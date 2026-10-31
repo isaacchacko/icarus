@@ -702,12 +702,23 @@ function commands.root(args)
   tui("require('isovim').refresh()")
 end
 
--- What isovim recorded for a stamp id: who sent it, to whom, and how it began.
+-- What isovim recorded for a stamp id: who sent it, to whom, and how it began. A stamp from another
+-- host is in that host's ledger, so the other hosts are asked too (--here: this host only).
 function commands.verify(args)
   local json = flag(args, "--json")
+  local here = flag(args, "--here")
   local entry = args[1] and require("isovim.root").find(args[1])
+  local remote = require("isovim.remote")
+  for _, host in pairs(not entry and not here and args[1] and remote.peers() or {}) do
+    local result = remote.run(host, { "verify", args[1], "--json", "--here" }, 5000)
+    local ok, decoded = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
+    if ok and type(decoded) == "table" then
+      entry = decoded
+      break
+    end
+  end
   if not entry then
-    fail(("no stamp %s here: not sent through isovim on this host"):format(args[1] or ""))
+    fail(("no stamp %s: not sent through isovim on this host or its others"):format(args[1] or ""))
   end
   if json then
     out(vim.json.encode(entry))

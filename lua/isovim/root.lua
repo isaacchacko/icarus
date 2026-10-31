@@ -127,7 +127,7 @@ function M.check(tag, to)
   if host and host ~= self() then
     local remote = require("isovim.remote")
     local ssh = remote.host_of(host)
-    local result = ssh and remote.run(ssh, { "verify", tag.id, "--json" }, 5000)
+    local result = ssh and remote.run(ssh, { "verify", tag.id, "--json", "--here" }, 5000)
     local ok, decoded = pcall(vim.json.decode, result and result.code == 0 and result.stdout or "")
     entry = ok and decoded or nil
   else
