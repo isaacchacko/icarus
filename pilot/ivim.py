@@ -29,17 +29,17 @@ class Ivim:
         self.cols, self.rows = cols, rows
         # Short and outside the scratch tree: unix socket paths cap near 104 bytes.
         self.tmp = Path(tempfile.mkdtemp(prefix="ivim-"))
-        self.ui = f"clut-ui-{os.getpid()}-{name}"[:60]
+        self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
         self.env = {
             **os.environ,
             "ISOVIM_HOME": str(self.tmp / "home"),
-            "ISOVIM_TMUX_SOCKET": f"clut-panes-{os.getpid()}-{name}"[:60],
+            "ISOVIM_TMUX_SOCKET": f"isot-panes-{os.getpid()}-{name}"[:60],
             "ISOVIM_SOCK": str(self.tmp / "s"),
             "ISOVIM_AGENT_CMD": str(REPO / "pilot" / "fake-agent"),
             "ISOVIM_CLAUDE_JSON": str(self.tmp / "claude.json"),
             "ISOVIM_NOTIFY_LOG": str(self.tmp / "notifications.log"),
             "FAKE_AGENT_DELAY": str(agent_delay),
-            # No real mallory peers in the sidebar; pilots that want one set it.
+            # No real other hosts in the sidebar; pilots that want one set it.
             "ISOVIM_PEERS": "-",
         }
         self.env.pop("TMUX", None)

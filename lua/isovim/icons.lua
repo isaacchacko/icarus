@@ -8,7 +8,7 @@ local M = {}
 M.map = {
   workspace = { "\u{f07b}", "Directory" }, -- fa-folder
   workspace_current = { "\u{f07c}", "Directory" }, -- fa-folder_open
-  claude = { "\u{ec82}", "CluClaude" }, -- cod-claude
+  claude = { "\u{ec82}", "IsovimClaude" }, -- cod-claude
   codex = { "\u{ec81}", "MiniIconsGrey" }, -- cod-openai
   terminal = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal
   host = { "\u{f108}", "Title" }, -- fa-desktop
@@ -17,7 +17,7 @@ M.map = {
 }
 
 function M.setup()
-  vim.api.nvim_set_hl(0, "CluClaude", { fg = "#d97757", default = true })
+  vim.api.nvim_set_hl(0, "IsovimClaude", { fg = "#d97757", default = true })
 end
 
 ---@return string glyph, string hl

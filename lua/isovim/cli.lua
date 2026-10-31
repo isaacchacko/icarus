@@ -369,7 +369,7 @@ function commands.phone()
       end
       return a.label < b.label
     end)
-    io.write("\27[2J\27[H\27[1mCLU\27[0m\n")
+    io.write("\27[2J\27[H\27[1misovim\27[0m\n")
     for i, row in ipairs(rows) do
       io.write(("%2d %s %s\n"):format(i, PHONE_MARK[row.state], row.label))
     end
