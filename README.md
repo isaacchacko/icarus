@@ -4,6 +4,8 @@ Agents first, in nvim. `iso` opens an nvim built around coding agents: a sidebar
 
 It's an isomer of neovim: the same parts, arranged around the agents.
 
+![isovim: workspaces with their agents, terminals and pins in the sidebar, an agent's chat on the right](docs/screenshot.png)
+
 ## What it does
 
 - **Workspaces.** One per task. A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI and review state) and the ports its dev servers listen on. A PR an agent opens shows up by itself.
