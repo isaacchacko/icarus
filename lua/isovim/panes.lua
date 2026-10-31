@@ -96,8 +96,24 @@ function M.claude_project(dir)
   return vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects/" .. key
 end
 
-local function has_conversation(dir)
-  return #vim.fn.glob(M.claude_project(dir) .. "/*.jsonl", false, true) > 0
+-- A fresh Claude gets its own session id, recorded where its hooks record it, so it resumes only
+-- its own conversation, never another agent's that shares its project dir.
+local function new_session(ws, agent)
+  local bytes = { vim.uv.random(16):byte(1, 16) }
+  bytes[7] = bit.bor(bit.band(bytes[7], 0x0f), 0x40)
+  bytes[9] = bit.bor(bit.band(bytes[9], 0x3f), 0x80)
+  local hex = table.concat(vim.tbl_map(function(b)
+    return ("%02x"):format(b)
+  end, bytes))
+  local id = ("%s-%s-%s-%s-%s"):format(hex:sub(1, 8), hex:sub(9, 12), hex:sub(13, 16), hex:sub(17, 20), hex:sub(21))
+  vim.fn.mkdir(store.run_dir(ws), "p")
+  vim.fn.writefile({ id }, store.run_dir(ws) .. "/" .. agent .. ".session")
+  return id
+end
+
+-- Claude writes a conversation only once it gets its first message.
+local function has_conversation(id)
+  return #vim.fn.glob(vim.fs.dirname(M.claude_project("/")) .. "/*/" .. id .. ".jsonl", false, true) > 0
 end
 
 M.codex_sessions = vim.fs.normalize(vim.env.CODEX_HOME or "~/.codex") .. "/sessions"
@@ -132,16 +148,17 @@ function M.agent_cmd(ws, agent, dir)
     if vim.env.ISOVIM_AGENT_CMD then
       return vim.split(vim.env.ISOVIM_AGENT_CMD, " ", { trimempty = true })
     end
-    -- A Claude that starts again picks its last conversation back up.
+    -- A Claude that starts again picks its own last conversation back up.
     local cmd = { M.exe("claude"), "--permission-mode", "bypassPermissions", "--settings", HOOKS }
     vim.list_extend(cmd, { "--append-system-prompt", instructions() })
     local id = store.session_id(ws, agent.id)
-    if id then
+    if id and has_conversation(id) then
       vim.list_extend(cmd, { "--resume", id })
-    elseif agent.prompt then
-      table.insert(cmd, agent.prompt)
-    elseif has_conversation(dir) then
-      table.insert(cmd, "--continue")
+    else
+      vim.list_extend(cmd, { "--session-id", id or new_session(ws, agent.id) })
+      if agent.prompt then
+        table.insert(cmd, agent.prompt)
+      end
     end
     return cmd
   elseif agent.kind == "codex" then
