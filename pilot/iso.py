@@ -49,12 +49,17 @@ class Iso:
     # lifecycle
 
     def start(self):
-        self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(REPO / "bin" / "iso"))
-        for option in (("escape-time", "0"), ("focus-events", "on"), ("default-terminal", "tmux-256color")):
-            self._tmux_ui("set-option", "-g", *option)
-        self.wait(lambda: Path(self.env["ISOVIM_SOCK"]).exists(), "TUI socket")
-        self.nvim = pynvim.attach("socket", path=self.env["ISOVIM_SOCK"])
-        self.wait(lambda: self.lua("return Snacks and Snacks.picker.get({source='isovim'})[1] ~= nil"), "sidebar")
+        """A pilot that fails to come up is stopped, so its TUI doesn't keep running headless."""
+        try:
+            self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(REPO / "bin" / "iso"))
+            for option in (("escape-time", "0"), ("focus-events", "on"), ("default-terminal", "tmux-256color")):
+                self._tmux_ui("set-option", "-g", *option)
+            self.wait(lambda: Path(self.env["ISOVIM_SOCK"]).exists(), "TUI socket")
+            self.nvim = pynvim.attach("socket", path=self.env["ISOVIM_SOCK"])
+            self.wait(lambda: self.lua("return Snacks and Snacks.picker.get({source='isovim'})[1] ~= nil"), "sidebar")
+        except BaseException:
+            self.stop()
+            raise
         return self
 
     def stop(self):
@@ -63,8 +68,11 @@ class Iso:
                 self.nvim.close()
             except Exception:
                 pass
-        subprocess.run(["tmux", "-L", self.ui, "kill-server"], capture_output=True)
-        subprocess.run(["tmux", "-L", self.env["ISOVIM_TMUX_SOCKET"], "kill-server"], capture_output=True)
+        # kill-server can leave the socket file behind; hundreds of them piled up in /tmp.
+        sockets = Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}"
+        for name in (self.ui, self.env["ISOVIM_TMUX_SOCKET"]):
+            subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
+            (sockets / name).unlink(missing_ok=True)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # driving
