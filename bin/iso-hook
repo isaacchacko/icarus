@@ -52,6 +52,16 @@ start)
 prompt)
   printf working >"$ISOVIM_STATE"
   transcript
+  # A stamp in the prompt is checked against isovim's ledger; what's printed here reaches the agent as
+  # context it can tell apart from typed text.
+  input="$(cat)"
+  case "$input" in
+  *"from "*)
+    agent="$(basename "${ISOVIM_STATE%.state}")"
+    ws="$(basename "$(dirname "$ISOVIM_STATE")")"
+    printf %s "$input" | "$(dirname "$0")/iso" checkstamp "$ws/$agent"
+    ;;
+  esac
   ;;
 stop)
   # Unread means progress to report, not just a finished turn: until the answer is read, the agent

@@ -13,8 +13,9 @@ local M = {}
 
 M.queue = {} ---@type {ws: string, ws_name: string, agent: string, name: string, status: isovim.Status}[]
 
+-- Only what waits on you: a raised decision or a question. A finished turn (the green dot) doesn't.
 function M.needs_you(agent)
-  return not agent.hidden and (agent.status == "unread" or agent.status == "attention")
+  return not agent.hidden and agent.status == "attention"
 end
 
 -- A path as the sidebar names it: relative to the workspace's project dir when inside it.
@@ -84,6 +85,9 @@ local KINDS = {
       if item.hidden then
         row[#row + 1] = { " (hidden)", "Comment" }
       end
+      if not item.host and require("isovim.root").is_root(require("isovim.root").address(item.ws, item.agent)) then
+        row[#row + 1] = { " root", "Special" }
+      end
       -- What it's on: the task title Claude gives its terminal, or the command a terminal runs.
       -- The ports it serves on first: the subtitle is often long enough to be cut off.
       if isovim.show_ports and item.ports and #item.ports > 0 then
@@ -151,7 +155,7 @@ local KINDS = {
 }
 
 -- Rows: each workspace with its agents, or its PRs while P is on. Hidden agents show only
--- while show_hidden is on. Unread/attention agents also go to M.queue, the "Needs you" pane.
+-- while show_hidden is on. Agents waiting on you (attention) also go to M.queue, the "Needs you" pane.
 local function sidebar_items()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()

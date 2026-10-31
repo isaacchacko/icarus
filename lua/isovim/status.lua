@@ -42,6 +42,10 @@ function M.get(ws, agent)
   if changed == 0 then
     return nil
   end
+  -- A decision it raised (iso ask) waits on you until you've looked at it, whatever it does next.
+  if require("isovim.root").raised_at(ws, agent) > mtime(store.seen_file(ws, agent)) then
+    return "attention"
+  end
   local state = M.state(ws, agent)
   if state == "working" or state == "checking" then
     return "working"

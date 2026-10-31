@@ -12,6 +12,7 @@ It's an isomer of neovim: the same parts, arranged around the agents.
 - **Agents.** Claude Code, Codex, terminals or any command, as many per workspace as you like. Each runs in its own tmux session and resumes its conversation when restarted. The sidebar shows which are working, which have something new for you and which are waiting on you, and a Needs-you pane lists those.
 - **Pins.** Agents pin the files they point you at (a report, a screenshot, the file they changed) under their workspace; Enter opens one beside the chat.
 - **Agents working together.** Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.
+- **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in Needs-you. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
 - **Other hosts.** Agents on your other machines show in the sidebar, and `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
 - **A browser for agents.** `iso browser` runs one Chrome per host that agents drive over CDP, in the background, without taking your focus.
 - **Hot reload.** Edit isovim's source and the running app picks it up.

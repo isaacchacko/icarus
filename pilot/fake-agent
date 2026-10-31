@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Stand-in for Claude when piloting: fires isovim's hooks the way Claude does, without the model.
-# "ask <q>" waits for an answer line (attention); anything else works for $FAKE_AGENT_DELAY seconds.
+# Each line goes to the prompt hook as Claude's JSON, and what the hook says back is printed, as
+# Claude would add it to context. "ask <q>" waits for an answer line (attention); "run <cmd>" runs a
+# shell command from inside the pane, as an agent's tool would; anything else works for
+# $FAKE_AGENT_DELAY seconds.
 hook="$(dirname "$(realpath "$0")")/../bin/iso-hook"
 "$hook" start </dev/null
 echo "fake agent ready"
 while true; do
   printf '❯ '
   IFS= read -r line || exit 0
-  "$hook" prompt </dev/null
+  context="$(jq -n --arg p "$line" '{prompt: $p}' | "$hook" prompt)"
+  [ -n "$context" ] && printf '⎿ hook: %s\n' "$context"
   case "$line" in
   ask*)
     "$hook" ask </dev/null
@@ -15,6 +19,10 @@ while true; do
     IFS= read -r answer || exit 0
     "$hook" tool-done </dev/null
     echo "⏺ thanks for: $answer"
+    ;;
+  run*)
+    echo "⏺ ran: ${line#run }"
+    bash -c "${line#run }" 2>&1 | sed 's/^/  /'
     ;;
   *)
     sleep "${FAKE_AGENT_DELAY:-1}"
