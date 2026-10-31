@@ -1,4 +1,4 @@
--- `ivim <command>`: drive workspaces and their agents from a shell or an agent. bin/ivim runs this
+-- `iso <command>`: drive workspaces and their agents from a shell or an agent. bin/iso runs this
 -- under `nvim -l`; when the TUI is open, changes reach it over its socket.
 local lua_dir = vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)))
 package.path = lua_dir .. "/?.lua;" .. lua_dir .. "/?/init.lua;" .. package.path
@@ -14,56 +14,56 @@ local function out(text)
 end
 
 local USAGE = [[
-usage: ivim                          open the TUI (ivim --takeover to steal it from another terminal)
-       ivim ls [--json]              list agents: ws/agent, status, workspace · agent
-       ivim new <name> [--dir path] [--worktree | --from <branch|PR>]
+usage: iso                           open the TUI (iso --takeover to steal it from another terminal)
+       iso ls [--json]               list agents: ws/agent, status, workspace · agent
+       iso new <name> [--dir path] [--worktree | --from <branch|PR>]
                                      create a workspace, print its id; its agents and files
                                      live in path (a project), else its own dir. --worktree
                                      gives it a new worktree of the repo at path, on branch
                                      $USER/<name>; --from one of an existing branch or PR
                                      (number or URL). Archiving removes it if clean
-       ivim dir <ws> [path|-]        print, set or (-) clear its project dir
-       ivim rename <ws|agent> <name>  rename a workspace, or an agent (<ws>/<agent>)
-       ivim archive <ws>             stop its agents and move it to the archive
-       ivim archived                 list archived workspaces, newest first
-       ivim unarchive <ws>           bring one back (a worktree workspace gets its worktree)
-       ivim move <ws> <host> [--force]  move it to another host (ssh name); its agents resume
+       iso dir <ws> [path|-]         print, set or (-) clear its project dir
+       iso rename <ws|agent> <name>   rename a workspace, or an agent (<ws>/<agent>)
+       iso archive <ws>              stop its agents and move it to the archive
+       iso archived                  list archived workspaces, newest first
+       iso unarchive <ws>            bring one back (a worktree workspace gets its worktree)
+       iso move <ws> <host> [--force]   move it to another host (ssh name); its agents resume
                                      there. --force moves it even while an agent is working
-       ivim agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text]
+       iso agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text]
                                      add an agent (claude|codex|terminal|command), start it;
                                      --prompt starts a claude or codex agent on that prompt
-       ivim rm <agent>               stop an agent and remove it from its workspace
-       ivim pr <ws> <url|owner/repo#n>  register a PR for the workspace (agents run this)
-       ivim prs <ws> [--json]        its PRs with their state
-       ivim hide|unhide <agent>      hidden agents stay out of the sidebar and never notify
-       ivim open <agent>             start it; show it in the TUI if open
-       ivim restart <agent>          restart it (Claude and Codex keep their conversation)
-       ivim attach <agent>           start it and attach this terminal to it (detach: C-b d)
-       ivim phone                    pick an agent to attach to, needs-you first; for small
+       iso rm <agent>                stop an agent and remove it from its workspace
+       iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)
+       iso prs <ws> [--json]         its PRs with their state
+       iso hide|unhide <agent>       hidden agents stay out of the sidebar and never notify
+       iso open <agent>              start it; show it in the TUI if open
+       iso restart <agent>           restart it (Claude and Codex keep their conversation)
+       iso attach <agent>            start it and attach this terminal to it (detach: C-b d)
+       iso phone                     pick an agent to attach to, needs-you first; for small
                                      screens over SSH
-       ivim send <agent> <text...>   type text into it and submit (starts it if needed); from
+       iso send <agent> <text...>    type text into it and submit (starts it if needed); from
                                      an agent it starts "[from <host>:<ws>/<agent>]" to reply to
-       ivim find <query> [--json]    agents on every host ranked by where the query turns up:
+       iso find <query> [--json]     agents on every host ranked by where the query turns up:
                                      names, branch, PRs, what they're on, their conversation
-       ivim pin <ws> <path> [--label text]  show a file or folder under the workspace in the sidebar
-       ivim unpin <ws> <path>
-       ivim transcript <agent>       rewrite its plain-text transcript, print the path
-       ivim status <agent>           stopped | idle | working | attention | unread
-       ivim wait <agent> [--timeout s]  block until it stops working, print the status
-       ivim peek <agent> [-n lines]  print the last lines of its screen (default 40)
-       ivim doctor                   check what isovim needs here and on the other hosts
-       ivim version                  the isovim commit this runs
-       ivim pilot request <reason...> ask to drive the TUI; blocks until allowed or denied
-       ivim pilot keys <keys>        type into the TUI, in nvim key notation ("<C-h>j<CR>")
-       ivim pilot screen             print the TUI's screen
-       ivim pilot status|release     off | asking | active | denied; release hands control back
+       iso pin <ws> <path> [--label text]   show a file or folder under the workspace in the sidebar
+       iso unpin <ws> <path>
+       iso transcript <agent>        rewrite its plain-text transcript, print the path
+       iso status <agent>            stopped | idle | working | attention | unread
+       iso wait <agent> [--timeout s]   block until it stops working, print the status
+       iso peek <agent> [-n lines]   print the last lines of its screen (default 40)
+       iso doctor                    check what isovim needs here and on the other hosts
+       iso version                   the isovim commit this runs
+       iso pilot request <reason...> ask to drive the TUI; blocks until allowed or denied
+       iso pilot keys <keys>         type into the TUI, in nvim key notation ("<C-h>j<CR>")
+       iso pilot screen              print the TUI's screen
+       iso pilot status|release      off | asking | active | denied; release hands control back
                                      (pressing Esc in the TUI takes control back too)
 <ws> is a workspace id, name, or unique prefix of either. <agent> is <ws>/<agent id or name>,
 or just <ws> for the workspace's first visible agent. send, status, wait and peek also take
 <host>:<agent> for an agent on another host (hosts in ~/.isovim/config.json).]]
 
 local function fail(message)
-  io.stderr:write("ivim: " .. message .. "\n")
+  io.stderr:write("iso: " .. message .. "\n")
   os.exit(1)
 end
 
@@ -157,7 +157,7 @@ end
 
 local function ensure_running(ws, agent)
   if panes.running(ws.id, agent.id) then
-    -- It may have just been started elsewhere (ivim receive); a busy one takes the prompt queued.
+    -- It may have just been started elsewhere (iso receive); a busy one takes the prompt queued.
     if agent.kind == "codex" then
       codex_ready(ws, agent, 5)
     end
@@ -245,7 +245,7 @@ function commands.new(args)
   worktree = from or worktree
   local name = table.concat(args, " ")
   if name == "" then
-    fail("usage: ivim new <name> [--dir path] [--worktree | --from <branch|PR>]")
+    fail("usage: iso new <name> [--dir path] [--worktree | --from <branch|PR>]")
   end
   if dir and vim.fn.isdirectory(dir) == 0 then
     fail(dir .. " is not a directory")
@@ -285,7 +285,7 @@ function commands.rename(args)
   local target = table.remove(args, 1)
   local name = table.concat(args, " ")
   if not target or name == "" then
-    fail("usage: ivim rename <ws|agent> <name>")
+    fail("usage: iso rename <ws|agent> <name>")
   end
   if target:find("/") then
     local ws, agent = resolve_agent(target)
@@ -299,7 +299,7 @@ end
 function commands.move(args)
   local force = flag(args, "--force")
   local ws = resolve(args[1])
-  local host = args[2] or fail("usage: ivim move <ws> <host>")
+  local host = args[2] or fail("usage: iso move <ws> <host>")
   if not force then
     for _, agent in ipairs(store.agents(ws.id)) do
       if word(ws.id, agent.id) == "working" then
@@ -416,13 +416,13 @@ function commands.doctor()
   check(vim.system({ "gh", "auth", "status" }):wait().code == 0, "gh signed in", "gh auth login")
   check(vim.fn.executable("node") == 1, "node", "put node on PATH (the language servers for files you open run on it)")
   check(vim.fn.executable("lsof") == 1, "lsof", "install lsof (the sidebar's dev server ports)")
-  check(vim.fn.executable("rg") == 1, "rg", "install ripgrep (ivim find searches conversations with it)")
+  check(vim.fn.executable("rg") == 1, "rg", "install ripgrep (iso find searches conversations with it)")
   for _, name in ipairs({ "claude", "codex" }) do
     local path = panes.exe(name)
     check(vim.fn.executable(path) == 1, name .. " " .. path, "install " .. name .. " (agents of that kind can't start)")
   end
-  local link = vim.fn.resolve(vim.fn.exepath("ivim"))
-  check(link == panes.bin, "ivim on PATH is this repo's", "ln -s " .. panes.bin .. " ~/.local/bin/ivim")
+  local link = vim.fn.resolve(vim.fn.exepath("iso"))
+  check(link == panes.bin, "iso on PATH is this repo's", "ln -s " .. panes.bin .. " ~/.local/bin/iso")
   local here = repo_commit()
   out("     this isovim: " .. here)
   local remote = require("isovim.remote")
@@ -433,7 +433,7 @@ function commands.doctor()
     if result.code == 255 or result.signal ~= 0 then
       check(false, name .. " reachable", "it may be asleep; moves and its sidebar rows wait for it")
     elseif not theirs then
-      check(false, name .. " runs an isovim with `ivim version`", "update its isovim to this one's commit")
+      check(false, name .. " runs an isovim with `iso version`", "update its isovim to this one's commit")
     else
       check(theirs == here, ("%s runs isovim %s"):format(name, theirs), "update one side so both run the same commit")
     end
@@ -443,7 +443,7 @@ function commands.doctor()
   end
 end
 
--- The other end of `ivim move`: bin/ivim unpacks the incoming tar into args[1].
+-- The other end of `iso move`: bin/iso unpacks the incoming tar into args[1].
 function commands.receive(args)
   local ok, message = require("isovim.move").receive(args[1])
   if not ok then
@@ -462,7 +462,7 @@ function commands.archived()
 end
 
 function commands.unarchive(args)
-  local ws = unique(args[1] or fail("usage: ivim unarchive <ws>"), store.archived(), function(ws)
+  local ws = unique(args[1] or fail("usage: iso unarchive <ws>"), store.archived(), function(ws)
     return { ws.id, ws.name }
   end, "archived workspace")
   local ok, err = store.unarchive(ws.id)
@@ -494,7 +494,7 @@ function commands.agent(args)
   local ws = resolve(args[1])
   local kind = args[2]
   if not vim.tbl_contains(panes.kinds, kind) then
-    fail("usage: ivim agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text]")
+    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text]")
   end
   if kind == "command" and not cmd then
     fail("a command agent needs --cmd")
@@ -507,7 +507,7 @@ end
 
 function commands.pr(args)
   local ws = resolve(args[1])
-  local url = args[2] and prs.normalize(args[2]) or fail("usage: ivim pr <ws> <pr url|owner/repo#n>")
+  local url = args[2] and prs.normalize(args[2]) or fail("usage: iso pr <ws> <pr url|owner/repo#n>")
   store.add_pr(ws.id, url)
   tui("require('isovim').refresh()")
 end
@@ -574,7 +574,7 @@ function commands.restart(args)
   end
 end
 
--- Returns once a hooked agent has taken the prompt, so a following `ivim wait` waits for the answer.
+-- Returns once a hooked agent has taken the prompt, so a following `iso wait` waits for the answer.
 -- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
 -- sidebar lists them. This host's own name, or none, means here.
 ---@return string? host, string query
@@ -599,7 +599,7 @@ local function forward(host, args)
   os.exit(result.code)
 end
 
--- An agent sending to another says who it is, so the receiver can answer with ivim send.
+-- An agent sending to another says who it is, so the receiver can answer with iso send.
 local function sender_tag()
   local ws_id, agent_id = (vim.env.ISOVIM_STATE or ""):match("([^/]+)/([^/]+)%.state$")
   if not ws_id or not store.agent(ws_id, agent_id) then
@@ -612,7 +612,7 @@ function commands.send(args)
   local host, query = split_host(table.remove(args, 1))
   local text = table.concat(args, " ")
   if text == "" then
-    fail("usage: ivim send <agent> <text...>")
+    fail("usage: iso send <agent> <text...>")
   end
   text = sender_tag() .. text
   if host then
@@ -637,7 +637,7 @@ function commands.pin(args)
   local ws = resolve(args[1])
   local path = args[2] and vim.fn.fnamemodify(vim.fs.normalize(args[2]), ":p"):gsub("/$", "")
   if not path or not vim.uv.fs_stat(path) then
-    fail("usage: ivim pin <ws> <existing file or folder> [--label text]")
+    fail("usage: iso pin <ws> <existing file or folder> [--label text]")
   end
   store.pin(ws.id, path, label)
   tui("require('isovim').refresh()")
@@ -646,7 +646,7 @@ end
 function commands.unpin(args)
   local ws = resolve(args[1])
   if not args[2] then
-    fail("usage: ivim unpin <ws> <path>")
+    fail("usage: iso unpin <ws> <path>")
   end
   store.unpin(ws.id, vim.fn.fnamemodify(vim.fs.normalize(args[2]), ":p"):gsub("/$", ""))
   tui("require('isovim').refresh()")
@@ -722,7 +722,7 @@ function commands.find(args)
   local only_here = flag(args, "--local")
   local query = table.concat(args, " ")
   if vim.trim(query) == "" then
-    fail("usage: ivim find <query> [--json]")
+    fail("usage: iso find <query> [--json]")
   end
   local remote = require("isovim.remote")
   local rows = {}
@@ -807,7 +807,7 @@ function commands.pilot(args)
     out(now == "active" and "allowed" or now == "asking" and "no answer" or "denied")
     os.exit(now == "active" and 0 or 1)
   elseif sub == "keys" then
-    call("require('isovim.pilot').input(...)", args[1] or fail("usage: ivim pilot keys <keys>"))
+    call("require('isovim.pilot').input(...)", args[1] or fail("usage: iso pilot keys <keys>"))
   elseif sub == "screen" then
     out(call("return require('isovim.pilot').screen()"))
   elseif sub == "status" then
@@ -815,7 +815,7 @@ function commands.pilot(args)
   elseif sub == "release" then
     call("require('isovim.pilot').release(...)")
   else
-    fail("usage: ivim pilot request|keys|screen|status|release")
+    fail("usage: iso pilot request|keys|screen|status|release")
   end
 end
 

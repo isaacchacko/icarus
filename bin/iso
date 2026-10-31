@@ -5,10 +5,10 @@ repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 home="${ISOVIM_HOME:-$HOME/.isovim}"
 lock="$home/isovim.lock"
 cli="$repo/lua/isovim/cli.lua"
-# A non-interactive ssh (ivim move's other end) gets a bare PATH; on macOS that misses Homebrew.
+# A non-interactive ssh (iso move's other end) gets a bare PATH; on macOS that misses Homebrew.
 PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 
-# ivim move streams a workspace in as a tar; unpack it next to the workspaces so it can be renamed in.
+# iso move streams a workspace in as a tar; unpack it next to the workspaces so it can be renamed in.
 if [ "${1:-}" = receive ]; then
   mkdir -p "$home/workspaces"
   incoming="$(mktemp -d "$home/incoming.XXXXXX")"
@@ -19,7 +19,7 @@ fi
 case "${1:-}" in
 browser)
   shift
-  exec node "$repo/bin/ivim-browser.mjs" "$@"
+  exec node "$repo/bin/iso-browser.mjs" "$@"
   ;;
 ls | new | dir | open | rename | archive | archived | unarchive | move | restart | agent | rm | pr | prs | hide | unhide | attach | phone | send | pin | unpin | progress | autopin | transcript | status | wait | peek | find | doctor | version | pilot | help | -h | --help)
   NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"
@@ -60,7 +60,7 @@ if [ -f "$lock" ]; then
   pid="$(cat "$lock")"
   if kill -0 "$pid" 2>/dev/null; then
     if [ -z "$takeover" ]; then
-      echo "isovim is already open (pid $pid). Run 'ivim --takeover' to close it and open here." >&2
+      echo "isovim is already open (pid $pid). Run 'iso --takeover' to close it and open here." >&2
       exit 1
     fi
     kill -TERM "$pid"

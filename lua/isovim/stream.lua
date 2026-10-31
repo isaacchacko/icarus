@@ -102,7 +102,7 @@ local function replay(pane, lines, full)
   return table.concat(out)
 end
 
--- How much of the pane's history a chat shows; all of it stays in tmux (ivim peek, ivim attach).
+-- How much of the pane's history a chat shows; all of it stays in tmux (iso peek, iso attach).
 local HISTORY = 10000
 
 -- What nvim sizes the terminal to: the smallest window showing it, less its number/sign columns.
@@ -276,7 +276,7 @@ function M.check(buf)
   if not stream or stream.seeding or not width or not M.alive(buf) then
     return
   end
-  -- While another client (ivim attach, a phone) has sized the pane its way, leave it be: redrawing
+  -- While another client (iso attach, a phone) has sized the pane its way, leave it be: redrawing
   -- would size it back and the two would fight. Its detach resizes the pane, which checks again.
   local pane_size, clients
   local line = ("display -p -t %s %s ; list-clients -F %s ; capture-pane -p -t %s"):format(

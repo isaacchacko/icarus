@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand-in for ssh when piloting `ivim move`: drops the options and host and runs the remote
+# Stand-in for ssh when piloting `iso move`: drops the options and host and runs the remote
 # command here, with the receiving pilot's environment from $FAKE_SSH_ENV.
 while [ "${1:-}" = -o ] || [ "${1:-}" = -t ]; do
   [ "$1" = -o ] && shift

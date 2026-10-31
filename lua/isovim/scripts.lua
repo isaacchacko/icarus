@@ -50,7 +50,7 @@ function M.start(ws, which)
   -- It reports like an agent: working while it runs, then finished (a toast, Needs you).
   local hook = vim.fn.shellescape(panes.hook_script)
   local cmd = ("%s prompt </dev/null; %s; code=$?; %s stop </dev/null; "):format(hook, line, hook)
-    .. ("[ $code -eq 0 ] || echo 'ivim: the %s script failed (exit '$code')'; exec ${SHELL:-sh} -l"):format(which)
+    .. ("[ $code -eq 0 ] || echo 'iso: the %s script failed (exit '$code')'; exec ${SHELL:-sh} -l"):format(which)
   local agent = store.agent(ws, which)
   if agent then
     store.update_agent(ws, which, { cmd = cmd })

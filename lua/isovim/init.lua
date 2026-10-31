@@ -398,7 +398,7 @@ local function sidebar_items()
       end
     end
   end
-  -- The other hosts' agents, by host then workspace, as their `ivim ls` lists them.
+  -- The other hosts' agents, by host then workspace, as their `iso ls` lists them.
   local hosts = {}
   for name, host in pairs(remote.peers()) do
     local rows = remote.list(name, host, refresh_sidebar)
@@ -727,7 +727,7 @@ function M.toast(message)
   Snacks.notify(message, { title = "isovim" })
 end
 
--- Picks up changes made outside the TUI, e.g. by the `ivim` CLI.
+-- Picks up changes made outside the TUI, e.g. by the `iso` CLI.
 -- Workspaces archived or moved away (here or by the CLI) leave no chats or selection behind.
 local function drop_gone()
   local here = {}
@@ -1053,7 +1053,7 @@ local actions = {
       M.refresh()
     end)
   end,
-  -- m moves the workspace to another host; its agents resume there (ivim move).
+  -- m moves the workspace to another host; its agents resume there (iso move).
   isovim_move = function(picker, item)
     if not item or not item.ws then
       return
@@ -1075,7 +1075,7 @@ local actions = {
         Snacks.notify.info(("Moving %s to %s…"):format(name, host), { title = "isovim" })
         local cmd = { panes.bin, "move", ws, peers[host], force and "--force" or nil }
         vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
-          local busy = result.stderr:match("ivim: (.- is working)")
+          local busy = result.stderr:match("iso: (.- is working)")
           if busy then
             Snacks.picker.util.confirm(busy .. ". Move anyway?", function()
               move(true)
@@ -1132,7 +1132,7 @@ local LIST_KEYS = {
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
   { "c", "isovim_changes", "its changes since its base" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
-  { "f", "isovim_find", "find the agent that was on something, on any host (ivim find)" },
+  { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "move it to another host, or here" },
   { "s", "isovim_sort", "sort by creation or by recent activity" },
@@ -1500,7 +1500,7 @@ function M.setup(opts)
     end,
   })
 
-  -- The `ivim` CLI and the agents' hooks find this instance by its socket.
+  -- The `iso` CLI and the agents' hooks find this instance by its socket.
   if not vim.tbl_contains(vim.fn.serverlist(), store.socket) then
     pcall(vim.fn.serverstart, store.socket)
   end
@@ -1713,7 +1713,7 @@ function M.unarchive()
   end)
 end
 
--- m on another host's workspace: that host moves it here (ivim move there, to this host's name),
+-- m on another host's workspace: that host moves it here (iso move there, to this host's name),
 -- and it opens once it lands.
 function M.move_here(item)
   if not item.remote_ws then
@@ -1725,7 +1725,7 @@ function M.move_here(item)
     local args = item.remote_ws .. " " .. me .. (force and " --force" or "")
     local cmd = ("%s %s %s"):format(remote.ssh, vim.fn.shellescape(item.ssh), vim.fn.shellescape(remote.remote_bin .. " move " .. args))
     vim.system({ "bash", "-c", cmd }, { text = true }, vim.schedule_wrap(function(result)
-      local busy = (result.stderr or ""):match("ivim: (.- is working)")
+      local busy = (result.stderr or ""):match("iso: (.- is working)")
       if busy then
         return Snacks.picker.util.confirm(busy .. ". Move anyway?", function()
           move(true)
@@ -1859,8 +1859,8 @@ function M.poll_prs()
   end
 end
 
--- ivim find as a live picker, like <leader>/: each keystroke searches every host; the preview
--- shows the agent's transcript at the match, or where else the query turned up. ivim find prints one JSON array; jq makes it a row per agent.
+-- iso find as a live picker, like <leader>/: each keystroke searches every host; the preview
+-- shows the agent's transcript at the match, or where else the query turned up. iso find prints one JSON array; jq makes it a row per agent.
 function M.find()
   local self = remote.self()
   Snacks.picker.pick({

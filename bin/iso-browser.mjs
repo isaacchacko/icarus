@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `ivim browser`: one isovim Chrome per host for agents to drive over CDP. It runs with its own
+// `iso browser`: one isovim Chrome per host for agents to drive over CDP. It runs with its own
 // profile (your Chrome cookies copied in on first start), opens in the background and never
 // takes keyboard focus; you reach it with cmd+tab. Each workspace keeps its own tabs in
 // ~/.isovim/run/<ws>/browser.json. No dependencies: Node's built-in fetch and WebSocket.
@@ -13,7 +13,7 @@ const PORT = Number(process.env.ISOVIM_BROWSER_PORT || 9333);
 const BASE = `http://127.0.0.1:${PORT}`;
 const PROFILE = join(HOME, "browser", "profile");
 
-const USAGE = `usage: ivim browser <command> [--ws <id>] [--tab <id>]
+const USAGE = `usage: iso browser <command> [--ws <id>] [--tab <id>]
   start                 launch the isovim Chrome (in the background) if it isn't running
   tabs                  this workspace's tabs: id, url, title
   open <url>            open a tab for this workspace (in a background window), print its id
@@ -28,7 +28,7 @@ The workspace defaults to $ISOVIM_WS (agents have it); the tab to the workspace'
 CDP endpoint for other tools: ${BASE}`;
 
 function fail(message) {
-  process.stderr.write(`ivim browser: ${message}\n`);
+  process.stderr.write(`iso browser: ${message}\n`);
   process.exit(1);
 }
 
@@ -140,7 +140,7 @@ async function liveTabs(ws) {
 async function pickTab(ws, id) {
   const tabs = await liveTabs(ws);
   const tab = id ? tabs.find((t) => t.id.startsWith(id)) : tabs.at(-1);
-  return tab || fail(id ? `no tab ${id} in workspace ${ws}` : `workspace ${ws} has no tab; ivim browser open <url>`);
+  return tab || fail(id ? `no tab ${id} in workspace ${ws}` : `workspace ${ws} has no tab; iso browser open <url>`);
 }
 
 // One CDP session over a WebSocket: send(method, params) resolves with the result.
@@ -206,7 +206,7 @@ const commands = {
     for (const tab of await liveTabs(ws)) console.log(`${tab.id.slice(0, 8)}  ${tab.url}  ${tab.title}`);
   },
   async open(ws, _tab, [url]) {
-    if (!url) fail("usage: ivim browser open <url>");
+    if (!url) fail("usage: iso browser open <url>");
     await start();
     const browser = await connect((await version()).webSocketDebuggerUrl);
     const { targetId } = await browser.send("Target.createTarget", { url, newWindow: true, background: true });
@@ -250,7 +250,7 @@ const commands = {
     if (!found) fail(`nothing matches ${selector}`);
   },
   async shot(ws, id, [file]) {
-    if (!file) fail("usage: ivim browser shot <file.png>");
+    if (!file) fail("usage: iso browser shot <file.png>");
     const { data } = await onTab(await pickTab(ws, id), (cdp) => cdp.send("Page.captureScreenshot", { format: "png" }));
     writeFileSync(file, Buffer.from(data, "base64"));
     console.log(file);
@@ -274,5 +274,5 @@ if (!commands[command]) {
   process.exit(command === "help" || command === "--help" || !command ? 0 : 1);
 }
 if (command !== "start" && !ws) fail("no workspace: pass --ws <id> or run inside an isovim agent ($ISOVIM_WS)");
-if (command !== "start" && command !== "open" && !(await version())) fail("the isovim Chrome isn't running; ivim browser start");
+if (command !== "start" && command !== "open" && !(await version())) fail("the isovim Chrome isn't running; iso browser start");
 await commands[command](ws, tab, args);

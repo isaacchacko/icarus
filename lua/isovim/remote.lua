@@ -1,12 +1,12 @@
--- The other hosts' agents: each host's `ivim ls --json`
+-- The other hosts' agents: each host's `iso ls --json`
 -- over ssh, fetched in the background and cached; a peer that doesn't answer (asleep) drops out
--- until it does. Opening one attaches a terminal to it over ssh (ivim attach).
+-- until it does. Opening one attaches a terminal to it over ssh (iso attach).
 local config = require("isovim.config").get
 
 local M = {}
 
 M.ssh = vim.env.ISOVIM_SSH or "ssh -o BatchMode=yes -o ConnectTimeout=3"
-M.remote_bin = vim.env.ISOVIM_REMOTE_BIN or "~/.local/bin/ivim"
+M.remote_bin = vim.env.ISOVIM_REMOTE_BIN or "~/.local/bin/iso"
 
 local TTL = 10
 local cache = {} ---@type table<string, {rows?: table[], at: integer, busy?: boolean}>
@@ -36,7 +36,7 @@ function M.host_of(name)
   return peers[name], name
 end
 
--- Runs `ivim <args>` on a peer and waits: the remote's own output, exit code and errors.
+-- Runs `iso <args>` on a peer and waits: the remote's own output, exit code and errors.
 ---@param args string[]
 function M.run(host, args, timeout)
   local cmd = vim.split(M.ssh, " ", { trimempty = true })

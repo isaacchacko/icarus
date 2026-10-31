@@ -1,4 +1,4 @@
--- The PRs a workspace's agents registered (`ivim pr`), with their state from gh, cached for a
+-- The PRs a workspace's agents registered (`iso pr`), with their state from gh, cached for a
 -- minute under run/<ws>/prs.json so the sidebar never waits on the network.
 local store = require("isovim.store")
 
@@ -99,7 +99,7 @@ local function fetch(ws, urls, on_done)
 end
 
 -- A worktree workspace's PR is the one for its branch, found in the background
--- and registered once it exists, without waiting for an agent to run `ivim pr`.
+-- and registered once it exists, without waiting for an agent to run `iso pr`.
 function M.discover(ws, dir, branch, on_found)
   vim.system({ "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "url", "--limit", "1" }, { cwd = dir, text = true }, function(result)
     local ok, found = pcall(vim.json.decode, result.code == 0 and result.stdout or "")

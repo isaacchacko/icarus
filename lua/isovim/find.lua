@@ -1,6 +1,6 @@
--- ivim find: which agent was on something. Each of this host's agents is scored by where the query
+-- iso find: which agent was on something. Each of this host's agents is scored by where the query
 -- turns up: its workspace or agent name, branch, PRs, what it's on now, and its conversation, as
--- the plain text its hooks keep in transcripts/<agent>.txt (ivim/transcript.lua).
+-- the plain text its hooks keep in transcripts/<agent>.txt (iso/transcript.lua).
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 

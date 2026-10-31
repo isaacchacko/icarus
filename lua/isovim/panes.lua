@@ -25,8 +25,8 @@ end
 -- This file sits at <repo>/lua/isovim/panes.lua.
 local here = debug.getinfo(1, "S").source:sub(2)
 local repo = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.uv.fs_realpath(here) or here)))
-M.hook_script = repo .. "/bin/ivim-hook"
-M.bin = repo .. "/bin/ivim"
+M.hook_script = repo .. "/bin/iso-hook"
+M.bin = repo .. "/bin/iso"
 
 local function hook(event, matcher)
   return { { matcher = matcher, hooks = { { type = "command", command = ("'%s' %s"):format(M.hook_script, event) } } } }
@@ -64,20 +64,20 @@ end
 -- What every agent is told at launch. PRs and pins in the sidebar come from the agents themselves.
 local INSTRUCTIONS = "You are running inside isovim, in workspace $ISOVIM_WS. Whenever you open a pull request, "
   .. "or start working on an existing one, register it so it shows in isovim's sidebar: "
-  .. "`ivim pr $ISOVIM_WS <pr url>`. For anything in a browser, use isovim's Chrome, which has the "
-  .. "user's logins and never takes their focus: `ivim browser help` lists the commands "
+  .. "`iso pr $ISOVIM_WS <pr url>`. For anything in a browser, use isovim's Chrome, which has the "
+  .. "user's logins and never takes their focus: `iso browser help` lists the commands "
   .. "(open, text, eval, click, fill, shot); never drive the user's own Chrome or bring a window to the front. "
-  .. "Pin files in the user's sidebar under your workspace with `ivim pin $ISOVIM_WS <path> --label "
+  .. "Pin files in the user's sidebar under your workspace with `iso pin $ISOVIM_WS <path> --label "
   .. "<2-4 words>`, without being asked: every file or folder your reply tells them about by path "
   .. "(the one or few that matter, not every file you touched), and everything you make on the "
-  .. "side for them to see, like screenshots, reports or exports. `ivim unpin $ISOVIM_WS <path>` "
+  .. "side for them to see, like screenshots, reports or exports. `iso unpin $ISOVIM_WS <path>` "
   .. "removes ones that stopped mattering. "
   .. "Other agents run beside you, here and on the user's other hosts; you can work with them: "
-  .. "`ivim ls` lists this host's agents (<ws>/<agent>, status, what each is on), "
-  .. "`ivim find <query>` finds which agent on any host was on something (names, branch, PRs, "
-  .. "their conversations), `ivim peek <agent>` shows its screen, `ivim status <agent>` and "
-  .. "`ivim wait <agent>` tell you when it's done, and `ivim send <agent> <text>` types a message "
-  .. "into it. An agent on another host is <host>:<ws>/<agent>, as ivim find prints it. Messages "
+  .. "`iso ls` lists this host's agents (<ws>/<agent>, status, what each is on), "
+  .. "`iso find <query>` finds which agent on any host was on something (names, branch, PRs, "
+  .. "their conversations), `iso peek <agent>` shows its screen, `iso status <agent>` and "
+  .. "`iso wait <agent>` tell you when it's done, and `iso send <agent> <text>` types a message "
+  .. "into it. An agent on another host is <host>:<ws>/<agent>, as iso find prints it. Messages "
   .. "you send start with [from <host>:<ws>/<agent>], and one you receive with that tag can be "
   .. "answered by sending to that address."
 
@@ -107,7 +107,7 @@ function M.codex_rollout(id)
   return vim.fn.glob(M.codex_sessions .. "/*/*/*/rollout-*-" .. id .. ".jsonl", false, true)[1]
 end
 
--- What `A` and `ivim agent` offer; "shell" agents made earlier run like terminals.
+-- What `A` and `iso agent` offer; "shell" agents made earlier run like terminals.
 M.kinds = { "claude", "codex", "terminal", "command" }
 
 -- Agents with hooks report working/idle/attention; the rest are only running or not.
@@ -259,7 +259,7 @@ function M.target(ws, agent)
 end
 
 -- A control-mode client (isovim.stream): commands in on stdin, the pane's output and replies out on stdout.
--- A plain attach, for a terminal outside the TUI (ivim attach, ivim phone).
+-- A plain attach, for a terminal outside the TUI (iso attach, iso phone).
 function M.attach_cmd(ws, agent)
   return tmux_cmd({ "attach-session", "-t", "=" .. session(ws, agent) })
 end

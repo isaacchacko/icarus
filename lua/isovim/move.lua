@@ -1,5 +1,5 @@
 -- Moving a workspace to another host: its agents stop here and pick their conversations back up
--- there. One tar goes over ssh into `ivim receive`: the workspace dir, Claude's transcripts for it,
+-- there. One tar goes over ssh into `iso receive`: the workspace dir, Claude's transcripts for it,
 -- each Codex agent's rollout, the agents' session ids and a manifest of which agents were running.
 -- Claude keys transcripts by the workspace's path, which differs between hosts, so the receiver
 -- files them under its own path's key. A worktree workspace also brings its branch and uncommitted
@@ -12,7 +12,7 @@ local M = {}
 
 -- Pilots swap ssh for a local stand-in.
 M.ssh = vim.env.ISOVIM_SSH or "ssh -o BatchMode=yes -o ConnectTimeout=5"
-M.remote_bin = vim.env.ISOVIM_REMOTE_BIN or "~/.local/bin/ivim"
+M.remote_bin = vim.env.ISOVIM_REMOTE_BIN or "~/.local/bin/iso"
 
 local function copy(from, to)
   vim.fn.mkdir(vim.fs.dirname(to), "p")
@@ -97,7 +97,7 @@ function M.send(ws, host)
   return true, note
 end
 
--- Files what `send` packed (bin/ivim unpacked it into stage) and starts the agents that were running.
+-- Files what `send` packed (bin/iso unpacked it into stage) and starts the agents that were running.
 ---@return boolean ok, string message
 function M.receive(stage)
   local manifest = vim.json.decode(table.concat(vim.fn.readfile(stage .. "/manifest.json"), "\n"))

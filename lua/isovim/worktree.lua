@@ -120,7 +120,7 @@ function M.repo_of(path)
   return common and vim.fs.dirname(common) or nil
 end
 
--- For ivim move: writes a bundle of the branch's commits beyond the remote default branch (the other
+-- For iso move: writes a bundle of the branch's commits beyond the remote default branch (the other
 -- host has those) plus a commit of everything uncommitted, untracked files too, without touching
 -- the checkout or its index.
 ---@return {branch: string, wip: string}? info, string? err
@@ -138,13 +138,13 @@ function M.pack(path, bundle)
   indexed({ "add", "-A" })
   local tree = out(indexed({ "write-tree" }))
   vim.fn.delete(index)
-  local wip = tree and out(git(path, { "commit-tree", tree, "-p", "HEAD", "-m", "ivim move: uncommitted work" }))
+  local wip = tree and out(git(path, { "commit-tree", tree, "-p", "HEAD", "-m", "iso move: uncommitted work" }))
   if not wip then
     return nil, "could not snapshot its uncommitted work"
   end
   -- The snapshot's parents hold every commit of the branch, so it alone is bundled; a branch with
   -- no commits of its own would otherwise be left out of the bundle as already there.
-  local ref = "refs/ivim/move-wip"
+  local ref = "refs/iso/move-wip"
   git(path, { "update-ref", ref, wip })
   local args = { "bundle", "create", bundle, ref }
   if out(git(path, { "rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD" })) then
@@ -166,7 +166,7 @@ function M.unpack(repo, bundle, info)
     return nil, repo .. " is not a git repo here"
   end
   git(repo, { "fetch", "--quiet", "origin" }, 30000)
-  local fetched = git(repo, { "fetch", "--quiet", bundle, "refs/ivim/move-wip" })
+  local fetched = git(repo, { "fetch", "--quiet", bundle, "refs/iso/move-wip" })
   if fetched.code ~= 0 then
     return nil, vim.trim(fetched.stderr)
   end

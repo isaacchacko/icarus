@@ -1,5 +1,5 @@
 -- Pilot mode: an agent asks to drive the TUI, and once allowed reads the screen and types into
--- it through `ivim pilot`. Any Esc the agent didn't send itself hands control back.
+-- it through `iso pilot`. Any Esc the agent didn't send itself hands control back.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("isovim_pilot")

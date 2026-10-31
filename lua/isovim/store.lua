@@ -22,7 +22,7 @@ function M.write_session(session)
 end
 
 -- Only remove the lock if it is ours; a takeover may already have replaced it.
--- bin/ivim records the TUI process, which is this Lua server's parent.
+-- bin/iso records the TUI process, which is this Lua server's parent.
 function M.release_lock()
   local ok, lines = pcall(vim.fn.readfile, M.lock_file)
   if ok and tonumber(lines[1]) == vim.uv.os_getppid() then
@@ -411,13 +411,13 @@ function M.set_hidden(ws, id, hidden)
   write_meta(dir, meta)
 end
 
--- PR URLs the workspace's agents registered with `ivim pr`, oldest first.
+-- PR URLs the workspace's agents registered with `iso pr`, oldest first.
 ---@return string[]
 function M.prs(ws)
   return (read_meta(M.path(ws)) or {}).prs or {}
 end
 
--- Files and folders an agent pinned for you (`ivim pin`), shown under the workspace.
+-- Files and folders an agent pinned for you (`iso pin`), shown under the workspace.
 -- Kept relative to ~, like the project dir, so they mean the same on every host.
 ---@return {path: string, label?: string, auto?: boolean}[]
 function M.pinned(ws)

@@ -23,12 +23,12 @@ REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "pilot" / "out"
 
 
-class Ivim:
+class Iso:
     def __init__(self, name, cols=140, rows=40, agent_delay=1):
         self.name = name
         self.cols, self.rows = cols, rows
         # Short and outside the scratch tree: unix socket paths cap near 104 bytes.
-        self.tmp = Path(tempfile.mkdtemp(prefix="ivim-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="iso-"))
         self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
         self.env = {
             **os.environ,
@@ -49,7 +49,7 @@ class Ivim:
     # lifecycle
 
     def start(self):
-        self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(REPO / "bin" / "ivim"))
+        self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(REPO / "bin" / "iso"))
         for option in (("escape-time", "0"), ("focus-events", "on"), ("default-terminal", "tmux-256color")):
             self._tmux_ui("set-option", "-g", *option)
         self.wait(lambda: Path(self.env["ISOVIM_SOCK"]).exists(), "TUI socket")
@@ -85,9 +85,9 @@ class Ivim:
         return self.nvim.exec_lua(code, *args)
 
     def cli(self, *args, check=True):
-        result = subprocess.run([str(REPO / "bin" / "ivim"), *args], env=self.env, capture_output=True, text=True)
+        result = subprocess.run([str(REPO / "bin" / "iso"), *args], env=self.env, capture_output=True, text=True)
         if check and result.returncode != 0:
-            raise AssertionError(f"ivim {' '.join(args)} failed: {result.stderr}")
+            raise AssertionError(f"iso {' '.join(args)} failed: {result.stderr}")
         return result.stdout.strip()
 
     def wait(self, check, what, timeout=10):

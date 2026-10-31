@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hooks for an agent (wired in panes.lua): record its state in $ISOVIM_STATE for the sidebar, and
 # raise a desktop notification while the isovim TUI is closed, unless the agent is hidden.
-# `ivim-hook desktop <message>` only notifies; the TUI uses it when it isn't focused.
+# `iso-hook desktop <message>` only notifies; the TUI uses it when it isn't focused.
 
 desktop() {
   # Pilots read notifications from a log instead of the screen.
@@ -28,15 +28,15 @@ notify() {
 }
 
 # Rewrites the agent's plain-text transcript (workspace/transcripts/<agent>.txt) in the background;
-# after an answer, also pins the files and folders it named (ivim autopin).
+# after an answer, also pins the files and folders it named (iso autopin).
 transcript() {
   agent="$(basename "${ISOVIM_STATE%.state}")"
   ws="$(basename "$(dirname "$ISOVIM_STATE")")"
-  ivim="$(dirname "$0")/ivim"
+  iso="$(dirname "$0")/iso"
   if [ "$1" = answered ]; then
-    ("$ivim" transcript "$ws/$agent" && "$ivim" autopin "$ws/$agent") </dev/null >/dev/null 2>&1 &
+    ("$iso" transcript "$ws/$agent" && "$iso" autopin "$ws/$agent") </dev/null >/dev/null 2>&1 &
   else
-    ("$ivim" transcript "$ws/$agent" </dev/null >/dev/null 2>&1 &)
+    ("$iso" transcript "$ws/$agent" </dev/null >/dev/null 2>&1 &)
   fi
 }
 
@@ -59,7 +59,7 @@ stop)
   printf checking >"$ISOVIM_STATE"
   agent="$(basename "${ISOVIM_STATE%.state}")"
   ws="$(basename "$(dirname "$ISOVIM_STATE")")"
-  ivim="$(dirname "$0")/ivim"
+  iso="$(dirname "$0")/iso"
   (
     # A turn can end on a dialog that waits for you (a plan to approve): it draws just after this
     # hook, so look at the pane a moment later.
@@ -68,15 +68,15 @@ stop)
       printf attention >"$ISOVIM_STATE"
       notify "needs you"
     else
-      "$ivim" transcript "$ws/$agent"
-      if [ "$("$ivim" progress "$ws/$agent")" = waiting ]; then
+      "$iso" transcript "$ws/$agent"
+      if [ "$("$iso" progress "$ws/$agent")" = waiting ]; then
         printf waiting >"$ISOVIM_STATE"
       else
         printf idle >"$ISOVIM_STATE"
         notify "finished"
       fi
     fi
-    "$ivim" autopin "$ws/$agent"
+    "$iso" autopin "$ws/$agent"
   ) </dev/null >/dev/null 2>&1 &
   ;;
 ask)

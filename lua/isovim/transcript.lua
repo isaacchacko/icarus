@@ -1,6 +1,6 @@
 -- Each agent's conversation as plain text, kept with its workspace in transcripts/<agent>.txt so it
 -- moves with it: what was said and by whom, without tool calls, tool output or system text. The
--- agent's hooks rewrite it as the chat goes; ivim find searches it and previews it at the match.
+-- agent's hooks rewrite it as the chat goes; iso find searches it and previews it at the match.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 
