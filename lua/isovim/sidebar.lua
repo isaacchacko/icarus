@@ -520,8 +520,8 @@ local TOGGLES = { isovim_hidden = "h", isovim_prs = "p", isovim_ports = "l" }
 
 local function toggle(option, badge)
   return function(picker)
-    isovim.remember(option, not iso[option])
-    picker.opts[badge] = iso[option]
+    isovim.remember(option, not isovim[option])
+    picker.opts[badge] = isovim[option]
     picker:update_titles()
     refresh(picker)
   end
