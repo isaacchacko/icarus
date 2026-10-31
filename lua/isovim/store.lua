@@ -374,6 +374,76 @@ function M.add_agent(ws, spec)
   return agent
 end
 
+---@class isovim.Task
+---@field id string
+---@field title string
+---@field status "todo"|"doing"|"waiting"|"blocked"|"done"
+---@field parent? string id of the task it belongs under
+---@field detail? string
+---@field prs? integer[]
+---@field linear? string[]
+
+M.task_statuses = { todo = true, doing = true, waiting = true, blocked = true, done = true }
+
+-- An agent's tasks, in the order it first set them; kept in its own entry, which only it writes.
+---@return isovim.Task[]
+function M.tasks(ws, agent)
+  local spec = M.agent(ws, agent)
+  return spec and spec.tasks or {}
+end
+
+-- Calls fn with the agent's entry from the workspace's agent list (written out first if the
+-- workspace still has just the default agent), then saves.
+local function with_agent(ws, agent, fn)
+  local dir = M.path(ws)
+  local meta = read_meta(dir) or {}
+  meta.agents = meta.agents or vim.deepcopy(DEFAULT_AGENTS)
+  for _, entry in ipairs(meta.agents) do
+    if entry.id == agent then
+      fn(entry)
+    end
+  end
+  write_meta(dir, meta)
+end
+
+-- Adds a task or updates one; fields left nil keep their value.
+---@param task isovim.Task
+function M.set_task(ws, agent, task)
+  with_agent(ws, agent, function(entry)
+    entry.tasks = entry.tasks or {}
+    for _, existing in ipairs(entry.tasks) do
+      if existing.id == task.id then
+        for key, value in pairs(task) do
+          existing[key] = value
+        end
+        return
+      end
+    end
+    table.insert(entry.tasks, task)
+  end)
+end
+
+-- Removes a task and everything under it.
+function M.remove_task(ws, agent, id)
+  with_agent(ws, agent, function(entry)
+    local gone, grew = { [id] = true }, true
+    while grew do
+      grew = false
+      for _, task in ipairs(entry.tasks or {}) do
+        if task.parent and gone[task.parent] and not gone[task.id] then
+          gone[task.id], grew = true, true
+        end
+      end
+    end
+    entry.tasks = vim.tbl_filter(function(task)
+      return not gone[task.id]
+    end, entry.tasks or {})
+    if #entry.tasks == 0 then
+      entry.tasks = nil
+    end
+  end)
+end
+
 function M.update_agent(ws, id, fields)
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}

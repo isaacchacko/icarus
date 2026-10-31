@@ -64,7 +64,9 @@ end
 -- What every agent is told at launch. PRs and pins in the sidebar come from the agents themselves.
 local INSTRUCTIONS = "You are running inside isovim, in workspace $ISOVIM_WS. Whenever you open a pull request, "
   .. "or start working on an existing one, register it so it shows in isovim's sidebar: "
-  .. "`iso pr $ISOVIM_WS <pr url>`. For anything in a browser, use isovim's Chrome, which has the "
+  .. "`iso pr $ISOVIM_WS <pr url>`. Keep your work as tasks the user can follow, current as you go: "
+  .. "`iso task set <id> \"<title>\" --status todo|doing|waiting|blocked|done [--parent <id>]` "
+  .. "(`iso help` for the rest). For anything in a browser, use isovim's Chrome, which has the "
   .. "user's logins and never takes their focus: `iso browser help` lists the commands "
   .. "(open, text, eval, click, fill, shot); never drive the user's own Chrome or bring a window to the front. "
   .. "Pin files in the user's sidebar under your workspace with `iso pin $ISOVIM_WS <path> --label "

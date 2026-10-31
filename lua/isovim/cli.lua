@@ -60,6 +60,11 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso peek <agent> [-n lines]   print the last lines of its screen (default 40)
        iso doctor                    check what isovim needs here and on the other hosts
        iso version                   the isovim commit this runs
+       iso task set <id> [<title>] [--status todo|doing|waiting|blocked|done] [--parent <id>]
+                                     [--detail text] [--pr N] [--linear PRO-x]
+                                     add or update one of your tasks; the sidebar shows them with T
+       iso task rm <id>              remove one of your tasks and its subtasks
+       iso task ls                   your tasks
        iso pilot request <reason...> ask to drive the TUI: control comes after a 10s countdown unless declined;
                                      blocks until allowed or denied
        iso pilot keys <keys>         type into the TUI, in nvim key notation ("<C-h>j<CR>")
@@ -230,6 +235,7 @@ function commands.ls(args)
         -- When anything last happened in it (epoch seconds), for scripts that wait for quiet.
         active = running or nil,
         dir = ws.dir,
+        tasks = agent.tasks,
       }
     end
   end
@@ -917,6 +923,75 @@ local function pilot_name()
     return agent.id == agent_id
   end)
   return ws.name .. " · " .. (agent and agent.name or agent_id)
+end
+
+-- An agent's own task list, shown under its row in the sidebar (T). It only ever writes the tasks
+-- of the agent it runs inside, as proven by ancestry, whatever its environment says.
+function commands.task(args)
+  local sub = table.remove(args, 1)
+  local ws, agent = require("isovim.root").caller()
+  if not ws then
+    fail("iso task runs inside an agent: it keeps that agent's own tasks")
+  end
+  local tasks = store.tasks(ws, agent)
+  local function find(id)
+    return vim.iter(tasks):find(function(task)
+      return task.id == id
+    end)
+  end
+  if sub == "set" then
+    local status = option(args, "--status")
+    local parent = option(args, "--parent")
+    local detail = option(args, "--detail")
+    local pr = option(args, "--pr")
+    local linear = option(args, "--linear")
+    local id = table.remove(args, 1) or fail("usage: iso task set <id> [<title>] [--status ...]")
+    local title = #args > 0 and table.concat(args, " ") or nil
+    local existing = find(id)
+    if not existing and not title then
+      fail("a new task needs a title: iso task set " .. id .. " \"<title>\"")
+    elseif status and not store.task_statuses[status] then
+      fail("status is one of todo, doing, waiting, blocked, done")
+    elseif parent and (parent == id or not find(parent)) then
+      fail("no task " .. tostring(parent) .. " to put it under")
+    end
+    local function add(list, value)
+      list = vim.deepcopy(list or {})
+      if value and not vim.tbl_contains(list, value) then
+        list[#list + 1] = value
+      end
+      return #list > 0 and list or nil
+    end
+    store.set_task(ws, agent, {
+      id = id,
+      title = title,
+      status = status or (existing and existing.status) or "todo",
+      parent = parent,
+      detail = detail,
+      prs = pr and add(existing and existing.prs, tonumber(pr:match("%d+"))) or nil,
+      linear = linear and add(existing and existing.linear, linear) or nil,
+    })
+  elseif sub == "rm" then
+    local id = args[1] or fail("usage: iso task rm <id>")
+    if not find(id) then
+      fail("no task " .. id)
+    end
+    store.remove_task(ws, agent, id)
+  elseif sub == "ls" then
+    local function show(parent, depth)
+      for _, task in ipairs(tasks) do
+        if task.parent == parent then
+          out(("%s%-8s %s  %s"):format(("  "):rep(depth), task.status, task.id, task.title))
+          show(task.id, depth + 1)
+        end
+      end
+    end
+    show(nil, 0)
+    return
+  else
+    fail("usage: iso task set|rm|ls")
+  end
+  tui("require('isovim').refresh()")
 end
 
 function commands.pilot(args)

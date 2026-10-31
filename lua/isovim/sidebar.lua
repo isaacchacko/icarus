@@ -29,6 +29,14 @@ end
 
 -- What each kind of row does: how it's drawn, what Enter opens and d removes (nil: nothing), and
 -- the fields that keep the cursor on it through refreshes. Another host's rows carry `host`.
+local TASK_GLYPHS = {
+  todo = { "○", "Comment" },
+  doing = { "◐", "DiagnosticInfo" },
+  waiting = { "\u{f051f}", "Comment" }, -- md-timer_sand
+  blocked = { "⊘", "DiagnosticWarn" },
+  done = { "✓", "DiagnosticOk" },
+}
+
 local KINDS = {
   hint = {
     format = function(item)
@@ -73,6 +81,23 @@ local KINDS = {
       end)
     end,
     id = { "ws" },
+  },
+  -- An agent's task, under its row: subtasks one level further in; done ones dimmed. Enter opens the
+  -- agent; the agent owns its tasks, so d leaves them alone.
+  task = {
+    format = function(item)
+      local glyph, hl = unpack(TASK_GLYPHS[item.task.status] or TASK_GLYPHS.todo)
+      local done = item.task.status == "done"
+      local row = { { ("    " .. ("  "):rep(item.depth)) }, { glyph, hl }, { " " }, { item.task.title, done and "Comment" or nil } }
+      for _, pr in ipairs(item.task.prs or {}) do
+        row[#row + 1] = { " #" .. pr, "Comment" }
+      end
+      if item.task.detail and not done then
+        row[#row + 1] = { "  " .. item.task.detail, "Comment" }
+      end
+      return row
+    end,
+    id = { "ws", "agent", "task_id" },
   },
   -- Indented under their workspace with a status icon. Anything not running is dimmed; hidden
   -- agents are italic.
@@ -153,6 +178,7 @@ local KINDS = {
     id = { "ws" },
   },
 }
+KINDS.task.open = KINDS.agent.open
 
 -- Rows: each workspace with its agents, or its PRs while P is on. Hidden agents show only
 -- while show_hidden is on. Agents waiting on you (attention) also go to M.queue, the "Needs you" pane.
@@ -196,7 +222,7 @@ local function sidebar_items()
       for _, row in ipairs(rows) do
         local ws_id = row.id:match("^[^/]+")
         local state = row.status ~= "idle" and row.status ~= "stopped" and row.status or nil
-        local agent = { id = row.id, name = row.agent, kind = row.kind, status = state, running = row.status ~= "stopped", hidden = row.hidden, doing = row.doing }
+        local agent = { id = row.id, name = row.agent, kind = row.kind, status = state, running = row.status ~= "stopped", hidden = row.hidden, doing = row.doing, tasks = row.tasks }
         if not by_ws[ws_id] then
           by_ws[ws_id] = { name = row.workspace, agents = {} }
           order[#order + 1] = ws_id
@@ -226,6 +252,30 @@ local function sidebar_items()
   M.queue = queue
 
   local items = {}
+  -- An agent's tasks, in tree order: each one's subtasks right under it.
+  local function add_tasks(base, agent)
+    if not isovim.show_tasks then
+      return
+    end
+    local tasks = agent.tasks or {}
+    local function under(parent, depth)
+      for _, task in ipairs(tasks) do
+        if task.parent == parent then
+          items[#items + 1] = vim.tbl_extend("force", base, {
+            kind = "task",
+            text = base.ws_name .. " " .. agent.name .. " " .. task.title,
+            agent = agent.id,
+            name = agent.name,
+            task = task,
+            task_id = task.id,
+            depth = depth,
+          })
+          under(task.id, depth + 1)
+        end
+      end
+    end
+    under(nil, 0)
+  end
   for _, ws in ipairs(workspaces) do
     local base = { ws = ws.id, ws_name = ws.name }
     local added, removed = diffstat.get(ws.dir, M.refresh)
@@ -254,6 +304,7 @@ local function sidebar_items()
           subtitle = agent.running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
           ports = agent.running and require("isovim.ports").of(ws.id, agent.id) or nil,
         })
+        add_tasks(base, agent)
       end
       for _, entry in ipairs(store.pinned(ws.id)) do
         items[#items + 1] = vim.tbl_extend("force", base, {
@@ -289,6 +340,7 @@ local function sidebar_items()
             hidden = agent.hidden,
             subtitle = agent.doing,
           })
+          add_tasks(base, agent)
         end
       end
     end
@@ -454,6 +506,7 @@ local LIST_KEYS = {
   { "s", "isovim_sort", "sort by creation or by recent activity" },
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
+  { "T", "isovim_toggle_tasks", "show or hide agents' tasks" },
   { "P", "isovim_toggle_prs", "agents or PRs" },
   { "b", "isovim_last_workspace", "back to the last workspace" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
@@ -517,7 +570,7 @@ end
 
 -- H, P and L show in the sidebar's title as badges, like the explorer's hidden-files toggle:
 -- snacks draws a badge for each `toggles` entry whose picker option is on.
-local TOGGLES = { isovim_hidden = "h", isovim_prs = "p", isovim_ports = "l" }
+local TOGGLES = { isovim_hidden = "h", isovim_prs = "p", isovim_ports = "l", isovim_tasks = "t" }
 
 local function toggle(option, badge)
   return function(picker)
@@ -745,6 +798,7 @@ M.actions = {
   end,
   isovim_toggle_hidden = toggle("show_hidden", "isovim_hidden"),
   isovim_toggle_ports = toggle("show_ports", "isovim_ports"),
+  isovim_toggle_tasks = toggle("show_tasks", "isovim_tasks"),
   isovim_explorer = function()
     M.show_explorer()
   end,
@@ -781,6 +835,7 @@ function M.open(opts)
     isovim_hidden = isovim.show_hidden,
     isovim_prs = isovim.show_prs,
     isovim_ports = isovim.show_ports,
+    isovim_tasks = isovim.show_tasks,
     finder = sidebar_items,
     format = function(item)
       return KINDS[item.kind].format(item)
