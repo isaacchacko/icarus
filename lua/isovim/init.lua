@@ -19,6 +19,7 @@ M.show_ports = false -- rows show the ports their agents and terminals listen on
 M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
 M.recent = {} ---@type string[] workspace ids, most recently selected first (<leader>aw)
+M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
 
 -- Persisted so a hot reload picks up where the old code left off.
 function M.remember(key, value)
@@ -32,6 +33,7 @@ function M.remember(key, value)
     show_tasks = M.show_tasks,
     explorer_roots = M.explorer_roots,
     recent = M.recent,
+    expanded = M.expanded,
   })
 end
 
@@ -498,6 +500,7 @@ function M.setup(opts)
   M.show_tasks = session.show_tasks or false
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
+  M.expanded = session.expanded or {}
 
   local sidebar = require("isovim.sidebar")
   icons.setup()

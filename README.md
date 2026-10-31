@@ -38,6 +38,7 @@ In the sidebar, `?` lists every key. The ones to start with:
 | key | does |
 |---|---|
 | `a` / `A` / `t` | new workspace / agent / terminal |
+| `Tab` | expand or collapse a workspace (all start collapsed) |
 | `Enter` | open the agent, PR or pin |
 | `d` | remove the agent or pin, or archive the workspace |
 | `P` / `H` / `L` / `T` | PRs, hidden agents, ports, tasks |

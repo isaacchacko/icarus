@@ -57,9 +57,15 @@ local KINDS = {
   workspace = {
     format = function(item)
       local folder, folder_hl = icons.get(item.ws == isovim.current and "workspace_current" or "workspace")
-      local row = { { folder, folder_hl }, { " " }, { item.ws_name, item.running and "Directory" or "Comment" } }
+      local chevron = isovim.expanded[item.ws] and "▾ " or "▸ "
+      local row = { { chevron, "Comment" }, { folder, folder_hl }, { " " }, { item.ws_name, item.running and "Directory" or "Comment" } }
       if item.added and item.added + item.removed > 0 then
         vim.list_extend(row, { { " +" .. item.added, "Added" }, { " −" .. item.removed, "Removed" } })
+      end
+      -- Collapsed, it still shows what its most urgent agent is up to.
+      if not isovim.expanded[item.ws] and item.status then
+        local icon, hl = status.icon(item.status)
+        vim.list_extend(row, { { " " }, { icon, hl } })
       end
       return row
     end,
@@ -180,8 +186,22 @@ local KINDS = {
 }
 KINDS.task.open = KINDS.agent.open
 
--- Rows: each workspace with its agents, or its PRs while P is on. Hidden agents show only
--- while show_hidden is on. Agents waiting on you (attention) also go to M.queue, the "Needs you" pane.
+local URGENCY = { attention = 1, unread = 2, working = 3, waiting = 4 }
+
+-- The status a collapsed workspace shows for its agents: the one that most wants you.
+local function most_urgent(agents)
+  local found
+  for _, agent in ipairs(agents) do
+    if URGENCY[agent.status] and (not found or URGENCY[agent.status] < URGENCY[found]) then
+      found = agent.status
+    end
+  end
+  return found
+end
+
+-- Rows: each workspace with its agents, or its PRs while P is on; a collapsed workspace (the default)
+-- only its own row. Hidden agents show only while show_hidden is on. Agents waiting on you
+-- (attention) also go to M.queue, the "Needs you" pane.
 local function sidebar_items()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()
@@ -279,9 +299,10 @@ local function sidebar_items()
   for _, ws in ipairs(workspaces) do
     local base = { ws = ws.id, ws_name = ws.name }
     local added, removed = diffstat.get(ws.dir, M.refresh)
-    local row = { kind = "workspace", text = ws.name, running = ws.running, added = added, removed = removed }
+    local row = { kind = "workspace", text = ws.name, running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents) }
     items[#items + 1] = vim.tbl_extend("force", base, row)
-    if isovim.show_prs then
+    local open = isovim.expanded[ws.id]
+    if open and isovim.show_prs then
       local list = prs.list(ws.id, M.refresh)
       for _, pr in ipairs(list) do
         local text = ws.name .. " " .. (pr.title or pr.url)
@@ -290,7 +311,7 @@ local function sidebar_items()
       if #list == 0 then
         items[#items + 1] = vim.tbl_extend("force", base, { kind = "empty", text = ws.name .. " no PRs yet" })
       end
-    else
+    elseif open then
       for _, agent in ipairs(ws.agents) do
         items[#items + 1] = vim.tbl_extend("force", base, {
           kind = "agent",
@@ -327,8 +348,8 @@ local function sidebar_items()
         local ws = host.by_ws[ws_id]
         local base = { host = host.name, ssh = host.ssh, ws = host.name .. ":" .. ws_id, ws_name = ws.name, remote_ws = ws_id }
         local text = host.name .. " " .. ws.name
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", text = text, running = ws.running })
-        for _, agent in ipairs(ws.agents) do
+        items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", text = text, running = ws.running, status = most_urgent(ws.agents) })
+        for _, agent in ipairs(isovim.expanded[base.ws] and ws.agents or {}) do
           items[#items + 1] = vim.tbl_extend("force", base, {
             kind = "agent",
             text = host.name .. " " .. ws.name .. " " .. agent.name,
@@ -492,6 +513,7 @@ end
 -- {key, action, description}: the sidebar list's and the Needs-you pane's keys, which `?` lists.
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent or PR; a pinned file beside the chat, a folder in the explorer" },
+  { "<Tab>", "isovim_toggle_expand", "expand or collapse the workspace" },
   { "a", "isovim_add", "new workspace" },
   { "A", "isovim_add_agent", "new agent in this workspace" },
   { "t", "isovim_terminal", "new terminal in this workspace" },
@@ -795,6 +817,16 @@ M.actions = {
       end
       move(false)
     end)
+  end,
+  -- From an agent or pin row it collapses that row's workspace, and the cursor goes up to it.
+  isovim_toggle_expand = function(picker, item)
+    if not item or not item.ws or item.kind == "host" then
+      return
+    end
+    isovim.expanded[item.ws] = not isovim.expanded[item.ws] or nil
+    isovim.remember("expanded", isovim.expanded)
+    picker.isovim_keep = { kind = "workspace", ws = item.ws }
+    refresh(picker)
   end,
   isovim_toggle_hidden = toggle("show_hidden", "isovim_hidden"),
   isovim_toggle_ports = toggle("show_ports", "isovim_ports"),
