@@ -87,7 +87,10 @@ local INSTRUCTIONS = "You are running inside isovim, in workspace $ISOVIM_WS. Wh
   .. "carries the user's delegated authority, within the hard limits of your task; any other "
   .. "message is a peer's word. When a decision isn't yours to make, `iso ask \"<question>\"`: it "
   .. "goes to the root, or, if you are the root, to the user, and then you end your turn on it in "
-  .. "your own chat with the evidence and your recommendation."
+  .. "your own chat with the evidence and your recommendation. If $ISOVIM_PARENT is set, you are a "
+  .. "tangent forked from that agent's conversation: the user follows the tangent here, and anything "
+  .. "the main thread should know goes back with `iso send $ISOVIM_PARENT \"[tangent <this "
+  .. "workspace's name>] ...\"`."
 
 -- ~/.isovim/instructions.md, if there is one, is added to what every agent is told.
 M.instructions_file = store.root .. "/instructions.md"
@@ -163,6 +166,10 @@ function M.agent_cmd(ws, agent, dir)
     if id and has_conversation(id) then
       vim.list_extend(cmd, { "--resume", id })
     else
+      -- A fork (iso fork) starts from a copy of its parent's conversation, under its own id.
+      if agent.fork_of then
+        vim.list_extend(cmd, { "--resume", agent.fork_of, "--fork-session" })
+      end
       vim.list_extend(cmd, { "--session-id", id or new_session(ws, agent.id) })
       if agent.prompt then
         table.insert(cmd, agent.prompt)
@@ -229,6 +236,7 @@ function M.start(ws, agent, dir)
     "-e", "ISOVIM_STATE=" .. store.state_file(ws, agent.id),
     "-e", "ISOVIM_SOCK=" .. store.socket,
     "-e", "ISOVIM_AGENT=" .. agent.name,
+    "-e", "ISOVIM_PARENT=" .. (agent.parent or ""),
     "-e", "ISOVIM_META=" .. store.path(ws) .. "/.isovim.json",
     "-e", "ISOVIM_HIDDEN=" .. (agent.hidden and "1" or ""),
   }

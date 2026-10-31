@@ -21,7 +21,7 @@ browser)
   shift
   exec node "$repo/bin/iso-browser.mjs" "$@"
   ;;
-ls | new | dir | open | rename | archive | archived | unarchive | move | restart | agent | rm | pr | prs | hide | unhide | attach | phone | send | pin | unpin | progress | autopin | autopr | transcript | ask | root | verify | checkstamp | status | wait | peek | find | doctor | version | task | pilot | help | -h | --help)
+ls | new | dir | open | rename | archive | archived | unarchive | move | restart | agent | rm | pr | prs | hide | unhide | attach | phone | send | fork | pin | unpin | progress | autopin | autopr | transcript | ask | root | verify | checkstamp | status | wait | peek | find | doctor | version | task | pilot | help | -h | --help)
   NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"
   ;;
 esac
