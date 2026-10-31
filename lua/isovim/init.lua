@@ -20,7 +20,7 @@ M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> works
 M.recent = {} ---@type string[] workspace ids, most recently selected first (<leader>aw)
 
 -- Persisted so a hot reload picks up where the old code left off.
-local function remember(key, value)
+function M.remember(key, value)
   M[key] = value
   store.write_session({
     current = M.current,
@@ -49,7 +49,7 @@ local function enter_dir(id)
 end
 
 -- Selecting a workspace scopes the buffer list to it and brings back its splits, keeping the
--- buffer just opened on screen; the sidebar's cursor follows (M.follow).
+-- buffer just opened on screen; the sidebar's cursor follows.
 local function select(id)
   local switching = id ~= M.current
   if id then
@@ -57,7 +57,7 @@ local function select(id)
       return other ~= id
     end, M.recent))
   end
-  remember("current", id)
+  M.remember("current", id)
   enter_dir(id)
   -- The terminal's tab or window title says which workspace isovim is on.
   vim.o.title = true
@@ -71,9 +71,7 @@ local function select(id)
       layout.resume(id, is_sidebar, M.open_leaf(id), want)
     end
   end
-  if M.follow then
-    M.follow()
-  end
+  require("isovim.sidebar").follow()
 end
 
 local function main_win()
@@ -85,6 +83,7 @@ local function main_win()
   vim.cmd("botright vnew")
   return vim.api.nvim_get_current_win()
 end
+M.is_sidebar, M.main_win = is_sidebar, main_win
 
 -- A chat buffer is an agent's terminal (isovim.stream): b:isovim_id is its workspace, b:isovim_agent the agent id.
 local function chat_bufs()
@@ -137,9 +136,26 @@ end
 -- Esc leaves the chat like any other mode, to scroll and search it; ctrl+q (unbound in Claude Code)
 -- sends Claude its Esc. ctrl+h goes to the sidebar; ctrl+l to a split on the right, if any.
 -- The terminal flattens shift+enter to enter, so it goes as meta+enter, Claude's other newline.
+-- A prompt (new workspace, rename, ...) without focus is a float no key can reach: cancel it.
+local function close_stray_prompts()
+  local current = vim.api.nvim_get_current_win()
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if win ~= current and vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "snacks_input" then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+end
+
 -- {key, rhs or fn(buf), description}; `?` in the sidebar lists them too.
 local CHAT_KEYS = {
-  { "<Esc>", [[<C-\><C-n>]], "leave the chat to normal mode" },
+  {
+    "<Esc>",
+    function()
+      close_stray_prompts()
+      vim.cmd.stopinsert()
+    end,
+    "leave the chat to normal mode (and drop any stray prompt)",
+  },
   {
     "<C-q>",
     function(buf)
@@ -207,6 +223,7 @@ local CHAT_NORMAL_KEYS = {
   { "gf", open_mentioned, "open file(:line) beside the chat" },
   { "gF", open_mentioned, "same as gf" },
 }
+M.chat_keys, M.chat_normal_keys = CHAT_KEYS, CHAT_NORMAL_KEYS
 
 local function map_chat_keys(buf)
   for _, key in ipairs(CHAT_NORMAL_KEYS) do
@@ -296,7 +313,7 @@ end
 -- A chat on screen counts as read, even while the sidebar has focus.
 -- Only while you're in the TUI: a chat that finishes on screen while you're in another app stays
 -- unread (and notifies) until you come back.
-local function mark_visible_seen()
+function M.mark_visible_seen()
   if not M.focused then
     return
   end
@@ -327,401 +344,6 @@ function M.restart(ws, agent)
   end
 end
 
-local function needs_you(agent)
-  return not agent.hidden and (agent.status == "unread" or agent.status == "attention")
-end
-
-local refresh -- below: refreshes keep the cursor on its item
-
-local function refresh_sidebar()
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1]
-  if sidebar then
-    refresh(sidebar)
-  end
-end
-
-M.queue = {} ---@type {ws: string, ws_name: string, agent: string, name: string, status: isovim.Status}[]
-
--- A path as the sidebar names it: relative to the workspace's project dir when inside it.
-local function short_path(ws, path)
-  local dir = store.dir(ws)
-  if dir and vim.startswith(path, dir .. "/") then
-    return path:sub(#dir + 2)
-  end
-  return vim.fn.fnamemodify(path, ":~")
-end
-
--- Rows: each workspace with its agents, or its PRs while P is on. Hidden agents show only
--- while show_hidden is on. Unread/attention agents also go to M.queue, the "Needs you" pane.
--- Another host's agent that newly needs you toasts here too (its own notification shows on that
--- host's screen). A host's first listing only sets what counts as new.
-local remote_notified = {} ---@type table<string, table<string, string|false>>
-local function notify_remote(host, rows)
-  local first = remote_notified[host] == nil
-  local seen = remote_notified[host] or {}
-  remote_notified[host] = seen
-  for _, row in ipairs(rows) do
-    local now = (row.status == "unread" or row.status == "attention") and row.status or false
-    if not first and not row.hidden and now and seen[row.id] ~= now then
-      local message = ("%s · %s · %s %s"):format(host, row.workspace, row.agent, now == "attention" and "needs you" or "finished")
-      Snacks.notify(message, { level = now == "attention" and "warn" or "info", title = "isovim" })
-      if not M.focused then
-        vim.system({ panes.hook_script, "desktop", message })
-      end
-    end
-    seen[row.id] = now
-  end
-end
-
-local function sidebar_items()
-  mark_visible_seen()
-  local sessions = panes.sessions()
-  local titles = panes.titles()
-  local workspaces = store.list()
-  local queue = {}
-  local working = false
-  for _, ws in ipairs(workspaces) do
-    local running = sessions[ws.id] or {}
-    ws.active = ws.modified
-    ws.agents = {}
-    for _, agent in ipairs(store.agents(ws.id)) do
-      agent.running = running[agent.id] ~= nil
-      agent.status = status.get(ws.id, agent.id)
-      ws.active = math.max(ws.active, running[agent.id] or 0)
-      if not agent.hidden or M.show_hidden then
-        ws.agents[#ws.agents + 1] = agent
-        working = working or agent.status == "working"
-      end
-      if needs_you(agent) then
-        queue[#queue + 1] =
-          { ws = ws.id, ws_name = ws.name, agent = agent.id, name = agent.name, kind = agent.kind, status = agent.status }
-      end
-    end
-  end
-  -- The other hosts' agents, by host then workspace, as their `iso ls` lists them.
-  local hosts = {}
-  for name, host in pairs(remote.peers()) do
-    local rows = remote.list(name, host, refresh_sidebar)
-    if rows then
-      notify_remote(name, rows)
-    end
-    if remote.down(name) then
-      hosts[#hosts + 1] = { name = name, ssh = host, order = {}, by_ws = {}, down = true }
-    elseif rows and #rows > 0 then
-      local by_ws, order = {}, {}
-      for _, row in ipairs(rows) do
-        local ws_id = row.id:match("^[^/]+")
-        local state = row.status ~= "idle" and row.status ~= "stopped" and row.status or nil
-        local agent = { id = row.id, name = row.agent, kind = row.kind, status = state, running = row.status ~= "stopped", hidden = row.hidden, doing = row.doing }
-        if not by_ws[ws_id] then
-          by_ws[ws_id] = { name = row.workspace, agents = {} }
-          order[#order + 1] = ws_id
-        end
-        if not agent.hidden or M.show_hidden then
-          table.insert(by_ws[ws_id].agents, agent)
-        end
-        if needs_you(agent) then
-          queue[#queue + 1] = { host = name, ssh = host, remote_id = row.id, ws_name = name .. ":" .. row.workspace, name = row.agent, kind = row.kind, status = state }
-        end
-      end
-      hosts[#hosts + 1] = { name = name, ssh = host, order = order, by_ws = by_ws }
-    end
-  end
-  table.sort(hosts, function(a, b)
-    return a.name < b.name
-  end)
-
-  status.animate(working)
-  table.sort(workspaces, function(a, b)
-    return a[M.sort] > b[M.sort]
-  end)
-  table.sort(queue, function(a, b)
-    return (a.status == "attention" and 0 or 1) < (b.status == "attention" and 0 or 1)
-  end)
-  M.queue = queue
-
-  local items = {}
-  local function agent_item(ws, agent)
-    items[#items + 1] = {
-      kind = "agent",
-      text = ws.name .. " " .. agent.name,
-      ws = ws.id,
-      ws_name = ws.name,
-      agent = agent.id,
-      name = agent.name,
-      agent_kind = agent.kind,
-      status = agent.status,
-      running = agent.running,
-      hidden = agent.hidden,
-      subtitle = agent.running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
-      ports = agent.running and require("isovim.ports").of(ws.id, agent.id) or nil,
-    }
-  end
-  for _, ws in ipairs(workspaces) do
-    local running = vim.iter(ws.agents):any(function(agent)
-      return agent.running
-    end)
-    local base = { ws = ws.id, ws_name = ws.name }
-    local added, removed = diffstat.get(ws.dir, refresh_sidebar)
-    items[#items + 1] = vim.tbl_extend(
-      "force",
-      base,
-      { kind = "workspace", text = ws.name, running = running, added = added, removed = removed }
-    )
-    if M.show_prs then
-      local list = prs.list(ws.id, refresh_sidebar)
-      for _, pr in ipairs(list) do
-        local text = ws.name .. " " .. (pr.title or pr.url)
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "pr", text = text, pr = pr })
-      end
-      if #list == 0 then
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "empty", text = ws.name .. " no PRs yet" })
-      end
-    else
-      for _, agent in ipairs(ws.agents) do
-        agent_item(ws, agent)
-      end
-      for _, entry in ipairs(store.pinned(ws.id)) do
-        items[#items + 1] = vim.tbl_extend("force", base, {
-          kind = "path",
-          text = ws.name .. " " .. (entry.label or entry.path),
-          path = entry.path,
-          label = entry.label or short_path(ws.id, entry.path),
-          is_dir = vim.fn.isdirectory(entry.path) == 1,
-        })
-      end
-    end
-  end
-  if #workspaces == 0 then
-    items[#items + 1] = { kind = "hint", text = "no workspaces · a new · ? keys" }
-  end
-  if not M.show_prs then
-    for _, host in ipairs(hosts) do
-      items[#items + 1] = { kind = "host", text = host.name, host = host.name, ws = "@" .. host.name, down = host.down }
-      for _, ws_id in ipairs(host.order) do
-        local ws = host.by_ws[ws_id]
-        local base = { host = host.name, ssh = host.ssh, ws = host.name .. ":" .. ws_id, ws_name = ws.name, remote_ws = ws_id }
-        items[#items + 1] = vim.tbl_extend("force", base, {
-          kind = "workspace",
-          text = host.name .. " " .. ws.name,
-          running = vim.iter(ws.agents):any(function(agent)
-            return agent.running
-          end),
-        })
-        for _, agent in ipairs(ws.agents) do
-          items[#items + 1] = vim.tbl_extend("force", base, {
-            kind = "agent",
-            text = host.name .. " " .. ws.name .. " " .. agent.name,
-            agent = agent.id,
-            remote_id = agent.id,
-            name = agent.name,
-            agent_kind = agent.kind,
-            status = agent.status,
-            running = agent.running,
-            hidden = agent.hidden,
-            subtitle = agent.doing,
-          })
-        end
-      end
-    end
-  end
-  return items
-end
-
--- Agents are indented under their workspace with a status icon.
--- Anything not running is dimmed; hidden agents are italic.
-local function format_item(item)
-  if item.kind == "hint" then
-    return { { "  " .. item.text, "Comment" } }
-  elseif item.kind == "host" then
-    -- A divider: what follows is on that machine.
-    if item.down then
-      return { { "── ", "Comment" }, { icons.get("host"), "Comment" }, { " " .. item.host .. " unreachable ", "Comment" }, { ("─"):rep(40), "Comment" } }
-    end
-    return { { "── ", "Comment" }, { icons.get("host") }, { " " }, { item.host, "Title" }, { " " .. ("─"):rep(40), "Comment" } }
-  elseif item.kind == "workspace" then
-    local folder, folder_hl = icons.get(item.ws == M.current and "workspace_current" or "workspace")
-    local row = { { folder, folder_hl }, { " " }, { item.ws_name, item.running and "Directory" or "Comment" } }
-    if item.added and item.added + item.removed > 0 then
-      vim.list_extend(row, { { " +" .. item.added, "Added" }, { " −" .. item.removed, "Removed" } })
-    end
-    return row
-  elseif item.kind == "empty" then
-    return { { "    no PRs yet", "Comment" } }
-  elseif item.kind == "path" then
-    local icon, hl = "\u{f07b}", "Directory"
-    if not item.is_dir then
-      local ok, mini = pcall(require, "mini.icons")
-      icon, hl = "\u{f15b}", "Comment"
-      if ok then
-        icon, hl = mini.get("file", item.path)
-      end
-    end
-    return { { "  " }, { " " }, { " " }, { icon, hl }, { " " }, { item.label, item.is_dir and "Directory" or nil } }
-  elseif item.kind == "pr" then
-    local icon, hl = prs.icon(item.pr)
-    local label = item.pr.number and ("#%d %s"):format(item.pr.number, item.pr.title) or item.pr.url
-    -- The CI mark before the title, which the sidebar's width often cuts.
-    local row = vim.list_extend({ { "  " }, { icon, hl } }, prs.marks(item.pr))
-    return vim.list_extend(row, { { " " }, { label, item.pr.state ~= "OPEN" and "Comment" or nil } })
-  end
-  local icon, hl = status.icon(item.status)
-  local kind_icon, kind_hl = icons.get(item.agent_kind)
-  local name_hl = item.hidden and "Comment" or (not item.running and "Comment" or nil)
-  local row = {
-    { "  " },
-    { icon, hl },
-    { " " },
-    { kind_icon, kind_hl },
-    { " " },
-    { item.name, name_hl },
-  }
-  if item.hidden then
-    row[#row + 1] = { " (hidden)", "Comment" }
-  end
-  -- What it's on: the task title Claude gives its terminal, or the command a terminal runs.
-  -- The ports it serves on first: the subtitle is often long enough to be cut off.
-  if M.show_ports and item.ports and #item.ports > 0 then
-    row[#row + 1] = { "  :" .. table.concat(item.ports, " :"), "Special" }
-  end
-  if item.subtitle and item.subtitle ~= item.name then
-    row[#row + 1] = { "  " .. item.subtitle, "Comment" }
-  end
-  return row
-end
-
--- The sidebar's cursor sits on what you're looking at: the agent in the focused window, or else the
--- current workspace. Left alone while you're moving around the sidebar yourself.
-local function follow(picker)
-  if picker.closed or is_sidebar(vim.api.nvim_get_current_win()) then
-    return
-  end
-  local shown = vim.api.nvim_get_current_buf()
-  local agent = vim.b[shown].isovim_id == M.current and vim.b[shown].isovim_agent
-  local target
-  for i = 1, picker.list:count() do
-    local item = picker.list:get(i)
-    if item.ws == M.current then
-      if item.kind == "agent" and item.agent == agent then
-        target = i
-        break
-      elseif item.kind == "workspace" then
-        target = target or i
-      end
-    end
-  end
-  if target then
-    picker.list:view(target)
-  end
-end
-
-local function same_row(a, b)
-  return a.kind == b.kind and a.ws == b.ws and a.agent == b.agent and a.path == b.path
-    and (a.pr and a.pr.url) == (b.pr and b.pr.url)
-end
-
-local queue_ns = vim.api.nvim_create_namespace("isovim_queue")
-
--- The "Needs you" pane is the picker's preview window: rendered from M.queue whatever the
--- list's cursor is on, and hidden while the queue is empty.
-local function render_queue(preview)
-  local lines, marks = {}, {}
-  for i, entry in ipairs(M.queue) do
-    local icon, hl = status.icon(entry.status)
-    local kind_icon, kind_hl = icons.get(entry.kind)
-    lines[i] = (" %s %s %s · %s"):format(icon, kind_icon, entry.ws_name, entry.name)
-    marks[i] = { { 1, #icon, hl }, { 2 + #icon, #kind_icon, kind_hl } }
-  end
-  preview:set_lines(lines)
-  vim.api.nvim_buf_clear_namespace(preview.win.buf, queue_ns, 0, -1)
-  for i, row in ipairs(marks) do
-    for _, mark in ipairs(row) do
-      local col, len, hl = unpack(mark)
-      vim.api.nvim_buf_set_extmark(preview.win.buf, queue_ns, i - 1, col, { end_col = col + len, hl_group = hl })
-    end
-  end
-  preview:wo({ cursorline = true, number = false, relativenumber = false, signcolumn = "no", statuscolumn = "", foldcolumn = "0" })
-end
-
--- The pane is as tall as the queue, so it never shows empty rows.
-local function size_queue(picker)
-  local function find(box)
-    if box.win == "preview" then
-      return box
-    end
-    for _, child in ipairs(box) do
-      local found = type(child) == "table" and find(child)
-      if found then
-        return found
-      end
-    end
-  end
-  local box = find(picker.layout.opts.layout)
-  local height = math.min(#M.queue, 10)
-  if box and box.height ~= height then
-    box.height = height
-    picker.layout:update()
-  end
-end
-
-local function update_queue(picker)
-  if picker.closed then
-    return
-  end
-  local want = #M.queue > 0
-  if want then
-    size_queue(picker)
-  end
-  if picker.layout:is_hidden("preview") == want then
-    picker:toggle("preview", { enable = want })
-  end
-  if want and picker.preview.win:valid() then
-    render_queue(picker.preview)
-  end
-end
-
--- Rows can shift (activity sort, the queue, subtitles), so the cursor keeps its item, not its row number.
--- Rebuilding the list resets the cursor to row 1 until the finder is done; a target holds the view
--- where it is meanwhile. Bursts of refreshes (the poll, hooks, PR updates) run once.
-function refresh(picker)
-  if picker.isovim_refresh_pending then
-    return
-  end
-  picker.isovim_refresh_pending = true
-  vim.defer_fn(function()
-    picker.isovim_refresh_pending = nil
-    if not picker.closed then
-      M.refresh_now(picker)
-    end
-  end, 30)
-end
-
-function M.refresh_now(picker)
-  local before = picker.list:current()
-  picker.list:set_target(picker.list.cursor, picker.list.top, { force = true })
-  picker:find({
-    refresh = true,
-    on_done = function()
-      update_queue(picker)
-      if not is_sidebar(vim.api.nvim_get_current_win()) or not before then
-        return follow(picker)
-      end
-      for i = 1, picker.list:count() do
-        if same_row(picker.list:get(i), before) then
-          return picker.list:view(i)
-        end
-      end
-    end,
-  })
-end
-
-function M.follow()
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1]
-  if sidebar then
-    follow(sidebar)
-  end
-end
-
 -- An isovim toast for news from outside the TUI, e.g. a workspace moved in from another host.
 function M.toast(message)
   Snacks.notify(message, { title = "isovim" })
@@ -749,33 +371,51 @@ function M.refresh()
   for _, buf in ipairs(chat_bufs()) do
     name_chat(buf)
   end
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1]
-  if sidebar then
-    refresh(sidebar)
-  end
+  require("isovim.sidebar").refresh()
 end
 
 M.focused = true
 local notified = {} ---@type table<string, isovim.Status>
 
--- Toast when an agent off screen finishes or needs you; a desktop notification too while
--- the TUI isn't focused. Hidden agents never notify. The first pass after setup only
--- records, so reloads stay quiet.
+-- A toast, and a desktop notification too while the TUI isn't focused.
+local function notify(message, level)
+  Snacks.notify(message, { level = level, title = "isovim" })
+  if not M.focused then
+    vim.system({ panes.hook_script, "desktop", message })
+  end
+end
+
+-- Notifies when an agent off screen finishes or needs you. Hidden agents never notify. The first
+-- pass after setup only records, so reloads stay quiet.
 local function notify_changes(quiet)
-  mark_visible_seen()
+  M.mark_visible_seen()
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       local key = ws.id .. "/" .. agent.id
       local now = status.get(ws.id, agent.id)
       if not quiet and not agent.hidden and now ~= notified[key] and (now == "unread" or now == "attention") then
         local message = ("%s · %s %s"):format(ws.name, agent.name, now == "attention" and "needs you" or "finished")
-        Snacks.notify(message, { level = now == "attention" and "warn" or "info", title = "isovim" })
-        if not M.focused then
-          vim.system({ panes.hook_script, "desktop", message })
-        end
+        notify(message, now == "attention" and "warn" or "info")
       end
       notified[key] = now
     end
+  end
+end
+
+-- Another host's agent that newly needs you toasts here too, as the sidebar lists it (its own
+-- notification shows on that host's screen). A host's first listing only sets what counts as new.
+local remote_notified = {} ---@type table<string, table<string, string|false>>
+function M.notify_remote(host, rows)
+  local first = remote_notified[host] == nil
+  local seen = remote_notified[host] or {}
+  remote_notified[host] = seen
+  for _, row in ipairs(rows) do
+    local now = (row.status == "unread" or row.status == "attention") and row.status or false
+    if not first and not row.hidden and now and seen[row.id] ~= now then
+      local message = ("%s · %s · %s %s"):format(host, row.workspace, row.agent, now == "attention" and "needs you" or "finished")
+      notify(message, now == "attention" and "warn" or "info")
+    end
+    seen[row.id] = now
   end
 end
 
@@ -829,528 +469,17 @@ local function drop_exited()
   return dropped
 end
 
-local function add_agent(ws, spec)
-  local agent = store.add_agent(ws, spec)
-  M.open(ws, agent.id)
-  M.refresh()
-end
-
--- H, P and L show in the sidebar's title as badges, like the explorer's hidden-files toggle:
--- snacks draws a badge for each `toggles` entry whose picker option is on.
-local TOGGLES = { isovim_hidden = "h", isovim_prs = "p", isovim_ports = "l" }
-
-local function show_toggles(picker)
-  picker.opts.isovim_hidden, picker.opts.isovim_prs, picker.opts.isovim_ports = M.show_hidden, M.show_prs, M.show_ports
-  picker:update_titles()
-end
-
-local actions = {
-  isovim_open = function(_, item)
-    if not item or item.kind == "empty" or item.kind == "hint" then
-      return
-    elseif item.kind == "pr" then
-      vim.ui.open(item.pr.url)
-    elseif item.kind == "path" then
-      M.reveal(item.ws, item.path)
-    elseif item.host then
-      if item.remote_id then
-        M.open_remote(item.host, item.ssh, item.remote_id, item.ws_name, item.name)
-      end
-    else
-      M.open(item.ws, item.agent)
-    end
-  end,
-  isovim_open_queued = function(picker)
-    local row = vim.api.nvim_win_get_cursor(picker.preview.win.win)[1]
-    local entry = M.queue[row]
-    if entry and entry.host then
-      M.open_remote(entry.host, entry.ssh, entry.remote_id, entry.ws_name, entry.name)
-    elseif entry then
-      M.open(entry.ws, entry.agent)
-    end
-  end,
-  isovim_focus_queue = function(picker)
-    if not picker.layout:is_hidden("preview") then
-      picker:focus("preview")
-    end
-  end,
-  isovim_focus_list = function(picker)
-    picker:focus("list")
-  end,
-  isovim_toggle_prs = function(picker)
-    remember("show_prs", not M.show_prs)
-    show_toggles(picker)
-    refresh(picker)
-  end,
-  isovim_add = function(picker)
-    vim.ui.input({ prompt = "New workspace: " }, function(name)
-      if not name or name == "" then
-        return
-      end
-      -- Where it works: the project you're in, then the ones workspaces used, a path, or none.
-      local choices = {}
-      local here = vim.fn.getcwd()
-      local home = vim.fs.normalize("~")
-      if here ~= home and not vim.startswith(here, store.root) then
-        choices[1] = vim.fn.fnamemodify(here, ":~")
-      end
-      for _, project in ipairs(store.projects()) do
-        if not vim.tbl_contains(choices, project) then
-          choices[#choices + 1] = project
-        end
-      end
-      local TYPE, NONE = "another dir…", "none: its own dir"
-      vim.list_extend(choices, { TYPE, NONE })
-      local function with_dir(dir)
-        if dir == nil then
-          return
-        end
-        dir = dir ~= "" and vim.fs.normalize(dir) or nil
-        if dir and vim.fn.isdirectory(dir) == 0 then
-          Snacks.notify.error(dir .. " is not a directory")
-          return
-        end
-        local function create(worktree)
-          -- Making a worktree fetches the default branch first, which can take a few seconds.
-          if worktree then
-            Snacks.notify.info("Making " .. name .. "'s worktree…", { title = "isovim", id = "isovim_worktree" })
-            vim.cmd.redraw()
-          end
-          local id, err = store.create(name, dir, worktree)
-          Snacks.notifier.hide("isovim_worktree")
-          if not id then
-            Snacks.notify.error("Could not make the worktree:\n" .. err)
-            return
-          end
-          -- A fresh worktree runs the repo's setup script (deps, .env) in a terminal of its own.
-          if worktree and require("isovim.scripts").start(id, "setup") then
-            Snacks.notify.info("Running " .. name .. "'s setup script", { title = "isovim" })
-          end
-          M.open(id)
-          M.refresh()
-        end
-        local worktree = require("isovim.worktree")
-        if not dir or not worktree.is_repo(dir) then
-          return create(false)
-        end
-        -- A repo: a worktree of its own by default, or the checkout itself.
-        local choices = {
-          "New worktree on " .. worktree.branch_for(name),
-          "Worktree of a branch or PR…",
-          "Work in " .. vim.fn.fnamemodify(dir, ":~") .. " itself",
-        }
-        vim.ui.select(choices, { prompt = name }, function(_, i)
-          if i == 2 then
-            vim.ui.input({ prompt = "Branch, or PR number or URL: " }, function(ref)
-              if ref and vim.trim(ref) ~= "" then
-                create(vim.trim(ref))
-              end
-            end)
-          elseif i then
-            create(i == 1)
-          end
-        end)
-      end
-      vim.ui.select(choices, { prompt = "Project for " .. name }, function(choice)
-        if choice == TYPE then
-          vim.ui.input({ prompt = "Project dir: ", completion = "dir" }, with_dir)
-        elseif choice == NONE then
-          with_dir("")
-        elseif choice then
-          with_dir(choice)
-        end
-      end)
-    end)
-  end,
-  isovim_add_agent = function(_, item)
-    if not item or not item.ws then
-      return
-    end
-    local format = function(kind)
-      return icons.get(kind) .. " " .. kind
-    end
-    vim.ui.select(panes.kinds, { prompt = "New agent in " .. item.ws_name, format_item = format }, function(kind)
-      if kind == "command" then
-        vim.ui.input({ prompt = "Command: " }, function(cmd)
-          if cmd and cmd ~= "" then
-            add_agent(item.ws, { kind = kind, name = cmd:match("^%S+"), cmd = cmd })
-          end
-        end)
-      elseif kind then
-        add_agent(item.ws, { kind = kind })
-      end
-    end)
-  end,
-  isovim_find = function()
-    M.find()
-  end,
-  isovim_open_port = function(_, item)
-    if item and item.ws and not item.host then
-      M.open_port(item.ws, item.kind == "agent" and item.agent or nil)
-    end
-  end,
-  isovim_changes = function(_, item)
-    if item and item.ws and not item.host then
-      M.changes(item.ws)
-    end
-  end,
-  isovim_restart = function(_, item)
-    if item and item.kind == "agent" and not item.host then
-      Snacks.picker.util.confirm(("Restart %s?"):format(item.name), function()
-        M.restart(item.ws, item.agent)
-        M.refresh()
-      end)
-    end
-  end,
-  -- t opens a new terminal in the workspace under the cursor; it outlives the TUI like the agents.
-  isovim_terminal = function(_, item)
-    local ws = item and item.ws or M.current
-    if ws then
-      add_agent(ws, { kind = "terminal" })
-    end
-  end,
-  isovim_rename = function(picker, item)
-    if not item or not item.ws then
-      return
-    end
-    -- On an agent row it renames the agent, e.g. a terminal after what runs in it.
-    if item.kind == "agent" then
-      return vim.ui.input({ prompt = "Rename agent: ", default = item.name }, function(name)
-        if name and name ~= "" then
-          store.update_agent(item.ws, item.agent, { name = name })
-          M.refresh()
-        end
-      end)
-    end
-    vim.ui.input({ prompt = "Rename workspace: ", default = item.ws_name }, function(name)
-      if name and name ~= "" then
-        store.rename(item.ws, name)
-        M.refresh()
-      end
-    end)
-  end,
-  -- d on an agent removes it (its process and chat go too); on a workspace, archives it.
-  isovim_delete = function(picker, item)
-    if not item or not item.ws then
-      return
-    elseif item.kind == "path" then
-      store.unpin(item.ws, item.path)
-      return refresh(picker)
-    elseif item.kind == "agent" then
-      Snacks.picker.util.confirm(("Remove %s from %s?"):format(item.name, item.ws_name), function()
-        M.remove_agent(item.ws, item.agent)
-      end)
-      return
-    end
-    Snacks.picker.util.confirm("Archive " .. item.ws_name .. "?", function()
-      panes.stop_all(item.ws)
-      local ok, err, note = store.archive_workspace(item.ws)
-      if not ok then
-        Snacks.notify.error("Could not archive " .. item.ws_name .. ":\n" .. err)
-      elseif note then
-        Snacks.notify.warn(item.ws_name .. " archived; " .. note, { title = "isovim" })
-      end
-      M.refresh()
-    end)
-  end,
-  -- m moves the workspace to another host; its agents resume there (iso move).
-  isovim_move = function(picker, item)
-    if not item or not item.ws then
-      return
-    elseif item.host then
-      return M.move_here(item)
-    end
-    local peers = remote.peers()
-    local hosts = vim.tbl_keys(peers)
-    if #hosts == 0 then
-      Snacks.notify.error("No other hosts in " .. require("isovim.config").path)
-      return
-    end
-    local ws, name = item.ws, item.ws_name
-    vim.ui.select(hosts, { prompt = "Move " .. name .. " to" }, function(host)
-      if not host then
-        return
-      end
-      local function move(force)
-        Snacks.notify.info(("Moving %s to %s…"):format(name, host), { title = "isovim" })
-        local cmd = { panes.bin, "move", ws, peers[host], force and "--force" or nil }
-        vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
-          local busy = result.stderr:match("iso: (.- is working)")
-          if busy then
-            Snacks.picker.util.confirm(busy .. ". Move anyway?", function()
-              move(true)
-            end)
-            return
-          elseif result.code ~= 0 then
-            Snacks.notify.error(vim.trim(result.stderr))
-            return
-          end
-          remote.invalidate(host)
-          M.toast(("%s moved to %s"):format(name, host))
-          M.refresh()
-        end))
-      end
-      move(false)
-    end)
-  end,
-  isovim_toggle_hidden = function(picker)
-    remember("show_hidden", not M.show_hidden)
-    show_toggles(picker)
-    refresh(picker)
-  end,
-  isovim_toggle_ports = function(picker)
-    remember("show_ports", not M.show_ports)
-    show_toggles(picker)
-    refresh(picker)
-  end,
-  isovim_explorer = function()
-    M.show_explorer()
-  end,
-  isovim_focus_chat = function()
-    vim.api.nvim_set_current_win(main_win())
-  end,
-  isovim_last_workspace = function()
-    M.last_workspace()
-  end,
-  isovim_help = function()
-    M.help()
-  end,
-  isovim_sort = function(picker)
-    remember("sort", M.sort == "created" and "active" or "created")
-    Snacks.notify.info("Sorted by " .. (M.sort == "created" and "creation time" or "recent activity"))
-    refresh(picker)
-  end,
-}
-
--- {key, action, description}: the sidebar list's and the Needs-you pane's keys, which `?` lists.
-local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent or PR; a pinned file beside the chat, a folder in the explorer" },
-  { "a", "isovim_add", "new workspace" },
-  { "A", "isovim_add_agent", "new agent in this workspace" },
-  { "t", "isovim_terminal", "new terminal in this workspace" },
-  { "r", "isovim_rename", "rename the workspace or agent" },
-  { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
-  { "c", "isovim_changes", "its changes since its base" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
-  { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
-  { "R", "isovim_restart", "restart the agent (it resumes)" },
-  { "m", "isovim_move", "move it to another host, or here" },
-  { "s", "isovim_sort", "sort by creation or by recent activity" },
-  { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
-  { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
-  { "P", "isovim_toggle_prs", "agents or PRs" },
-  { "b", "isovim_last_workspace", "back to the last workspace" },
-  { "E", "isovim_explorer", "file explorer (W comes back)" },
-  { "<c-k>", "isovim_focus_queue", "into Needs you" },
-  { "<c-l>", "isovim_focus_chat", "to the chat" },
-  { "?", "isovim_help", "this help" },
-}
-local QUEUE_KEYS = {
-  { "<cr>", "isovim_open_queued", "open that agent" },
-  { "<c-j>", "isovim_focus_list", "back to the list" },
-  { "<c-l>", "isovim_focus_chat", "to the chat" },
-}
-
-local function keys_of(spec)
-  local keys = {}
-  for _, key in ipairs(spec) do
-    if key[1] ~= "<cr>" or key[2] ~= "isovim_open" then
-      keys[key[1]] = key[2]
-    end
-  end
-  return keys
-end
-
--- A float listing every isovim key, built from the tables above and the live <leader> maps.
-function M.help()
-  local lines = {}
-  local function section(title, keys)
-    lines[#lines + 1] = "# " .. title
-    for _, key in ipairs(keys) do
-      lines[#lines + 1] = ("  %-12s %s"):format(key[1], key[#key])
-    end
-    lines[#lines + 1] = ""
-  end
-  section("Sidebar", LIST_KEYS)
-  section("Needs you", QUEUE_KEYS)
-  section("Chat (terminal mode)", CHAT_KEYS)
-  section("Chat (normal mode)", CHAT_NORMAL_KEYS)
-  local leader = {}
-  for _, map in ipairs(vim.api.nvim_get_keymap("n")) do
-    if map.desc and map.desc:match("^isovim: ") then
-      leader[#leader + 1] = { (map.lhs:gsub("^" .. vim.pesc(vim.g.mapleader or "\\"), "<leader>")), map.desc:sub(6) }
-    end
-  end
-  table.sort(leader, function(a, b)
-    return a[1] < b[1]
-  end)
-  section("Anywhere (normal mode)", leader)
-  lines[#lines] = nil
-  Snacks.win({
-    text = lines,
-    ft = "markdown",
-    title = " isovim keys ",
-    title_pos = "center",
-    border = "rounded",
-    width = 64,
-    height = #lines,
-    wo = { wrap = false, conceallevel = 2 },
-    keys = { q = "close", ["?"] = "close" },
-  })
-end
-
--- Another host's rows only open; changing them is that host's business.
-for _, name in ipairs({ "isovim_add_agent", "isovim_terminal", "isovim_rename", "isovim_delete" }) do
-  local action = actions[name]
-  actions[name] = function(picker, item)
-    if item and item.host then
-      return Snacks.notify.info(("That's on %s; change it there"):format(item.host), { title = "isovim" })
-    end
-    return action(picker, item)
-  end
-end
-
----@param opts? {enter?: boolean}
-function M.open_sidebar(opts)
-  Snacks.picker.pick({
-    source = "isovim",
-    enter = not opts or opts.enter ~= false,
-    title = "Workspaces",
-    toggles = TOGGLES,
-    isovim_hidden = M.show_hidden,
-    isovim_prs = M.show_prs,
-    isovim_ports = M.show_ports,
-    finder = sidebar_items,
-    format = format_item,
-    focus = "list",
-    show_empty = true,
-    auto_close = false,
-    jump = { close = false },
-    layout = {
-      layout = {
-        backdrop = false,
-        width = 40,
-        min_width = 40,
-        height = 0,
-        position = "left",
-        border = "none",
-        box = "vertical",
-        { win = "input", height = 1, border = true, title = "{title} {live} {flags}", title_pos = "center" },
-        { win = "preview", title = "Needs you", title_pos = "center", height = 6, border = true },
-        { win = "list", border = "none" },
-      },
-    },
-    preview = function(ctx)
-      render_queue(ctx.preview)
-    end,
-    matcher = { sort_empty = false },
-    confirm = "isovim_open",
-    actions = actions,
-    on_show = refresh,
-    win = {
-      list = {
-        keys = keys_of(LIST_KEYS),
-      },
-      preview = {
-        keys = keys_of(QUEUE_KEYS),
-      },
-    },
-  })
-end
-
--- The sidebar shows Workspaces (W) or a file explorer rooted at the current workspace (E).
--- Opening is deferred a tick: snacks errors if a picker opens while the closed one is still resizing.
----@param opts? {cwd?: string, reveal?: string} reveal: a file to select once it's open
-function M.show_explorer(opts)
-  opts = opts or {}
-  M.view = "explorer"
-  for _, source in ipairs({ "isovim", "explorer" }) do
-    local open = Snacks.picker.get({ source = source })[1]
-    if open then
-      open:close()
-    end
-  end
-  vim.schedule(function()
-    -- Each workspace's explorer reopens where it was left: its root (a jump, <BS>, .) and the item
-    -- the cursor was on; a workspace never moved around in opens at its dir.
-    local key = M.current or ""
-    local last = type(M.explorer_roots[key]) == "table" and M.explorer_roots[key] or {}
-    if last.cwd and vim.fn.isdirectory(last.cwd) == 0 then
-      last = {}
-    end
-    local reveal = opts.reveal or (not opts.cwd and last.file and vim.uv.fs_stat(last.file) and last.file) or nil
-    Snacks.explorer({
-      cwd = opts.cwd or last.cwd or (M.current and store.dir(M.current)) or store.workspaces,
-      on_close = function(picker)
-        local item = picker:current()
-        M.explorer_roots[key] = { cwd = picker:cwd(), file = item and item.file }
-        remember("explorer_roots", M.explorer_roots)
-      end,
-      actions = {
-        isovim_workspaces = M.show_workspaces,
-        isovim_focus_chat = function()
-          vim.api.nvim_set_current_win(main_win())
-        end,
-      },
-      win = { list = { keys = { ["W"] = "isovim_workspaces", ["<c-l>"] = "isovim_focus_chat" } } },
-      on_show = reveal and function(picker)
-        require("snacks.explorer.tree"):open(reveal)
-        require("snacks.explorer.actions").update(picker, { target = reveal, refresh = true })
-      end or nil,
-    })
-  end)
-end
-
 -- A pinned file opens beside the workspace's chat and the sidebar stays put; a pinned folder
 -- becomes the explorer's root.
 function M.reveal(ws, path)
   select(ws)
   if vim.fn.isdirectory(path) == 1 then
-    return M.show_explorer({ cwd = path })
+    return require("isovim.sidebar").show_explorer({ cwd = path })
   end
   local chat_win = vim.tbl_filter(function(win)
     return not is_sidebar(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_id == ws
   end, vim.api.nvim_tabpage_list_wins(0))[1]
   open_beside(chat_win or main_win(), path)
-end
-
-function M.show_workspaces()
-  M.view = "workspaces"
-  local explorer = Snacks.picker.get({ source = "explorer" })[1]
-  if explorer then
-    explorer:close()
-  end
-  vim.schedule(M.open_sidebar)
-end
-
--- Focuses the sidebar (Workspaces or the file explorer), or closes it when already there.
--- Reopening shows the view it had.
-function M.sidebar()
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1] or Snacks.picker.get({ source = "explorer" })[1]
-  if not sidebar then
-    if M.view == "explorer" then
-      M.show_explorer()
-    else
-      M.open_sidebar()
-    end
-  elseif is_sidebar(vim.api.nvim_get_current_win()) then
-    sidebar:close()
-  else
-    sidebar:focus("list")
-  end
-end
-
--- The sidebar's file explorer, focused; from inside it, back to Workspaces. LazyVim's own explorer
--- keys come here too, rather than opening a second explorer beside the sidebar.
-function M.files()
-  local explorer = Snacks.picker.get({ source = "explorer" })[1]
-  if not explorer then
-    M.show_explorer()
-  elseif is_sidebar(vim.api.nvim_get_current_win()) then
-    M.show_workspaces()
-  else
-    explorer:focus("list")
-  end
 end
 
 ---@param opts? {reload?: boolean}
@@ -1367,10 +496,11 @@ function M.setup(opts)
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
 
+  local sidebar = require("isovim.sidebar")
   icons.setup()
-  vim.keymap.set("n", "<leader>e", M.sidebar, { desc = "isovim: focus or close the sidebar" })
+  vim.keymap.set("n", "<leader>e", sidebar.toggle, { desc = "isovim: focus or close the sidebar" })
   for _, lhs in ipairs({ "<leader>E", "<leader>fe", "<leader>fE" }) do
-    vim.keymap.set("n", lhs, M.files, { desc = "isovim: the workspace's files in the sidebar" })
+    vim.keymap.set("n", lhs, sidebar.files, { desc = "isovim: the workspace's files in the sidebar" })
   end
   -- The sidebar's actions from anywhere, on the current workspace.
   local function on_current(action)
@@ -1379,14 +509,14 @@ function M.setup(opts)
         Snacks.notify.warn("No workspace selected")
         return
       end
-      actions[action](nil, { ws = M.current, ws_name = store.name(M.current), kind = "workspace" })
+      sidebar.actions[action](nil, { ws = M.current, ws_name = store.name(M.current), kind = "workspace" })
     end
   end
   for lhs, map in pairs({
     ["<leader>at"] = { on_current("isovim_terminal"), "new terminal" },
     ["<leader>aa"] = { on_current("isovim_add_agent"), "new agent" },
     ["<leader>am"] = { on_current("isovim_move"), "move the workspace to another host" },
-    ["<leader>an"] = { actions.isovim_add, "new workspace" },
+    ["<leader>an"] = { sidebar.actions.isovim_add, "new workspace" },
     ["<leader>aj"] = { M.next_needs_you, "jump to what needs you" },
     ["<leader>ar"] = { M.run_script, "run the workspace's run script" },
     ["<leader>aw"] = { M.switch_workspace, "switch workspace" },
@@ -1420,7 +550,7 @@ function M.setup(opts)
       if tagged and tagged ~= "" and tagged ~= M.current then
         select(tagged)
       elseif ws then
-        M.follow()
+        sidebar.follow()
       end
     end,
   })
@@ -1483,6 +613,9 @@ function M.setup(opts)
       end)
     end,
   })
+  -- Belt and braces: whenever focus lands anywhere, a prompt that doesn't have it is cancelled,
+  -- even when focus moved without a WinLeave (noautocmd).
+  vim.api.nvim_create_autocmd("WinEnter", { group = group, callback = close_stray_prompts })
   vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
     group = group,
     callback = function(ev)
@@ -1533,18 +666,15 @@ function M.setup(opts)
         end, 500)
       end
     end
-    local sidebar = Snacks.picker.get({ source = "isovim" })[1]
-    if sidebar then
-      refresh(sidebar)
-    end
+    sidebar.refresh()
   end, function()
     ticks = ticks + 1
     if ticks % 10 == 0 then
       reload_files()
     end
-    local sidebar = Snacks.picker.get({ source = "isovim" })[1]
-    if sidebar then
-      sidebar.list:update({ force = true })
+    local picker = Snacks.picker.get({ source = "isovim" })[1]
+    if picker then
+      picker.list:update({ force = true })
     else
       status.animate(false)
     end
@@ -1554,10 +684,7 @@ function M.setup(opts)
   -- or one merges.
   prs.on_news = function(ws, pr, news)
     local message = ("%s · #%s %s"):format(store.name(ws), pr.number or "?", news)
-    Snacks.notify(message, { level = news == "checks failed" and "warn" or "info", title = "isovim" })
-    if not M.focused then
-      vim.system({ panes.hook_script, "desktop", message })
-    end
+    notify(message, news == "checks failed" and "warn" or "info")
   end
   if not _G.isovim_pr_timer then
     _G.isovim_pr_timer = vim.uv.new_timer()
@@ -1589,43 +716,12 @@ function M.setup(opts)
       map_chat_keys(buf)
       name_chat(buf)
     end
-    -- The open sidebar's actions still point at the old code, in either view; the explorer's W
-    -- would bring back an old Workspaces. Reopening it must not move the cursor: put back the
-    -- window and mode (terminal/insert) the reload interrupted.
-    local sidebar = Snacks.picker.get({ source = "isovim" })[1] or Snacks.picker.get({ source = "explorer" })[1]
-    if sidebar then
-      local win = vim.api.nvim_get_current_win()
-      -- Only the sidebar's own windows; a prompt you're typing in keeps the cursor.
-      local ft = vim.bo[vim.api.nvim_win_get_buf(win)].filetype
-      local in_sidebar = ft:match("^snacks_picker") ~= nil or ft == "snacks_layout_box"
-      local typing = vim.api.nvim_get_mode().mode:match("^[ti]") ~= nil
-      local explorer = sidebar.opts.source == "explorer"
-      sidebar:close()
-      local function put_back_cursor()
-        if not in_sidebar and vim.api.nvim_win_is_valid(win) then
-          vim.api.nvim_set_current_win(win)
-          if typing then
-            vim.cmd.startinsert()
-          end
-        end
-      end
-      vim.schedule(function()
-        if explorer then
-          -- The old explorer saved where it was as it closed.
-          M.explorer_roots = store.read_session().explorer_roots or {}
-          M.show_explorer()
-          vim.schedule(put_back_cursor)
-        else
-          M.open_sidebar({ enter = in_sidebar })
-          put_back_cursor()
-        end
-      end)
-    end
+    sidebar.reopen()
     return
   end
   require("isovim.reload").watch()
   if vim.fn.argc() == 0 then
-    M.open_sidebar()
+    sidebar.open()
     vim.schedule(M.resume)
   end
 end
@@ -1757,7 +853,7 @@ function M.changes(ws)
 end
 
 function M.new_workspace()
-  actions.isovim_add()
+  require("isovim.sidebar").actions.isovim_add()
 end
 
 -- Fuzzy-pick a workspace to switch to, most recently selected first.
@@ -1831,7 +927,7 @@ function M.next_needs_you()
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       agent.status = status.get(ws.id, agent.id)
-      if needs_you(agent) then
+      if require("isovim.sidebar").needs_you(agent) then
         local rank = agent.status == "attention" and 0 or 1
         local since = vim.fn.getftime(store.state_file(ws.id, agent.id))
         if not best or rank < best.rank or (rank == best.rank and since < best.since) then
@@ -1851,10 +947,10 @@ function M.poll_prs()
   for _, ws in ipairs(store.list()) do
     local branch = store.branch(ws.id)
     if branch and ws.dir ~= store.path(ws.id) then
-      prs.discover(ws.id, ws.dir, branch, refresh_sidebar)
+      prs.discover(ws.id, ws.dir, branch, require("isovim.sidebar").refresh)
     end
     if #store.prs(ws.id) > 0 then
-      prs.list(ws.id, refresh_sidebar)
+      prs.list(ws.id, require("isovim.sidebar").refresh)
     end
   end
 end
@@ -1998,21 +1094,17 @@ function M.poll()
   local now = vim.json.encode(panes.titles())
   if now ~= last_titles then
     last_titles = now
-    M.refresh_titles()
+    require("isovim.sidebar").refresh()
   end
   -- lsof is the costly part, and a dev server's port can show a few seconds late.
   if ticks % 3 == 1 then
-    require("isovim.ports").poll(M.refresh_titles)
+    require("isovim.ports").poll(require("isovim.sidebar").refresh)
   end
   -- Only the workspace you're in: a git diff per workspace every few seconds adds up. The others
   -- catch up when their agents next report.
   if M.current then
-    diffstat.get(store.dir(M.current), M.refresh_titles)
+    diffstat.get(store.dir(M.current), require("isovim.sidebar").refresh)
   end
-end
-
-function M.refresh_titles()
-  refresh_sidebar()
 end
 
 -- How a layout.json leaf comes back in its window: the agent's chat, or the file.
