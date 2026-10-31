@@ -36,23 +36,52 @@ local function watch_esc(key)
   end)
 end
 
+-- Seconds a request waits before the pilot takes control on its own.
+M.countdown = 10
+
+local function grant(pilot)
+  session.state = "active"
+  session.own_escs = 0
+  vim.on_key(watch_esc, ns)
+  notify(pilot .. " is driving isovim. Press Esc to take control back.", "warn")
+end
+
+-- The pilot takes control when the countdown ends. Accepting skips the wait; declining, or closing
+-- the prompt, cancels.
 function M.request(pilot, reason)
   if session.state == "active" or session.state == "asking" then
     return
   end
   session.state = "asking"
   session.pilot = pilot
-  local prompt = ("%s wants to drive isovim: %s"):format(pilot, reason)
-  vim.ui.select({ "Allow", "Deny" }, { prompt = prompt }, function(choice)
-    if choice ~= "Allow" then
-      session.state = "denied"
+  local left = M.countdown
+  local function title()
+    return ("%s wants to drive isovim: %s · taking control in %ds"):format(pilot, reason, left)
+  end
+  local picker = Snacks.picker.select({ "Accept now", "Decline" }, { prompt = title() }, function(choice)
+    if session.state ~= "asking" then
       return
     end
-    session.state = "active"
-    session.own_escs = 0
-    vim.on_key(watch_esc, ns)
-    notify(pilot .. " is driving isovim. Press Esc to take control back.", "warn")
+    if choice == "Accept now" then
+      grant(pilot)
+    else
+      session.state = "denied"
+    end
   end)
+  local timer = assert(vim.uv.new_timer())
+  timer:start(1000, 1000, vim.schedule_wrap(function()
+    if session.state ~= "asking" then
+      return timer:close()
+    end
+    left = left - 1
+    if left > 0 then
+      picker.title = title()
+      return picker:update_titles()
+    end
+    timer:close()
+    grant(pilot)
+    picker:close()
+  end))
 end
 
 function M.state()

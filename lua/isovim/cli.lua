@@ -59,7 +59,8 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso peek <agent> [-n lines]   print the last lines of its screen (default 40)
        iso doctor                    check what isovim needs here and on the other hosts
        iso version                   the isovim commit this runs
-       iso pilot request <reason...> ask to drive the TUI; blocks until allowed or denied
+       iso pilot request <reason...> ask to drive the TUI: control comes after a 10s countdown unless declined;
+                                     blocks until allowed or denied
        iso pilot keys <keys>         type into the TUI, in nvim key notation ("<C-h>j<CR>")
        iso pilot screen              print the TUI's screen
        iso pilot status|release      off | asking | active | denied; release hands control back
