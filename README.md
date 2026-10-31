@@ -6,7 +6,7 @@ It's an isomer of neovim: the same parts, arranged around the agents.
 
 ## What it does
 
-- **Workspaces.** One per task. A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI state) and the ports its dev servers listen on.
+- **Workspaces.** One per task. A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI and review state) and the ports its dev servers listen on. A PR an agent opens shows up by itself.
 - **Agents.** Claude Code, Codex, terminals or any command, as many per workspace as you like. Each runs in its own tmux session and resumes its conversation when restarted. The sidebar shows which are working, which have something new for you and which are waiting on you, and a Needs-you pane lists those.
 - **Pins.** Agents pin the files they point you at (a report, a screenshot, the file they changed) under their workspace; Enter opens one beside the chat.
 - **Agents working together.** Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.

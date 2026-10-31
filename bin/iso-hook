@@ -28,13 +28,14 @@ notify() {
 }
 
 # Rewrites the agent's plain-text transcript (workspace/transcripts/<agent>.txt) in the background;
-# after an answer, also pins the files and folders it named (iso autopin).
+# after an answer, also pins the files and folders it named and registers the PRs it opened
+# (iso autopin, iso autopr).
 transcript() {
   agent="$(basename "${ISOVIM_STATE%.state}")"
   ws="$(basename "$(dirname "$ISOVIM_STATE")")"
   iso="$(dirname "$0")/iso"
   if [ "$1" = answered ]; then
-    ("$iso" transcript "$ws/$agent" && "$iso" autopin "$ws/$agent") </dev/null >/dev/null 2>&1 &
+    ("$iso" transcript "$ws/$agent" && "$iso" autopin "$ws/$agent" && "$iso" autopr "$ws/$agent") </dev/null >/dev/null 2>&1 &
   else
     ("$iso" transcript "$ws/$agent" </dev/null >/dev/null 2>&1 &)
   fi
@@ -77,6 +78,7 @@ stop)
       fi
     fi
     "$iso" autopin "$ws/$agent"
+    "$iso" autopr "$ws/$agent"
   ) </dev/null >/dev/null 2>&1 &
   ;;
 ask)

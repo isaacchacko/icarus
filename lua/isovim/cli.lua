@@ -671,6 +671,18 @@ function commands.autopin(args)
   end
 end
 
+-- Registers the PRs the agent opened with `gh pr create`; its hooks run this after each answer.
+function commands.autopr(args)
+  local ws, agent = resolve_agent(args[1])
+  local added = require("isovim.autopr").run(ws.id, agent.id)
+  for _, url in ipairs(added) do
+    out(url)
+  end
+  if #added > 0 then
+    tui("require('isovim').refresh()")
+  end
+end
+
 -- Rewrites the agent's plain-text transcript; its hooks run this after every prompt and answer.
 function commands.transcript(args)
   local ws, agent = resolve_agent(args[1])
