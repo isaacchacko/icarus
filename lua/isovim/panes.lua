@@ -277,7 +277,9 @@ function M.send(ws, agent, text)
     return typed
   end
   vim.uv.sleep(300)
-  return tmux({ "send-keys", "-t", target, "Enter" })
+  -- C-m, not Enter: with extended keys on, tmux can pass Enter to a freshly started Claude as a key
+  -- that lands in the composer instead of submitting it.
+  return tmux({ "send-keys", "-t", target, "C-m" })
 end
 
 ---@return string

@@ -56,8 +56,15 @@ function M.caller()
   end
 end
 
+-- The text as the receiver will see it: Claude wraps a long message in <pasted_content> tags and
+-- may rewrap its lines, and several queued messages can arrive as one prompt.
+local function normalize(text)
+  text = text:gsub("</?pasted_content[^>]*>", "")
+  return vim.trim((text:gsub("%s+", " ")))
+end
+
 local function digest(text)
-  return vim.fn.sha256(vim.trim(text))
+  return vim.fn.sha256(text)
 end
 
 -- The stamp for a message from `from` to `to`, recorded in the ledger. kind is "from" or "ask".
@@ -66,8 +73,9 @@ function M.stamp(kind, from, to, text)
     return ("%02x"):format(c:byte())
   end))
   local root = M.is_root(from)
-  local entry = { id = id, at = os.time(), kind = kind, from = from, to = to, root = root or nil, sum = digest(text),
-    preview = vim.trim(text):sub(1, 120) }
+  local sent = normalize(text)
+  local entry = { id = id, at = os.time(), kind = kind, from = from, to = to, root = root or nil, sum = digest(sent),
+    len = #sent, preview = sent:sub(1, 120) }
   vim.fn.mkdir(store.run, "p")
   local file = assert(io.open(M.ledger, "a"))
   file:write(vim.json.encode(entry), "\n")
@@ -141,10 +149,20 @@ function M.check(tag, to)
     return entry.to == name or vim.endswith(entry.to, ":" .. name)
   end) then
     return false, tag.id .. " was sent to " .. entry.to
-  elseif entry.sum ~= digest(tag.body) then
+  elseif not M.same_text(entry, tag.body) then
     return false, "the text after the tag isn't what was sent as " .. tag.id
   end
   return true, entry.root and "from the root" or "from " .. entry.from
+end
+
+-- Whether the text after a tag begins with what was sent under it. Entries from before the ledger
+-- recorded a length hashed the trimmed text as sent.
+function M.same_text(entry, body)
+  local received = normalize(body)
+  if entry.len then
+    return digest(received:sub(1, entry.len)) == entry.sum
+  end
+  return digest(vim.trim(body)) == entry.sum or digest(received) == entry.sum
 end
 
 local function raised_file(ws, agent)
