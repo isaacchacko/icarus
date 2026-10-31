@@ -2,21 +2,16 @@
 
 Agents first, in nvim. `iso` opens an nvim built around coding agents: a sidebar of workspaces, each with its Claude Code and Codex agents, terminals, PRs and dev servers. Agents keep running in tmux when the window closes. Plain `nvim` stays your editor; `iso` is for when the agents come first.
 
-It's an isomer of neovim: the same parts, arranged around the agents.
-
 ![isovim: workspaces with their agents, terminals and pins in the sidebar, an agent's chat on the right](docs/screenshot.png)
 
 ## What it does
 
-- **Workspaces.** One per task. A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI and review state) and the ports its dev servers listen on. A PR an agent opens shows up by itself.
-- **Agents.** Claude Code, Codex, terminals or any command, as many per workspace as you like. Each runs in its own tmux session and resumes its conversation when restarted. The sidebar shows which are working, which have something new for you and which are waiting on you, and a Needs-you pane lists those.
-- **Tasks.** Agents keep their own task lists (`iso task`), with status, parent steps, PRs and what they wait on; `T` shows them under each agent's row.
-- **Pins.** Agents pin the files they point you at (a report, a screenshot, the file they changed) under their workspace; Enter opens one beside the chat.
-- **Agents working together.** Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.
-- **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in Needs-you. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
-- **Other hosts.** Agents on your other machines show in the sidebar, and `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
-- **A browser for agents.** `iso browser` runs one Chrome per host that agents drive over CDP, in the background, without taking your focus.
-- **Hot reload.** Edit isovim's source and the running app picks it up.
+- **Workspaces**, one per task, each with its own worktree, PRs and dev servers.
+- **Agents**: Claude Code, Codex, terminals or any command, as many per workspace as you like.
+- **Tasks** each agent keeps, shown under its row.
+- **Pins**: the files an agent points you at, one Enter away.
+- **Agents talking to each other**, with one root agent the others ask.
+- **Other hosts**: their agents in the same sidebar, and workspaces that move between machines.
 
 ## Install
 
@@ -48,7 +43,33 @@ In the sidebar, `?` lists every key. The ones to start with:
 
 `iso help` lists the commands.
 
-## Make it yours
+## More
+
+### Workspaces and agents
+
+- A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI and review state) and the ports its dev servers listen on. A PR an agent opens shows up by itself.
+- Each agent runs in its own tmux session and resumes its conversation when restarted. The sidebar shows which are working, which have something new for you and which are waiting on you, and a Needs-you pane lists those.
+- Agents keep their own task lists (`iso task`), with status, parent steps, PRs and what they wait on; `T` shows them under each agent's row.
+- Agents pin the files they point you at (a report, a screenshot, the file they changed) under their workspace; Enter opens one beside the chat.
+
+### Agents working together
+
+- Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.
+- **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in Needs-you. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
+
+### Other hosts
+
+Agents on your other machines show in the sidebar, and `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
+
+### A browser for agents
+
+`iso browser` runs one Chrome per host that agents drive over CDP, in the background, without taking your focus.
+
+### Hot reload
+
+Edit isovim's source and the running app picks it up.
+
+### Make it yours
 
 Everything lives in `~/.isovim/`:
 
