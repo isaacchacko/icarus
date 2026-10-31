@@ -445,8 +445,9 @@ local LIST_KEYS = {
   { "t", "isovim_terminal", "new terminal in this workspace" },
   { "r", "isovim_rename", "rename the workspace or agent" },
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
-  { "c", "isovim_changes", "its changes since its base" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
+  { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
+  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
+  { "y", "isovim_yank_url", "copy the PR's URL" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "move it to another host, or here" },
@@ -645,13 +646,23 @@ M.actions = {
   end,
   isovim_find = isovim.find,
   isovim_open_port = function(_, item)
-    if item and item.ws and not item.host then
+    if item and item.kind == "pr" then
+      vim.ui.open(item.pr.url)
+    elseif item and item.ws and not item.host then
       isovim.open_port(item.ws, item.agent)
     end
   end,
   isovim_changes = function(_, item)
-    if item and item.ws and not item.host then
+    if item and item.kind == "pr" then
+      vim.ui.open(item.pr.url .. "/files")
+    elseif item and item.ws and not item.host then
       isovim.changes(item.ws)
+    end
+  end,
+  isovim_yank_url = function(_, item)
+    if item and item.kind == "pr" then
+      vim.fn.setreg("+", item.pr.url)
+      vim.notify("Copied " .. item.pr.url)
     end
   end,
   isovim_restart = function(_, item)
