@@ -2,7 +2,8 @@
 --   self       this host's name, as other hosts address its agents (<host>:<ws>/<agent>); default hostname
 --   hosts      other hosts, name -> ssh host: their agents show in the sidebar and workspaces move there
 --   aliases    other names for those hosts
---   repo_dirs  folders whose git repos are offered when making a workspace
+--   repo_dirs  more folders whose git repos are offered when making a workspace, besides ~ and the usual
+--              code folders (~/code, ~/src, ~/Programs, ...)
 local store = require("isovim.store")
 
 local M = {}

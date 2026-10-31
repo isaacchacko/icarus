@@ -218,16 +218,30 @@ function M.projects()
       end
     end
   end
-  -- Then the repos under the config's repo_dirs not yet used: one clone per origin, the most
-  -- recently touched, since any clone can hold new worktrees.
-  local clones = {}
-  for _, root in ipairs(require("isovim.config").get().repo_dirs or {}) do
+  -- Then the repos not yet used, one clone per origin, the most recently touched first, since any
+  -- clone can hold new worktrees. They're looked for in ~, the usual code folders, the folders
+  -- holding the projects above, and the config's repo_dirs.
+  local configured = require("isovim.config").get().repo_dirs or {}
+  local roots = vim.list_extend({ "~", "~/code", "~/Code", "~/src", "~/dev", "~/Developer", "~/projects", "~/Projects", "~/Programs", "~/repos", "~/git", "~/work" }, configured)
+  for _, project in ipairs(list) do
+    roots[#roots + 1] = vim.fs.dirname(vim.fs.normalize(project))
+  end
+  local clones, scanned = {}, {}
+  for _, root in ipairs(roots) do
     root = vim.fs.normalize(root)
-    for name, kind in vim.fs.dir(root) do
-      local dir = root .. "/" .. name
-      if kind == "directory" and vim.fn.isdirectory(dir .. "/.git") == 1 then
-        local stat = vim.uv.fs_stat(dir .. "/.git/HEAD")
-        clones[#clones + 1] = { dir = M.home_relative(dir), at = stat and stat.mtime.sec or 0 }
+    if not scanned[root] then
+      scanned[root] = true
+      for name, kind in vim.fs.dir(root) do
+        local dir = root .. "/" .. name
+        if kind == "directory" and not vim.startswith(name, ".") and vim.fn.isdirectory(dir .. "/.git") == 1 then
+          -- Touched: checked out (HEAD) or committed to and staged in (index).
+          local at = 0
+          for _, file in ipairs({ "HEAD", "index" }) do
+            local stat = vim.uv.fs_stat(dir .. "/.git/" .. file)
+            at = math.max(at, stat and stat.mtime.sec or 0)
+          end
+          clones[#clones + 1] = { dir = M.home_relative(dir), at = at }
+        end
       end
     end
   end

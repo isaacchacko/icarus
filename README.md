@@ -54,11 +54,11 @@ Everything lives in `~/.isovim/`:
     "self": "laptop",
     "hosts": { "desktop": "desktop.local" },
     "aliases": { "box": "desktop" },
-    "repo_dirs": ["~/code"],
+    "repo_dirs": ["~/clients"],
     "idle_after": 30
   }
   ```
-  `hosts` are your other machines by ssh name, `repo_dirs` are offered when making a workspace.
+  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in).
 - **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes, once per quiet spell.
 - **`ivim agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `ivim ls --json` says when each agent was last active.
 
