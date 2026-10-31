@@ -1,0 +1,1 @@
+require("isovim").setup()

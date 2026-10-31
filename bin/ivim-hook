@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Hooks for an agent (wired in panes.lua): record its state in $ISOVIM_STATE for the sidebar, and
+# raise a desktop notification while the isovim TUI is closed, unless the agent is hidden.
+# `ivim-hook desktop <message>` only notifies; the TUI uses it when it isn't focused.
+
+desktop() {
+  # Pilots read notifications from a log instead of the screen.
+  if [ -n "$ISOVIM_NOTIFY_LOG" ]; then
+    echo "$1" >>"$ISOVIM_NOTIFY_LOG"
+    return
+  fi
+  if command -v osascript >/dev/null; then
+    osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "isovim"' -e 'end run' "$1" >/dev/null 2>&1 &
+  elif command -v notify-send >/dev/null; then
+    notify-send isovim "$1" &
+  fi
+}
+
+# The open TUI notifies on its own, knowing whether the chat is on screen.
+notify() {
+  [ -S "$ISOVIM_SOCK" ] || [ -n "$ISOVIM_HIDDEN" ] && return
+  meta="${ISOVIM_META:-$PWD/.isovim.json}"
+  name="$(jq -r '.name // empty' "$meta" 2>/dev/null)"
+  # Its current name (it may have been renamed since it started); the id is in its state file's name.
+  id="$(basename "${ISOVIM_STATE%.state}")"
+  agent="$(jq -r --arg id "$id" '(.agents // [])[] | select(.id == $id) | .name' "$meta" 2>/dev/null)"
+  desktop "${name:-isovim} · ${agent:-${ISOVIM_AGENT:-isovim}} $1"
+}
+
+# Rewrites the agent's plain-text transcript (workspace/transcripts/<agent>.txt) in the background;
+# after an answer, also pins the files and folders it named (ivim autopin).
+transcript() {
+  agent="$(basename "${ISOVIM_STATE%.state}")"
+  ws="$(basename "$(dirname "$ISOVIM_STATE")")"
+  ivim="$(dirname "$0")/ivim"
+  if [ "$1" = answered ]; then
+    ("$ivim" transcript "$ws/$agent" && "$ivim" autopin "$ws/$agent") </dev/null >/dev/null 2>&1 &
+  else
+    ("$ivim" transcript "$ws/$agent" </dev/null >/dev/null 2>&1 &)
+  fi
+}
+
+case "$1" in
+desktop) desktop "$2" ;;
+start)
+  printf ready >"$ISOVIM_STATE"
+  # Claude and Codex both pass the conversation's id; panes.lua resumes it on restart.
+  id="$(jq -r '.session_id // empty' 2>/dev/null)"
+  [ -n "$id" ] && printf %s "$id" >"${ISOVIM_STATE%.state}.session"
+  ;;
+prompt)
+  printf working >"$ISOVIM_STATE"
+  transcript
+  ;;
+stop)
+  # Unread means progress to report, not just a finished turn: until the answer is read, the agent
+  # stays "checking" (drawn as working); an answer that only waits on something it started (a build,
+  # a server coming up) becomes "waiting" and never notifies.
+  printf checking >"$ISOVIM_STATE"
+  agent="$(basename "${ISOVIM_STATE%.state}")"
+  ws="$(basename "$(dirname "$ISOVIM_STATE")")"
+  ivim="$(dirname "$0")/ivim"
+  (
+    # A turn can end on a dialog that waits for you (a plan to approve): it draws just after this
+    # hook, so look at the pane a moment later.
+    sleep 1.5
+    if [ -n "$TMUX_PANE" ] && tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null | grep -qE "Would you like to proceed\?|Do you want to proceed\?"; then
+      printf attention >"$ISOVIM_STATE"
+      notify "needs you"
+    else
+      "$ivim" transcript "$ws/$agent"
+      if [ "$("$ivim" progress "$ws/$agent")" = waiting ]; then
+        printf waiting >"$ISOVIM_STATE"
+      else
+        printf idle >"$ISOVIM_STATE"
+        notify "finished"
+      fi
+    fi
+    "$ivim" autopin "$ws/$agent"
+  ) </dev/null >/dev/null 2>&1 &
+  ;;
+ask)
+  printf attention >"$ISOVIM_STATE"
+  notify "needs you"
+  ;;
+interrupt) printf idle >"$ISOVIM_STATE" ;;
+tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && printf working >"$ISOVIM_STATE" ;;
+notification)
+  case "$(cat)" in
+  *idle_prompt* | *"waiting for your input"*) ;;
+  *)
+    printf attention >"$ISOVIM_STATE"
+    notify "needs you"
+    ;;
+  esac
+  ;;
+esac
+exit 0

@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+home="${ISOVIM_HOME:-$HOME/.isovim}"
+lock="$home/isovim.lock"
+cli="$repo/lua/isovim/cli.lua"
+# A non-interactive ssh (ivim move's other end) gets a bare PATH; on macOS that misses Homebrew.
+PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+
+# ivim move streams a workspace in as a tar; unpack it next to the workspaces so it can be renamed in.
+if [ "${1:-}" = receive ]; then
+  mkdir -p "$home/workspaces"
+  incoming="$(mktemp -d "$home/incoming.XXXXXX")"
+  tar -xf - -C "$incoming"
+  NVIM_APPNAME=isovim exec nvim -l "$cli" receive "$incoming"
+fi
+
+case "${1:-}" in
+browser)
+  shift
+  exec node "$repo/bin/ivim-browser.mjs" "$@"
+  ;;
+ls | new | dir | open | rename | archive | archived | unarchive | move | restart | agent | rm | pr | prs | hide | unhide | attach | phone | send | pin | unpin | progress | autopin | transcript | status | wait | peek | find | doctor | version | pilot | help | -h | --help)
+  NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"
+  ;;
+esac
+
+takeover=""
+if [ "${1:-}" = "--takeover" ]; then
+  takeover=1
+  shift
+fi
+
+mkdir -p "$home/workspaces" "$home/archive"
+# The app is the starter config under its own NVIM_APPNAME, so your own nvim is never touched.
+config="${XDG_CONFIG_HOME:-$HOME/.config}/isovim"
+[ -e "$config" ] || ln -s "$repo/starter" "$config"
+
+# First run on a host: install the plugins at lazy-lock.json's commits before the TUI. Lazy installs
+# missing plugins at their newest and rewrites the lockfile as it starts, so the lockfile is put back
+# and restored again; parallel clones sometimes fail, so it retries until every locked plugin is there.
+plugins="${XDG_DATA_HOME:-$HOME/.local/share}/isovim/lazy"
+lockfile="$repo/starter/lazy-lock.json"
+locked="$(grep -c '"commit"' "$lockfile")"
+installed() { find "$plugins" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
+if [ "$(installed)" -lt "$locked" ]; then
+  echo "isovim: installing plugins (first run)..." >&2
+  cp "$lockfile" "$lockfile.first-run"
+  for _ in 1 2 3; do
+    NVIM_APPNAME=isovim nvim --headless "+Lazy! restore" +qa >/dev/null 2>&1 || true
+    cp "$lockfile.first-run" "$lockfile"
+    [ "$(installed)" -ge "$locked" ] && break
+  done
+  rm "$lockfile.first-run"
+  NVIM_APPNAME=isovim nvim --headless "+Lazy! restore" +qa >/dev/null 2>&1 || true
+fi
+
+if [ -f "$lock" ]; then
+  pid="$(cat "$lock")"
+  if kill -0 "$pid" 2>/dev/null; then
+    if [ -z "$takeover" ]; then
+      echo "isovim is already open (pid $pid). Run 'ivim --takeover' to close it and open here." >&2
+      exit 1
+    fi
+    kill -TERM "$pid"
+    for _ in $(seq 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "isovim (pid $pid) did not quit." >&2
+      exit 1
+    fi
+  fi
+fi
+
+# No live isovim holds the socket now; a crashed one may have left it behind.
+rm -f "${ISOVIM_SOCK:-$home/nvim.sock}"
+
+# exec keeps this pid, so the lock names the nvim process.
+echo $$ >"$lock"
+NVIM_APPNAME=isovim exec nvim "$@"

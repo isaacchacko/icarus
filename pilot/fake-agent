@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Stand-in for Claude when piloting: fires isovim's hooks the way Claude does, without the model.
+# "ask <q>" waits for an answer line (attention); anything else works for $FAKE_AGENT_DELAY seconds.
+hook="$(dirname "$(realpath "$0")")/../bin/ivim-hook"
+"$hook" start </dev/null
+echo "fake agent ready"
+while true; do
+  printf '❯ '
+  IFS= read -r line || exit 0
+  "$hook" prompt </dev/null
+  case "$line" in
+  ask*)
+    "$hook" ask </dev/null
+    echo "⏺ question: ${line#ask }"
+    IFS= read -r answer || exit 0
+    "$hook" tool-done </dev/null
+    echo "⏺ thanks for: $answer"
+    ;;
+  *)
+    sleep "${FAKE_AGENT_DELAY:-1}"
+    echo "⏺ reply to: $line"
+    ;;
+  esac
+  "$hook" stop </dev/null
+done

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stand-in for ssh when piloting `ivim move`: drops the options and host and runs the remote
+# command here, with the receiving pilot's environment from $FAKE_SSH_ENV.
+while [ "${1:-}" = -o ] || [ "${1:-}" = -t ]; do
+  [ "$1" = -o ] && shift
+  shift
+done
+shift
+unset ISOVIM_STATE
+set -a
+. "$FAKE_SSH_ENV"
+set +a
+eval "$*"

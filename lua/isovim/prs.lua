@@ -1,0 +1,170 @@
+-- The PRs a workspace's agents registered (`ivim pr`), with their state from gh, cached for a
+-- minute under run/<ws>/prs.json so the sidebar never waits on the network.
+local store = require("isovim.store")
+
+local M = {}
+
+local TTL = 60
+local fetching = {} ---@type table<string, boolean>
+
+---@type fun(ws: string, pr: isovim.Pr, news: string)? set by the TUI to notify
+M.on_news = nil
+
+---@class isovim.Pr
+---@field url string
+---@field number? integer
+---@field title? string
+---@field state? "OPEN"|"CLOSED"|"MERGED"
+---@field isDraft? boolean
+---@field checks? "pass"|"fail"|"pending" CI, from the checks' rollup
+---@field approved? boolean
+
+local FAILED = { FAILURE = true, TIMED_OUT = true, CANCELLED = true, ACTION_REQUIRED = true, STARTUP_FAILURE = true, ERROR = true }
+
+-- One word for a PR's CI: any failed check fails it, else any unfinished one keeps it pending.
+local function checks(rollup)
+  if type(rollup) ~= "table" or #rollup == 0 then
+    return nil
+  end
+  local pending = false
+  for _, check in ipairs(rollup) do
+    if FAILED[check.conclusion] or FAILED[check.state] then
+      return "fail"
+    end
+    pending = pending or (check.status and check.status ~= "COMPLETED") or check.state == "PENDING" or check.state == "EXPECTED"
+  end
+  return pending and "pending" or "pass"
+end
+
+-- Accepts a PR URL or owner/repo#123.
+---@return string?
+function M.normalize(ref)
+  if ref:match("^https://github%.com/[^/]+/[^/]+/pull/%d+") then
+    return ref:match("^(https://github%.com/[^/]+/[^/]+/pull/%d+)")
+  end
+  local repo, number = ref:match("^([%w_.-]+/[%w_.-]+)#(%d+)$")
+  return repo and ("https://github.com/%s/pull/%s"):format(repo, number) or nil
+end
+
+local function cache_file(ws)
+  return store.run_dir(ws) .. "/prs.json"
+end
+
+local function read_cache(ws)
+  local ok, lines = pcall(vim.fn.readfile, cache_file(ws))
+  local decoded, cache = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  return decoded and type(cache) == "table" and cache or { fetched = 0, prs = {} }
+end
+
+-- Looks every PR up in parallel and rewrites the cache; on_done runs on the main loop.
+local function fetch(ws, urls, on_done)
+  if fetching[ws] then
+    return
+  end
+  fetching[ws] = true
+  local prs, pending = {}, #urls
+  local before = read_cache(ws).prs
+  local function finish()
+    fetching[ws] = nil
+    -- News worth a notification: checks that finished, a PR merged.
+    for url, pr in pairs(prs) do
+      local old = before[url]
+      if old and M.on_news then
+        if old.checks == "pending" and (pr.checks == "pass" or pr.checks == "fail") then
+          M.on_news(ws, pr, pr.checks == "pass" and "checks passed" or "checks failed")
+        elseif old.state == "OPEN" and pr.state == "MERGED" then
+          M.on_news(ws, pr, "merged")
+        end
+      end
+    end
+    vim.fn.mkdir(store.run_dir(ws), "p")
+    vim.fn.writefile({ vim.json.encode({ fetched = os.time(), prs = prs }) }, cache_file(ws))
+    on_done()
+  end
+  for _, url in ipairs(urls) do
+    local fields = "number,title,state,isDraft,url,statusCheckRollup,reviewDecision"
+    vim.system({ "gh", "pr", "view", url, "--json", fields }, { text = true }, function(result)
+      local ok, pr = pcall(vim.json.decode, result.stdout or "")
+      if ok and type(pr) == "table" then
+        pr.checks, pr.approved = checks(pr.statusCheckRollup), pr.reviewDecision == "APPROVED" or nil
+        pr.statusCheckRollup, pr.reviewDecision = nil, nil
+        prs[url] = pr
+      end
+      pending = pending - 1
+      if pending == 0 then
+        vim.schedule(finish)
+      end
+    end)
+  end
+end
+
+-- A worktree workspace's PR is the one for its branch, found in the background
+-- and registered once it exists, without waiting for an agent to run `ivim pr`.
+function M.discover(ws, dir, branch, on_found)
+  vim.system({ "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "url", "--limit", "1" }, { cwd = dir, text = true }, function(result)
+    local ok, found = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
+    local url = ok and type(found) == "table" and found[1] and found[1].url
+    if url and not vim.tbl_contains(store.prs(ws), url) then
+      vim.schedule(function()
+        store.add_pr(ws, url)
+        on_found()
+      end)
+    end
+  end)
+end
+
+-- The workspace's PRs, newest registered first, with whatever state the cache has; refetches
+-- in the background when stale and calls on_update once fresh states are in.
+---@return isovim.Pr[]
+-- What was last fetched for the workspace's PRs, without fetching: url -> PR.
+---@return table<string, isovim.Pr>
+function M.cached(ws)
+  return read_cache(ws).prs
+end
+
+function M.list(ws, on_update)
+  local urls = store.prs(ws)
+  local cache = read_cache(ws)
+  local missing = vim.iter(urls):any(function(url)
+    return cache.prs[url] == nil
+  end)
+  if #urls > 0 and (missing or os.time() - cache.fetched > TTL) then
+    fetch(ws, urls, on_update)
+  end
+  local list = {}
+  for i = #urls, 1, -1 do
+    list[#list + 1] = cache.prs[urls[i]] or { url = urls[i] }
+  end
+  return list
+end
+
+---@param pr isovim.Pr
+---@return string icon, string hl
+function M.icon(pr)
+  if pr.state == "MERGED" then
+    return "\u{f419}", "Special"
+  elseif pr.state == "CLOSED" then
+    return "\u{f4dc}", "DiagnosticError"
+  elseif pr.isDraft then
+    return "\u{f4dd}", "Comment"
+  elseif pr.state == "OPEN" then
+    return "\u{f407}", "DiagnosticOk"
+  end
+  return "…", "Comment"
+end
+
+-- CI and review marks for a PR's row.
+---@return {[1]: string, [2]: string}[]
+function M.marks(pr)
+  local marks = {}
+  if pr.state == "OPEN" and pr.checks then
+    local mark = ({ pass = { "✓", "DiagnosticOk" }, fail = { "✗", "DiagnosticError" }, pending = { "●", "DiagnosticWarn" } })[pr.checks]
+    marks[#marks + 1] = { " " .. mark[1], mark[2] }
+  end
+  if pr.state == "OPEN" and pr.approved then
+    marks[#marks + 1] = { " approved", "DiagnosticOk" }
+  end
+  return marks
+end
+
+return M
