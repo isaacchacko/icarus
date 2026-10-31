@@ -47,7 +47,8 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso ask <question...>         from an agent: ask the root; the root (or anyone, with no
                                      root) raises it to you, into Needs-you
        iso root [<agent>|--clear]    print or set the root, the agent the others ask and whose
-                                     stamped messages speak for you
+                                     stamped messages speak for you; <host>:<ws>/<agent> for a
+                                     root on another host
        iso verify <m-id> [--json]    what isovim recorded for a stamp
        iso find <query> [--json]     agents on every host ranked by where the query turns up:
                                      names, branch, PRs, what they're on, their conversation
@@ -681,8 +682,14 @@ function commands.root(args)
     return
   end
   local target
-  if args[1] ~= "--clear" then
-    local ws, agent = resolve_agent(args[1])
+  local host, rest = split_host(args[1])
+  if args[1] == "--clear" then
+    target = nil
+  elseif host then
+    -- A root on another host is named as that host names it, <host>:<ws>/<agent>.
+    target = args[1]:match("^([^:]+):") .. ":" .. rest
+  else
+    local ws, agent = resolve_agent(rest)
     target = root.address(ws.id, agent.id)
   end
   local ws, agent = root.caller()
