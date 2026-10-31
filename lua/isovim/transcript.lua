@@ -51,6 +51,24 @@ end
 
 local USER, ASSISTANT = { text = true, input_text = true }, { text = true, output_text = true }
 
+-- What you type while Claude is mid-turn is logged as a queued command it absorbed, not as a user
+-- message. Other agents' messages arrive the same way, marked as from a peer.
+local function typed_mid_turn(entry)
+  local attachment = entry.type == "attachment" and entry.attachment
+  return type(attachment) == "table" and attachment.type == "queued_command" and attachment.commandMode == "prompt"
+    and type(attachment.prompt) == "string" and type(attachment.origin) == "table" and attachment.origin.kind == "human"
+end
+
+-- A queued message can be logged both as typed mid-turn and as a user message; it's said once.
+local function said_just_now(out, speaker, text)
+  for i = #out, math.max(1, #out - 1), -1 do
+    if out[i][1] == speaker and out[i][2] == text then
+      return true
+    end
+  end
+  return false
+end
+
 -- {speaker, text} turns from a Claude jsonl or a Codex rollout.
 local function turns(file, agent_name)
   local out = {}
@@ -62,12 +80,15 @@ local function turns(file, agent_name)
         role, content = entry.type, entry.message and entry.message.content
       elseif entry.type == "response_item" and entry.payload and entry.payload.type == "message" then
         role, content = entry.payload.role, entry.payload.content
+      elseif typed_mid_turn(entry) then
+        role, content = "user", entry.attachment.prompt
       end
       if role == "user" or role == "assistant" then
+        local speaker = role == "user" and "You" or agent_name
         for _, text in ipairs(texts(content, role == "user" and USER or ASSISTANT)) do
           text = said(text)
-          if text ~= "" then
-            out[#out + 1] = { role == "user" and "You" or agent_name, text }
+          if text ~= "" and not (role == "user" and said_just_now(out, speaker, text)) then
+            out[#out + 1] = { speaker, text }
           end
         end
       end
