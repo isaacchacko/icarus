@@ -137,10 +137,70 @@ local function main_buffer(buf)
   end
 end
 
+-- A window that belongs to the buffer above it: a chat's composer or queue, a surface's input box.
+local function slot_buffer(buf)
+  return vim.b[buf].isovim_composer or vim.b[buf].isovim_queue or vim.b[buf].isovim_surface_input
+end
+
+-- Marks the windows showing one (w:isovim_slot), so a tab picked in one is caught: bufferline's
+-- click and :buffer put the tab's buffer in the current window, and from the composer that put a
+-- chat into the composer's six rows, which then got a composer of its own under it, and the
+-- composer's snap-back moved what was left between beside the chat: more windows each switch.
+local function mark_slots()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if slot_buffer(vim.api.nvim_win_get_buf(win)) and not vim.w[win].isovim_slot then
+      vim.w[win].isovim_slot = true
+    end
+  end
+end
+
+-- A tab's buffer that landed in a slot goes to the main window instead (an agent's chat opened there,
+-- as its tab does) and the slot closes, so the main area stays one chat and its composer, or one
+-- other buffer.
+local function redirect(slot_win, buf)
+  if not vim.api.nvim_win_is_valid(slot_win) or vim.api.nvim_win_get_buf(slot_win) ~= buf then
+    return
+  end
+  local isovim = require("isovim")
+  local target
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if win ~= slot_win and not isovim.is_sidebar(win) and not vim.w[win].isovim_slot then
+      target = target or win
+    end
+  end
+  vim.cmd.stopinsert()
+  if not target then
+    -- The only editing window: it's the main one now.
+    vim.w[slot_win].isovim_slot = nil
+    return
+  end
+  local ws, agent = M.agent_of(buf)
+  pcall(vim.api.nvim_win_close, slot_win, true)
+  vim.api.nvim_set_current_win(target)
+  if ws then
+    open_in(target, ws, agent)
+  elseif vim.api.nvim_buf_is_valid(buf) then
+    vim.api.nvim_win_set_buf(target, buf)
+  end
+  close_stray_composers()
+end
+
+vim.api.nvim_create_autocmd("WinEnter", { group = GROUP, callback = mark_slots })
+
 vim.api.nvim_create_autocmd("BufWinEnter", {
   group = GROUP,
   callback = function(ev)
     main_buffer(ev.buf)
+    if slot_buffer(ev.buf) then
+      return mark_slots()
+    end
+    for _, win in ipairs(vim.fn.win_findbuf(ev.buf)) do
+      if vim.w[win].isovim_slot then
+        return require("isovim.safe").schedule("moving a tab out of a composer", function()
+          redirect(win, ev.buf)
+        end)
+      end
+    end
     local placeholder = vim.b[ev.buf].isovim_placeholder
     -- An ACP chat entering a window without its composer: picked from the tab bar.
     local acp = not placeholder and vim.b[ev.buf].isovim_acp
@@ -148,9 +208,9 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
       -- Anything else in a chat's window: its composer goes with it.
       return require("isovim.safe").schedule("closing a stray composer", close_stray_composers)
     end
-    local win = vim.api.nvim_get_current_win()
+    local win = vim.fn.bufwinid(ev.buf)
     require("isovim.safe").schedule("opening a tab's chat", function()
-      if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= ev.buf then
+      if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= ev.buf or vim.w[win].isovim_slot then
         return
       end
       local ws, agent = M.agent_of(ev.buf)
@@ -198,6 +258,7 @@ function M.sync(scope_name)
   local isovim = require("isovim")
   scope_name = scope_name or isovim.current_scope
   local scope = require("isovim.scope")
+  mark_slots()
   local chats, placeholders = {}, {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.b[buf].isovim_placeholder then
