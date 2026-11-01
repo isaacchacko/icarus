@@ -17,6 +17,8 @@
 --                             root, isovim.rootmode), then removed when its asker collects it
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
+--   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
+--                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
 -- The PRs surface is isovim's own, no file: M.list adds it for a repo with PRs registered (M.prs_entry).
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
 -- <file>.surface.error beside it (foo.surface's is foo.surface.error) saying why, rewritten as
@@ -47,7 +49,7 @@ end
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"prs"|"question"|"file"|"folder"|"chat"|"broken"
+---@field type "markdown"|"tasks"|"prs"|"page"|"question"|"file"|"folder"|"chat"|"broken"
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -59,7 +61,10 @@ end
 ---@field color? string
 ---@field consumable? boolean
 ---@field consumed? boolean consumable and opened since it last changed
----@field body? string markdown and tasks: the text after the frontmatter
+---@field body? string markdown, tasks and page: the text after the frontmatter
+---@field body_line? integer page: the file's line its body starts on
+---@field comments_open? integer page: how many of its comments are open
+---@field waiting? integer page: how many of them wait on the user (an agent's reply asked them); prs: PRs
 ---@field tasks? {status: string, text: string, line: integer}[] tasks
 ---@field counts? table<string, integer> tasks: how many under each heading
 ---@field question? string question
@@ -398,7 +403,7 @@ local function parse_markdown(entry, text)
   if not fields then
     return start
   end
-  entry.body = body
+  entry.body, entry.body_line = body, start
   local err = apply_fields(entry, fields)
   if err then
     return err
@@ -427,18 +432,21 @@ local function parse(repo, base, state, taken)
   local file = M.dir(repo) .. "/" .. base
   local text = read_file(file) or ""
   local markdown = base:match("%.md$") ~= nil
+  local page = vim.startswith(base, "pages/")
   local entry = {
     repo = repo,
-    name = markdown and base:sub(1, -4) or base:sub(1, -9),
+    name = M.name_of(base),
     file = file,
     base = base,
-    type = base == "tasks.md" and "tasks" or "markdown",
+    type = page and "page" or base == "tasks.md" and "tasks" or "markdown",
     needs_you = false,
     error_file = M.error_file(file),
   }
   entry.title = entry.type == "tasks" and "Task Board" or entry.name
   local err
-  if markdown then
+  if page and taken[entry.name] ~= base then
+    err = ("%s already has the name %s"):format(taken[entry.name], entry.name)
+  elseif markdown then
     err = parse_markdown(entry, text)
   elseif taken[entry.name] then
     entry.type = "broken"
@@ -447,6 +455,13 @@ local function parse(repo, base, state, taken)
     err = parse_surface(entry, text)
   end
   entry.error = err
+  if page then
+    -- Its comments are part of it: a new one, a reply or a resolve changes the page's row.
+    local comments, raw = require("isovim.pages").comments(repo, entry.name)
+    entry.comments_open, entry.waiting = require("isovim.pages").summary(comments)
+    entry.needs_you = entry.waiting > 0
+    text = text .. "\0" .. raw
+  end
   entry.sig = vim.fn.sha256(text .. "\0" .. (err or ""))
   local seen = state[base] or {}
   entry.consumed = entry.consumable and seen.consumed == entry.sig or nil
@@ -456,6 +471,12 @@ local function parse(repo, base, state, taken)
   local stat = vim.uv.fs_stat(file)
   entry.created = entry.created or seen.first or (stat and stat.mtime.sec) or os.time()
   return entry
+end
+
+-- A surface's name from its file under iso/: its stem.
+function M.name_of(base)
+  base = base:gsub("^pages/", "")
+  return base:match("^(.*)%.md$") or base:match("^(.*)%.surface$") or base
 end
 
 -- A repo's surfaces, parsed, by name; nothing is written.
@@ -475,7 +496,21 @@ function M.read(repo, state)
       end
     end
   end
+  -- Pages, after the rest: a name another surface has already makes the page broken.
+  local pages = {}
+  if vim.fn.isdirectory(dir .. "/pages") == 1 then
+    for base, kind in vim.fs.dir(dir .. "/pages") do
+      if kind ~= "directory" and not vim.startswith(base, ".") and base:match("%.md$") then
+        pages[#pages + 1] = "pages/" .. base
+      end
+    end
+  end
+  table.sort(pages)
+  for _, base in ipairs(pages) do
+    taken[M.name_of(base)] = taken[M.name_of(base)] or base
+  end
   table.sort(bases)
+  vim.list_extend(bases, pages)
   return vim.tbl_map(function(base)
     return parse(repo, base, state, taken)
   end, bases)
@@ -505,13 +540,14 @@ local function locked(repo, fn)
       vim.uv.sleep(10)
     end
   end
-  local ok, result = pcall(fn)
+  local ok, result, err = pcall(fn)
   vim.uv.fs_rmdir(lock)
   if not ok then
     error(result, 0)
   end
-  return result
+  return result, err
 end
+M.locked = locked
 
 local function publish(entry, what, details)
   events.publish(events.topic("surface", entry.repo, entry.name, what), vim.tbl_extend("force", {
@@ -580,8 +616,7 @@ function M.scan(repo, quiet)
     end
     for base, seen in pairs(state) do
       if not present[base] then
-        local markdown = base:match("%.md$")
-        publish({ repo = repo, name = markdown and base:sub(1, -4) or base:sub(1, -9), file = M.dir(repo) .. "/" .. base,
+        publish({ repo = repo, name = M.name_of(base), file = M.dir(repo) .. "/" .. base,
           type = seen.type }, "removed")
         state[base] = nil
         dirty = true
@@ -990,6 +1025,9 @@ function M.open(entry)
     -- Rendered, with an input box to the repo's router under it.
     require("isovim.surface_view").open(entry)
     M.consume(entry)
+  elseif entry.type == "page" then
+    -- Rendered, its comments drawn on it, commented on in the input box under it.
+    require("isovim.surface_view").open(entry)
   elseif entry.type == "broken" then
     reveal(entry.file)
     M.consume(entry)
@@ -1060,9 +1098,10 @@ function M.watch(on_change)
     end
   end
   local discover
+  -- True when it starts watching dir.
   local function watch_dir(dir, on_event)
     if handles[dir] then
-      return
+      return false
     end
     local handle = assert(vim.uv.new_fs_event())
     if handle:start(dir, {}, function(err)
@@ -1071,9 +1110,10 @@ function M.watch(on_change)
       end
     end) then
       handles[dir] = handle
-    else
-      handle:close()
+      return true
     end
+    handle:close()
+    return false
   end
   local function soon(key, fn)
     local timer = timers[key] or assert(vim.uv.new_timer())
@@ -1107,12 +1147,17 @@ function M.watch(on_change)
       end
     end
     for _, repo in ipairs(M.repos()) do
-      if not M.cache[repo] then
-        watch_dir(M.dir(repo), function()
-          soon(repo, function()
-            rescan(repo)
-          end)
+      local function changed()
+        soon(repo, function()
+          rescan(repo)
         end)
+      end
+      if not M.cache[repo] then
+        watch_dir(M.dir(repo), changed)
+        rescan(repo)
+      end
+      -- Its pages and their comments, once it has any (made later: within 5s, and scanned then).
+      if vim.fn.isdirectory(M.dir(repo) .. "/pages") == 1 and watch_dir(M.dir(repo) .. "/pages", changed) then
         rescan(repo)
       end
     end

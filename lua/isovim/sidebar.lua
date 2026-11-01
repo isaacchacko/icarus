@@ -297,6 +297,7 @@ end
 
 local SURFACE_GLYPHS = {
   markdown = { "\u{f48a}", "Special" }, -- oct-markdown
+  page = { "\u{f15c}", "Special" }, -- fa-file-text
   question = { "?", "DiagnosticWarn" },
   chat = { "●", "DiagnosticOk" },
   tasks = { "\u{f0ae}", "Special" }, -- fa-tasks
@@ -317,12 +318,12 @@ function M.surface_chunks(entry)
     if entry.exists == false then
       hl = "DiagnosticWarn"
     end
-  elseif kind == "markdown" and type(entry.icon) == "string" and entry.icon ~= "" then
+  elseif (kind == "markdown" or kind == "page") and type(entry.icon) == "string" and entry.icon ~= "" then
     glyph, hl = entry.icon, (entry.color and repos.highlight(entry.color)) or "Special"
   else
     glyph, hl = unpack(SURFACE_GLYPHS[kind] or SURFACE_GLYPHS.markdown)
   end
-  if kind == "markdown" and entry.color and hl == "Special" then
+  if (kind == "markdown" or kind == "page") and entry.color and hl == "Special" then
     hl = repos.highlight(entry.color) or hl
   end
   local row = { { glyph, hl }, { " " }, { title, title_hl } }
@@ -354,6 +355,13 @@ function M.surface_chunks(entry)
       row[#row + 1] = { ("  %d waiting on you"):format(entry.waiting), "DiagnosticWarn" }
     else
       row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
+    end
+  elseif kind == "page" then
+    -- Its open comments; in the Inbox, how many of them wait on you.
+    if (entry.waiting or 0) > 0 then
+      row[#row + 1] = { ("  %d waiting on you"):format(entry.waiting), "DiagnosticWarn" }
+    elseif (entry.comments_open or 0) > 0 then
+      row[#row + 1] = { ("  \u{f075} %d"):format(entry.comments_open), "Comment" }
     end
   elseif (kind == "file" or kind == "folder") and entry.exists == false then
     row[#row + 1] = { "  missing", "DiagnosticWarn" }
@@ -1583,6 +1591,7 @@ function M.help()
   section("ACP chat", acp_keys.chat)
   section("Prompt queue (under the chat, while prompts wait)", acp_keys.queue)
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
+  section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("PRs surface (on a PR's line)", vim.tbl_map(function(key)
     return { key[1], key[2] }
   end, require("isovim.surface_view").prs_keys))

@@ -251,11 +251,33 @@ one tab, isovim, in every scope.
 | type | made by | shown as |
 |---|---|---|
 | markdown | the router writes `name.md` with frontmatter (`name`, `icon`, `color`, `consumable`) | rendered markdown and an input box (it takes images, as the chat's does); the router rewrites it in place |
+| page | the router writes `pages/<name>.md` (frontmatter as markdown's), for design docs; its comments are `pages/<name>.comments.jsonl` beside it | rendered markdown you comment on line by line (see Pages below); a plain row with how many comments are open, in the Inbox only while a reply asks you something |
 | question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
 | file / folder | `iso router surface file\|folder <path>` | the file as a tab in the main window; the folder as the explorer's root |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
 | Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed, alone in its window with no input box; one that doesn't parse shown as it is and marked broken |
 | PRs | isovim, for a repo (or the root) with PRs registered by `iso <role> pr` (which keeps who registered each and when) | drawn by isovim (`isovim_prs`) from the PRs' cache, never waiting on gh: grouped Open, Draft, Merged today, Closed, a merged or closed one gone a day after; a line each with its CI glyph, `#n` and title, its review (approved, changes requested, review required), the agent that registered it and its age. `<CR>` opens the PR in the browser, `y` copies its URL, `c` opens its Files changed, `a` the agent's chat. A plain row after the Task Board with how many it lists; in the Inbox, with how many, while a PR waits on you (open, not a draft, CI green, no changes requested) |
+
+**Pages** are for reading and discussing what a router writes, design docs first. A page holds no
+state: comments live beside it, one JSON object a line (`id` c1, c2…, the `quote` of the lines it's
+on, their `from`/`to` lines in the file, the `heading` path above them, `text`, `by`, `at`, `status`
+open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the page's tab:
+- `c` comments on the line under the cursor, `V`/`v` then `c` (or `<CR>`) on the lines selected:
+  the input box under the page takes it (its title says which lines, under which heading; `<C-c>`
+  cancels), `<CR>` keeps it and sends it to the repo's router as a prompt, `[page comment
+  <repo>/<page>#<id>] on "<heading>" lines a-b of <file>`, the quoted lines, your words and how to
+  answer.
+- An open comment shows where its quote is now, found again by its text after the router rewrites
+  the page (the match closest to where it was, then its first line alone, then its heading, else
+  the line it was on): a sign beside its lines, and under them a dim line, its first line and how
+  many replies. `<CR>` on it opens all of it and its replies (and closes it again), `a` replies
+  (sent to the router as `[page reply ...]`), `]c` / `[c` go to the next and previous, `r` shows the
+  resolved ones too, dimmed with their note, or hides them. Tables are render-markdown's, as in any
+  markdown surface, so a page's lines stay the file's lines.
+- Agents answer with `iso <role> page comments <page> [--all]`, `iso <role> page reply <page> <id>
+  "..." [--ask]` and `iso <role> page resolve <page> <id> ["what changed"]`: the router changes the
+  page wherever a comment asks, then resolves it with a note, and the comment leaves the page. A
+  reply with `--ask` asks you something: the page waits on you, in the Inbox, until you reply.
 
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
 - A question opens as a tab in the main window like a markdown surface, never as a popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a

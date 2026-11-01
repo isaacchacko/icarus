@@ -45,6 +45,7 @@ In the sidebar, `s` spawns a worker in the repo under the cursor and opens its c
   | surface | made by | shows |
   |---|---|---|
   | markdown | the router writes `<name>.md` (optional frontmatter: `name`, `icon`, `color`, `consumable`) | the rendered file, rewritten in place |
+  | page | the router writes `pages/<name>.md`, design docs and the like | the rendered page, which you comment on: `c` on a line, or `V` then `c` on lines, writes a comment in the box under it, kept in `pages/<name>.comments.jsonl` and sent to the router, which updates the page and resolves it (`iso <role> page resolve <page> <id> "what changed"`) or replies (`iso <role> page reply <page> <id> "..." [--ask]`; `--ask` puts the page in your Inbox until you reply). Open comments show beside their lines, found again by their text as the page changes: `<CR>` opens one with its replies, `a` replies, `]c` / `[c` step through them, `r` shows the resolved ones. Its row shows how many are open |
   | question | `iso router surface question <json\|file\|->` | `{question, options: [{label, description}], multi?, other?}`; the router blocks until it's answered. Enter on it in the Inbox opens it as a buffer: pick by number or `<CR>` (multi: tick, then Submit), your own words in the box under it |
   | file / folder | `iso router surface file\|folder <path>` | the file as a tab, the folder as the explorer's root |
   | chat | `iso router surface chat <agent>` | an agent's chat, gone once you open it |

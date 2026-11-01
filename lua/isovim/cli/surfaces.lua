@@ -1,5 +1,6 @@
 -- Surfaces on the command line (isovim.surfaces): iso router surface question|file|folder|chat puts
--- one in the router's repo's Inbox, iso answer answers a question (also iso <root|repo-root>
+-- one in the router's repo's Inbox, iso <role> page comments|reply|resolve reads and answers the
+-- comments on a page (isovim.pages), iso answer answers a question (also iso <root|repo-root>
 -- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first. In root mode
 -- the root answers the Inbox's questions with you, the first answer winning (isovim.rootmode).
 local store = require("isovim.store")
@@ -281,6 +282,84 @@ end
 function M.raise(args)
   table.insert(args, "--raise")
   M.answer(args)
+end
+
+-- A page from what was typed: <repo>/<name>, or a name in the caller's repo.
+local function page_ref(text)
+  local pages = require("isovim.pages")
+  local repo, name = text:match("^(.*)/([^/]+)$")
+  repo = repo and surfaces.key(repo:lower())
+  if not repo then
+    repo, name = my_repo(nil), text
+  end
+  name = name:gsub("%.md$", "")
+  if not vim.uv.fs_stat(pages.file(repo, name)) then
+    fail(("%s has no page %s (%s)"):format(repo, name, pages.file(repo, name)))
+  end
+  return repo, name
+end
+
+local function print_comment(pages, comment)
+  local lines = comment.from == comment.to and ("line %d"):format(comment.from) or ("lines %d-%d"):format(comment.from, comment.to)
+  out(("%s [%s] %s%s, %s:"):format(comment.id, comment.status, lines, comment.heading ~= "" and (' "' .. comment.heading .. '"') or "",
+    os.date("%Y-%m-%d %H:%M", comment.at)))
+  for _, line in ipairs(vim.split(comment.quote, "\n", { plain = true })) do
+    out("  > " .. line)
+  end
+  for _, line in ipairs(vim.split(comment.text, "\n", { plain = true })) do
+    out("  " .. line)
+  end
+  for _, reply in ipairs(comment.replies) do
+    out(("  ↳ %s%s: %s"):format(reply.by, reply.ask and " asks" or "", reply.text))
+  end
+  if comment.status == "resolved" then
+    out(("  resolved by %s%s"):format(comment.resolved_by or "?", comment.note and (": " .. comment.note) or ""))
+  elseif pages.waiting(comment) then
+    out("  (waiting on the user)")
+  end
+end
+
+-- iso <role> page comments|reply|resolve ...: a page's comments, read, answered and resolved.
+function M.page(args)
+  local pages = require("isovim.pages")
+  local sub = table.remove(args, 1)
+  local usage = "usage: iso <role> page comments <page> [--all] | reply <page> <id> <text...> [--ask] | resolve <page> <id> [<note...>]"
+  if sub == "comments" then
+    local all = flag(args, "--all")
+    local repo, name = page_ref(args[1] or fail(usage))
+    local shown = 0
+    for _, comment in ipairs((pages.comments(repo, name))) do
+      if all or comment.status == "open" then
+        print_comment(pages, comment)
+        shown = shown + 1
+      end
+    end
+    if shown == 0 then
+      out(("%s/%s has no %scomments"):format(repo, name, all and "" or "open "))
+    end
+    return
+  elseif sub ~= "reply" and sub ~= "resolve" then
+    fail(usage)
+  end
+  local ask = flag(args, "--ask")
+  local repo, name = page_ref(args[1] or fail(usage))
+  local id = args[2] or fail(usage)
+  local text = vim.trim(table.concat(vim.list_slice(args, 3), " "))
+  local me = require("isovim.cli.roles").caller() or "user"
+  local comment, err
+  if sub == "reply" then
+    if text == "" then
+      fail(usage)
+    end
+    comment, err = pages.reply(repo, name, id, me, text, ask)
+  else
+    comment, err = pages.resolve(repo, name, id, me, text ~= "" and text or nil)
+  end
+  if not comment then
+    fail(err)
+  end
+  surfaces.scan(repo)
+  out(("%s/%s %s %s"):format(repo, name, id, sub == "reply" and (ask and "asks the user now" or "has your reply") or "is resolved"))
 end
 
 -- iso __surfaces [<repo>...]: the repos' surfaces (default every repo's), scanned, as JSON.

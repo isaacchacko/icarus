@@ -12,6 +12,10 @@
 -- does, and starts the router if it isn't running. It takes images as the chat's composer does
 -- (isovim.acp.images), sent with iso send --image.
 --
+-- A page (isovim.pages): rendered as a markdown surface is, with its comments drawn on it (a sign
+-- and a note under the lines each is on) and keys to comment on lines, reply and step through them;
+-- its input box takes a comment or a reply as well as words to the router.
+--
 -- A question: who asked and what, its options numbered as the chat's question box draws them
 -- (isovim.acp.look's palette), answered in the buffer: <CR> on an option or its number picks it, or
 -- for a multi question toggles it, and Submit (or s) sends what's ticked. One that takes your own
@@ -60,7 +64,7 @@ M.prs_keys = {
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"tasks"|"prs"|"question"
+---@field kind "markdown"|"tasks"|"prs"|"page"|"question"
 ---@field pr_rows? table<integer, isovim.Pr> prs: the PR each line is, for its keys
 ---@field buf integer the rendered view
 ---@field input integer the input box
@@ -283,6 +287,17 @@ function M.render(entry)
     return board(entry)
   elseif entry.type == "prs" then
     return prs_board(entry)
+  elseif entry.type == "page" then
+    -- Its body line for line (no title over it, nothing trimmed from its top), so a comment's
+    -- lines are the file's less where the body starts (isovim.pages.draw).
+    local lines = vim.split(entry.body or "", "\n", { plain = true })
+    while #lines > 0 and vim.trim(lines[#lines]) == "" do
+      table.remove(lines)
+    end
+    if entry.error then
+      table.insert(lines, 1, ("> **%s is broken:** %s"):format(entry.base, entry.error))
+    end
+    return lines, {}
   end
   local lines = {}
   if entry.error then
@@ -325,6 +340,10 @@ local function draw_surface(view, entry)
   local lines, marks, rows = M.render(entry)
   view.pr_rows = rows
   set_lines(view.buf, lines, marks)
+  if view.kind == "page" then
+    view.page_offset = (entry.body_line or 1) - 1 - (entry.error and 1 or 0)
+    require("isovim.pages").draw(view)
+  end
 end
 
 function set_lines(buf, lines, marks)
@@ -339,13 +358,18 @@ function set_lines(buf, lines, marks)
 end
 
 local function winbar(view)
-  if view.kind == "question" then
+  local page = view.kind == "page" and require("isovim.pages").winbar(view)
+  if page then
+    return page
+  elseif view.kind == "question" then
     return view.entry.multi and " ↳ your own answer, with what's ticked · <CR> sends" or " ↳ your own answer · <CR> sends"
   end
   local reader = M.reader(view.repo)
   return reader and (" ↳ to %s · <CR> sends · <C-v> image"):format(reader:gsub("%%", "%%%%"))
     or (" no router in %s to send to"):format(view.repo)
 end
+
+M.winbar = winbar
 
 local function input_text(view)
   return vim.trim(table.concat(vim.api.nvim_buf_get_lines(view.input, 0, -1, false), "\n"))
@@ -670,7 +694,7 @@ end
 
 -- The keys of the view and its input box, and the box going with the view.
 local function bind(view)
-  if view.kind == "markdown" then
+  if view.kind == "markdown" or view.kind == "page" then
     images.setup(view.input, surfaces.dir(view.repo) .. "/images")
   end
   local function map(modes, lhs, fn, desc)
@@ -741,6 +765,8 @@ local function bind(view)
         end
       end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
     end
+  elseif view.kind == "page" then
+    require("isovim.pages").bind(view)
   elseif view.kind == "markdown" then
     for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
       vim.keymap.set("n", lhs, function()
@@ -844,6 +870,8 @@ function M.submit(view)
   end
   if text == "" then
     return
+  elseif view.kind == "page" and require("isovim.pages").submit(view, text) then
+    return
   end
   local reader = M.reader(view.repo)
   if not reader then
@@ -885,7 +913,10 @@ end
 function M.dress(view, win)
   local question = view.kind == "question"
   view_window(win, question, view.kind == "tasks" or view.kind == "prs")
-  local boxed = view.kind == "markdown" or (question and view.entry.other and pending(view))
+  if view.kind == "page" then
+    require("isovim.pages").dress(win)
+  end
+  local boxed = view.kind == "markdown" or view.kind == "page" or (question and view.entry.other and pending(view))
   local input_win = vim.fn.bufwinid(view.input)
   if input_win ~= -1 and (view.under ~= win or not boxed) then
     pcall(vim.api.nvim_win_close, input_win, true)
@@ -954,7 +985,7 @@ function M.rebind()
   for _, view in pairs(M.views) do
     if vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
       for _, buf in ipairs({ view.buf, view.input }) do
-        for _, mode in ipairs({ "n", "i" }) do
+        for _, mode in ipairs({ "n", "i", "x" }) do
           for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
             if vim.startswith(map.desc or "", "isovim: ") then
               vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)

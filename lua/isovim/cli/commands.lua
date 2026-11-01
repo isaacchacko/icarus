@@ -38,10 +38,10 @@ end
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
   "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug" }
 M.only = {
-  worker = { "wt", "setup", "teardown", "run" },
-  router = { "surface", "pr", "rm", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer", "raise", "rm" },
-  root = { "answer", "raise", "rm" },
+  worker = { "wt", "setup", "teardown", "run", "page" },
+  router = { "surface", "page", "pr", "rm", "wt", "setup", "teardown", "run" },
+  ["repo-root"] = { "answer", "raise", "rm", "page" },
+  root = { "answer", "raise", "rm", "page" },
 }
 
 M.header = [=[
@@ -712,6 +712,29 @@ M.role_actions = {
                                      tasks.md, the Task Board (headings todo, doing,
                                      waiting, blocked, done; one task a line). From a
                                      shell, --repo owner/repo says whose]=],
+  },
+  page = { name = "page", module = "surfaces",
+    subs = {
+      comments = { args = { "<text>" }, flags = { ["--all"] = false } },
+      reply = { args = { "<text>", "<text>", "<text>..." }, flags = { ["--ask"] = false } },
+      resolve = { args = { "<text>", "<text>", "<text>..." } },
+    },
+    summary = "read, answer and resolve the user's comments on a page",
+    help = [=[
+       iso page comments <page> [--all]
+                                     a page's open comments (--all: resolved ones too),
+                                     each with the lines it's on, what they said then
+                                     and its replies. A page is iso/pages/<name>.md in
+                                     your repo's iso/, markdown the router writes for
+                                     the user to read and comment on (design docs go
+                                     there); <page> is its name, or <repo>/<name>
+       iso page reply <page> <id> <text...> [--ask]
+                                     reply under a comment; --ask when it asks the
+                                     user something: the page waits on them, in their
+                                     Inbox, until they reply
+       iso page resolve <page> <id> [<note...>]
+                                     resolve a comment once the page does what it asks,
+                                     with a note of what changed; it leaves the page]=],
   },
   promote = { name = "promote", module = "roles",
     args = { "<agent>|router|repo-root|root", "router|repo-root|root", "<text>" },
