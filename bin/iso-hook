@@ -45,16 +45,19 @@ encode() {
   printf %s "${value//./%2E}"
 }
 
-# Every state the hooks write goes through here; a change is published as agent.<addr>.status, the
-# address encoded in the topic and raw in the details.
+# Every state the hooks write goes through here; a change is published as
+# agent.<scope>.<id>.status, the address split at its last "/" (a scope may hold one, an id never),
+# each part encoded in the topic and raw in the details.
 set_state() {
-  local previous="" addr
+  local previous="" addr scope id
   IFS= read -r previous 2>/dev/null <"$ISOVIM_STATE"
   printf %s "$1" >"$ISOVIM_STATE"
   [ "$previous" = "$1" ] && return
   [ -n "$previous" ] && previous="\"$previous\"" || previous=null
   addr="$(address)"
-  publish "agent.$(encode "$addr").status" "\"addr\":\"$addr\",\"state\":\"$1\",\"previous\":$previous"
+  scope="${addr%/*}" id="${addr##*/}"
+  publish "agent.$(encode "$scope").$(encode "$id").status" \
+    "\"addr\":\"$addr\",\"scope\":\"$scope\",\"id\":\"$id\",\"state\":\"$1\",\"previous\":$previous"
 }
 
 # The open TUI notifies on its own, knowing whether the chat is on screen.

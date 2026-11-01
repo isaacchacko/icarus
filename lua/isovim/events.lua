@@ -4,18 +4,22 @@
 -- FSEvents or inotify, through libuv) and reads only the bytes added since it last looked: nothing
 -- runs while nothing happens. Past 1 MiB the log moves to events.jsonl.1 and a new one starts.
 --
--- Topics are dot-separated parts; an address (<ws>/<agent>, <owner>/<repo>/aN) or a repo
--- (<owner>/<repo>) is one part:
---   agent.<addr>.status    its hooks wrote a new state      {addr, state, previous}
---   agent.<addr>.spawned   its program started              {addr, kind, name, role, parent}
---   agent.<addr>.exited    its program ended                {addr, reason: stopped|ended}
---   agent.<addr>.promoted  its role changed                 {addr, role, previous}
---   msg.<addr>             a message was typed into it      {addr, from, kind, id, text}
+-- Topics are dot-separated parts. An agent is two parts, its scope and its id: a new-layout agent's
+-- scope is its repo key (<owner>/<repo>, or "_" in no repo) and its id aN; a legacy agent's scope
+-- is its workspace id and its id the agent's. A repo (<owner>/<repo>) is one part.
+--   agent.<scope>.<id>.status    its hooks wrote a new state   {addr, scope, id, state, previous}
+--   agent.<scope>.<id>.spawned   its program started           {addr, scope, id, kind, name, role, parent}
+--   agent.<scope>.<id>.exited    its program ended             {addr, scope, id, reason: stopped|ended}
+--   agent.<scope>.<id>.promoted  its role changed              {addr, scope, id, role, previous}
+--   msg.<scope>.<id>             a message was typed into it   {addr, scope, from, kind, id, text}
 --   pr.<repo>.<n>.state|ci|review   a registered PR changed   {repo, number, url, ws, title, ..., previous}
--- Inside a part "%" is written %25 and then "." %2E (M.encode), so agent owner/site.com/a3's status
--- is agent.owner/site%2Ecom/a3.status. Every publisher builds its topic with M.topic, which encodes
--- each part (bin/iso-hook escapes the same way); patterns are matched against the encoded topic as
--- given, never decoded, and the details carry addr and repo raw.
+-- So agent.<owner>/<repo>.** is everything about a repo's agents, agent.<ws>.*.status every state
+-- in a workspace, agent.*.*.status everyone's. Inside a part "%" is written %25 and then "." %2E
+-- (M.encode), so agent owner/site.com/a3's status is agent.owner/site%2Ecom.a3.status. Every
+-- publisher builds its topic with M.topic, which encodes each part (bin/iso-hook escapes the same
+-- way); patterns are matched against the encoded topic as given, never decoded, and the details
+-- carry addr (<scope>/<id>), scope and repo raw. An agent event's id is the agent's; a msg's id is
+-- its stamp's, as before, the agent's being the end of addr.
 -- Surfaces (surface.*), the root's decisions (root.*) and other hosts (host.*, <host>: prefixes)
 -- publish here too once they exist.
 local store = require("isovim.store")
@@ -28,11 +32,11 @@ M.max_bytes = 1024 * 1024
 
 -- What `iso listen` completes and its help lists.
 M.topics = {
-  { "agent.*.status", "an agent's state changed" },
-  { "agent.*.spawned", "an agent started" },
-  { "agent.*.exited", "an agent stopped or ended" },
-  { "agent.*.promoted", "an agent's role changed" },
-  { "msg.*", "a message reached an agent" },
+  { "agent.*.*.status", "an agent's state changed" },
+  { "agent.*.*.spawned", "an agent started" },
+  { "agent.*.*.exited", "an agent stopped or ended" },
+  { "agent.*.*.promoted", "an agent's role changed" },
+  { "msg.*.*", "a message reached an agent" },
   { "pr.*.*.state", "a PR opened, merged, closed or left draft" },
   { "pr.*.*.ci", "a PR's checks changed" },
   { "pr.*.*.review", "a PR's review decision changed" },
@@ -77,11 +81,17 @@ function M.publish(topic, details)
   end
 end
 
--- An agent's event, agent.<addr>.<what>, its details carrying the raw address.
+-- An agent's event, agent.<scope>.<id>.<what>; the details carry the raw address, scope and id.
 ---@param details? table
 function M.publish_agent(ws, agent, what, details)
-  local addr = ws .. "/" .. agent
-  M.publish(M.topic("agent", addr, what), vim.tbl_extend("force", { addr = addr }, details or {}))
+  M.publish(M.topic("agent", ws, agent, what), vim.tbl_extend("force", { addr = ws .. "/" .. agent, scope = ws, id = agent }, details or {}))
+end
+
+-- A message typed into an agent, msg.<scope>.<id>; the details carry the raw address and scope, and
+-- their id is the message's stamp.
+---@param details table
+function M.publish_msg(ws, agent, details)
+  M.publish(M.topic("msg", ws, agent), vim.tbl_extend("force", { addr = ws .. "/" .. agent, scope = ws }, details))
 end
 
 -- Whether a topic matches a pattern: parts split on ".", * is any one part, ** any number of them.

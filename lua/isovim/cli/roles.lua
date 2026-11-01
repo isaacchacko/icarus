@@ -201,8 +201,7 @@ local function send_as(from, ws, agent, text)
   if result.code ~= 0 then
     fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
   end
-  local events, addr = require("isovim.events"), ws.id .. "/" .. agent.id
-  events.publish(events.topic("msg", addr), { addr = addr, from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
+  require("isovim.events").publish_msg(ws.id, agent.id, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
 end
 
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no

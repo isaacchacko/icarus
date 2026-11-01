@@ -281,10 +281,12 @@ try:
     print("\n# events")
     evs = [json.loads(line) for line in (iso.tmp / "home" / "events" / "events.jsonl").read_text().splitlines()]
     topics = [e["topic"] for e in evs]
-    check(f"agent.{W2}.promoted" in topics and f"agent.{W3}.promoted" in topics, "promotions publish agent.<addr>.promoted", topics[-20:])
-    check(any(e["topic"] == f"msg.{W3}" and "promoted to repo-root" in e.get("text", "") for e in evs), "the promotion message publishes msg.<addr>")
+    def at(addr):  # <scope>.<id>, each encoded as isovim.events.encode does
+        return ".".join(part.replace("%", "%25").replace(".", "%2E") for part in str(addr).rsplit("/", 1))
+    check(f"agent.{at(W2)}.promoted" in topics and f"agent.{at(W3)}.promoted" in topics, "promotions publish agent.<scope>.<id>.promoted", topics[-20:])
+    check(any(e["topic"] == f"msg.{at(W3)}" and "promoted to repo-root" in e.get("text", "") for e in evs), "the promotion message publishes msg.<scope>.<id>")
     if fork:
-        check(any(e["topic"] == f"agent.{fork}.promoted" and e.get("fork_of") == R for e in evs), "the root fork publishes promoted, fork_of the router")
+        check(any(e["topic"] == f"agent.{at(fork)}.promoted" and e.get("fork_of") == R for e in evs), "the root fork publishes promoted, fork_of the router")
 
     print("\n# checkhealth")
     a, b = run("checkhealth"), run("doctor")

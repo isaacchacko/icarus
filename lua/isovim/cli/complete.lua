@@ -82,8 +82,9 @@ local KINDS = {
       found[#found + 1] = { role }
     end
   end,
-  -- Event patterns: each topic for any agent or PR, and everything about one agent or one PR, their
-  -- parts encoded as topics have them (a repo's "." as %2E).
+  -- Event patterns: each topic for any agent or PR; everything about one scope (a repo's or a
+  -- workspace's agents), then one agent in it, or one PR; their parts encoded as topics have them (a
+  -- repo's "." as %2E).
   topic = function(found)
     local events = require("isovim.events")
     for _, topic in ipairs(events.topics) do
@@ -91,11 +92,12 @@ local KINDS = {
     end
     local prs = {}
     for _, ws in ipairs(store.list()) do
+      found[#found + 1] = { events.topic("agent", ws.id) .. ".**", "every agent in " .. ws.name }
+      found[#found + 1] = { events.topic("msg", ws.id) .. ".*", "messages to every agent in " .. ws.name }
       for _, agent in ipairs(store.agents(ws.id)) do
-        local address = ws.id .. "/" .. agent.id
         local about = ws.name .. " · " .. agent.name
-        found[#found + 1] = { events.topic("agent", address) .. ".*", about }
-        found[#found + 1] = { events.topic("msg", address), "messages to " .. about }
+        found[#found + 1] = { events.topic("agent", ws.id, agent.id) .. ".*", about }
+        found[#found + 1] = { events.topic("msg", ws.id, agent.id), "messages to " .. about }
       end
       for _, url in ipairs(store.prs(ws.id)) do
         local repo, number = url:match("github%.com/([^/]+/[^/]+)/pull/(%d+)")

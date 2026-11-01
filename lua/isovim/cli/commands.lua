@@ -328,11 +328,15 @@ M.list = {
                                      print each event whose topic matches a pattern, one JSON
                                      line {topic, time, ...} as it happens, until killed (made
                                      for a Monitor); --once exits after the first. Topics:
-                                     agent.<agent>.status|spawned|exited|promoted, msg.<agent>,
-                                     pr.<owner/repo>.<n>.state|ci|review. In a part "%" is
-                                     written %25 and "." %2E (agent.owner/site%2Ecom/a3.status),
-                                     and patterns match it as written. In a pattern * is any
-                                     one dot-separated part, ** any number (quote them). --since
+                                     agent.<scope>.<id>.status|spawned|exited|promoted,
+                                     msg.<scope>.<id>, pr.<owner/repo>.<n>.state|ci|review,
+                                     where an agent's scope is its repo (owner/repo, or _) and
+                                     its id aN, or a legacy one's its workspace and agent ids.
+                                     In a part "%" is written %25 and "." %2E
+                                     (agent.owner/site%2Ecom.a3.status), and patterns match it
+                                     as written. In a pattern * is any one dot-separated part,
+                                     ** any number (quote them): agent.owner/repo.** is a whole
+                                     repo, agent.*.*.status every agent's state. --since
                                      starts from a time (epoch seconds, or 90s, 10m, 2h, 1d ago)]=],
   },
   { name = "closed", module = "events",
