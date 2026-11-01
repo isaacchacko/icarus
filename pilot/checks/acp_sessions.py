@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from iso import REPO, Iso  # noqa: E402
 
 BIN = str(REPO / "bin" / "iso")
+DOT = f"{DOT}" if sys.platform == "darwin" else "●"
 fails = []
 
 
@@ -169,7 +170,7 @@ try:
     print("# a restart resumes the session")
     ask("a0", "one", "one")
     iso.cli("open", a0)
-    iso.wait(lambda: has("a0", "⏺ reply to: one"), "a0's chat")
+    iso.wait(lambda: has("a0", f"{DOT} reply to: one"), "a0's chat")
     rc, _, err = run("restart", a0)
     check(rc == 0, "iso restart", err)
     iso.wait(lambda: any(f["params"]["sessionId"] == sid for f in frames("session/resume")), "session/resume", 20)
@@ -177,7 +178,7 @@ try:
     check(not frames("session/new")[1:], "no new session for it", len(frames("session/new")))
     check(history("a0") == "history: one", "the resumed session remembers what came before", history)
     iso.wait(lambda: has("a0", f"[resumed session {sid}]"), "the chat says it resumed")
-    check(has("a0", "⏺ reply to: one"), "and keeps what it had")
+    check(has("a0", f"{DOT} reply to: one"), "and keeps what it had")
 
     print("\n# rewind: edit an earlier prompt, the agent goes on from before it, the files come back")
     ask("a0", "run echo v1 > notes.txt", "ran: echo v1 > notes.txt", typed=True)
@@ -244,11 +245,11 @@ try:
     iso.cli("open", a0)
     iso.wait(lambda: iso.lua("return require('isovim.acp.chat').get('acme/app', 'a0') ~= nil"
                              " and vim.fn.bufwinid(require('isovim.acp.chat').get('acme/app', 'a0').buf) ~= -1"), "a0 on screen")
-    to_chat("a0", "⏺ reply to: one")
+    to_chat("a0", f"{DOT} reply to: one")
     iso.keys("Space", "i", "f")
     iso.wait(lambda: any(s["how"] == "fork" for s in sessions_of("a2")), "a2, forked at that message", 30)
     check(prompts("a2") == ["one"], "its journal goes up to that message", prompts("a2"))
-    iso.wait(lambda: chat("a2") is not None and has("a2", "⏺ reply to: one"), "its chat shows it")
+    iso.wait(lambda: chat("a2") is not None and has("a2", f"{DOT} reply to: one"), "its chat shows it")
     check(not has("a2", "❯ history"), "and nothing after it")
     check(history("a2") == "history: one", "its session remembers only that far")
     check(record("a2").get("fork_at", "").startswith("msg_"), "forked at the message's id", record("a2"))
@@ -278,7 +279,7 @@ try:
           "the picker lists the agent's sessions, its current one first", picked)
     check(any(" · one · " + sid[:8] in p["label"] for p in picked), "each with its first prompt", picked)
     iso.wait(lambda: has("a0", f"[resumed session {rewound_sid}]"), "the chat says so")
-    check(has("a0", "❯ run echo v1 > notes.txt") and has("a0", "⏺ reply to: one"), "with that session's conversation back", chat("a0"))
+    check(has("a0", "❯ run echo v1 > notes.txt") and has("a0", f"{DOT} reply to: one"), "with that session's conversation back", chat("a0"))
     check(frames("session/resume")[-1]["params"]["sessionId"] == rewound_sid, "through session/resume")
     check(history("a0") == "history: one | history | run echo v1 > notes.txt | history", "and the agent remembers it")
     type_in_composer("a0", f"/resume {cleared_sid}")
@@ -306,7 +307,8 @@ try:
     check(q0["question"] == "alpha (a0) asks: Color: Which color?" and q0["options"] == ["Red", "Blue"] and q0["other"]
           and not q0["multi"], "the first with its options, and room for your own words", q0)
     check(q1["multi"] and q1["options"] == ["S", "M", "L"], "the second a multi-select", q1)
-    iso.wait(lambda: has("a0", "? Color: Which color?  [Red / Blue]"), "the chat shows them")
+    iso.wait(lambda: has("a0", "  ☐ Color ") and has("a0", " Which color?") and has("a0", "   2. Blue"),
+             "the chat shows them in Claude's box")
     inbox = iso.wait(lambda: any("Color" in row for row in iso.sidebar()) and iso.sidebar(), "the sidebar's Inbox lists them")
     check(True, "the sidebar's Inbox lists them")
     rc, _, err = run("answer", names[0], "Blue")
@@ -317,7 +319,8 @@ try:
              "the answers reach the agent", 10)
     check(True, "the answers reach the agent as the form's content")
     iso.wait(lambda: not any(s["name"] in names for s in surfaces()), "the questions leave the Inbox")
-    iso.wait(lambda: has("a0", "  ⎿  Blue"), "the chat shows the answers")
+    iso.wait(lambda: has("a0", "  ⎿  · Which color? → Blue") and has("a0", "     · Which sizes? → S, L"),
+             "the chat shows the answers")
     # Answered in the TUI: the Inbox's picker, your own words for the first, M for the second.
     iso.wait(lambda: state("a0") == "idle", "a0 idle")
     seq = last_seq("a0")
@@ -351,8 +354,8 @@ try:
         got = [e for e in journal("a0") if e["seq"] > seq and e["kind"] == "permission" and e["decision"] != "asked"]
         check(got and got[-1]["decision"] == decision and got[-1]["by"] == "user", f"journaled as {decision}", got)
         iso.wait(lambda: state("a0") == "idle", "a0 idle")
-    iso.wait(lambda: has("a0", "allowed: Bash: rm -rf build (by user)") and has("a0", "denied: Bash: rm -rf build (by user)"),
-             "the chat shows both")
+    iso.wait(lambda: has("a0", "  ⎿  Denied by you · Bash: rm -rf build won't run") and not has("a0", " Bash command"),
+             "the chat shows the denial, and neither box is left")
     # One left waiting when the turn is cancelled is taken down.
     seq = last_seq("a0")
     run("send", a0, "perm")
@@ -363,6 +366,7 @@ try:
              "cancelled with its turn")
     iso.wait(lambda: not any(s["name"] == asked["name"] for s in surfaces()), "and taken out of the Inbox")
     check(True, "a cancelled turn takes its question down")
+    iso.wait(lambda: not has("a0", " Bash command"), "and the chat's box")
     iso.wait(lambda: not any("asks" in row for row in iso.sidebar()), "the sidebar's Inbox is empty again")
     check(iso.lua("local n = 0 for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
                   " if vim.b[vim.api.nvim_win_get_buf(w)].isovim_composer then n = n + 1 end end return n") == 1,

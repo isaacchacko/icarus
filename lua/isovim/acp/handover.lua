@@ -70,7 +70,9 @@ function M.entries(path, offset)
             content = { type = "text", text = block.text } } } }
         elseif type(block) == "table" and block.type == "tool_use" then
           entries[#entries + 1] = { "update", { update = { sessionUpdate = "tool_call", toolCallId = block.id,
-            title = title(block.name, block.input), status = "pending" } } }
+            title = title(block.name, block.input), status = "pending",
+            rawInput = type(block.input) == "table" and block.input or nil,
+            _meta = { claudeCode = { toolName = block.name } } } } }
         end
       end
     end

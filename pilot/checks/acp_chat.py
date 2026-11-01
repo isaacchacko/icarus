@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from iso import REPO, Iso  # noqa: E402
 
 BIN = str(REPO / "bin" / "iso")
+DOT = f"{DOT}" if sys.platform == "darwin" else "●"
 fails = []
 
 
@@ -110,7 +111,7 @@ try:
     iso.wait(lambda: has("a0", "reply to: hello alpha"), "a0's chat drawn from its journal")
     lines = chat("a0")
     check("❯ hello alpha" in lines, "the prompt shows", lines)
-    check(lines.count("⏺ Read notes.md") == 1, "the tool call is one line, updated in place", lines)
+    check(lines.count(f"{DOT} Read(notes.md)") == 1, "the tool call is one line, updated in place", lines)
     check(on_screen("a0") and in_composer("a0") and iso.mode() == "i", "the composer is below it, in insert mode",
           (on_screen("a0"), in_composer("a0"), iso.mode()))
     iso.type("first from the composer")
@@ -158,17 +159,19 @@ try:
     iso.wait(lambda: has("a0", "reply to: while busy"), "sent and answered after the turn", 20)
     lines = chat("a0")
     check(not any("(queued)" in line for line in lines), "the queued line gives way to the prompt", lines[-10:])
-    check(lines.index("❯ while busy") > lines.index("⏺ reply to: slow 2"), "after the turn it waited on", lines[-10:])
+    check(lines.index("❯ while busy") > lines.index(f"{DOT} reply to: slow 2"), "after the turn it waited on", lines[-10:])
 
     print("\n# a denied permission")
     run("send", a1, "perm")
     asked = iso.wait(lambda: next((e for e in journal("a1") if e["kind"] == "permission" and e["decision"] == "asked"), None),
                      "the permission asked in the Inbox")
-    iso.wait(lambda: has("a1", "? a1 asks to run: Bash: rm -rf build"), "the chat says it waits on you")
+    iso.wait(lambda: has("a1", " Bash command") and has("a1", "   rm -rf build") and has("a1", "   2. No"),
+             "the chat shows Claude's box, waiting on you")
     rc, _, err = run("answer", asked["name"], "deny")
     check(rc == 0, "iso answer denies it", err)
     iso.wait(lambda: has("a1", "permission: reject"), "the permission answered")
-    check(has("a1", "denied: Bash: rm -rf build (by user)"), "the chat says it was denied", chat("a1"))
+    check(soon(lambda: has("a1", "  ⎿  Denied by you · Bash: rm -rf build won't run") and not has("a1", " Bash command")),
+          "the box gives way to saying it was denied", chat("a1"))
     iso.screenshot("chats")
 
     print("\n# chat keys")
@@ -187,36 +190,37 @@ try:
     iso.keys("]", "]")
     check(iso.lua("return vim.api.nvim_get_current_line()") == "❯ first from the composer", "]] goes forward", iso.lua("return vim.api.nvim_get_current_line()"))
     iso.keys("]", "m")
-    check(iso.lua("return vim.api.nvim_get_current_line()") == "⏺ reply to: first from the composer", "]m stops at the agent's message too",
+    check(iso.lua("return vim.api.nvim_get_current_line()") == f"{DOT} reply to: first from the composer", "]m stops at the agent's message too",
           iso.lua("return vim.api.nvim_get_current_line()"))
     iso.keys("]", "m")
     line = iso.lua("return vim.api.nvim_get_current_line()")
     check(line.startswith("❯ [from pilothost:acme/app/a1"), "and at another agent's message", line)
     iso.keys("[", "m")
-    check(iso.lua("return vim.api.nvim_get_current_line()") == "⏺ reply to: first from the composer", "[m goes back")
+    check(iso.lua("return vim.api.nvim_get_current_line()") == f"{DOT} reply to: first from the composer", "[m goes back")
 
     # A tool call's output is collapsed to its first line under it until za opens it.
     (iso.tmp / "work" / "acme" / "app" / "a0" / "notes.txt").write_text("the notes\n")
-    run("send", a0, "run echo notes.txt; echo more")
-    iso.wait(lambda: has("a0", "⏺ ran: echo notes.txt; echo more"), "the run's tool call")
-    row = iso.lua("for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do if l == '⏺ run echo notes.txt; echo more' then return i end end")
+    run("send", a0, "run echo notes.txt; seq 1 6")
+    iso.wait(lambda: has("a0", f"{DOT} ran: echo notes.txt; seq 1 6"), "the run's tool call")
+    row = iso.lua(f"for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do if l == '{DOT} Bash(echo notes.txt; seq 1 6)' then return i end end")
     check(row and chat("a0")[row] == "  ⎿  notes.txt", "its output is under its line", chat("a0")[row - 1:row + 2] if row else chat("a0")[-6:])
     iso.lua("vim.api.nvim_win_set_cursor(0, { ..., 0 })", row)
-    folded = lambda: chat("a0")[row + 1] != "     more"  # noqa: E731
-    check(folded() and chat("a0")[row + 1] == "", "collapsed at first", chat("a0")[row - 1:row + 3])
+    folded = lambda: chat("a0")[row + 3] == "     … +4 lines (za to expand)"  # noqa: E731
+    check(folded() and chat("a0")[row + 1:row + 3] == ["     1", "     2"] and chat("a0")[row + 4] == "",
+          "collapsed at first: its first lines and how many more", chat("a0")[row - 1:row + 5])
     iso.keys("z", "o")
     check(soon(lambda: not folded()), "zo opens it", chat("a0")[row - 1:row + 3])
     iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 2, 0 })", row)
     iso.keys("z", "c")
     check(soon(lambda: folded()), "zc on its output closes it", chat("a0")[row - 1:row + 3])
-    check(iso.lua("return vim.api.nvim_win_get_cursor(0)[1]") == row + 1, "leaving the cursor on what's left of it")
+    check(iso.lua("return vim.api.nvim_win_get_cursor(0)[1]") == row + 2, "leaving the cursor on what's left of it")
     iso.keys("z", "a")
     check(soon(lambda: not folded()), "za toggles it")
     iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 2, 0 })", row)
     iso.keys("z", "a")
     check(soon(lambda: folded()), "za on its output closes it again")
     bare = iso.lua("for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do"
-                   " if l == '⏺ Read notes.md' then return i end end")
+                   f" if l == '{DOT} Read(notes.md)' then return i end end")
     iso.lua("vim.api.nvim_win_set_cursor(0, { ..., 0 })", bare)
     iso.lua("vim.v.errmsg = ''")
     before = chat("a0")
@@ -257,7 +261,7 @@ try:
     run("send", a0, "slow 10")
     iso.wait(lambda: state("a0") == "working", "a0 working on the slow one")
     iso.keys("C-c")
-    iso.wait(lambda: has("a0", "[turn ended: cancelled]"), "the turn cancelled")
+    iso.wait(lambda: has("a0", "  ⎿  Interrupted · What should Claude do instead?"), "the turn cancelled")
     check(any(e["kind"] == "turn" and e.get("stopReason") == "cancelled" for e in journal("a0")), "<C-c> sent session/cancel")
     iso.wait(lambda: state("a0") == "idle", "a0 idle after the cancel")
 

@@ -89,13 +89,25 @@ lifetimes, so agents outlive the TUI).
 
 ## The chat
 
-A chat is a real nvim buffer drawn to look like Claude's screen:
-- `⏺` messages and `⎿` tool results, drawn with extmarks;
-- tool calls folded by default, diffs colored inline, a spinner while working;
+A chat is a real nvim buffer drawn to look like Claude Code's screen (docs/chat-compare/ has the two
+side by side):
+- your prompt on Claude's gray band after `❯`; the agent's text after Claude's bullet (`⏺` on macOS,
+  `●` elsewhere, as Claude has it), its markdown's `code` and **bold** drawn, not shown;
+- each tool call one line as Claude names it, `Update(app.py)`, `Bash(./count.sh)`, its bullet
+  colored by status, and what came back under `⎿`: a read's line count, an edit's diff numbered from
+  the file's lines on red and green with the changed words brighter and the code highlighted, a
+  command's first lines and `… +N lines` (`za` opens and closes any of them);
+- thinking dimmed and collapsed, the todo list as Claude's, the turn's summary after it;
+- a permission or a question as Claude's numbered box, answered by its number in the input box or
+  `<CR>` on an option (or in the Inbox), then put away;
+- Claude's colors, for dark and light backgrounds;
 - streamed token by token, following the bottom only when you're there;
 - long lines wrap; there's no sideways scrolling.
+Everything drawn is a pure function of the journal, so a replay draws what live drew.
 
-The input box is another buffer under it, with full vim editing.
+The input box is another buffer under it, with full vim editing: Claude's spinner line above it
+while the agent works (its verb, the time, tokens, how to interrupt), a rule above and below it,
+`❯` before it and a hint under it.
 
 `iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat and input
 box, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.

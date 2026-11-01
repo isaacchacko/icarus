@@ -187,7 +187,8 @@ class Iso:
 
     def screenshot(self, label):
         """Renders the TUI as it looks now to pilot/out/<name>-<label>.png."""
-        ansi = self._tmux_ui("capture-pane", "-p", "-e", "-t", "=0:").stdout
+        # -N keeps each line's trailing blanks, which carry the background they were drawn with.
+        ansi = self._tmux_ui("capture-pane", "-p", "-e", "-N", "-t", "=0:").stdout
         OUT.mkdir(exist_ok=True)
         return screenshot.render(ansi, OUT / f"{self.name}-{label}.png", self.cols, self.rows)
 

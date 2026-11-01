@@ -8,27 +8,37 @@
 -- pushes each entry as it journals it (M.push), so the agent's text streams token by token without
 -- waiting on the filesystem. Entries are taken in seq order, once each, whichever way they came.
 --
--- What it looks like, as Claude draws it:
---   ❯ your prompt (and messages from iso send/msg)
---   ⏺ the agent's text, streamed in place; ✻ its thinking, dimmed
---   ⏺ Tool title           one line per tool call, rewritten in place; its ⏺ colored by status
---     ⎿  output … +N lines its output collapsed to its first line until za opens it; diffs are
---                         drawn with their line numbers and colored inline, Bash output streams
---                         in from the terminal deltas
+-- What it looks like, as Claude Code draws its screen (isovim.acp.look has the words, the colors
+-- for dark and light backgrounds and the rows under a tool call):
+--   ❯ your prompt          on Claude's gray band (and messages from iso send/msg)
+--   ● the agent's text     streamed in place (⏺ on macOS), its `code` and **bold** drawn
+--   ● Update(app.py)       one line per tool call, as Claude names it, rewritten in place; its
+--     ⎿  Added 1 line…     bullet colored by status. Under ⎿ what came back: a diff numbered and
+--          1  code         colored, a read's line count, a command's first lines then "… +N
+--     … +37 lines          lines"; za opens or collapses any of it
+--   ✻ Thought for 3s       the agent's thinking, collapsed until za
+--   ─ Bash command ─       a permission or question waiting on you, as Claude's numbered box:
+--      1. Yes              its number and <CR> in the composer, or <CR> on an option, answers it;
+--      2. No               once answered the box gives way to what was decided
+--   ✻ Brewed for 8s        the turn's summary
 --   (queued) a prompt      the queue, kept at the bottom until each prompt goes
+-- Everything drawn is a pure function of the journal's entries, so a replay draws what live drew.
 -- The glyphs are text, so wrapping, search and yanks work in any window; colors, the tool
 -- call places and the message marks are extmarks. Long lines wrap under their text (breakindent),
 -- never sideways. Collapsing is the chat's own (a call's output is left out of the buffer until
 -- opened), not nvim's folds, which nvim doesn't update while you type in the composer; so it holds
--- in every window and in iso attach, and needs no window state. The view follows new output only in a window whose cursor is on the last line; one scrolled up stays
--- where it is, and the composer's bar says there's more below. The bar above the composer has a
--- spinner while the agent works, how long it's been at it, and how many prompts wait.
+-- in every window and in iso attach, and needs no window state. The view follows new output only in
+-- a window whose cursor is on the last line; one scrolled up stays where it is, and the composer's
+-- bar says there's more below. The composer is Claude's prompt: its bar is Claude's spinner line
+-- while the agent works (glyph, verb, time, tokens, <C-c> to interrupt) and says how many prompts
+-- wait; a rule above and below it, ❯ before it and a hint under it.
 --
 -- Chat keys: ]] [[ your own prompts, ]m [m any message, za zo zc the output of the tool call under
--- the cursor, i a o <CR> the composer, <C-c> cancels the turn, gf the file on the line. Composer
--- keys: <CR> sends (queued while the agent works), <S-CR> or <C-j> a new line, <C-c> cancels the
--- turn, <Up> <Down> your earlier prompts while it's empty, <Esc> normal mode, <C-k> the chat.
--- <leader>iq edits the queue (isovim.acp.queue).
+-- the cursor, i a o the composer, <CR> too (or, on a box's option, that answer), <C-c> cancels the
+-- turn, gf the file on the line. Composer keys: <CR> sends (queued while the agent works; an answer
+-- while a box waits on you), <S-CR> or <C-j> a new line, <C-c> cancels the turn, <Up> <Down> your
+-- earlier prompts while it's empty, <Esc> normal mode, <C-k> the chat. <leader>iq edits the queue
+-- (isovim.acp.queue).
 --
 -- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
 -- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
@@ -37,6 +47,7 @@
 -- forks the agent at the message under the cursor (isovim.acp.host does the rest).
 local acp = require("isovim.acp")
 local journal = require("isovim.acp.journal")
+local look = require("isovim.acp.look")
 local store = require("isovim.store")
 
 local M = {}
@@ -46,8 +57,12 @@ local NS = vim.api.nvim_create_namespace("isovim_acp_chat")
 local TOOLS = vim.api.nvim_create_namespace("isovim_acp_tools")
 local MESSAGES = vim.api.nvim_create_namespace("isovim_acp_messages")
 local MINE = vim.api.nvim_create_namespace("isovim_acp_mine")
+-- Markdown's marks in the agent's text; the boxes waiting on you, and their options.
+local MD = vim.api.nvim_create_namespace("isovim_acp_markdown")
+local BOXES = vim.api.nvim_create_namespace("isovim_acp_boxes")
+local OPTIONS = vim.api.nvim_create_namespace("isovim_acp_options")
 
-M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE }
+M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxes = BOXES, options = OPTIONS }
 
 ---@class isovim.acp.ToolCall
 ---@field mark integer
@@ -57,8 +72,16 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE }
 ---@field terminal table<string, string> terminal id -> output so far
 ---@field exit? integer
 ---@field body integer how many lines of output it has under it
----@field open boolean its whole output shows (za), not only the first line
+---@field open? boolean opened (za) or collapsed by you; nil: as it shows by default (a diff open)
 ---@field more integer how many lines of output are left out while it's collapsed
+---@field can_open? boolean it has output to show
+---@field tool? string the tool's own name (_meta.claudeCode.toolName)
+---@field kind? string ACP's kind of tool (read, edit, execute…)
+---@field input? table its arguments (rawInput)
+---@field locations? table[] the files it touches, with the line its diff starts at
+---@field response? table what the tool returned (_meta.claudeCode.toolResponse)
+---@field hidden? boolean drawn another way (AskUserQuestion's box, TodoWrite's plan)
+---@field thought? boolean a thought, not a tool call: text is what it thought, secs how long
 
 ---@class isovim.acp.Chat
 ---@field ws string
@@ -69,9 +92,13 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE }
 ---@field drain fun()
 ---@field seq integer the last entry drawn
 ---@field fresh boolean nothing drawn yet: its first line is a placeholder
----@field block? "agent"|"thought"|"other" what the last block is: streaming text, or anything else
+---@field block? "agent"|"thought"|"other" what the last block is: streaming text or thought, or anything else
 ---@field block_row? integer the first row of the streaming block
----@field block_hl? integer the extmark that colors a thought block
+---@field thought? isovim.acp.ToolCall the thought streaming in
+---@field boxes isovim.acp.Box[] permissions and questions waiting on you
+---@field options table<integer, table> a box's options by their extmark (OPTIONS), for <CR> on one
+---@field turn_chars? integer how much the running turn has streamed, for the spinner's tokens
+---@field verb? string the running turn's spinner verb
 ---@field at_start? boolean the streaming block has no text yet
 ---@field tools table<string, isovim.acp.ToolCall>
 ---@field queue {id: string, text: string}[] prompts waiting, as the tail shows them
@@ -89,9 +116,11 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE }
 _G.isovim_acp_chats = _G.isovim_acp_chats or {} ---@type table<string, isovim.acp.Chat>
 local chats = _G.isovim_acp_chats
 
-local GLYPH = { message = "⏺", thought = "✻", result = "⎿", prompt = "❯" }
-local FIRST, REST = "  ⎿  ", "     "
-local MAX_BODY = 400
+local RENDER = {}
+
+local DOT = look.DOT
+local GLYPH = { message = DOT, thought = "✻", result = "⎿", prompt = "❯" }
+local FIRST, REST = look.FIRST, look.REST
 
 local STATUS_HL = {
   pending = "IsovimAcpToolPending",
@@ -100,31 +129,19 @@ local STATUS_HL = {
   failed = "IsovimAcpToolFailed",
 }
 
-function M.highlights()
-  local set = function(name, spec)
-    vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", spec, { default = true }))
-  end
-  set("IsovimAcpPrompt", { link = "Title" })
-  set("IsovimAcpMessage", { link = "Normal" })
-  set("IsovimAcpThought", { link = "Comment" })
-  set("IsovimAcpToolTitle", { bold = true })
-  set("IsovimAcpToolPending", { link = "Comment" })
-  set("IsovimAcpToolRunning", { link = "DiagnosticInfo" })
-  set("IsovimAcpToolDone", { link = "DiagnosticOk" })
-  set("IsovimAcpToolFailed", { link = "DiagnosticError" })
-  set("IsovimAcpResult", { link = "Comment" })
-  set("IsovimAcpDiffAdd", { link = "DiffAdd" })
-  set("IsovimAcpDiffDelete", { link = "DiffDelete" })
-  set("IsovimAcpNotice", { link = "Comment" })
-  set("IsovimAcpDenied", { link = "WarningMsg" })
-  set("IsovimAcpQueued", { link = "Comment" })
-  set("IsovimAcpSpinner", { link = "Special" })
-end
+M.highlights = look.highlights
+M.dot = DOT
 
 M.highlights()
-vim.api.nvim_create_autocmd("ColorScheme", {
+vim.api.nvim_create_autocmd({ "ColorScheme", "OptionSet" }, {
   group = vim.api.nvim_create_augroup("isovim_acp_chat_hl", { clear = true }),
-  callback = M.highlights,
+  pattern = { "*", "background" },
+  callback = function(ev)
+    if ev.event == "OptionSet" and ev.match ~= "background" then
+      return
+    end
+    look.highlights()
+  end,
 })
 
 local function key(ws, agent)
@@ -148,9 +165,8 @@ local function followers(buf)
   end, vim.fn.win_findbuf(buf))
 end
 
--- Changes the buffer with fn (from: the first row it changes, 0-based). Windows at the bottom stay
--- there.
-local function edit(chat, fn, from)
+-- Changes the buffer with fn. Windows at the bottom stay there.
+local function edit(chat, fn)
   local buf = chat.buf
   local wins = vim.fn.win_findbuf(buf)
   local follow = followers(buf)
@@ -178,8 +194,15 @@ local function line_hl(buf, row, count, hl)
   end
 end
 
-local function span(buf, row, col, end_col, hl)
-  vim.api.nvim_buf_set_extmark(buf, NS, row, col, { end_col = end_col, hl_group = hl })
+local function span(buf, row, col, end_col, hl, priority)
+  vim.api.nvim_buf_set_extmark(buf, NS, row, col, { end_col = end_col, hl_group = hl, priority = priority })
+end
+
+-- A highlight from col to the end of the line and on to the window's edge, as Claude colors a
+-- diff's lines.
+local function eol_hl(buf, row, col, hl)
+  vim.api.nvim_buf_set_extmark(buf, NS, row, col, { end_row = row + 1, end_col = 0, hl_group = hl, hl_eol = true,
+    priority = 100 })
 end
 
 -- Adds whole lines at the end of the conversation (above the tail); returns the first one's row.
@@ -191,7 +214,7 @@ local function add_lines(chat, lines, hl)
     if hl then
       line_hl(buf, row, #lines, hl)
     end
-  end, chat.fresh and 0 or body_end(chat))
+  end)
   chat.fresh = false
   chat.block = "other"
   return row
@@ -219,15 +242,35 @@ local function mark_message(chat, row, mine)
   end
 end
 
--- Streams the agent's text (or its thinking) onto the end of the conversation, a new message
--- after anything else; its lines after the first are indented under the glyph.
-local function add_text(chat, text, kind)
-  if chat.block ~= kind then
-    local glyph = kind == "thought" and GLYPH.thought or GLYPH.message
-    local row = add_block(chat, { glyph .. " " })
-    span(chat.buf, row, 0, #glyph, kind == "thought" and "IsovimAcpThought" or "IsovimAcpMessage")
+-- The agent's dir as paths in its tool calls start, for showing them short.
+local function dirs(chat)
+  local dir = store.agent_dir(chat.ws, chat.agent)
+  return { dir, vim.uv.fs_realpath(dir) or dir }
+end
+
+-- Markdown's marks on rows from..to (0-based, inclusive) of the agent's text.
+local function markup(chat, from, to)
+  local buf = chat.buf
+  vim.api.nvim_buf_clear_namespace(buf, MD, from, to + 1)
+  for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, from, to + 1, false)) do
+    local spans, conceals = look.markdown(line)
+    for _, s in ipairs(spans) do
+      vim.api.nvim_buf_set_extmark(buf, MD, from + row - 1, s[1], { end_col = s[2], hl_group = s[3] })
+    end
+    for _, c in ipairs(conceals) do
+      vim.api.nvim_buf_set_extmark(buf, MD, from + row - 1, c[1], { end_col = c[2], conceal = "" })
+    end
+  end
+end
+
+-- Streams the agent's text onto the end of the conversation, a new message after anything else;
+-- its lines after the first are indented under the glyph.
+local function add_text(chat, text)
+  if chat.block ~= "agent" then
+    local row = add_block(chat, { GLYPH.message .. " " })
+    span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
     mark_message(chat, row, false)
-    chat.block, chat.block_row, chat.block_hl, chat.at_start = kind, row, nil, true
+    chat.block, chat.block_row, chat.at_start = "agent", row, true
   end
   if chat.at_start then
     text = text:gsub("^\n+", "")
@@ -236,210 +279,153 @@ local function add_text(chat, text, kind)
     end
     chat.at_start = false
   end
+  chat.turn_chars = (chat.turn_chars or 0) + #text
   local parts = vim.split(text, "\n", { plain = true })
   for i = 2, #parts do
     parts[i] = "  " .. parts[i]
   end
+  local from
   edit(chat, function(buf)
     local row = body_end(chat) - 1
+    from = row
     local col = #(vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or "")
     vim.api.nvim_buf_set_text(buf, row, col, row, col, parts)
-    if kind == "thought" then
-      local last = body_end(chat) - 1
-      local width = #(vim.api.nvim_buf_get_lines(buf, last, last + 1, false)[1] or "")
-      chat.block_hl = vim.api.nvim_buf_set_extmark(buf, NS, chat.block_row, 0,
-        { id = chat.block_hl, end_row = last, end_col = width, hl_group = "IsovimAcpThought" })
-    end
-  end, body_end(chat) - 1)
+    markup(chat, from, body_end(chat) - 1)
+  end)
 end
 
-local function strip_ansi(text)
-  return (text:gsub("\27%[[%d;?]*[%a]", ""):gsub("\27%][^\7]*\7", ""):gsub("\r\n", "\n"):gsub("\r", ""))
-end
+-- Tool calls, thinking: blocks drawn in place, whose output collapses (za)
 
--- A path as the agent's dir sees it.
-local function short(chat, path)
-  local dir = store.agent_dir(chat.ws, chat.agent)
-  local real = vim.uv.fs_realpath(dir) or dir
-  for _, base in ipairs({ dir, real }) do
-    if path and vim.startswith(path, base .. "/") then
-      return path:sub(#base + 2)
-    end
-  end
-  return path or "a file"
-end
-
--- Text content without the code fence the adapter wraps command output in.
-local function text_lines(text)
-  local lines = vim.split(strip_ansi(text or ""), "\n", { plain = true })
-  if lines[1] and lines[1]:match("^```") then
-    table.remove(lines, 1)
-    while lines[#lines] == "" do
-      lines[#lines] = nil
-    end
-    if lines[#lines] and lines[#lines]:match("^```%s*$") then
-      lines[#lines] = nil
-    end
-  end
-  return lines
-end
-
-local function plural(n, word)
-  return ("%d %s%s"):format(n, word, n == 1 and "" or "s")
-end
-
--- A diff's lines: what changed with a line of context, each with its line number, and the hl of
--- the line ("+" added, "-" removed).
----@return {[1]: string, [2]: string?}[] lines, string summary
-local function diff_lines(chat, item)
-  local old = item.oldText ~= vim.NIL and item.oldText or nil
-  local new = item.newText ~= vim.NIL and item.newText or ""
-  local path = short(chat, item.path)
-  local out = {}
-  if not old then
-    local lines = vim.split(new, "\n", { plain = true })
-    if lines[#lines] == "" then
-      lines[#lines] = nil
-    end
-    for i, line in ipairs(lines) do
-      out[#out + 1] = { ("%4d + %s"):format(i, line), "IsovimAcpDiffAdd" }
-    end
-    return out, ("Wrote %s to %s"):format(plural(#lines, "line"), path)
-  end
-  local function nl(text)
-    return text:sub(-1) == "\n" and text or text .. "\n"
-  end
-  local diff = (vim.text and vim.text.diff or vim.diff)(nl(old), nl(new), { result_type = "unified", ctxlen = 1 })
-  local added, removed, o, n = 0, 0, 0, 0
-  for line in tostring(diff or ""):gmatch("([^\n]*)\n") do
-    local a, c = line:match("^@@ %-(%d+),?%d* %+(%d+),?%d* @@")
-    if a then
-      if #out > 0 then
-        out[#out + 1] = { "   ⋮" }
-      end
-      o, n = tonumber(a), tonumber(c)
-    elseif line:sub(1, 1) == "-" then
-      out[#out + 1] = { ("%4d - %s"):format(o, line:sub(2)), "IsovimAcpDiffDelete" }
-      o, removed = o + 1, removed + 1
-    elseif line:sub(1, 1) == "+" then
-      out[#out + 1] = { ("%4d + %s"):format(n, line:sub(2)), "IsovimAcpDiffAdd" }
-      n, added = n + 1, added + 1
-    elseif line:sub(1, 1) == " " then
-      out[#out + 1] = { ("%4d   %s"):format(n, line:sub(2)) }
-      o, n = o + 1, n + 1
-    end
-  end
-  return out, ("Updated %s with %s and %s"):format(path, plural(added, "addition"), plural(removed, "removal"))
-end
-
--- What goes under a tool call: its text, diffs and terminal output, the first line after ⎿.
 ---@param call isovim.acp.ToolCall
----@return {[1]: string, [2]: string?}[]
-local function body_lines(chat, call)
+local function is_open(call, kind, count)
+  if call.open ~= nil then
+    return call.open
+  end
+  return look.open_by_default(kind, count)
+end
+
+-- The rows under a thought: its text, dimmed, under the ✻.
+local function thought_rows(call)
   local rows = {}
-  local shown_terminals = {}
-  local function plain(lines)
-    for _, line in ipairs(lines) do
-      rows[#rows + 1] = { line }
+  local text = (call.text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if text ~= "" then
+    for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+      rows[#rows + 1] = { line, hl = "IsovimAcpThought" }
     end
-  end
-  for _, item in ipairs(call.items) do
-    if item.type == "content" and type(item.content) == "table" and item.content.type == "text" then
-      plain(text_lines(item.content.text))
-    elseif item.type == "diff" then
-      local lines, summary = diff_lines(chat, item)
-      rows[#rows + 1] = { summary }
-      vim.list_extend(rows, lines)
-    elseif item.type == "terminal" then
-      shown_terminals[item.terminalId or ""] = true
-      plain(text_lines(call.terminal[item.terminalId or ""] or ""))
-    end
-  end
-  -- Output that came before the content naming its terminal.
-  for id, output in pairs(call.terminal) do
-    if not shown_terminals[id] then
-      plain(text_lines(output))
-    end
-  end
-  while #rows > 0 and vim.trim(rows[#rows][1]) == "" do
-    rows[#rows] = nil
-  end
-  while #rows > 0 and vim.trim(rows[1][1]) == "" do
-    table.remove(rows, 1)
-  end
-  if #rows > MAX_BODY then
-    local more = #rows - MAX_BODY
-    rows = vim.list_slice(rows, 1, MAX_BODY)
-    rows[#rows + 1] = { ("… +%s"):format(plural(more, "line")) }
-  end
-  for i, row in ipairs(rows) do
-    row[1] = (i == 1 and FIRST or REST) .. row[1]
   end
   return rows
 end
 
-local function title_of(title)
-  title = (title or "tool"):gsub("\n.*", " …")
-  return (title:gsub("^`(.*)`$", "%1"))
-end
-
--- Draws a tool call's line and its output in place: all of it when it's open, else its first line
--- and how much more there is.
+-- Draws a tool call's (or a thought's) line and what's under it in place: all of it when it's
+-- open, else what shows collapsed and a line saying how much more there is.
 ---@param call isovim.acp.ToolCall
 local function draw_tool(chat, call)
   local row = vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
   if not row then
     return
   end
-  local header = GLYPH.message .. " " .. title_of(call.title)
-  local body = body_lines(chat, call)
-  call.more = (not call.open and #body > 1) and #body - 1 or 0
-  if call.more > 0 then
-    body = { body[1] }
+  local header, spans = "", {}
+  local rows, kind
+  if call.thought then
+    header = GLYPH.thought .. " " .. (call.secs and ("Thought for " .. look.duration(call.secs)) or "Thinking…")
+    spans[1] = { 0, #header, "IsovimAcpThought" }
+    rows, kind = thought_rows(call), "thought"
+  else
+    local name, args = look.header(call, dirs(chat))
+    header = GLYPH.message .. " " .. name .. (args and ("(" .. args .. ")") or "")
+    spans[1] = { 0, #GLYPH.message, STATUS_HL[call.status] or "IsovimAcpToolPending" }
+    spans[2] = { #GLYPH.message + 1, #GLYPH.message + 1 + #name, "IsovimAcpToolTitle" }
+    rows, kind = look.body(call, dirs(chat))
   end
+  local open = is_open(call, kind, #rows)
+  local shown = rows
+  call.more = 0
+  if not open then
+    local count = kind == "thought" and 0 or look.collapsed_count(kind, #rows)
+    if #rows > count then
+      shown = vim.list_slice(rows, 1, count)
+      call.more = #rows - count
+      -- A read says its count already; the rest say how many lines are left out.
+      if kind ~= "read" and kind ~= "thought" then
+        shown[#shown + 1] = { ("… +%s (za to expand)"):format(look.plural(call.more, "line")), hl = "IsovimAcpResultNote",
+          note = true }
+      end
+    end
+  end
+  call.can_open = #rows > 0
   local lines = { header }
-  for _, line in ipairs(body) do
-    lines[#lines + 1] = line[1]
+  local indent = call.thought and "  " or nil
+  for i, r in ipairs(shown) do
+    lines[#lines + 1] = (indent or (i == 1 and FIRST or REST)) .. r[1]
   end
   edit(chat, function(buf)
     local replaced = row + 1 + call.body
     vim.api.nvim_buf_clear_namespace(buf, NS, row, replaced)
     vim.api.nvim_buf_set_lines(buf, row, replaced, false, lines)
-    span(buf, row, 0, #GLYPH.message, STATUS_HL[call.status] or "IsovimAcpToolPending")
-    span(buf, row, #GLYPH.message + 1, #header, "IsovimAcpToolTitle")
-    local said = (call.exit and call.exit ~= 0 and ("exit " .. call.exit)) or (call.status == "failed" and "failed") or nil
-    if said then
-      vim.api.nvim_buf_set_extmark(buf, NS, row, 0, { virt_text = { { "  " .. said, "IsovimAcpToolFailed" } } })
+    for _, s in ipairs(spans) do
+      span(buf, row, s[1], s[2], s[3])
     end
-    for i, line in ipairs(body) do
-      vim.api.nvim_buf_set_extmark(buf, NS, row + i, 0, { line_hl_group = line[2] or "IsovimAcpResult" })
+    local hint = call.more > 0 and (kind == "read" or kind == "thought") and "  (za to expand)" or nil
+    if hint then
+      vim.api.nvim_buf_set_extmark(buf, NS, kind == "thought" and row or row + 1, 0,
+        { virt_text = { { hint, "IsovimAcpNotice" } } })
     end
-    if call.more > 0 then
-      vim.api.nvim_buf_set_extmark(buf, NS, row + 1, 0,
-        { virt_text = { { ("  … +%s (za)"):format(plural(call.more, "line")), "IsovimAcpNotice" } } })
+    for i, r in ipairs(shown) do
+      local at = row + i
+      local pre = indent and #indent or #(i == 1 and FIRST or REST)
+      if not indent and i == 1 then
+        span(buf, at, 0, pre, "IsovimAcpResultGlyph")
+      end
+      if r.hl == "IsovimAcpDiffAdd" or r.hl == "IsovimAcpDiffDelete" then
+        eol_hl(buf, at, pre, r.hl)
+      elseif r.hl then
+        span(buf, at, pre, #lines[i + 1], r.hl)
+      else
+        span(buf, at, pre, #lines[i + 1], "IsovimAcpResult", 90)
+      end
+      for _, s in ipairs(r.spans or {}) do
+        span(buf, at, pre + s[1], math.min(pre + s[2], #lines[i + 1]), s[3], s.syntax and 4200 or 150)
+      end
     end
-    call.body = #body
+    call.body = #shown
     vim.api.nvim_buf_set_extmark(buf, TOOLS, row, 0, { id = call.mark, end_row = row + call.body, end_col = 0 })
-  end, row)
+  end)
 end
 
--- A tool call is a block, rewritten in place as its title, status or output changes.
+-- A tool call is a block, rewritten in place as its title, status or output changes. One isovim
+-- draws another way (AskUserQuestion as its question, TodoWrite as its plan) gets no block.
 local function tool(chat, update)
   local id = update.toolCallId or "?"
   local call = chat.tools[id]
+  local meta = type(update._meta) == "table" and update._meta or {}
+  local claude = type(meta.claudeCode) == "table" and meta.claudeCode or {}
   if not call then
     call = { title = update.title or "tool", status = update.status or "pending", items = {}, terminal = {}, body = 0,
-      open = false, more = 0 }
-    local row = add_block(chat, { "" })
-    call.mark = vim.api.nvim_buf_set_extmark(chat.buf, TOOLS, row, 0, {})
+      more = 0, kind = update.kind, tool = claude.toolName }
     chat.tools[id] = call
+    local name = look.tool_name(call)
+    call.hidden = name ~= nil and look.HIDDEN[name] or false
+    if not call.hidden then
+      local row = add_block(chat, { "" })
+      call.mark = vim.api.nvim_buf_set_extmark(chat.buf, TOOLS, row, 0, {})
+    end
   end
   call.title = update.title or call.title
   call.status = update.status or call.status
+  call.kind = update.kind or call.kind
+  call.tool = call.tool or claude.toolName
+  if type(update.rawInput) == "table" and next(update.rawInput) then
+    call.input = update.rawInput
+  end
+  if type(update.locations) == "table" and #update.locations > 0 then
+    call.locations = update.locations
+  end
+  if type(claude.toolResponse) == "table" then
+    call.response = claude.toolResponse
+  end
   if type(update.content) == "table" then
     call.items = update.content
   end
-  local meta = type(update._meta) == "table" and update._meta or {}
   local delta, full, exit = meta.terminal_output_delta, meta.terminal_output, meta.terminal_exit
   if type(delta) == "table" and delta.terminal_id then
     call.terminal[delta.terminal_id] = (call.terminal[delta.terminal_id] or "") .. (delta.data or "")
@@ -450,20 +436,65 @@ local function tool(chat, update)
   if type(exit) == "table" and exit.exit_code ~= vim.NIL then
     call.exit = tonumber(exit.exit_code)
   end
-  draw_tool(chat, call)
+  if not call.hidden then
+    draw_tool(chat, call)
+  end
 end
 
-local PLAN_MARK = { completed = "☒", in_progress = "◐", pending = "☐" }
+-- The agent's thinking: a ✻ block, collapsed to "Thinking…" until za, streamed into.
+local function thought(chat, text)
+  local call = chat.block == "thought" and chat.thought or nil
+  if not call then
+    local row = add_block(chat, { "" })
+    call = { thought = true, text = "", body = 0, more = 0, items = {}, terminal = {},
+      started = chat.entry and chat.entry.ts }
+    call.mark = vim.api.nvim_buf_set_extmark(chat.buf, TOOLS, row, 0, {})
+    chat.tools["thought:" .. call.mark] = call
+    mark_message(chat, row, false)
+  end
+  call.text = call.text .. text
+  chat.turn_chars = (chat.turn_chars or 0) + #text
+  draw_tool(chat, call)
+  chat.block, chat.thought = "thought", call
+end
+
+-- A thought ends when anything else comes: its header says how long it took.
+local function end_thought(chat, entry)
+  local call = chat.thought
+  if chat.block == "thought" and call and not call.secs then
+    call.secs = (entry and entry.ts and call.started) and math.max(1, entry.ts - call.started) or nil
+    if call.secs then
+      draw_tool(chat, call)
+    end
+  end
+  if chat.block == "thought" then
+    chat.block = "other"
+  end
+  chat.thought = nil
+end
+
+local PLAN_MARK = { completed = "☒", in_progress = "☐", pending = "☐" }
+local PLAN_HL = { completed = "IsovimAcpPlanDone", in_progress = "IsovimAcpPlanActive", pending = "IsovimAcpPlanPending" }
 
 local function plan(chat, update)
   local lines = { GLYPH.message .. " Update Todos" }
-  for i, entry in ipairs(update.entries or {}) do
+  local entries = update.entries or {}
+  for i, entry in ipairs(entries) do
     lines[#lines + 1] = (i == 1 and FIRST or REST) .. (PLAN_MARK[entry.status] or "☐") .. " " .. (entry.content or "")
   end
   local row = add_block(chat, lines)
   span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpToolDone")
   span(chat.buf, row, #GLYPH.message + 1, #lines[1], "IsovimAcpToolTitle")
-  line_hl(chat.buf, row + 1, #lines - 1, "IsovimAcpResult")
+  for i, entry in ipairs(entries) do
+    local line = lines[i + 1]
+    local pre = #(i == 1 and FIRST or REST)
+    if i == 1 then
+      span(chat.buf, row + i, 0, pre, "IsovimAcpResultGlyph")
+    end
+    local mark = #(PLAN_MARK[entry.status] or "☐") + 1
+    span(chat.buf, row + i, pre, pre + mark, PLAN_HL[entry.status] == "IsovimAcpPlanDone" and "IsovimAcpNotice" or "IsovimAcpResult")
+    span(chat.buf, row + i, pre + mark, #line, PLAN_HL[entry.status] or "IsovimAcpResult")
+  end
 end
 
 local function prompt_lines(text)
@@ -488,7 +519,7 @@ local function draw_tail(chat)
     vim.api.nvim_buf_clear_namespace(buf, NS, from, -1)
     vim.api.nvim_buf_set_lines(buf, from, -1, false, lines)
     line_hl(buf, from, #lines, "IsovimAcpQueued")
-  end, body_end(chat))
+  end)
   chat.tail = #lines
   local queue = package.loaded["isovim.acp.queue"]
   if queue then
@@ -496,7 +527,268 @@ local function draw_tail(chat)
   end
 end
 
-local RENDER = {}
+-- Boxes: a permission or a question waiting on you, drawn as Claude draws them, and replaced by
+-- what you decided once you have.
+
+-- A rule as wide as any window: virtual text is cut at the window's edge.
+local RULE = ("─"):rep(400)
+
+---@class isovim.acp.Box
+---@field mark integer its first line (in BOXES), its extent to end_row
+---@field kind "permission"|"question"
+---@field repo string
+---@field names string[] the surfaces it waits on
+---@field options string[][] each surface's option labels
+---@field other boolean[] each surface takes your own words
+---@field multi boolean[]
+
+-- Draws a box's lines at the end of the conversation, its options marked for <CR> on them.
+---@param rows {[1]: string, [2]: string?, spans?: table[], option?: {[1]: integer, [2]: integer}}[]
+local function add_box(chat, box, rows)
+  local lines = vim.tbl_map(function(r)
+    return r[1]
+  end, rows)
+  local row = add_block(chat, lines)
+  local buf = chat.buf
+  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, { virt_lines = { { { RULE, "IsovimAcpAskRule" } } }, virt_lines_above = true })
+  for i, r in ipairs(rows) do
+    if r[2] then
+      span(buf, row + i - 1, 0, #r[1], r[2])
+    end
+    for _, s in ipairs(r.spans or {}) do
+      span(buf, row + i - 1, s[1], s[2], s[3], 150)
+    end
+    if r.option then
+      local id = vim.api.nvim_buf_set_extmark(buf, OPTIONS, row + i - 1, 0, {})
+      chat.options[id] = { box = box, surface = r.option[1], n = r.option[2] }
+    end
+  end
+  box.mark = vim.api.nvim_buf_set_extmark(buf, BOXES, row, 0, { end_row = row + #lines - 1, end_col = 0 })
+  return row
+end
+
+-- Takes a box out of the chat (and the blank line before it), putting lines in its place.
+local function replace_box(chat, box, lines, hl)
+  local pos = vim.api.nvim_buf_get_extmark_by_id(chat.buf, BOXES, box.mark, { details = true })
+  if not pos[1] then
+    return
+  end
+  local first, last = pos[1], pos[3].end_row or pos[1]
+  local from = first > 0 and first - 1 or first
+  edit(chat, function(buf)
+    vim.api.nvim_buf_clear_namespace(buf, NS, from, last + 1)
+    vim.api.nvim_buf_clear_namespace(buf, OPTIONS, from, last + 1)
+    vim.api.nvim_buf_del_extmark(buf, BOXES, box.mark)
+    -- A result (⎿) goes right under what it's about, as Claude puts it; anything else is a block.
+    local put = #lines > 0 and (vim.startswith(lines[1], FIRST) and lines or { "", unpack(lines) }) or {}
+    if first == 0 and #put > 0 then
+      table.remove(put, 1)
+    end
+    vim.api.nvim_buf_set_lines(buf, from, last + 1, false, put)
+    if hl and #lines > 0 then
+      line_hl(buf, from + #put - #lines, #lines, hl)
+    end
+  end)
+  for id, option in pairs(chat.options) do
+    if option.box == box then
+      chat.options[id] = nil
+    end
+  end
+  chat.boxes = vim.tbl_filter(function(each)
+    return each ~= box
+  end, chat.boxes)
+  if chat.block ~= "agent" then
+    chat.block = "other"
+  end
+  update_bar(chat)
+end
+
+local HINT_ANSWER = "its number and <CR> in the composer, or <CR> on an option"
+
+-- What Claude calls the prompt for a tool: its box's title, what it shows, and its question.
+local function permission_rows(chat, entry)
+  local call = chat.tools[entry.toolCallId or ""] or {}
+  local name = look.tool_name(call) or (entry.tool or ""):match("^(%u%a+)")
+  local input = call.input or {}
+  local path = input.file_path and look.short(input.file_path, dirs(chat))
+  local rows = {}
+  local title, question, body
+  if name == "Bash" then
+    title, question = "Bash command", "Do you want to proceed?"
+    local cmd = input.command or look.tool_args("Bash", nil, call.title or entry.tool, dirs(chat)) or entry.tool
+    body = {}
+    for _, line in ipairs(vim.split(cmd or "", "\n", { plain = true })) do
+      body[#body + 1] = { "   " .. line }
+    end
+    if input.description then
+      body[#body + 1] = { "   " .. input.description, "IsovimAcpNotice" }
+    end
+  elseif name == "Edit" or name == "MultiEdit" or name == "Write" then
+    local new = name == "Write" and path and not vim.uv.fs_stat(input.file_path)
+    title = new and "Create file" or "Edit file"
+    path = path or (entry.tool or ""):match("^%u%a+ (.+)$") or "the file"
+    question = new and ("Do you want to create %s?"):format(path) or ("Do you want to make this edit to %s?"):format(path)
+    body = { { " " .. path, "IsovimAcpNotice" } }
+  else
+    title, question = "Tool use", "Do you want to proceed?"
+    local tool_name, args = look.header(call.title and call or { title = entry.tool }, dirs(chat))
+    body = { { "   " .. tool_name .. (args and ("(" .. args .. ")") or "") } }
+  end
+  rows[#rows + 1] = { " " .. title, "IsovimAcpAskTitle" }
+  vim.list_extend(rows, body)
+  rows[#rows + 1] = { "" }
+  local q = { " " .. question }
+  if path and question:find(path, 1, true) then
+    local s = q[1]:find(path, 1, true)
+    q.spans = { { s - 1, s - 1 + #path, "IsovimAcpBold" } }
+  end
+  rows[#rows + 1] = q
+  return rows
+end
+
+local function option_row(n, label, surface)
+  local text = ("   %d. %s"):format(n, label)
+  return { text, option = { surface, n }, spans = { { 3, 3 + #tostring(n) + 1, "IsovimAcpOptionNr" } } }
+end
+
+-- A permission the agent asked for: a box waiting on you, then what you decided.
+function RENDER.permission(chat, entry)
+  local decision = entry.decision or "denied"
+  local id = entry.toolCallId or entry.name or "?"
+  if decision == "asked" then
+    local box = { kind = "permission", id = id, repo = entry.repo, names = { entry.name }, options = { { "Allow", "Deny" } },
+      other = { false }, multi = { false } }
+    local rows = permission_rows(chat, entry)
+    rows[#rows + 1] = option_row(1, "Yes", 1)
+    rows[#rows + 1] = option_row(2, "No", 1)
+    rows[#rows + 1] = { "" }
+    rows[#rows + 1] = { (" %s · <leader>in the Inbox"):format(HINT_ANSWER), "IsovimAcpHint" }
+    add_box(chat, box, rows)
+    chat.boxes[#chat.boxes + 1] = box
+    update_bar(chat)
+    return
+  end
+  local box
+  for _, each in ipairs(chat.boxes) do
+    if each.kind == "permission" and each.id == id then
+      box = each
+    end
+  end
+  local by = entry.by and entry.by ~= "user" and entry.by or nil
+  local lines, hl
+  if decision == "allowed" then
+    -- As on Claude's screen: once allowed, the tool just runs. Another agent's say-so is noted.
+    lines = by and { ("  ⎿  Allowed by %s"):format(by) } or {}
+    hl = "IsovimAcpNotice"
+  elseif decision == "denied" then
+    local why = entry.reason and (" (" .. entry.reason .. ")") or ""
+    lines = { ("  ⎿  Denied by %s%s · %s won't run"):format(by or "you", why, entry.tool or "the tool") }
+    hl = "IsovimAcpDenied"
+  else
+    lines = { ("  ⎿  Permission withdrawn%s"):format(entry.reason and (": " .. entry.reason) or "") }
+    hl = "IsovimAcpNotice"
+  end
+  if box then
+    replace_box(chat, box, lines, hl)
+  elseif #lines > 0 then
+    add_block(chat, lines, hl)
+  end
+end
+
+-- What the agent asked you (AskUserQuestion): its questions in a box, then the answers.
+function RENDER.question(chat, entry)
+  if entry.state == "asked" then
+    local call = chat.tools[entry.toolCallId or ""] or {}
+    local asked = type(call.input) == "table" and type(call.input.questions) == "table" and call.input.questions or {}
+    local box = { kind = "question", id = entry.id, repo = entry.repo, names = {}, options = {}, other = {}, multi = {},
+      texts = {} }
+    local rows = {}
+    for i, q in ipairs(entry.questions or {}) do
+      box.names[i] = q.name
+      box.options[i] = vim.tbl_map(function(option)
+        return option.label
+      end, q.options or {})
+      box.other[i] = q.other == true
+      box.multi[i] = q.multi == true
+      local header = asked[i] and asked[i].header
+      -- The adapter puts the header before the question ("Color: Which color?"); the chip has it.
+      local text = q.question or ""
+      if header and vim.startswith(text, header .. ": ") then
+        text = text:sub(#header + 3)
+      end
+      box.texts[i] = text
+      if i > 1 then
+        rows[#rows + 1] = { "" }
+      end
+      if header then
+        local chip = " ☐ " .. header .. " "
+        rows[#rows + 1] = { " " .. chip, spans = { { 1, 1 + #chip, "IsovimAcpAskChip" } } }
+        rows[#rows + 1] = { "" }
+      end
+      rows[#rows + 1] = { " " .. text, "IsovimAcpBold" }
+      rows[#rows + 1] = { "" }
+      for n, option in ipairs(q.options or {}) do
+        rows[#rows + 1] = option_row(n, option.label or "", i)
+        if option.description and option.description ~= "" then
+          rows[#rows + 1] = { "      " .. option.description, "IsovimAcpOptionNote" }
+        end
+      end
+      if box.other[i] then
+        rows[#rows + 1] = { ("   %d. Type something."):format(#(q.options or {}) + 1), "IsovimAcpOptionNote" }
+      end
+      if box.multi[i] then
+        rows[#rows + 1] = { "   (any of them: their numbers, space between)", "IsovimAcpOptionNote" }
+      end
+    end
+    rows[#rows + 1] = { "" }
+    rows[#rows + 1] = { (" %s · <leader>in the Inbox"):format(HINT_ANSWER), "IsovimAcpHint" }
+    add_box(chat, box, rows)
+    chat.boxes[#chat.boxes + 1] = box
+    update_bar(chat)
+    return
+  end
+  local box
+  for _, each in ipairs(chat.boxes) do
+    if each.kind == "question" and each.id == entry.id then
+      box = each
+    end
+  end
+  if entry.state == "answered" then
+    local who = (entry.by and entry.by ~= "user") and entry.by or "User"
+    local lines = { ("%s %s answered %s's questions:"):format(GLYPH.message, who, chat.kind == "codex" and "Codex" or "Claude") }
+    local texts = box and box.texts or {}
+    for i, text in ipairs(entry.answers or {}) do
+      local q = texts[i]
+      local answer = text:gsub("\n", ", ")
+      lines[#lines + 1] = (i == 1 and FIRST or REST) .. "· " .. (q and (q .. " → ") or "") .. answer
+    end
+    if #lines == 1 then
+      lines[2] = FIRST .. "(no answer)"
+    end
+    if box then
+      replace_box(chat, box, {})
+    end
+    local row = add_block(chat, lines)
+    span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
+    for i = 1, #lines - 1 do
+      span(chat.buf, row + i, 0, #lines[i + 1], "IsovimAcpNotice")
+    end
+  else
+    local lines = { ("  ⎿  The question was withdrawn: %s"):format(entry.reason or "cancelled") }
+    if box then
+      replace_box(chat, box, lines, "IsovimAcpNotice")
+    else
+      add_block(chat, lines, "IsovimAcpNotice")
+    end
+  end
+end
+
+-- Boxes nothing will answer now (a new session, the agent gone) are taken down.
+local function drop_boxes(chat)
+  for _, box in ipairs(vim.list_slice(chat.boxes, 1)) do
+    replace_box(chat, box, { "  ⎿  No longer waiting on an answer" }, "IsovimAcpNotice")
+  end
+end
 
 function RENDER.prompt(chat, entry)
   -- Sent now: it leaves the queue.
@@ -510,7 +802,13 @@ function RENDER.prompt(chat, entry)
   -- Yours: typed in a composer or on Claude's screen, or iso spawn's; not one iso send or msg
   -- delivered.
   local mine = entry.via ~= "iso"
-  local row = add_block(chat, prompt_lines(entry.text or ""), "IsovimAcpPrompt")
+  local lines = prompt_lines(entry.text or "")
+  local row = add_block(chat, lines)
+  span(chat.buf, row, 0, #GLYPH.prompt + 1, "IsovimAcpPromptGlyph")
+  span(chat.buf, row, #GLYPH.prompt + 1, #lines[1], "IsovimAcpPrompt")
+  for i = 2, #lines do
+    span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
+  end
   mark_message(chat, row, mine)
   if mine and entry.text and chat.history[#chat.history] ~= entry.text then
     chat.history[#chat.history + 1] = entry.text
@@ -533,10 +831,15 @@ function RENDER.update(chat, entry)
   local update = entry.update or {}
   local kind = update.sessionUpdate
   local content = type(update.content) == "table" and update.content or {}
+  if kind == "agent_thought_chunk" and content.type == "text" then
+    thought(chat, content.text or "")
+    return
+  end
+  if kind == "agent_message_chunk" or kind == "tool_call" or kind == "tool_call_update" or kind == "plan" then
+    end_thought(chat, entry)
+  end
   if kind == "agent_message_chunk" and content.type == "text" then
-    add_text(chat, content.text or "", "agent")
-  elseif kind == "agent_thought_chunk" and content.type == "text" then
-    add_text(chat, content.text or "", "thought")
+    add_text(chat, content.text or "")
   elseif kind == "tool_call" or kind == "tool_call_update" then
     tool(chat, update)
   elseif kind == "plan" then
@@ -546,62 +849,39 @@ end
 
 function RENDER.turn(chat, entry)
   if entry.state == "start" then
-    chat.busy, chat.since = true, entry.ts
+    chat.busy, chat.since, chat.turn_id, chat.turn_chars = true, entry.ts, entry.id, 0
+    chat.verb = look.verb(entry.id)
   elseif entry.state == "end" then
+    end_thought(chat, entry)
     chat.busy = false
-    if entry.error or (entry.stopReason and entry.stopReason ~= "end_turn") then
-      add_block(chat, { ("[turn ended: %s]"):format(entry.error or entry.stopReason) }, "IsovimAcpNotice")
+    local reason = entry.error or entry.stopReason
+    if reason == "cancelled" then
+      add_lines(chat, { "  ⎿  Interrupted · What should " .. (chat.kind == "codex" and "Codex" or "Claude") .. " do instead?" },
+        "IsovimAcpNotice")
+    elseif entry.error or (reason and reason ~= "end_turn") then
+      add_lines(chat, { ("  ⎿  Error: the turn ended: %s"):format(reason) }, "IsovimAcpError")
     end
-  end
-end
-
--- A permission the agent asked for: waiting in the Inbox, then what you decided.
-function RENDER.permission(chat, entry)
-  local decision = entry.decision or "denied"
-  if decision == "asked" then
-    add_block(chat, { ("? %s asks to run: %s"):format(chat.agent, entry.tool or "a tool"),
-      ("  allow or deny it in the Inbox (<leader>in), or: iso answer %s allow|deny"):format(entry.name or "?") },
-      "IsovimAcpDenied")
-    return
-  end
-  local why = entry.reason and (" (" .. entry.reason .. ")") or (entry.by and (" (by " .. entry.by .. ")")) or ""
-  add_block(chat, { ("%s: %s%s"):format(decision, entry.tool or "a tool", why) },
-    decision == "allowed" and "IsovimAcpNotice" or "IsovimAcpDenied")
-end
-
--- What the agent asked you (AskUserQuestion): its questions, waiting in the Inbox, then the answers.
-function RENDER.question(chat, entry)
-  if entry.state == "asked" then
-    local lines = {}
-    for _, q in ipairs(entry.questions or {}) do
-      local labels = vim.tbl_map(function(option)
-        return option.label
-      end, q.options or {})
-      lines[#lines + 1] = ("? %s%s"):format(q.question or "", #labels > 0 and ("  [" .. table.concat(labels, " / ") .. "]") or "")
+    local _, past = look.verb(entry.id)
+    if chat.since and entry.ts and reason ~= "cancelled" then
+      local row = add_block(chat, { ("%s %s for %s"):format(GLYPH.thought, past, look.duration(entry.ts - chat.since)) })
+      span(chat.buf, row, 0, #vim.api.nvim_buf_get_lines(chat.buf, row, row + 1, false)[1], "IsovimAcpTurnDone")
     end
-    local first = (entry.questions or {})[1]
-    lines[#lines + 1] = ("  answer in the Inbox (<leader>in), or: iso answer %s <answer>"):format(first and first.name or "?")
-    add_block(chat, lines, "IsovimAcpDenied")
-  elseif entry.state == "answered" then
-    local lines = {}
-    for i, text in ipairs(entry.answers or {}) do
-      lines[i] = (i == 1 and FIRST or REST) .. text:gsub("\n", ", ")
-    end
-    add_lines(chat, #lines > 0 and lines or { FIRST .. "(no answer)" }, "IsovimAcpResult")
-  else
-    add_block(chat, { ("[the question was withdrawn: %s]"):format(entry.reason or "cancelled") }, "IsovimAcpNotice")
+    chat.since = nil
+    drop_boxes(chat)
   end
 end
 
 function RENDER.notice(chat, entry)
   if (entry.text or ""):match("^the agent exited") then
     chat.busy = false
+    drop_boxes(chat)
   end
   add_block(chat, { "[" .. (entry.text or "") .. "]" }, "IsovimAcpNotice")
 end
 
 function RENDER.session(chat, entry)
   chat.busy, chat.handover = false, false
+  drop_boxes(chat)
   local sid = entry.sessionId or ""
   local said
   if entry.how == "new" then
@@ -636,28 +916,53 @@ local FRAMES = { "·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "
 local frame = 1
 local spinner ---@type uv.uv_timer_t?
 
--- What the bar above the composer says.
+-- What the bar above the composer says, as {text, hl} parts: while the agent works, Claude's
+-- spinner line (its glyph, the turn's verb, how long, about how many tokens, how to interrupt).
 ---@param chat isovim.acp.Chat
-function M.bar_text(chat)
+function M.bar_parts(chat)
   local parts = {}
+  local function add(text, hl)
+    parts[#parts + 1] = { text, hl }
+  end
   if chat.rewind then
-    parts[1] = "↶ rewind: edit your prompt; <CR> goes on from before it (its files too) · <C-c> drops the rewind"
+    add("↶ rewind: edit your prompt; <CR> goes on from before it (its files too) · <C-c> drops the rewind", "IsovimAcpSpinner")
   elseif chat.handover then
-    parts[1] = "⇄ on Claude's screen (iso handover); prompts wait"
+    add("⇄ on Claude's screen (iso handover); prompts wait", "IsovimAcpSpinner")
+  elseif #chat.boxes > 0 then
+    local box = chat.boxes[1]
+    add(box.kind == "permission" and "? waiting for your permission" or "? waiting for your answer", "IsovimAcpAsk")
+    add(" (type its number and <CR>)", "IsovimAcpSpinnerNote")
   elseif chat.busy then
-    local secs = chat.since and math.max(0, math.floor(os.time() - chat.since)) or 0
-    parts[1] = ("%s Working… (%ds · <C-c> to cancel)"):format(FRAMES[frame], secs)
+    local sec, usec = vim.uv.gettimeofday()
+    local secs = chat.since and math.max(0, math.floor(sec + usec / 1e6 - chat.since)) or 0
+    add(FRAMES[frame] .. " ", "IsovimAcpSpinner")
+    add((chat.verb or "Working") .. "…", "IsovimAcpSpinnerVerb")
+    local notes = { look.duration(secs) }
+    local tokens = math.floor(((chat.turn_chars or 0) + 3) / 4)
+    if chat.block == "thought" then
+      notes[#notes + 1] = "thinking"
+    elseif tokens > 0 then
+      notes[#notes + 1] = "↓ " .. look.count(tokens) .. " tokens"
+    end
+    notes[#notes + 1] = "<C-c> to interrupt"
+    add(" (" .. table.concat(notes, " · ") .. ")", "IsovimAcpSpinnerNote")
   else
     local spec = store.agent(chat.ws, chat.agent) or {}
-    parts[1] = "❯ " .. (spec.name or chat.agent)
+    add(GLYPH.prompt .. " " .. (spec.name or chat.agent), "IsovimAcpIdle")
   end
   if #chat.queue > 0 then
-    parts[#parts + 1] = ("%d queued (<leader>iq)"):format(#chat.queue)
+    add((" · %d queued (<leader>iq)"):format(#chat.queue), "IsovimAcpSpinnerNote")
   end
   if chat.unseen then
-    parts[#parts + 1] = "↓ more below"
+    add(" · ↓ more below", "IsovimAcpSpinnerNote")
   end
-  return " " .. table.concat(parts, " · ")
+  return parts
+end
+
+function M.bar_text(chat)
+  return " " .. table.concat(vim.tbl_map(function(p)
+    return p[1]
+  end, M.bar_parts(chat)))
 end
 
 local function any_busy()
@@ -673,10 +978,15 @@ update_bar = function(chat)
   if not vim.api.nvim_buf_is_valid(chat.composer) then
     return
   end
-  local text = M.bar_text(chat):gsub("%%", "%%%%")
-  local hl = (chat.busy or chat.handover) and "%#IsovimAcpSpinner#" or "%#IsovimAcpNotice#"
+  local bar = " "
+  for _, part in ipairs(M.bar_parts(chat)) do
+    bar = bar .. "%#" .. part[2] .. "#" .. part[1]:gsub("%%", "%%%%")
+  end
   for _, win in ipairs(vim.fn.win_findbuf(chat.composer)) do
-    vim.wo[win][0].winbar = hl .. text
+    vim.wo[win][0].winbar = bar
+  end
+  if M.decorate_composer then
+    M.decorate_composer(chat)
   end
   if any_busy() and not spinner then
     spinner = vim.uv.new_timer()
@@ -734,10 +1044,10 @@ end
 
 local function reset(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.tail, chat.fresh = nil, {}, {}, {}, 0, 0, true
-  chat.marks = {}
+  chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
   chat.busy, chat.handover = false, false
   if vim.api.nvim_buf_is_valid(chat.buf) then
-    for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE }) do
+    for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS }) do
       vim.api.nvim_buf_clear_namespace(chat.buf, ns, 0, -1)
     end
     edit(chat, function(buf)
@@ -811,15 +1121,16 @@ local function fold(chat, cmd)
   if not call then
     return
   end
-  local open = (cmd == "zo") or (cmd == "za" and not call.open) or false
-  if open == call.open or (open and call.more == 0) then
+  local now = call.more == 0 and call.can_open
+  local open = (cmd == "zo") or (cmd == "za" and not now) or false
+  if open == now or (open and call.more == 0) then
     return
   end
   call.open = open
   draw_tool(chat, call)
-  local now = vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
-  if now and not open then
-    vim.api.nvim_win_set_cursor(0, { math.min(row, now + 1) + 1, 0 })
+  local at = vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
+  if at and not open then
+    vim.api.nvim_win_set_cursor(0, { math.min(row, at + call.body) + 1, 0 })
   end
 end
 
@@ -954,8 +1265,70 @@ function COMMANDS.fork(chat, rest)
   return true
 end
 
+-- Answers the box waiting on you, as Claude's prompt takes a number: text is an option's number
+-- (several, space between, for a multi question), yes or no for a permission, or your own words
+-- for a question that takes them. The first of its questions not yet answered gets it. Returns
+-- whether it was an answer (else the text is a prompt), and why not when it was meant as one.
+---@return boolean answered, string? err
+function M.answer(chat, text, box)
+  box = box or chat.boxes[1]
+  if not box then
+    return false
+  end
+  local surfaces = require("isovim.surfaces")
+  local which, entry
+  for i, name in ipairs(box.names) do
+    local each = surfaces.get(box.repo, name)
+    if each and each.type == "question" and not each.answer then
+      which, entry = i, each
+      break
+    end
+  end
+  if not entry then
+    return false
+  end
+  local words = vim.split(vim.trim(text), "[%s,]+", { trimempty = true })
+  local numbers = #words > 0 and vim.iter(words):all(function(word)
+    return tonumber(word) ~= nil
+  end)
+  local value
+  if box.kind == "permission" then
+    local lower = vim.trim(text):lower()
+    if lower == "1" or lower == "y" or lower == "yes" then
+      value = "Allow"
+    elseif lower == "2" or lower == "n" or lower == "no" then
+      value = "Deny"
+    else
+      return false
+    end
+  elseif numbers then
+    local labels = {}
+    for _, word in ipairs(words) do
+      local label = box.options[which][tonumber(word)]
+      if not label then
+        return true, ("%s isn't one of its options (1-%d)"):format(word, #box.options[which])
+      end
+      labels[#labels + 1] = label
+    end
+    if #labels > 1 and not box.multi[which] then
+      return true, "it takes one option"
+    end
+    value = { labels = labels }
+  elseif box.other[which] then
+    value = { labels = {}, other = vim.trim(text) }
+  else
+    return false
+  end
+  local answer, err = surfaces.answer(entry, value)
+  if not answer then
+    return true, err
+  end
+  return true
+end
+
 -- Sends what's in the composer and empties it; on failure the text stays and you're told why.
--- During a rewind it's the rewound prompt's new text.
+-- During a rewind it's the rewound prompt's new text. While a permission or question waits on you,
+-- an answer to it (a number, yes or no, your own words for a question) answers it instead.
 function M.submit(composer)
   local chat = by_buf(composer)
   local text = vim.trim(table.concat(vim.api.nvim_buf_get_lines(composer, 0, -1, false), "\n"))
@@ -973,6 +1346,16 @@ function M.submit(composer)
     return
   end
   local command, rest = text:match("^/(%a+)%s*(.-)$")
+  if not command and #chat.boxes > 0 then
+    local answered, err = M.answer(chat, text)
+    if answered then
+      if err then
+        return say("could not answer: " .. err, vim.log.levels.WARN)
+      end
+      vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+      return
+    end
+  end
   if command and COMMANDS[command] then
     if COMMANDS[command](chat, rest, command) then
       chat.recall = nil
@@ -1026,11 +1409,33 @@ local function map_chat(chat)
   map("[m", function()
     jump(chat, -1, false)
   end, "previous message")
-  for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
+  for _, lhs in ipairs({ "i", "a", "o" }) do
     map(lhs, function()
       M.focus_composer(chat.ws, chat.agent)
     end, "type to the agent")
   end
+  map("<CR>", function()
+    -- On an option of a box waiting on you: that's the answer.
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local mark = vim.api.nvim_buf_get_extmarks(buf, OPTIONS, { row, 0 }, { row, -1 }, {})[1]
+    local option = mark and chat.options[mark[1]]
+    if option then
+      local box = option.box
+      local name = box.names[option.surface]
+      local surfaces = require("isovim.surfaces")
+      local entry = name and surfaces.get(box.repo, name)
+      if not entry or entry.answer then
+        return say("that question isn't waiting any more")
+      end
+      local label = box.options[option.surface][option.n]
+      local answer, err = surfaces.answer(entry, box.multi[option.surface] and { labels = { label } } or label)
+      if not answer then
+        say("could not answer: " .. tostring(err), vim.log.levels.WARN)
+      end
+      return
+    end
+    M.focus_composer(chat.ws, chat.agent)
+  end, "answer with the option under the cursor, else type to the agent")
   map("<C-c>", function()
     cancel(chat)
   end, "cancel the agent's turn")
@@ -1086,6 +1491,71 @@ local function chat_window(win)
   wo.number, wo.relativenumber, wo.signcolumn, wo.statuscolumn, wo.foldcolumn = false, false, "no", "", "0"
   wo.list, wo.spell, wo.colorcolumn, wo.foldenable = false, false, "", false
   wo.fillchars = "eob: "
+  -- Markdown's marks (`code`, **bold**) hidden, as Claude draws them, on the cursor's line too.
+  wo.conceallevel, wo.concealcursor = 2, "nc"
+end
+
+-- The composer as Claude's prompt: a rule above and below it, ❯ before its first line, a hint
+-- under it, and what to type while it's empty. Redrawn as you type (the rule below follows the
+-- last line).
+local COMPOSER = vim.api.nvim_create_namespace("isovim_acp_composer")
+local RULE_LINE = { { ("─"):rep(400), "IsovimAcpRule" } }
+
+-- The rule above the first line shows only while the window keeps a filler line at its top.
+local function show_top_rule(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.composer)) do
+    vim.api.nvim_win_call(win, function()
+      local view = vim.fn.winsaveview()
+      if view.topline == 1 and (view.topfill or 0) < 1 then
+        view.topfill = 1
+        vim.fn.winrestview(view)
+      end
+    end)
+  end
+end
+
+local function composer_hint(chat)
+  if #chat.boxes > 0 then
+    return "  type its number and <CR> to answer · or <CR> on an option in the chat · <leader>in the Inbox"
+  elseif chat.busy then
+    return "  <CR> queues it · <C-c> interrupts · <leader>iq the queue · <C-k> the chat"
+  end
+  return "  <CR> send · <S-CR> new line · /new /resume /fork · <Up> earlier prompts · <C-k> the chat"
+end
+
+local function decorate_composer(chat)
+  local buf = chat.composer
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  local last = vim.api.nvim_buf_line_count(buf) - 1
+  local hint = composer_hint(chat)
+  local empty = last == 0 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
+  local drawn = table.concat({ hint, last, tostring(empty) }, "|")
+  if chat.composer_drawn == drawn and #vim.api.nvim_buf_get_extmarks(buf, COMPOSER, 0, -1, { limit = 1 }) > 0 then
+    return show_top_rule(chat)
+  end
+  chat.composer_drawn = drawn
+  vim.api.nvim_buf_clear_namespace(buf, COMPOSER, 0, -1)
+  vim.api.nvim_buf_set_extmark(buf, COMPOSER, 0, 0, { virt_lines = { RULE_LINE }, virt_lines_above = true,
+    virt_lines_leftcol = true })
+  vim.api.nvim_buf_set_extmark(buf, COMPOSER, last, 0,
+    { virt_lines = { RULE_LINE, { { hint, "IsovimAcpHint" } } }, virt_lines_leftcol = true })
+  if empty then
+    local spec = store.agent(chat.ws, chat.agent) or {}
+    vim.api.nvim_buf_set_extmark(buf, COMPOSER, 0, 0, { virt_text = { { ("Message %s…"):format(spec.name or chat.agent),
+      "IsovimAcpHint" } }, virt_text_pos = "overlay" })
+  end
+  show_top_rule(chat)
+end
+M.decorate_composer = decorate_composer
+
+local function composer_window(win)
+  local wo = vim.wo[win][0]
+  wo.winfixheight, wo.number, wo.relativenumber, wo.wrap = true, false, false, true
+  wo.signcolumn, wo.foldcolumn, wo.fillchars = "no", "0", "eob: "
+  wo.statuscolumn = "%#IsovimAcpComposerGlyph#%{v:lnum == 1 && v:virtnum == 0 ? '❯ ' : '  '}"
+  wo.breakindent = false
 end
 
 local function make(ws, agent)
@@ -1114,7 +1584,8 @@ local function make(ws, agent)
   vim.b[composer].completion = false
 
   local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, seq = 0,
-    tail = 0, fresh = true, busy = false, handover = false, unseen = false, marks = {} }
+    tail = 0, fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
+    kind = spec.kind or "claude" }
   -- Window options follow the buffer into any window that shows it (a layout rebuilt, :b).
   vim.api.nvim_create_autocmd("BufWinEnter", {
     buffer = buf,
@@ -1135,10 +1606,14 @@ local function make(ws, agent)
   vim.api.nvim_create_autocmd("BufWinEnter", {
     buffer = composer,
     callback = function()
-      local wo = vim.wo[vim.api.nvim_get_current_win()][0]
-      wo.winfixheight, wo.number, wo.relativenumber, wo.wrap = true, false, false, true
-      wo.signcolumn, wo.statuscolumn, wo.foldcolumn, wo.fillchars = "no", "", "0", "eob: "
+      composer_window(vim.api.nvim_get_current_win())
       update_bar(chat)
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    buffer = composer,
+    callback = function()
+      decorate_composer(chat)
     end,
   })
   map_chat(chat)
@@ -1237,7 +1712,7 @@ function M.open(ws, agent, win)
   if old_composer ~= -1 and vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_win_set_buf(old_composer, chat.composer)
   elseif vim.fn.bufwinid(chat.composer) == -1 then
-    vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = 5 })
+    vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = 6 })
   end
   update_bar(chat)
   return chat

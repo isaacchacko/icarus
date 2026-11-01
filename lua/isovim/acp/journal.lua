@@ -30,7 +30,9 @@
 --                                                 for: asked (its question surface repo/name),
 --                                                 then allowed, denied or cancelled
 --   question  {state: asked|answered|cancelled, id, questions?, answers?}  what the agent asked
---                                                 you (AskUserQuestion), as question surfaces
+--                                                 you (AskUserQuestion), as question surfaces:
+--                                                 each {question, options, multi, other (it
+--                                                 takes your own words), name (its surface)}
 --   notice    {text}                              the supervisor's own words: errors, restarts
 -- Raw updates are kept as they came so the renderer stays faithful to the protocol and new update
 -- kinds need no change here.

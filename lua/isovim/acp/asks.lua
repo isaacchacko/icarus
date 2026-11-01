@@ -246,7 +246,8 @@ function M.elicit(asks, params, answer)
       return answer({ action = "cancel" })
     end
     ask.names[#ask.names + 1] = name
-    journaled[#journaled + 1] = { question = field.question, options = spec.options, multi = spec.multi, name = name }
+    journaled[#journaled + 1] = { question = field.question, options = spec.options, multi = spec.multi, other = spec.other,
+      name = name }
   end
   asks.pending[id] = ask
   asks.journal("question", { state = "asked", id = id, repo = asks.repo, toolCallId = params.toolCallId,

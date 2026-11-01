@@ -11,6 +11,7 @@ Run from pilot/: uv run --with pynvim --with pillow --with fonttools python chec
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -21,6 +22,7 @@ import screenshot  # noqa: E402
 from iso import OUT, REPO, Iso  # noqa: E402
 
 BIN = str(REPO / "bin" / "iso")
+DOT = f"{DOT}" if sys.platform == "darwin" else "●"
 fails = []
 
 
@@ -117,7 +119,7 @@ def hl_at(row, col=0, agent="a0"):
       for _, m in ipairs(vim.api.nvim_buf_get_extmarks(c.buf, require('isovim.acp.chat').ns.hl, { row, 0 }, { row, -1 }, { details = true })) do
         local d = m[4]
         if d.line_hl_group then out[#out + 1] = d.line_hl_group end
-        if d.hl_group and m[3] <= col and (d.end_col or 0) > col then out[#out + 1] = d.hl_group end
+        if d.hl_group and m[3] <= col and ((d.end_row or m[2]) > m[2] or (d.end_col or 0) > col) then out[#out + 1] = d.hl_group end
         if d.virt_text then out[#out + 1] = 'virt:' .. d.virt_text[1][1] end
       end
       return out""", agent, row, col)
@@ -180,60 +182,59 @@ try:
 
     print("\n# the look")
     iso.cli("open", a0)
-    iso.wait(lambda: has("⏺ reply to: hello alpha"), "a0's chat")
+    iso.wait(lambda: has(f"{DOT} reply to: hello alpha"), "a0's chat")
     lines = chat()
     r = row_of("❯ hello alpha")
-    check(r is not None and "IsovimAcpPrompt" in hl_at(r), "your prompt: ❯, colored", (r, hl_at(r) if r is not None else None))
-    r = row_of("⏺ Read notes.md")
-    check(r is not None and "IsovimAcpToolDone" in hl_at(r, 0) and "IsovimAcpToolTitle" in hl_at(r, 5),
-          "a finished tool call: green ⏺, bold title", hl_at(r) if r is not None else lines)
+    check(r is not None and "IsovimAcpPrompt" in hl_at(r, 4), "your prompt: ❯, colored", (r, hl_at(r) if r is not None else None))
+    r = row_of(f"{DOT} Read(notes.md)")
+    check(r is not None and "IsovimAcpToolDone" in hl_at(r, 0) and "IsovimAcpToolTitle" in hl_at(r, len(DOT.encode()) + 2),
+          f"a finished tool call: green {DOT}, bold name", hl_at(r) if r is not None else lines)
     check(lines[r - 1] == "" and lines[r + 1] == "", "blocks are a blank line apart", lines[r - 1:r + 2])
 
     (iso.tmp / "work" / "acme" / "app" / "a0" / "src").mkdir(parents=True, exist_ok=True)
     run("send", a0, "diff")
-    iso.wait(lambda: has("⏺ edited src/app.lua"), "the diff turn")
+    iso.wait(lambda: has(f"{DOT} edited src/app.lua"), "the diff turn")
     lines = chat()
-    r = row_of("⏺ Edit src/app.lua")
-    body = ["  ⎿  Updated src/app.lua with 2 additions and 1 removal", "        1   local a = 1", "        2 - local b = 2",
-            "        2 + local b = 20", "        3   local c = 3", "        4 + local d = 4", "        5   return a"]
-    check(lines[r + 1] == body[0], "the diff's summary on the ⎿ line", lines[r:r + 3])
-    check(lines[r + 2] == "", "collapsed at first: the summary, then nothing until za", lines[r:r + 3])
-    more = iso.lua("local c = require('isovim.acp.chat').get('acme/app', 'a0') local r = ..."
-                   " for _, m in ipairs(vim.api.nvim_buf_get_extmarks(c.buf, require('isovim.acp.chat').ns.hl, { r, 0 }, { r, -1 },"
-                   " { details = true })) do if m[4].virt_text then return m[4].virt_text[1][1] end end", r + 1)
-    check(more == "  … +6 lines (za)", "saying how much is under it", more)
+    r = row_of(f"{DOT} Update(src/app.lua)")
+    body = ["  ⎿  Added 2 lines, removed 1 line", "       1  local a = 1", "       2 -local b = 2",
+            "       2 +local b = 20", "       3  local c = 3", "       4 +local d = 4", "       5  return a"]
+    check(lines[r + 1:r + 8] == body, "the diff open under its summary, as Claude shows an edit", lines[r:r + 9])
     iso.lua("local c = require('isovim.acp.chat').get('acme/app', 'a0') local w = vim.fn.bufwinid(c.buf)"
-            " vim.api.nvim_set_current_win(w) vim.cmd('stopinsert') vim.api.nvim_win_set_cursor(w, { ..., 0 })", r + 1)
+            " vim.api.nvim_set_current_win(w) vim.cmd('stopinsert') vim.api.nvim_win_set_cursor(w, { ..., 0 })", r + 3)
     iso.keys("Escape")
+    iso.keys("z", "c")
+    check(soon(lambda: chat()[r + 1:r + 4] == [body[0], "     … +6 lines (za to expand)", ""]), "zc collapses it, saying how"
+          " much is under it", chat()[r:r + 4])
     iso.keys("z", "a")
-    check(soon(lambda: chat()[r + 1:r + 8] == body), "za shows the whole diff", chat()[r:r + 8])
-    hls = [hl_at(r + 1 + i) for i in range(1, 7)]
-    check("IsovimAcpDiffDelete" in hls[1] and "IsovimAcpDiffAdd" in hls[2] and "IsovimAcpResult" in hls[0],
-          "removed lines red, added green, context dim", hls)
+    check(soon(lambda: chat()[r + 1:r + 8] == body), "za shows the whole diff again", chat()[r:r + 8])
+    hls = [hl_at(r + 1 + i, 12) for i in range(1, 7)]
+    check("IsovimAcpDiffDelete" in hls[1] and "IsovimAcpDiffAdd" in hls[2] and not any("Diff" in h and "Nr" not in h for h in hls[0]),
+          "removed lines red, added green, context plain", hls)
     iso.lua("vim.cmd('normal! G') require('isovim.acp.chat').focus_composer('acme/app', 'a0')")
 
-    run("send", a0, "term for i in 1 2 3; do echo line $i; sleep 0.3; done; exit 3")
-    iso.wait(lambda: has("  ⎿  line 1"), "the terminal output streaming")
+    run("send", a0, "term for i in 1 2 3 4 5; do echo line $i; sleep 0.3; done; exit 3")
+    iso.wait(lambda: has("⎿  line 1"), "the terminal output streaming")
     early = chat()
-    iso.wait(lambda: has("⏺ ran it"), "the command done")
+    iso.wait(lambda: has(f"{DOT} ran it"), "the command done")
     lines = chat()
-    r = row_of("⏺ for i in 1 2 3; do echo line $i; sleep 0.3; done; exit 3")
-    check(r is not None and lines[r + 1] == "  ⎿  line 1" and lines[r + 2] == "", "Bash output from terminal deltas, under the call"
-          " (backticks off its title), collapsed", lines[-8:])
+    r = row_of(f"{DOT} Bash(for i in 1 2 3 4 5; do echo line $i; sleep 0.3; done; exit 3)")
+    check(r is not None and lines[r + 1:r + 6] == ["  ⎿  Error: Exit code 3", "     line 1", "     line 2",
+                                                   "     … +3 lines (za to expand)", ""],
+          "Bash output from terminal deltas, under Bash(command), its exit code first, collapsed", lines[-9:])
     iso.lua("require('isovim.acp.chat').set_open('acme/app', 'a0', ..., true)", r)
-    check(chat()[r + 1:r + 4] == ["  ⎿  line 1", "     line 2", "     line 3"], "all of it when opened", chat()[r:r + 5])
-    check(not any("line 3" in line for line in early), "it streamed in, line by line", early[-4:])
-    check("IsovimAcpToolFailed" in hl_at(r, 0) and "virt:  exit 3" in hl_at(r), "a failing exit: red ⏺ and its code",
-          hl_at(r) if r is not None else None)
+    check(chat()[r + 2:r + 7] == ["     line 1", "     line 2", "     line 3", "     line 4", "     line 5"],
+          "all of it when opened", chat()[r:r + 8])
+    check(not any("line 5" in line for line in early), "it streamed in, line by line", early[-4:])
+    check("IsovimAcpToolFailed" in hl_at(r, 0), f"a failing exit: red {DOT}", hl_at(r) if r is not None else None)
 
     run("send", a0, "think")
     run("send", a0, "plan")
-    iso.wait(lambda: has("⏺ planned"), "think and plan")
+    iso.wait(lambda: has(f"{DOT} planned"), "think and plan")
     lines = chat()
-    r = row_of("✻ pondering the question")
-    check(r is not None and "IsovimAcpThought" in hl_at(r, 4), "thinking: ✻, dimmed", lines[-14:])
-    r = row_of("⏺ Update Todos")
-    check(r is not None and lines[r + 1:r + 4] == ["  ⎿  ☒ read the code", "     ◐ write the fix", "     ☐ test it"],
+    r = next((i for i, line in enumerate(lines) if line.startswith("✻ Thought for ")), None)
+    check(r is not None and "IsovimAcpThought" in hl_at(r, 4), "thinking: ✻, dimmed and collapsed", lines[-14:])
+    r = row_of(f"{DOT} Update Todos")
+    check(r is not None and lines[r + 1:r + 4] == ["  ⎿  ☒ read the code", "     ☐ write the fix", "     ☐ test it"],
           "a plan as a checklist", lines[-8:])
     long = "word " * 60
     run("send", a0, long.strip())
@@ -252,17 +253,19 @@ try:
     seen, spin = [], None
     deadline = time.time() + 15
     while time.time() < deadline:
-        last = (chat() or [""])[-1]
-        if last.startswith("⏺ w") and (not seen or seen[-1] != last):
+        last = next((line for line in reversed(chat() or []) if line.startswith(f"{DOT} w")), "")
+        if last.startswith(f"{DOT} w") and (not seen or seen[-1] != last):
             seen.append(last)
         if last.rstrip().endswith("w6"):
             break
         if seen:
             spin = bar()
         time.sleep(0.1)
-    check(seen and seen[-1].rstrip() == "⏺ w1 w2 w3 w4 w5 w6", "the text arrives with the journal watch off", seen)
+    check(seen and seen[-1].rstrip() == f"{DOT} w1 w2 w3 w4 w5 w6", "the text arrives with the journal watch off", seen)
     check(len(seen) >= 4, "chunk by chunk, not all at the end", seen)
-    check("Working…" in (spin or "") and "<C-c> to cancel" in spin, "the bar above the composer has a spinner while it works", spin)
+    spin = re.sub(r"%#\w+#", "", spin or "")
+    check("… (" in spin and "<C-c> to interrupt" in spin, "the bar above the composer has Claude's spinner line while it"
+          " works", spin)
     spins = set()
     run("send", a0, "slow 2")
     for _ in range(12):
@@ -270,13 +273,13 @@ try:
         time.sleep(0.12)
     check(len(spins) >= 3, "the spinner turns", spins)
     iso.wait(lambda: turn_done("a0", "slow 2"), "slow 2 done")
-    check(soon(lambda: "Working" not in bar() and "alpha" in bar()), "idle: the bar names the agent", bar())
+    check(soon(lambda: "to interrupt" not in bar() and "alpha" in bar()), "idle: the bar names the agent", bar())
 
     print("\n# follow the bottom only when you're there")
     win = chat_win()
     iso.lua("vim.api.nvim_win_set_cursor(..., { 1, 0 })", win)
     run("send", a0, "stream 3")
-    iso.wait(lambda: has("⏺ w1 w2 w3"), "streamed while scrolled up")
+    iso.wait(lambda: has(f"{DOT} w1 w2 w3"), "streamed while scrolled up")
     check(iso.lua("return vim.api.nvim_win_get_cursor(...)[1]", win) == 1, "scrolled up, the view stays put")
     check("↓ more below" in bar(), "and the bar says there's more below", bar())
     iso.lua("vim.api.nvim_win_call(..., function() vim.cmd('normal! G') end)", win)
@@ -288,7 +291,7 @@ try:
     # The journal watch back on, for what follows.
     iso.lua("require('isovim.acp.chat').close('acme/app', 'a0')")
     iso.cli("open", a0)
-    iso.wait(lambda: has("⏺ w1 w2") and chat()[-1].startswith("⏺ w1 w2"), "the chat reopened")
+    iso.wait(lambda: has(f"{DOT} w1 w2") and any(line.startswith(f"{DOT} w1 w2") for line in chat()[-3:]), "the chat reopened")
 
     print("\n# the queue")
     run("send", a0, "slow 8")
@@ -345,14 +348,14 @@ try:
     def att_screen():
         return subprocess.run(["tmux", "-L", iso.ui, "capture-pane", "-p", "-t", f"={att}:"], capture_output=True, text=True).stdout
 
-    iso.wait(lambda: "⏺ w1 w2" in att_screen() and "alpha" in att_screen(), "the attached chat", 20)
+    iso.wait(lambda: f"{DOT} w1 w2" in att_screen() and "alpha" in att_screen(), "the attached chat", 20)
     check(True, "it shows the same chat, its bar naming the agent")
     subprocess.run(["tmux", "-L", iso.ui, "send-keys", "-t", f"={att}:", "-l", "from the attached nvim"])
     time.sleep(0.2)
     subprocess.run(["tmux", "-L", iso.ui, "send-keys", "-t", f"={att}:", "Enter"])
     iso.wait(lambda: turn_done("a0", "from the attached nvim"), "its prompt answered")
     check(soon(lambda: "reply to: from the attached nvim" in att_screen()), "it sends, and the reply streams in", att_screen()[-400:])
-    check(soon(lambda: has("❯ from the attached nvim") and has("⏺ reply to: from the attached nvim")), "and the TUI's chat shows it too")
+    check(soon(lambda: has("❯ from the attached nvim") and has(f"{DOT} reply to: from the attached nvim")), "and the TUI's chat shows it too")
     ansi = subprocess.run(["tmux", "-L", iso.ui, "capture-pane", "-p", "-e", "-t", f"={att}:"], capture_output=True, text=True).stdout
     screenshot.render(ansi, OUT / "acp_chat_look-attach.png", 110, 36)
     subprocess.run(["tmux", "-L", iso.ui, "send-keys", "-t", f"={att}:", "Escape", ":qa", "Enter"])
@@ -384,7 +387,7 @@ try:
     check(not any(e["kind"] == "prompt" and e["text"] == "while handed over" for e in journal("a0")), "and isn't sent")
     subprocess.run(["tmux", "-L", iso.env["ISOVIM_TMUX_SOCKET"], "send-keys", "-t", "=iso2-acme+app+a0:", "bye", "Enter"])
     iso.wait(lambda: has("[back from Claude's screen]"), "Claude exited", 15)
-    check(has("❯ hello from claude's screen") and has("⏺ hi on claude's screen") and has("⏺ Bash ls -la"),
+    check(has("❯ hello from claude's screen") and has(f"{DOT} hi on claude's screen") and has(f"{DOT} Bash(ls -la)"),
           "what happened on Claude's screen is in the chat", chat()[-14:])
     check(not has("meta, left out"), "without Claude's bookkeeping")
     iso.wait(lambda: turn_done("a0", "while handed over"), "the queued prompt sent after", 20)

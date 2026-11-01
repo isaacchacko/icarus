@@ -116,9 +116,13 @@ function M.ensure(kind)
   return true
 end
 
--- The mode a session of this agent is set to.
+-- The mode a session of this agent is set to. ISOVIM_ACP_MODE sets another for every agent (a pilot
+-- runs claude in default, to see its permission prompts).
 ---@param spec isovim.Agent
 function M.mode(spec)
+  if vim.env.ISOVIM_ACP_MODE and vim.env.ISOVIM_ACP_MODE ~= "" then
+    return vim.env.ISOVIM_ACP_MODE
+  end
   local adapter = M.get(spec.kind)
   return spec.read_only and adapter.read_only_mode or adapter.mode
 end

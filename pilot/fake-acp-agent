@@ -10,7 +10,9 @@ a child of this process; "slow <n>" works for n seconds; "perm" asks for a permi
 with the outcome. "diff" edits src/app.lua (a diff tool call), "term <cmd>" runs a command whose
 output streams as terminal output deltas (claude-agent-acp's _meta extension) and ends with its
 exit code, "stream <n>" streams n words one chunk at a time ($FAKE_STREAM_GAP seconds apart),
-"think" thinks before it answers, and "plan" sends a plan. session/cancel ends the running turn as cancelled.
+"think" thinks (two chunks) before it answers, "markdown" answers with `code`, **bold** and a heading, and
+"plan" sends a plan. session/cancel ends the running turn as cancelled. Tool calls carry the tool's name in
+_meta.claudeCode.toolName and its input in rawInput, as claude-agent-acp's do.
 "write <path> <text>", "read <path>" and "bash <cmd>" are Write, Read and Bash tool calls that first
 run the session's PreToolUse hooks (from _meta.claudeCode.options.settings) as Claude Code does: a
 hook that exits 2 blocks the call, its stderr the reason, which the reply then starts "blocked: ".
@@ -154,11 +156,16 @@ def work(seconds):
     return not running["cancelled"]
 
 
-def tool(session, call_id, title, kind, status, output=None):
+def tool(session, call_id, title, kind, status, output=None, name=None, raw=None):
+    """A tool call's update; name and raw (its input) go where claude-agent-acp puts them."""
     body = {"sessionUpdate": "tool_call" if status == "pending" else "tool_call_update", "toolCallId": call_id,
             "status": status}
     if status == "pending":
         body.update({"title": title, "kind": kind})
+    if name:
+        body["_meta"] = {"claudeCode": {"toolName": name}}
+    if raw is not None:
+        body["rawInput"] = raw
     if output is not None:
         body["content"] = [{"type": "content", "content": {"type": "text", "text": output}}]
     update(session, body)
@@ -185,7 +192,7 @@ def pre_tool_use(session, name, tool_input):
 
 def guarded(session, call_id, name, kind, title, tool_input, run):
     """A tool call that its PreToolUse hooks may block; run() does it and returns its output."""
-    tool(session, call_id, title, kind, "pending")
+    tool(session, call_id, title, kind, "pending", name=name, raw=tool_input)
     reason = pre_tool_use(session, name, tool_input)
     if reason is not None:
         tool(session, call_id, None, None, "failed", reason)
@@ -224,7 +231,8 @@ def prompt(rid, params):
         if (client["capabilities"].get("elicitation") or {}).get("form") is None:
             chunk(session, "no elicitation")
         else:
-            tool(session, call_id, "AskUserQuestion", "other", "pending")
+            tool(session, call_id, "AskUserQuestion", "other", "pending", name="AskUserQuestion",
+                 raw={"questions": [{"question": "Which color?", "header": "Color"}, {"question": "Which sizes?", "header": "Sizes"}]})
             answer = request("elicitation/create", {
                 "mode": "form", "sessionId": session, "toolCallId": call_id,
                 "message": "Please answer the following questions.",
@@ -249,12 +257,13 @@ def prompt(rid, params):
         proc = subprocess.Popen(["bash", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         background.append(proc)
-        tool(session, call_id, "run in background " + command, "execute", "pending")
+        tool(session, call_id, "run in background " + command, "execute", "pending", name="Bash",
+             raw={"command": command, "run_in_background": True})
         tool(session, call_id, None, None, "completed", f"running in background (pid {proc.pid})")
         chunk(session, f"started: {proc.pid}")
     elif text.startswith("run "):
         command = text[4:]
-        tool(session, call_id, "run " + command, "execute", "pending")
+        tool(session, call_id, "run " + command, "execute", "pending", name="Bash", raw={"command": command})
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
         tool(session, call_id, None, None, "completed", (result.stdout + result.stderr).strip())
         chunk(session, "ran: " + command)
@@ -283,7 +292,8 @@ def prompt(rid, params):
             return (result.stdout + result.stderr).strip() + f" (exit {result.returncode})"
         guarded(session, call_id, "Bash", "execute", command, {"command": command}, bash)
     elif text == "perm":
-        tool(session, call_id, "Bash: rm -rf build", "execute", "pending")
+        tool(session, call_id, "Bash: rm -rf build", "execute", "pending", name="Bash",
+             raw={"command": "rm -rf build", "description": "Remove the build dir"})
         answer = request("session/request_permission", {
             "sessionId": session,
             "toolCall": {"toolCallId": call_id, "title": "Bash: rm -rf build", "kind": "execute"},
@@ -301,15 +311,18 @@ def prompt(rid, params):
         old = "local a = 1\nlocal b = 2\nlocal c = 3\nreturn a\n"
         new = "local a = 1\nlocal b = 20\nlocal c = 3\nlocal d = 4\nreturn a\n"
         update(session, {"sessionUpdate": "tool_call", "toolCallId": call_id, "title": "Edit src/app.lua", "kind": "edit",
-                         "status": "pending", "locations": [{"path": path}]})
+                         "status": "pending", "locations": [{"path": path}], "_meta": {"claudeCode": {"toolName": "Edit"}},
+                         "rawInput": {"file_path": path, "old_string": "local b = 2", "new_string": "local b = 20"}})
         update(session, {"sessionUpdate": "tool_call_update", "toolCallId": call_id, "status": "completed",
+                         "locations": [{"path": path, "line": 1}],
                          "content": [{"type": "diff", "path": path, "oldText": old, "newText": new}]})
         chunk(session, "edited src/app.lua")
     elif text.startswith("term "):
         command = text[5:]
         update(session, {"sessionUpdate": "tool_call", "toolCallId": call_id, "title": "`" + command + "`", "kind": "execute",
                          "status": "in_progress", "content": [{"type": "terminal", "terminalId": call_id}],
-                         "_meta": {"terminal_info": {"terminal_id": call_id}}})
+                         "rawInput": {"command": command},
+                         "_meta": {"terminal_info": {"terminal_id": call_id}, "claudeCode": {"toolName": "Bash"}}})
         proc = subprocess.Popen(["bash", "-c", command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in proc.stdout:
             update(session, {"sessionUpdate": "tool_call_update", "toolCallId": call_id,
@@ -328,7 +341,10 @@ def prompt(rid, params):
             time.sleep(GAP)
     elif text == "think":
         update(session, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "pondering the question"}})
+        update(session, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "\nand then some more"}})
         chunk(session, "thought about it")
+    elif text == "markdown":
+        chunk(session, "Use `greet` and **bold** here.\n\n## A heading\n- a list item")
     elif text == "plan":
         update(session, {"sessionUpdate": "plan", "entries": [
             {"content": "read the code", "status": "completed", "priority": "high"},
@@ -337,7 +353,8 @@ def prompt(rid, params):
         chunk(session, "planned")
     else:
         seconds = float(text.split()[1]) if text.startswith("slow ") else DELAY
-        tool(session, call_id, "Read notes.md", "read", "pending")
+        tool(session, call_id, "Read notes.md", "read", "pending", name="Read",
+             raw={"file_path": os.path.join(os.getcwd(), "notes.md")})
         if work(seconds):
             tool(session, call_id, None, None, "completed")
             chunk(session, "reply to: ")

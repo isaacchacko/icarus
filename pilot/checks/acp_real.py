@@ -25,6 +25,7 @@ if os.environ.get("ISOVIM_ACP_REAL") != "1":
     sys.exit(0)
 
 BIN = str(REPO / "bin" / "iso")
+DOT = f"{DOT}" if sys.platform == "darwin" else "●"
 fails = []
 
 
@@ -88,7 +89,7 @@ try:
     iso.cli("open", addr)
     chat = lambda: iso.lua("local c = require('isovim.acp.chat').get('general', 'a0')"  # noqa: E731
                            " return c and vim.api.nvim_buf_get_lines(c.buf, 0, -1, false) or {}")
-    iso.wait(lambda: any(line.startswith("⏺ ") and "isovim" in line.lower() for line in chat()), "the chat drawn", 20)
+    iso.wait(lambda: any(line.startswith(f"{DOT} ") and "isovim" in line.lower() for line in chat()), "the chat drawn", 20)
     check(any(line.startswith("❯ Answer with one lowercase word") for line in chat()), "the chat shows the prompt and the answer",
           chat())
     rc, _, err = run("restart", addr)
