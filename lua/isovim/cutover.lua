@@ -657,9 +657,13 @@ function M.render(plan)
   add("(iso spawn, iso rootmode on host). New-layout agents keep running%s.",
     plan.root_kept and (", this host's root, " .. plan.root_holder .. ", among them") or "")
   if plan.old_root then
-    local host = plan.old_root:match("^([^:]+):")
+    local host, named = plan.old_root:match("^([^:]+):(.+)$")
+    local stopped = host == plan.host and vim.iter(plan.stops):any(function(stop)
+      return stop.ws .. "/" .. stop.agent == named
+    end)
     add("The old root pointer (%s) moves to the backup%s.", plan.old_root,
-      host and host ~= plan.host and (": that agent is on " .. host .. ", which this cutover doesn't touch") or "")
+      host and host ~= plan.host and (": that agent is on " .. host .. ", which this cutover doesn't touch")
+        or stopped and ": that agent is a legacy one, stopped in step 2 with the others" or "")
   end
   add("Enforcement is then on: role mismatches and agents running your commands are refused, and")
   add("the retired commands fail, naming what replaced them.")
