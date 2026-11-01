@@ -175,7 +175,7 @@ local KINDS = {
   },
   -- Under its repo's header with a status icon: the router and repo-root by role, a worker by name
   -- with the size of its team (counted, not listed); the root pinned at the top. Anything not
-  -- running is dimmed; hidden agents say so. In an Inbox the attention icon still marks a legacy
+  -- running is dimmed; hidden agents have an eye at the right edge. In an Inbox the attention icon still marks a legacy
   -- agent that raised something, until the cutover.
   agent = {
     format = function(item)
@@ -194,7 +194,7 @@ local KINDS = {
         vim.list_extend(row, { { " +" .. item.added, "Added" }, { " −" .. item.removed, "Removed" } })
       end
       if item.hidden then
-        row[#row + 1] = { " (hidden)", "Comment" }
+        row[#row + 1] = { "\u{f0209}", "Comment", right = true } -- md-eye_off
       end
       -- What it's on: the task title Claude gives its terminal, or the command a terminal runs.
       -- The ports it serves on first: the subtitle is often long enough to be cut off.
@@ -1042,21 +1042,28 @@ end
 
 local ns = vim.api.nvim_create_namespace("isovim_sidebar")
 
--- Each line is a list of {text, highlight} chunks. Cursors stay on their line numbers.
+-- Each line is a list of {text, highlight} chunks; a chunk with right = true is drawn at the
+-- window's right edge (virtual text, so it stays there as the width changes), not in the line.
+-- Cursors stay on their line numbers.
 local function draw(win, chunk_lines)
   local buf = vim.api.nvim_win_get_buf(win)
-  local lines, marks = {}, {}
+  local lines, marks, rights = {}, {}, {}
   for i, chunks in ipairs(chunk_lines) do
     local text, col = {}, 0
     for _, chunk in ipairs(chunks) do
       -- A row is one line: a title or question with a newline in it (an agent's summary, a
       -- surface's question) would make nvim_buf_set_lines refuse the whole sidebar.
+      local right = chunk.right
       chunk = { (tostring(chunk[1] or "")):gsub("[\r\n]+", " "), chunk[2] }
-      text[#text + 1] = chunk[1]
-      if chunk[2] then
-        marks[#marks + 1] = { i - 1, col, col + #chunk[1], chunk[2] }
+      if right then
+        rights[#rights + 1] = { i - 1, chunk }
+      else
+        text[#text + 1] = chunk[1]
+        if chunk[2] then
+          marks[#marks + 1] = { i - 1, col, col + #chunk[1], chunk[2] }
+        end
+        col = col + #chunk[1]
       end
-      col = col + #chunk[1]
     end
     lines[i] = table.concat(text)
   end
@@ -1067,6 +1074,9 @@ local function draw(win, chunk_lines)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   for _, mark in ipairs(marks) do
     vim.api.nvim_buf_set_extmark(buf, ns, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
+  end
+  for _, right in ipairs(rights) do
+    vim.api.nvim_buf_set_extmark(buf, ns, right[1], 0, { virt_text = { right[2] }, virt_text_pos = "right_align" })
   end
   vim.api.nvim_win_set_cursor(win, { math.max(1, math.min(cursor[1], #lines)), 0 })
 end
