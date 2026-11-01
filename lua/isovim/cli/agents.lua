@@ -177,7 +177,7 @@ function commands.role(args)
 end
 
 function commands.rm(args)
-  local ws, agent = resolve_agent(args[1])
+  local ws, agent = resolve_agent(args[1], true)
   if not tui("require('isovim').remove_agent(...)", ws.id, agent.id) then
     panes.stop(ws.id, agent.id)
     store.remove_agent(ws.id, agent.id)
@@ -206,7 +206,7 @@ function commands.open(args)
 end
 
 function commands.restart(args)
-  local ws, agent = resolve_agent(args[1])
+  local ws, agent = resolve_agent(args[1], true)
   if not tui("require('isovim').restart(...)", ws.id, agent.id) then
     panes.stop(ws.id, agent.id)
     ensure_running(ws, agent)

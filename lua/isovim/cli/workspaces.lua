@@ -83,7 +83,7 @@ end
 
 function commands.move(args)
   local force = flag(args, "--force")
-  local ws = resolve(args[1])
+  local ws = resolve(args[1], true)
   local host = args[2] or fail("usage: iso move <ws> <host>")
   if not force then
     for _, agent in ipairs(store.agents(ws.id)) do
@@ -120,7 +120,7 @@ function commands.unarchive(args)
 end
 
 function commands.archive(args)
-  local ws = resolve(args[1])
+  local ws = resolve(args[1], true)
   if store.v2(ws.id) then
     fail(select(2, store.archive_workspace(ws.id)))
   end

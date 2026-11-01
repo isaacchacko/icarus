@@ -25,12 +25,15 @@ function M.config(dir)
 end
 
 ---@param repo? string the repo's name, when dir may not say (a new-layout agent's dir before its worktree)
+---@param lookup? boolean only read: no import from dir's own files (a teardown, whose dir may hold anything)
 ---@return string[]?
-local function commands(dir, which, repo)
+local function commands(dir, which, repo, lookup)
   local repoconf = require("isovim.repoconf")
   local name = repo or require("isovim.repos").of(dir)
   if name then
-    repoconf.import(dir)
+    if not lookup then
+      repoconf.import(dir)
+    end
     local configured
     if M.names[which] then
       configured = repoconf.commands(name, which)
@@ -50,8 +53,9 @@ end
 -- are none.
 ---@param root string the repo's main checkout
 ---@param repo? string the repo's name, as for commands
-function M.line(dir, root, name, which, repo)
-  local listed = commands(dir, which, repo)
+---@param lookup? boolean as for commands
+function M.line(dir, root, name, which, repo, lookup)
+  local listed = commands(dir, which, repo, lookup)
   if not listed then
     return nil
   end

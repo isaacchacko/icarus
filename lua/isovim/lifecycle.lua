@@ -98,8 +98,9 @@ function M.plan(key, id, record)
   if not (record and record.of) then
     local repo = record and record.repo or (key ~= "_" and store.valid_key(key) and key or nil)
     local name = record and record.name or id
+    -- Looked up only: an agent's dir never imports its own scripts into the repo's config.
     plan.teardown = require("isovim.scripts").line(plan.cwd, require("isovim.worktree").repo_of(plan.cwd) or plan.cwd, name,
-      "teardown", repo)
+      "teardown", repo, true)
   end
   return plan
 end
@@ -197,7 +198,34 @@ local function key_dirs()
   return found
 end
 
--- One reaper pass. Dry (the default), it only logs; live, it tears each orphan down.
+-- Whether <key>/<id> is still running: its tmux session, or an ACP supervisor answering on its socket.
+local function alive(key, id)
+  if require("isovim.panes").running(key, id) then
+    return "its tmux session is running"
+  end
+  local sock = require("isovim.acp").socket(key, id)
+  if vim.uv.fs_stat(sock) then
+    local ok, chan = pcall(vim.fn.sockconnect, "pipe", sock)
+    if ok and chan ~= 0 then
+      vim.fn.chanclose(chan)
+      return "its supervisor is up"
+    end
+  end
+end
+
+-- Whether the records dir holds any record.
+local function has_records(records)
+  for name in vim.fs.dir(records) do
+    if is_agent_id(name:match("^(.*)%.json$")) then
+      return true
+    end
+  end
+  return false
+end
+
+-- One reaper pass. Dry (the default), it only logs (and writes nothing else: the teardown it
+-- reports is only looked up); live, it tears each orphan down. A repo whose records dir is missing,
+-- unreadable or empty while it has aN/ dirs is refused whole, and an aN/ that still runs is skipped.
 ---@param opts? {live?: boolean}
 ---@return {orphans: string[], refused: string[], reaped: string[], lines: string[]}
 function M.reap(opts)
@@ -220,14 +248,20 @@ function M.reap(opts)
     if has_agents and not readable then
       result.refused[#result.refused + 1] = key
       say(("refused %s: its records dir %s is missing or unreadable"):format(key, records))
+    elseif has_agents and not has_records(records) then
+      result.refused[#result.refused + 1] = key
+      say(("refused %s: its records dir %s is empty, yet it has agent dirs"):format(key, records))
     elseif has_agents then
       local now = os.time()
       for name in vim.fs.dir(dir) do
         if is_agent_id(name) and not lstat(records .. "/" .. name .. ".json") then
           local addr = key .. "/" .. name
           local stat = lstat(dir .. "/" .. name)
+          local running = alive(key, name)
           if stat and now - stat.mtime.sec < M.grace then
             say(("skipped %s: made %ds ago, its record may be on its way"):format(addr, now - stat.mtime.sec))
+          elseif running then
+            say(("skipped %s: %s"):format(addr, running))
           else
             local plan, why = M.plan(key, name, nil)
             if not plan then

@@ -137,8 +137,48 @@ local function queue_items()
   end, S.queue))
 end
 
+-- The queue is kept on disk too (iso/journal/aN.queue.json), so a supervisor that exits (a crash,
+-- iso restart) starts again with it and still delivers it. A promotion's reload isn't kept: a
+-- restart starts on the record's role anyway.
+local function queue_file(ws, agent)
+  return journal.dir(ws) .. "/" .. agent .. ".queue.json"
+end
+
+local function save_queue()
+  local kept = {}
+  for _, prompt in ipairs(S.queue) do
+    if not prompt.reload then
+      kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
+        message = prompt.message, via = prompt.via }
+    end
+  end
+  local path = queue_file(S.ws, S.agent)
+  if #kept == 0 then
+    os.remove(path)
+    return
+  end
+  vim.fn.mkdir(journal.dir(S.ws), "p")
+  local tmp = path .. ".tmp"
+  if pcall(vim.fn.writefile, { vim.json.encode(kept) }, tmp) then
+    vim.uv.fs_rename(tmp, path)
+  end
+end
+
+---@return isovim.acp.Prompt[]
+local function load_queue(ws, agent)
+  local ok, lines = pcall(vim.fn.readfile, queue_file(ws, agent))
+  local decoded, items = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "", { luanil = { object = true } })
+  if not (decoded and vim.islist(items)) then
+    return {}
+  end
+  return vim.tbl_filter(function(prompt)
+    return type(prompt) == "table" and type(prompt.id) == "string" and type(prompt.text) == "string"
+  end, items)
+end
+
 -- The queue as it is now, after anything but a push (which journals a queued entry).
 local function queue_changed()
+  save_queue()
   append("queue", { items = queue_items() })
 end
 
@@ -191,6 +231,8 @@ end
 
 ---@param prompt isovim.acp.Prompt
 deliver = function(prompt)
+  -- It has left the queue.
+  save_queue()
   if prompt.reload then
     return reload()
   end
@@ -224,6 +266,7 @@ local function submit(prompt)
   end
   if queued then
     S.queue[#S.queue + 1] = prompt
+    save_queue()
     append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, position = #S.queue })
     out(("\n(queued %d) %s\n"):format(#S.queue, prompt.text))
     return { id = prompt.id, queued = true, position = #S.queue }
@@ -878,9 +921,22 @@ function M.run(addr)
   log.file = store.run_dir(ws) .. "/" .. agent .. ".acp.log"
   S.writer = journal.writer(ws, agent)
   S.asks = asks_mod.new(ws, agent, journal_ask)
-  S.prompted = vim.iter(journal.read(ws, agent)):any(function(entry)
+  local entries = journal.read(ws, agent)
+  S.prompted = vim.iter(entries):any(function(entry)
     return entry.kind == "prompt"
   end)
+  -- What was queued when the last supervisor exited, delivered once the session is up; the
+  -- journal says so, so a chat's queue (and its count) is this one, not what it last read.
+  S.queue = load_queue(ws, agent)
+  local journaled = vim.iter(entries):any(function(entry)
+    return entry.kind == "queued" or entry.kind == "queue"
+  end)
+  if #S.queue > 0 or journaled then
+    append("queue", { items = queue_items() })
+    if #S.queue > 0 then
+      out(("%d queued prompt(s) kept from before; they go once the session is up\n"):format(#S.queue))
+    end
+  end
   S.cwd = vim.uv.cwd()
   out(("isovim ACP supervisor for %s in %s\n"):format(addr, S.cwd))
 

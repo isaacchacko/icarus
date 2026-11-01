@@ -65,9 +65,10 @@ local function worktree_setup(path, base, agent, log)
 end
 
 -- A new-layout agent's worktree, aN/w, made from its repo's base clone on a branch named for it
--- (or from a branch or PR) if it has none; the repo's worktree_setup runs in a new one.
+-- (or from a branch or PR) if it has none; the repo's worktree_setup runs in a new one. Offline (the
+-- base clone's fetch fails), it's made from the clone's last-known origin refs, and that's logged.
 ---@param log? string where worktree_setup's output goes, else stderr
----@return string? path, string branch_or_err, boolean? made, integer? setup worktree_setup's exit code
+---@return string? path, string branch_or_err, boolean? made, integer? setup worktree_setup's exit code, string? offline
 local function ensure_worktree(ws, agent, from, log)
   local path = store.dir(ws) .. "/" .. agent.id .. "/w"
   if vim.fn.isdirectory(path) == 1 then
@@ -80,8 +81,22 @@ local function ensure_worktree(ws, agent, from, log)
   local repoconf, worktree = require("isovim.repoconf"), require("isovim.worktree")
   local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
   local base, err = repoconf.base(agent.repo, checkout)
+  local offline
   if not base then
-    return nil, ("no base clone of %s: %s (iso repo base %s --from <checkout> makes one)"):format(agent.repo, err, agent.repo)
+    local clone = require("isovim.repos").dir(agent.repo) .. "/base-clone"
+    if vim.fn.isdirectory(clone .. "/.git") == 0 then
+      return nil, ("no base clone of %s: %s (iso repo base %s --from <checkout> makes one)"):format(agent.repo, err, agent.repo)
+    end
+    base = clone
+    offline = ("could not fetch %s's origin (%s), so the worktree starts from the base clone's last-known origin refs")
+      :format(agent.repo, (err or ""):gsub("\n", " "))
+    local file = log and io.open(log, "a")
+    if file then
+      file:write(os.date("!%Y-%m-%dT%H:%M:%SZ "), offline, "\n")
+      file:close()
+    else
+      note(offline)
+    end
   end
   local made, branch
   if from then
@@ -94,7 +109,7 @@ local function ensure_worktree(ws, agent, from, log)
   end
   store.update_agent(ws, agent.id, { branch = branch })
   c.tui("require('isovim').refresh()")
-  return path, branch, true, worktree_setup(path, base, agent, log)
+  return path, branch, true, worktree_setup(path, base, agent, log), offline
 end
 
 -- iso <role> wt [--from <branch|PR>]: the agent's worktree, made if it has none, and its path.
@@ -189,8 +204,9 @@ end
 -- tool call as JSON on stdin. A read-only agent's edits, and its git commands that would change
 -- the base clone, are refused. Another agent's first edit in its repo (under aN/, the base clone or the clone it was
 -- made from) makes its worktree, aN/w, and is refused with where to make it instead: the edit
--- would otherwise land outside it, so the agent makes it again under w/. Once it has w, edits in
--- the base clone are refused; anything else goes through, as edits outside the repo always do.
+-- would otherwise land outside it, so the agent makes it again under w/. An edit in the base clone
+-- or in the checkout it was made from (yours) is always refused, worktree or not; anything else goes
+-- through, as edits outside the repo always do.
 M.__pretool = function(args)
   local which = args[1]
   local ws, id = require("isovim.root").caller()
@@ -222,33 +238,38 @@ M.__pretool = function(args)
   local own = store.dir(ws) .. "/" .. agent.id
   local w = own .. "/w"
   local base = agent.repo and require("isovim.repos").dir(agent.repo) .. "/base-clone"
+  local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
+  local in_base = under(file, base)
+  local in_checkout = not in_base and checkout and under(file, checkout) or nil
+  local where = in_base and "the base clone is shared and never edited"
+    or ("%s is your user's own checkout, which agents never edit"):format(checkout)
   if vim.fn.isdirectory(w) == 1 then
-    local rel = under(file, base)
+    local rel = in_base or in_checkout
     if rel then
-      refuse(("isovim refused %s: the base clone is shared and never edited. Your worktree is %s: make the edit to %s."):format(tool, w,
-        vim.fs.joinpath(w, rel)))
+      refuse(("isovim refused %s: %s. Your worktree is %s: make the edit to %s."):format(tool, where, w, vim.fs.joinpath(w, rel)))
     end
     return
   end
-  local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
-  local rel = agent.repo and (under(file, own) or under(file, base) or (checkout and under(file, checkout)))
+  local rel = agent.repo and (under(file, own) or in_base or in_checkout)
   if not rel then
     return
   end
   local log = store.run_dir(ws) .. "/" .. agent.id .. ".worktree_setup.log"
   vim.fn.mkdir(store.run_dir(ws), "p")
-  local path, branch, _, setup = ensure_worktree(ws, agent, nil, log)
+  local path, branch, _, setup, offline = ensure_worktree(ws, agent, nil, log)
   if not path then
-    -- With no worktree to send it to, an edit goes through, except in the base clone.
-    if under(file, base) then
-      refuse(("isovim refused %s: the base clone is shared and never edited, and your worktree couldn't be made (%s)."):format(tool, branch))
+    -- With no worktree to send it to, an edit under aN/ goes through; never one in the base clone
+    -- or your checkout.
+    if in_base or in_checkout then
+      refuse(("isovim refused %s: %s, and your worktree couldn't be made (%s)."):format(tool, where, branch))
     end
     return
   end
   local setup_note = setup and (setup == 0 and (" The repo's worktree_setup ran there (its output: %s)."):format(log)
     or (" The repo's worktree_setup failed there (exit %d; its output: %s)."):format(setup, log)) or ""
-  refuse(("isovim made your worktree for your first edit, at %s, on branch %s, and didn't make this edit.%s Work there from now on: cd %s, and make the edit to %s.")
-    :format(w, branch, setup_note, w, vim.fs.joinpath(w, rel)))
+  local offline_note = offline and (" Offline: isovim " .. offline .. ".") or ""
+  refuse(("isovim made your worktree for your first edit, at %s, on branch %s, and didn't make this edit.%s%s Work there from now on: cd %s, and make the edit to %s.")
+    :format(w, branch, setup_note, offline_note, w, vim.fs.joinpath(w, rel)))
 end
 
 -- Runs one of the agent's repo scripts in a pane named after it, under Terminals.

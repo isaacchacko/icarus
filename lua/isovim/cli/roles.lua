@@ -393,7 +393,7 @@ function M.promote(args)
   if not role or not RANK[role] then
     fail("usage: iso <role> promote [<agent>] router|repo-root|root [\"reason\"]")
   end
-  local ws, agent = c.resolve_agent(target or promoter)
+  local ws, agent = c.resolve_agent(target or promoter, true)
   local address = ws.id .. "/" .. agent.id
   local from = store.role(agent)
   if role == from then

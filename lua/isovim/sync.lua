@@ -1,10 +1,14 @@
 -- Your config follows you to the other hosts: every write isovim makes to ~/.isovim/config.json or
 -- ~/.isovim/repos/** calls M.changed, which starts `iso __sync` in the background; `iso sync` runs
 -- one in the foreground. A sync copies to each host in config.json's hosts:
---   repos/       with rsync over ssh, never a base-clone/ (each host clones its own) nor a temp file;
---                nothing is deleted on the other side
---   config.json  merged into theirs: everything but self and hosts, which say who a host is and who
---                its peers are, so stay that host's own
+--   repos/       with rsync --update over ssh, never a base-clone/ (each host clones its own) nor a
+--                temp file; nothing is deleted on the other side, and a file that's newer there
+--                stays, so a host that slept through an edit never sends its stale copy back
+--   config.json  merged into theirs key by key, the newer of each winning: config.keys.json beside
+--                it records when each key last changed (refreshed at each sync from the file's
+--                mtime); a key with no record on a side counts as as old as that side's file. self,
+--                hosts and reaper say who a host is, who its peers are and whether it's cut over,
+--                so stay that host's own
 -- events/, run/ and the rest of ~/.isovim stay on their host. A host that's down is logged to
 -- ~/.isovim/sync.log and simply tried again on the next write, since each sync sends everything.
 -- One sync runs at a time; a write during one makes it go round again.
@@ -16,7 +20,7 @@ M.log_file = store.root .. "/sync.log"
 -- Where isovim's home is on the other hosts: relative to their home dir, as ssh starts there.
 M.remote_root = vim.env.ISOVIM_SYNC_ROOT or ".isovim"
 -- Keys of config.json that belong to one host.
-M.local_keys = { self = true, hosts = true }
+M.local_keys = { self = true, hosts = true, reaper = true }
 local MAX_LOG = 256 * 1024
 
 local function peers()
@@ -56,19 +60,74 @@ local function decode(text)
   return ok and type(value) == "table" and not vim.islist(value) and value or nil
 end
 
--- config.json for the peer: ours, with its own self and hosts kept (its name as self when it has none).
-local function merged(ours, theirs, name)
-  local result = {}
-  for key, value in pairs(ours) do
+-- JSON with sorted keys, so the same value hashes the same on every host.
+local function canonical(value)
+  if type(value) ~= "table" then
+    return vim.json.encode(value)
+  elseif vim.islist(value) then
+    return "[" .. table.concat(vim.tbl_map(canonical, value), ",") .. "]"
+  end
+  local keys = vim.tbl_keys(value)
+  table.sort(keys)
+  return "{" .. table.concat(vim.tbl_map(function(key)
+    return vim.json.encode(key) .. ":" .. canonical(value[key])
+  end, keys), ",") .. "}"
+end
+
+local function hash(value)
+  return value == nil and "" or vim.fn.sha256(canonical(value))
+end
+
+M.stamps_file = store.root .. "/config.keys.json"
+
+-- This host's config.keys.json, brought up to date with config.json: a key whose value changed
+-- (or that went, as hash "") since the last refresh is stamped with the file's mtime.
+---@return table<string, {h: string, t: integer}>
+function M.stamps(config, mtime)
+  local ok, lines = pcall(vim.fn.readfile, M.stamps_file)
+  local stamps = ok and decode(table.concat(lines, "\n")) or {}
+  local changed = false
+  for key in pairs(vim.tbl_extend("force", {}, stamps, config)) do
     if not M.local_keys[key] then
-      result[key] = value
+      local h = hash(config[key])
+      if type(stamps[key]) ~= "table" or stamps[key].h ~= h then
+        stamps[key], changed = { h = h, t = mtime }, true
+      end
+    end
+  end
+  if changed then
+    vim.fn.writefile({ vim.json.encode(stamps) }, M.stamps_file)
+  end
+  return stamps
+end
+
+-- config.json for the peer, and its stamps: per key the newer side's value (ours on a tie), with
+-- its own self, hosts and reaper kept (its name as self when it has none).
+local function merged(ours, our_stamps, our_mtime, theirs, their_stamps, their_mtime, name)
+  local result, stamps = {}, {}
+  -- A stamp counts only while it's of the value that side has: a key edited since that side's
+  -- last sync (a hand edit, a sync from an older isovim) is as new as its file.
+  local function when(side, side_stamps, key, fallback)
+    local stamp = side_stamps[key]
+    return type(stamp) == "table" and stamp.h == hash(side[key]) and tonumber(stamp.t) or fallback
+  end
+  for key in pairs(vim.tbl_extend("force", {}, ours, theirs, our_stamps, their_stamps)) do
+    if not M.local_keys[key] then
+      local ours_at, theirs_at = when(ours, our_stamps, key, our_mtime), when(theirs, their_stamps, key, their_mtime)
+      local mine = ours_at >= theirs_at
+      if mine then
+        result[key] = ours[key]
+      else
+        result[key] = theirs[key]
+      end
+      stamps[key] = { h = hash(result[key]), t = mine and ours_at or theirs_at }
     end
   end
   for key in pairs(M.local_keys) do
     result[key] = theirs[key]
   end
   result.self = result.self or name
-  return result
+  return result, stamps
 end
 
 -- One peer: config.json, then repos/. nil, why when it failed.
@@ -77,26 +136,41 @@ local function push(name, host)
   local root = M.remote_root
   local q = vim.fn.shellescape
   local config_path = store.root .. "/config.json"
-  if vim.uv.fs_stat(config_path) then
+  local stat = vim.uv.fs_stat(config_path)
+  if stat then
     local ok, lines = pcall(vim.fn.readfile, config_path)
     local ours = ok and decode(table.concat(lines, "\n"))
     if ours then
-      local read = vim.system(ssh_cmd(host, ("cat %s/config.json 2>/dev/null || true"):format(q(root))), { text = true, timeout = 30000 }):wait()
+      local our_stamps = M.stamps(ours, stat.mtime.sec)
+      -- Theirs, a separator, their stamps, a separator, their config.json's mtime.
+      local sep = "\n--isovim-sync--\n"
+      local read = vim.system(ssh_cmd(host, ("cat %s/config.json 2>/dev/null; printf %s; cat %s/config.keys.json 2>/dev/null; printf %s; date -r %s/config.json +%%s 2>/dev/null; true")
+        :format(q(root), q(sep), q(root), q(sep), q(root))), { text = true, timeout = 30000 }):wait()
       if read.code ~= 0 then
         return nil, ("could not reach it (exit %s): %s"):format(tostring(read.code), vim.trim(read.stderr or ""))
       end
-      local theirs = vim.trim(read.stdout) == "" and {} or decode(read.stdout)
+      local parts = vim.split(read.stdout, sep, { plain = true })
+      local theirs = vim.trim(parts[1] or "") == "" and {} or decode(parts[1])
       if not theirs then
         return nil, "its config.json isn't a JSON object, so it's left alone"
       end
-      local want = merged(ours, theirs, name)
-      if not vim.deep_equal(want, theirs) then
-        local text = vim.json.encode(want, { indent = "  " })
-        local write = ("mkdir -p %s && cat > %s/config.json.sync.tmp && mv %s/config.json.sync.tmp %s/config.json")
-          :format(q(root), q(root), q(root), q(root))
-        local wrote = vim.system(ssh_cmd(host, write), { stdin = text .. "\n", text = true, timeout = 30000 }):wait()
-        if wrote.code ~= 0 then
-          return nil, "could not write its config.json: " .. vim.trim(wrote.stderr or "")
+      local their_stamps = decode(parts[2]) or {}
+      local their_mtime = tonumber(vim.trim(parts[3] or "")) or 0
+      local want, stamps = merged(ours, our_stamps, stat.mtime.sec, theirs, their_stamps, their_mtime, name)
+      if not vim.deep_equal(want, theirs) or not vim.deep_equal(stamps, their_stamps) then
+        for key in pairs(want) do
+          if not M.local_keys[key] and not vim.deep_equal(want[key], ours[key]) then
+            log(("%s keeps its newer %s"):format(name, key))
+          end
+        end
+        -- Stamps first: a config.json without them would only make its keys look older.
+        for _, file in ipairs({ { "config.keys.json", vim.json.encode(stamps) }, { "config.json", vim.json.encode(want, { indent = "  " }) } }) do
+          local path = root .. "/" .. file[1]
+          local write = ("mkdir -p %s && cat > %s && mv %s %s"):format(q(root), q(path .. ".sync.tmp"), q(path .. ".sync.tmp"), q(path))
+          local wrote = vim.system(ssh_cmd(host, write), { stdin = file[2] .. "\n", text = true, timeout = 30000 }):wait()
+          if wrote.code ~= 0 then
+            return nil, ("could not write its %s: %s"):format(file[1], vim.trim(wrote.stderr or ""))
+          end
         end
       end
     end
@@ -106,7 +180,7 @@ local function push(name, host)
     if vim.fn.executable("rsync") == 0 then
       return nil, "rsync is missing here, so repos/ wasn't sent"
     end
-    local result = vim.system({ "rsync", "-a", "--exclude=base-clone/", "--exclude=*.tmp", "--exclude=*.lock",
+    local result = vim.system({ "rsync", "-a", "--update", "--exclude=base-clone/", "--exclude=*.tmp", "--exclude=*.lock",
       "-e", require("isovim.remote").ssh, "--rsync-path=mkdir -p " .. q(root .. "/repos") .. " && rsync",
       repos .. "/", host .. ":" .. root .. "/repos/" }, { text = true, timeout = 120000 }):wait()
     if result.code ~= 0 then

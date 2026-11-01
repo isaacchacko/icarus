@@ -18,8 +18,10 @@ local function fail(message)
   os.exit(1)
 end
 
-local function unique(query, candidates, keys, what)
-  for _, exact in ipairs({ true, false }) do
+-- exact_only (for the commands that destroy or restart something) skips the prefix pass, so a
+-- stale or short address is an error instead of some other agent.
+local function unique(query, candidates, keys, what, exact_only)
+  for _, exact in ipairs(exact_only and { true } or { true, false }) do
     local found = {}
     for _, candidate in ipairs(candidates) do
       for _, key in ipairs(keys(candidate)) do
@@ -40,18 +42,20 @@ end
 
 -- A repo key (store.v2) is matched by its start only when the query has a "/" or is "_", so a
 -- workspace id's prefix never runs into one.
-local function resolve(query)
+local function resolve(query, exact)
   if not query then
     fail("missing workspace\n" .. usage())
   end
   local by_key = store.v2(query)
   return unique(query, store.list(), function(ws)
     return (by_key or not store.v2(ws.id)) and { ws.id, ws.name } or {}
-  end, "workspace")
+  end, "workspace", exact)
 end
 
+-- exact: a destructive command's target. It must be a whole <ws>/<agent> (ids or names, no
+-- prefixes), so neither a stale aN that prefixes a live one nor a bare repo key reaches an agent.
 ---@return table ws, isovim.Agent agent
-local function resolve_agent(query)
+local function resolve_agent(query, exact)
   if not query then
     fail("missing agent\n" .. usage())
   end
@@ -63,7 +67,10 @@ local function resolve_agent(query)
   end) then
     ws_query, agent_query = nil, nil
   end
-  local ws = resolve(ws_query or query)
+  if exact and not (agent_query and agent_query ~= "") then
+    fail(("%q isn't an agent's address: name one as <ws>/<agent>, exactly"):format(query))
+  end
+  local ws = resolve(ws_query or query, exact)
   local agents = store.agents(ws.id)
   if not agent_query then
     for _, agent in ipairs(agents) do
@@ -75,7 +82,7 @@ local function resolve_agent(query)
   end
   return ws, unique(agent_query, agents, function(agent)
     return { agent.id, agent.name }
-  end, "agent in " .. ws.name)
+  end, "agent in " .. ws.name, exact)
 end
 
 -- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
