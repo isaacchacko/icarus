@@ -69,6 +69,11 @@ return {
       opts.options.sort_by = function(a, b)
         return require("isovim.tabs").before(a, b)
       end
+      -- A tab's x (and its right click) closes it as <leader>bd does.
+      opts.options.close_command = function(buf)
+        require("isovim.tabs").bufdelete(buf)
+      end
+      opts.options.right_mouse_command = opts.options.close_command
     end,
   },
 }

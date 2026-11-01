@@ -248,7 +248,13 @@ its view, part of its tab, as the composer is part of the chat's. Splits are you
 (`:vsplit`, `<C-w>v`); the terminal toggle is the one isovim key that opens one. An agent whose chat isn't open is a placeholder that attaches to nothing until it's shown;
 picking any agent's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) opens its chat there with its composer,
 as Enter on its sidebar row does. Agents spawned and removed come and go, and switching scope swaps
-the set. The empty buffer nvim starts with goes once nothing shows it.
+the set. The empty buffer nvim starts with goes once nothing shows it. LazyVim's buffer and window keys work on
+these as on files: `<leader>bd` (and a tab's x) closes an agent's tab, its chat, composer and queue,
+and the tab stays out of the bar, the agent running, until you open it again; on a surface it closes
+the view until it's reopened. `<leader>bo` closes every other tab, `<leader>bD` and `<leader>wd` close
+the window too while another editing window remains, and from a composer, queue or input box each
+acts on its chat or view. A composer or queue whose chat is no longer on screen closes and stays
+closed until the chat is shown again; a window a close leaves empty shows your last tab.
 
 ## Events
 
