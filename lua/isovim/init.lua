@@ -836,6 +836,17 @@ function M.setup(opts)
   -- Belt and braces: whenever focus lands anywhere, a prompt that doesn't have it is cancelled,
   -- even when focus moved without a WinLeave (noautocmd).
   vim.api.nvim_create_autocmd("WinEnter", { group = group, callback = close_stray_prompts })
+  -- Insert mode doesn't follow you into a buffer you can't type in. Leaving the composer while
+  -- typing (a click on the chat, a window set from Lua without stopinsert) kept insert mode in the
+  -- chat, and every key then was an E21.
+  vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter" }, {
+    group = group,
+    callback = function()
+      if not vim.bo.modifiable and vim.api.nvim_get_mode().mode:match("^i") then
+        vim.cmd.stopinsert()
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
     group = group,
     callback = function(ev)
