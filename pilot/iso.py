@@ -1,5 +1,6 @@
 """Pilots an isolated isovim for ad hoc debugging: its own ISOVIM_HOME, tmux servers, socket, and a fake
-agent instead of Claude.
+agent instead of Claude. It runs the isovim of the tree this file is in (its own config dir points
+at that tree's starter), so a worktree pilots its own code.
 
 The TUI runs headless in a tmux pane: press real keys (keys/type), inspect nvim over RPC (lua),
 read the screen (screen) and render it to PNG (screenshot). Run scripts with
@@ -41,7 +42,10 @@ class Iso:
             "FAKE_AGENT_DELAY": str(agent_delay),
             # No real other hosts in the sidebar; pilots that want one set it.
             "ISOVIM_PEERS": "-",
+            # bin/iso links isovim's config here to this tree's starter, which loads this tree.
+            "XDG_CONFIG_HOME": str(self.tmp / "config"),
         }
+        (self.tmp / "config").mkdir()
         self.env.pop("TMUX", None)
         (self.tmp / "claude.json").write_text("{}")
         self.nvim = None
