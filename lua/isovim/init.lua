@@ -927,6 +927,9 @@ end
 
 -- Pick an archived workspace to bring back, and open it.
 function M.unarchive()
+  if require("isovim.sidebar").refuse_legacy("Nothing is archived any more since the cutover: the old workspaces are in ~/.isovim/legacy-backup-*") then
+    return
+  end
   vim.ui.select(store.archived(), {
     prompt = "Unarchive",
     format_item = function(ws)

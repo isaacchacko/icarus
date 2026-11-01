@@ -269,8 +269,8 @@ Then, after your go, `iso cutover`:
 3. seeds the repo configs and base clones;
 4. wipes the old layout: it is moved, not deleted, into `~/.isovim/legacy-backup-<date>/`.
 
-The old conversations in `~/.claude/projects` are left untouched. Every agent, including clu's root,
-starts cold.
+The old conversations in `~/.claude/projects` are left untouched. Every legacy agent, including
+clu's root on cleopatra, starts cold. New-layout agents keep running, a host's `root/aN` among them.
 
 ## After v0
 

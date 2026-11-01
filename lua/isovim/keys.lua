@@ -417,12 +417,13 @@ local function on_current(action)
   end
 end
 
+-- legacy: refused once enforcement is on (its action says so, in place of the hint).
 M.RETIRED = {
   { "t", on_current("isovim_terminal"), "<leader>it" },
-  { "a", on_current("isovim_add_agent"), "<leader>is" },
+  { "a", on_current("isovim_add_agent"), "<leader>is", legacy = true },
   { "n", function()
     sidebar().actions.isovim_add()
-  end, "<leader>is" },
+  end, "<leader>is", legacy = true },
   { "j", function()
     isovim().next_needs_you()
   end, "<leader>in" },
@@ -447,7 +448,7 @@ M.RETIRED = {
   end, "iso <role> run (no key yet)" },
   { "u", function()
     isovim().unarchive()
-  end, "no key yet" },
+  end, "no key yet", legacy = true },
 }
 
 function M.setup()
@@ -460,7 +461,9 @@ function M.setup()
   for _, key in ipairs(M.RETIRED) do
     local fn = key[2]
     vim.keymap.set("n", "<leader>a" .. key[1], function()
-      M.hint("<leader>a" .. key[1], key[3])
+      if not (key.legacy and require("isovim.config").enforced()) then
+        M.hint("<leader>a" .. key[1], key[3])
+      end
       fn()
     end, { desc = "which_key_ignore" })
   end

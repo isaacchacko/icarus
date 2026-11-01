@@ -1341,6 +1341,16 @@ local function measure()
   end))
 end
 
+-- Once enforcement is on (iso cutover), the legacy layout's own ways of making things are refused,
+-- as the CLI's are: a new workspace, a workspace's new agent, unarchiving. True when it refused.
+function M.refuse_legacy(what)
+  if not require("isovim.config").enforced() then
+    return false
+  end
+  Snacks.notify.warn(what, { title = "isovim" })
+  return true
+end
+
 local function add_agent(ws, spec)
   local agent = store.add_agent(ws, spec)
   isovim.open(ws, agent.id)
@@ -1378,10 +1388,11 @@ local LIST_KEYS = {
   { "E", "isovim_explorer", "file explorer (W comes back)" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
--- {key, action, replacement}
+-- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
+-- says so, in place of the hint).
 local RETIRED_KEYS = {
-  { "a", "isovim_add", "s spawns" },
-  { "A", "isovim_add_agent", "s spawns" },
+  { "a", "isovim_add", "s spawns", legacy = true },
+  { "A", "isovim_add_agent", "s spawns", legacy = true },
   { "b", "isovim_last_workspace", "<leader>ib" },
   { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
 }
@@ -1414,7 +1425,9 @@ local function map_keys(buf, role)
   for _, key in ipairs(role == "list" and RETIRED_KEYS or {}) do
     local action = on_row(key[2])
     vim.keymap.set("n", key[1], function()
-      require("isovim.keys").hint(key[1] .. " in the sidebar", key[3])
+      if not (key.legacy and require("isovim.config").enforced()) then
+        require("isovim.keys").hint(key[1] .. " in the sidebar", key[3])
+      end
       action()
     end, { buffer = buf, nowait = true, desc = "isovim: retiring, " .. key[3] })
   end
@@ -1460,7 +1473,8 @@ function M.help()
   for _, key in ipairs(require("isovim.keys").RETIRED) do
     retired[#retired + 1] = { "<leader>a" .. key[1], key[3] }
   end
-  section("Retiring (they still work for now; use instead)", retired)
+  section(require("isovim.config").enforced() and "Retiring (since the cutover a, A, <leader>aa, <leader>an and <leader>au are refused; use instead)"
+    or "Retiring (they still work for now; use instead)", retired)
   lines[#lines] = nil
   Snacks.win({
     text = lines,
@@ -1849,6 +1863,9 @@ M.actions = {
   end,
   isovim_toggle_prs = toggle("show_prs"),
   isovim_add = function()
+    if M.refuse_legacy("New workspaces were retired at the cutover: s spawns an agent in its repo") then
+      return
+    end
     vim.ui.input({ prompt = "New workspace: " }, function(name)
       if not name or name == "" then
         return
@@ -1890,7 +1907,8 @@ M.actions = {
     M.toggle_root_mode(item)
   end,
   isovim_add_agent = function(item)
-    if not item or not item.ws then
+    if M.refuse_legacy("A workspace's agents were retired at the cutover: s spawns an agent, t opens a terminal")
+      or not item or not item.ws then
       return
     end
     local format = function(kind)

@@ -143,6 +143,13 @@ function commands.agent(args)
   if not vim.tbl_contains(panes.kinds, kind) then
     fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r] [--parent agent] [--v2 [--read-only]]")
   end
+  if require("isovim.config").enforced() then
+    if hidden then
+      fail("hidden agents were retired at the cutover: every agent shows under its repo (iso spawn starts one)")
+    elseif not store.v2(ws.id) then
+      fail("a workspace's agents were retired at the cutover: iso spawn starts an agent, in a repo with --repo")
+    end
+  end
   if read_only and not store.v2(ws.id) then
     fail("--read-only is for a new-layout agent: add --v2")
   end

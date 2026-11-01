@@ -69,7 +69,8 @@ function commands.cutover(args)
   if not done then
     fail(("cutover stopped: %s (see %s)"):format(err, store.home_relative(cutover.log_file)))
   end
-  out("cut over; the log is " .. store.home_relative(cutover.log_file))
+  out(("cut over; the log is %s, and %s/%s says how to undo it"):format(store.home_relative(cutover.log_file),
+    plan.backup, cutover.readme))
 end
 
 return commands

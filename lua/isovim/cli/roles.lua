@@ -264,8 +264,8 @@ end
 -- higher than its own). Each spawn is a new-layout agent over ACP, <repo key>/aN, in the repo
 -- --repo names, else the spawner's (for the user, the clone the shell is in; for an agent, the clone
 -- it was made from, recorded as the child's checkout too), else in General.
--- --legacy (until the cutover) makes a workspace with one agent in claude's TUI, in the repo's
--- dir, as spawns did before. --acp is the default now, and still accepted.
+-- --legacy (until the cutover; enforcement refuses it) makes a workspace with one agent in claude's
+-- TUI, in the repo's dir, as spawns did before. --acp is the default now, and still accepted.
 function M.spawn(args)
   local repo = option(args, "--repo")
   -- --repo general (or _, its old name) is General, no repo.
@@ -288,6 +288,8 @@ function M.spawn(args)
     fail("--kind is one of " .. table.concat(vim.fn.sort(vim.tbl_keys(adapter.adapters)), ", "))
   elseif legacy and kind ~= "claude" then
     fail("--legacy spawns claude in its TUI; --kind is for an agent over ACP")
+  elseif legacy and require("isovim.config").enforced() then
+    fail("iso spawn --legacy was retired at the cutover: iso spawn starts an agent over ACP, in a repo with --repo")
   end
   local address, mine, caller_ws, caller_id = caller()
   if address and RANK[role] > RANK[mine] then

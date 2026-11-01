@@ -6,13 +6,20 @@
 --   1. each worktree with uncommitted work or unpushed commits is pushed to its origin, as a
 --      wip/<ws>/<agent> branch. The uncommitted part goes as a snapshot commit (worktree.snapshot),
 --      made without touching the checkout.
---   2. every legacy agent is stopped.
+--   2. every legacy agent is stopped. New-layout agents keep running, the host's root/aN among them.
 --   3. each repo they worked in gets its config (glyph and color, its scripts imported once), its
 --      base clone and its work dir.
---   4. the old layout is moved, not deleted, into ~/.isovim/legacy-backup-<date>/. The worktrees
---      are repaired, so git still knows them there. Then config.json's enforce is set.
+--   4. the old layout is moved, not deleted, into ~/.isovim/legacy-backup-<date>/, with a README
+--      there saying how to undo it. Each worktree is repaired as soon as it's moved, so git still
+--      knows it there, and locked, so git worktree prune (or gc's) never drops it. Then
+--      config.json's enforce is set.
+-- The dry run checks what the run needs first, and blocks the plan when it can't finish: each
+-- push's origin, and for each repo to seed, its origin (the base clone is cloned or fetched from
+-- it) and a place to clone into. A run that stops in step 4 leaves a backup with no plan in it;
+-- the next run goes on into that one, and repairs and locks any worktree in a backup that git
+-- lost track of or that isn't locked (moved by a run from before this was done).
 -- Kept: the conversations in ~/.claude/projects, ~/.isovim/repos, events, config.json and the
--- new layout's agents. Nothing is restarted: every agent starts cold.
+-- new layout's agents, which keep running. Nothing is restarted: the legacy agents start cold.
 local store = require("isovim.store")
 
 local M = {}
@@ -151,8 +158,38 @@ local function safe_ref(name)
   return (name:gsub("[^%w._/-]", "-"):gsub("/+", "/"):gsub("%.%.", "-"):gsub("^[/.-]+", ""):gsub("[/.]+$", ""))
 end
 
--- Where the old layout goes: legacy-backup-<date>, numbered when that's taken.
-local function backup_dir()
+-- The backups so far, legacy-backup-<date>[-n], in order.
+local function backups()
+  local list = {}
+  for name, kind in vim.fs.dir(store.root) do
+    local date, n = name:match("^legacy%-backup%-(%d+%-%d+%-%d+)%-?(%d*)$")
+    if kind == "directory" and date then
+      list[#list + 1] = { path = store.root .. "/" .. name, date = date, n = tonumber(n) or 1 }
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.date ~= b.date then
+      return a.date < b.date
+    end
+    return a.n < b.n
+  end)
+  return vim.tbl_map(function(b)
+    return b.path
+  end, list)
+end
+
+-- Where the old layout goes: the backup of a run that stopped partway (a finished one has its plan
+-- in it), when none of rels is there yet; else legacy-backup-<date>, numbered when that's taken.
+---@return string path, boolean? unfinished
+local function backup_dir(rels)
+  for _, path in ipairs(backups()) do
+    local free = not vim.uv.fs_stat(path .. "/cutover-plan.txt") and vim.iter(rels):all(function(rel)
+      return not vim.uv.fs_lstat(path .. "/" .. rel)
+    end)
+    if free then
+      return path, true
+    end
+  end
   local base = ("%s/legacy-backup-%s"):format(store.root, os.date("%Y-%m-%d"))
   local path, n = base, 1
   while vim.uv.fs_stat(path) do
@@ -160,6 +197,26 @@ local function backup_dir()
     path = base .. "-" .. n
   end
   return path
+end
+
+-- A linked worktree's admin dir in its main repo (from its .git file), and what that says of it:
+-- whether it points back at path, and whether it's locked. nil when path's .git isn't such a file.
+---@return {admin: string, there: boolean, known: boolean, locked: boolean}?
+local function linked_state(path)
+  local ok, lines = pcall(vim.fn.readfile, path .. "/.git")
+  local admin = ok and (lines[1] or ""):match("^gitdir:%s*(.-)%s*$")
+  if not admin then
+    return nil
+  end
+  if not admin:match("^/") then
+    admin = vim.fs.normalize(path .. "/" .. admin)
+  end
+  local state = { admin = admin, there = vim.fn.isdirectory(admin) == 1 }
+  local back_ok, back = pcall(vim.fn.readfile, admin .. "/gitdir")
+  local points = back_ok and vim.trim(back[1] or "") or ""
+  state.known = state.there and points ~= "" and real(vim.fs.dirname(points)) == real(path)
+  state.locked = state.there and vim.uv.fs_stat(admin .. "/locked") ~= nil
+  return state
 end
 
 local TASK_ORDER = { "todo", "doing", "waiting", "blocked", "done" }
@@ -173,7 +230,6 @@ function M.plan()
     moves = {}, blocked = {}, projects = {} }
   plan.live = workspaces(store.workspaces)
   plan.archived = workspaces(store.archive, true)
-  plan.backup = backup_dir()
 
   -- Which agents are running: their tmux sessions.
   local sessions = panes.sessions()
@@ -299,12 +355,52 @@ function M.plan()
   table.sort(plan.seeds, function(a, b)
     return a.name < b.name
   end)
+  -- Seeding must be able to finish before step 2 stops anyone: each base clone is cloned (or, when
+  -- it's there, fetched) from origin.
+  local reached = {}
+  local function reach(dir, url)
+    if reached[url] == nil then
+      local remote = git(dir, { "ls-remote", "--quiet", "origin", "HEAD" }, 30000)
+      reached[url] = remote.code == 0 or first_line(remote.stderr ~= "" and remote.stderr or ("git exited " .. remote.code))
+    end
+    return reached[url]
+  end
+  local function writable(path)
+    while path ~= "/" and not vim.uv.fs_stat(path) do
+      path = vim.fs.dirname(path)
+    end
+    return vim.uv.fs_access(path, "W") == true
+  end
+  for _, entry in ipairs(plan.seeds) do
+    local from = entry.base_there and entry.base or entry.checkout
+    local url = entry.base_there and out(git(entry.base, { "remote", "get-url", "origin" })) or entry.origin
+    local why
+    if not url then
+      why = ("%s has no origin to %s from"):format(short(from), entry.base_there and "fetch" or "clone")
+    else
+      local ok = reach(from, url)
+      if ok ~= true then
+        why = ("its origin %s can't be reached (%s), so its base clone can't be %s"):format(url, ok,
+          entry.base_there and "fetched" or "made")
+      elseif not entry.base_there and vim.uv.fs_stat(entry.base) then
+        why = ("%s is there and isn't a clone"):format(short(entry.base))
+      elseif not entry.base_there and not writable(entry.base) then
+        why = ("its base clone can't be made in %s: not writable"):format(short(vim.fs.dirname(entry.base)))
+      elseif not writable(entry.work) then
+        why = ("its work dir can't be made in %s: not writable"):format(short(vim.fs.dirname(entry.work)))
+      end
+    end
+    if why then
+      entry.problem = why
+      plan.blocked[#plan.blocked + 1] = ("seeding %s: %s"):format(entry.name, why)
+    end
+  end
 
   -- What moves into the backup.
   local function move(rel, what)
     local from = store.root .. "/" .. rel
     if vim.uv.fs_lstat(from) then
-      plan.moves[#plan.moves + 1] = { from = from, to = plan.backup .. "/" .. rel, what = what }
+      plan.moves[#plan.moves + 1] = { from = from, rel = rel, what = what }
     end
   end
   move("workspaces", ("%d workspaces"):format(#plan.live))
@@ -312,7 +408,8 @@ function M.plan()
   local moved_trees = #vim.tbl_filter(function(tree)
     return not tree.outside
   end, plan.trees)
-  move("worktrees", ("%d worktrees, repaired so git still knows them there"):format(moved_trees))
+  move("worktrees", ("%d worktrees, each repaired and locked as it's moved, so git still knows it there"):format(moved_trees)
+    .. " and git worktree prune leaves it")
   local legacy_runs = {}
   for name, kind in vim.fs.dir(store.run) do
     if kind == "directory" and name:match("^%x%x%x%x%x%x$") then
@@ -328,6 +425,34 @@ function M.plan()
   plan.old_root = root_file ~= "" and root_file or nil
   move("root", "the old root pointer" .. (plan.old_root and (": " .. plan.old_root) or ""))
   move("session.json", "the TUI's open workspaces")
+  plan.backup, plan.resumed = backup_dir(vim.tbl_map(function(m)
+    return m.rel
+  end, plan.moves))
+  for _, m in ipairs(plan.moves) do
+    m.to = plan.backup .. "/" .. m.rel
+  end
+
+  -- Worktrees already in a backup that git lost track of or that aren't locked: moved by a run from
+  -- before they were repaired and locked as they moved (or one that stopped between the two).
+  plan.repairs, plan.lost = {}, {}
+  for _, backup in ipairs(backups()) do
+    for _, path in ipairs(checkouts(backup .. "/worktrees")) do
+      local state = linked_state(path)
+      if state and not state.there then
+        plan.lost[#plan.lost + 1] = path
+      elseif state and (not state.known or not state.locked) then
+        plan.repairs[#plan.repairs + 1] = { path = path, repair = not state.known or nil, lock = not state.locked or nil }
+      end
+    end
+  end
+
+  -- Who keeps running: the host's root, when it's a new-layout agent.
+  local holder = require("isovim.root").holder()
+  plan.root_holder = holder
+  plan.root_kept = holder and store.v2(holder:match("^(.*)/[^/]+$")) or nil
+
+  plan.clu = require("isovim.cluscan").scan()
+  plan.clu_dir = require("isovim.cluscan").dir()
 
   -- What stays, for the record.
   local claude = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects"
@@ -398,6 +523,32 @@ function M.render(plan)
   end
 
   add("")
+  if not plan.clu then
+    add("clu-system: none at %s", short(plan.clu_dir))
+  else
+    add("clu-system: %s (its bin, skills and hooks; discs aren't read)", short(plan.clu.dir))
+    local function list(hits)
+      for _, hit in ipairs(hits) do
+        add("    %s:%d: %s: %s", hit.file, hit.line, hit.shown, hit.why)
+      end
+    end
+    if #plan.clu.refused > 0 then
+      add("  WARNING, refused once enforcement is on, so these fail after the cutover (they don't block it):")
+      list(plan.clu.refused)
+    else
+      add("  nothing in them is refused once enforcement is on")
+    end
+    if #plan.clu.guarded > 0 then
+      add("  legacy-only, guarded by clu's enforce check (they don't run once enforcement is on):")
+      list(plan.clu.guarded)
+    end
+    if #plan.clu.named > 0 then
+      add("  named, not run:")
+      list(plan.clu.named)
+    end
+  end
+
+  add("")
   add("Legacy workspaces: %d, and %d archived", #plan.live, #plan.archived)
   for _, ws in ipairs(vim.list_extend(vim.list_extend({}, plan.live), plan.archived)) do
     add("  %s  %s%s", ws.id, ws.name, ws.archived and "  (archived)" or "")
@@ -445,7 +596,7 @@ function M.render(plan)
   add("  alone. Ignored files (.env, node_modules) aren't pushed; they stay in the backup.")
 
   add("")
-  add("2. Stop the legacy agents (%d running)", #plan.stops)
+  add("2. Stop the legacy agents (%d running); new-layout agents keep running", #plan.stops)
   for _, stop in ipairs(plan.stops) do
     add("  %s/%s%s", stop.ws, stop.agent, vim.tbl_contains(plan.orphans, stop) and "  (a tmux session with no workspace)" or "")
   end
@@ -472,13 +623,22 @@ function M.render(plan)
   add("  \"enforce\": true added once everything else has run")
 
   add("")
-  add("4. Move the old layout into %s/ (moved, not deleted)", short(plan.backup))
+  add("4. Move the old layout into %s/ (moved, not deleted)%s", short(plan.backup),
+    plan.resumed and ", an earlier run's that stopped partway" or "")
   for _, move in ipairs(plan.moves) do
     add("  %s  %s", short(move.from), move.what)
   end
   if #plan.moves == 0 then
     add("  (nothing to move)")
   end
+  for _, fix in ipairs(plan.repairs) do
+    add("  %s: in a backup already; %s", short(fix.path), fix.repair and "repair it (git doesn't know it there) and lock it"
+      or "lock it, so git worktree prune leaves it")
+  end
+  for _, path in ipairs(plan.lost) do
+    add("  %s: git no longer knows it (pruned): its files are there, but it can't be repaired", short(path))
+  end
+  add("  %s/README.md then says how to undo all of it", short(plan.backup))
 
   add("")
   add("Kept")
@@ -493,9 +653,16 @@ function M.render(plan)
   end
 
   add("")
-  add("Afterwards nothing restarts: every agent, the root%s included, starts cold", plan.old_root and (" (" .. plan.old_root .. ")") or "")
-  add("(iso spawn, iso rootmode on host). Enforcement is then on: role mismatches and agents")
-  add("running your commands are refused, and the retired commands fail, naming what replaced them.")
+  add("Afterwards nothing restarts. Only the legacy agents in step 2 are stopped, and they start cold")
+  add("(iso spawn, iso rootmode on host). New-layout agents keep running%s.",
+    plan.root_kept and (", this host's root, " .. plan.root_holder .. ", among them") or "")
+  if plan.old_root then
+    local host = plan.old_root:match("^([^:]+):")
+    add("The old root pointer (%s) moves to the backup%s.", plan.old_root,
+      host and host ~= plan.host and (": that agent is on " .. host .. ", which this cutover doesn't touch") or "")
+  end
+  add("Enforcement is then on: role mismatches and agents running your commands are refused, and")
+  add("the retired commands fail, naming what replaced them.")
   return table.concat(lines, "\n") .. "\n"
 end
 
@@ -590,6 +757,98 @@ local function seed(plan)
   log("seeded the role prompts into config.json")
 end
 
+M.readme = "README.md"
+
+-- A moved worktree's main checkout still points at the old path until it's repaired; locked, git
+-- worktree prune (and gc's, after three months) leaves it even if the backup moves.
+local function keep(plan, path, repair)
+  if repair then
+    local repaired = vim.system({ "git", "-C", path, "worktree", "repair" }, { text = true }):wait()
+    if repaired.code ~= 0 then
+      log(("warning: git worktree repair in %s failed: %s"):format(short(path), first_line(repaired.stderr)))
+    end
+  end
+  local state = linked_state(path)
+  if state and state.there and not state.locked then
+    local reason = ("isovim's legacy backup; %s/%s says how to undo the cutover"):format(plan.backup, M.readme)
+    local locked = vim.system({ "git", "-C", path, "worktree", "lock", "--reason", reason, path }, { text = true }):wait()
+    if locked.code ~= 0 then
+      log(("warning: git worktree lock of %s failed: %s"):format(short(path), first_line(locked.stderr)))
+    end
+  end
+  log(("kept %s: %srepaired and locked"):format(short(path), repair and "" or "already known, "))
+end
+
+local function shell(path)
+  return vim.fn.shellescape(path)
+end
+
+-- The backup's README: how to put back what's in it, made from what's there, so it holds for a run
+-- that stopped partway too.
+local function write_readme(plan)
+  local b = plan.backup
+  local lines = {
+    ("# The isovim cutover of %s: how to undo it"):format(plan.host),
+    "",
+    ("iso cutover moved the legacy layout here, out of %s, and turned enforcement on. Nothing"):format(store.root),
+    "was deleted. If the cutover stopped partway, what it hadn't moved yet is still where it was,",
+    "and this lists only what's here.",
+    "",
+    "With the isovim TUI closed, in a plain shell:",
+    "",
+    ("1. Turn enforcement off: in %s/config.json delete the \"enforce\": true entry (and the"):format(store.root),
+    "   comma before it). Until then, ISOVIM_ENFORCE=0 in front of a command turns it off for that one.",
+    "2. Run these, in order:",
+    "",
+    "```sh",
+    "# Empty dirs made since (the TUI makes workspaces/ and archive/ on start) would take the moves inside.",
+    ("rmdir %s %s %s 2>/dev/null || true"):format(shell(store.workspaces), shell(store.archive), shell(store.root .. "/worktrees")),
+  }
+  local function mv(rel)
+    if vim.uv.fs_lstat(b .. "/" .. rel) then
+      lines[#lines + 1] = ("mv %s %s"):format(shell(b .. "/" .. rel), shell(store.root .. "/" .. rel))
+    end
+  end
+  for _, rel in ipairs({ "workspaces", "archive", "worktrees", "root", "session.json" }) do
+    mv(rel)
+  end
+  local runs = {}
+  for name, kind in vim.fs.dir(b .. "/run") do
+    if kind == "directory" then
+      runs[#runs + 1] = name
+    end
+  end
+  table.sort(runs)
+  if #runs > 0 then
+    lines[#lines + 1] = ("mkdir -p %s"):format(shell(store.run))
+  end
+  for _, name in ipairs(runs) do
+    mv("run/" .. name)
+  end
+  local trees = checkouts(b .. "/worktrees")
+  if #trees > 0 then
+    lines[#lines + 1] = "# Tell git where each worktree is again, and unlock it."
+  end
+  for _, path in ipairs(trees) do
+    local back = store.root .. "/worktrees/" .. path:sub(#(b .. "/worktrees/") + 1)
+    local state = linked_state(path)
+    lines[#lines + 1] = ("git -C %s worktree repair"):format(shell(back))
+    if state and state.locked then
+      lines[#lines + 1] = ("git -C %s worktree unlock %s"):format(shell(back), shell(back))
+    end
+  end
+  vim.list_extend(lines, {
+    "```",
+    "",
+    "3. Start the TUI (iso): the legacy workspaces are back, and their agents start as before.",
+    "",
+    "Left as they are, with nothing to undo: the wip/ branches pushed to origin, the repos' configs",
+    ("and base clones in %s/repos, the work dirs in %s, the role prompts in config.json, and the"):format(store.root, store.work),
+    ("conversations in ~/.claude/projects. %s, the approved plan, is kept here."):format("cutover-plan.txt"),
+  })
+  vim.fn.writefile(lines, b .. "/" .. M.readme)
+end
+
 local function wipe(plan)
   for _, move in ipairs(plan.moves) do
     if vim.uv.fs_lstat(move.to) then
@@ -597,25 +856,31 @@ local function wipe(plan)
     end
   end
   vim.fn.mkdir(plan.backup, "p")
-  for _, move in ipairs(plan.moves) do
-    vim.fn.mkdir(vim.fs.dirname(move.to), "p")
-    local ok, err = vim.uv.fs_rename(move.from, move.to)
-    if not ok then
-      return ("could not move %s to %s: %s"):format(short(move.from), short(move.to), err)
+  local function moves()
+    for _, fix in ipairs(plan.repairs) do
+      keep(plan, fix.path, fix.repair)
     end
-    log(("moved %s to %s"):format(short(move.from), short(move.to)))
-  end
-  -- A moved worktree's main checkout still points at the old path until it's repaired.
-  local old = require("isovim.worktree").root .. "/"
-  for _, tree in ipairs(plan.trees) do
-    if not tree.outside and not tree.problem and vim.startswith(tree.path, old) then
-      local path = plan.backup .. "/worktrees/" .. tree.path:sub(#old + 1)
-      local repaired = vim.system({ "git", "-C", path, "worktree", "repair" }, { text = true }):wait()
-      if repaired.code ~= 0 then
-        log(("warning: git worktree repair in %s failed: %s"):format(short(path), first_line(repaired.stderr)))
+    local old = require("isovim.worktree").root .. "/"
+    for _, move in ipairs(plan.moves) do
+      vim.fn.mkdir(vim.fs.dirname(move.to), "p")
+      local ok, err = vim.uv.fs_rename(move.from, move.to)
+      if not ok then
+        return ("could not move %s to %s: %s"):format(short(move.from), short(move.to), err)
+      end
+      log(("moved %s to %s"):format(short(move.from), short(move.to)))
+      if move.rel == "worktrees" then
+        for _, tree in ipairs(plan.trees) do
+          if not tree.outside and not tree.problem and vim.startswith(tree.path, old) then
+            keep(plan, plan.backup .. "/worktrees/" .. tree.path:sub(#old + 1), true)
+          end
+        end
       end
     end
   end
+  local err = moves()
+  write_readme(plan)
+  log(("how to undo it: %s/%s"):format(plan.backup, M.readme))
+  return err
 end
 
 -- Runs the plan's steps in order; nil, why at the first failure.
@@ -632,6 +897,7 @@ function M.run(plan)
   end
   vim.fn.mkdir(plan.backup, "p")
   vim.uv.fs_rename(M.plan_file, plan.backup .. "/cutover-plan.txt")
+  -- (the plan in it marks the backup finished: a later run starts a new one)
   local ok, err = require("isovim.config").enforce()
   if not ok then
     log("cut over, but enforce could not be set: " .. tostring(err))
