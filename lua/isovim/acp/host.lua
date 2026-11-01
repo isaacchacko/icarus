@@ -156,6 +156,12 @@ local deliver, reload
 
 -- The next queued prompt goes, unless the session isn't up (a handover, a restart).
 local function next_prompt()
+  -- A session switch that waited on the turn (or a reload) goes first; it sends what's queued.
+  if not S.busy and S.after_turn then
+    local after = S.after_turn
+    S.after_turn = nil
+    return after()
+  end
   if S.busy or not S.ready then
     return
   end
@@ -179,11 +185,6 @@ local function turn_ended(prompt, result, err)
   -- What it asked and you didn't answer is moot now.
   if S.asks and asks_mod.waiting(S.asks) then
     asks_mod.cancel_all(S.asks, "the turn ended")
-  end
-  local after = S.after_turn
-  if after then
-    S.after_turn = nil
-    return after()
   end
   next_prompt()
 end
