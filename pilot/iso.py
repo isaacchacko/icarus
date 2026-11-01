@@ -148,7 +148,11 @@ class Iso:
     # viewing
 
     def screen(self):
-        return self._tmux_ui("capture-pane", "-p", "-t", "=0:").stdout
+        """The TUI's screen; a check that hasn't started it (or whose TUI quit) gets a note instead."""
+        try:
+            return self._tmux_ui("capture-pane", "-p", "-t", "=0:").stdout
+        except subprocess.CalledProcessError:
+            return "(no TUI)"
 
     def screenshot(self, label):
         """Renders the TUI as it looks now to pilot/out/<name>-<label>.png."""

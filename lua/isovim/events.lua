@@ -155,10 +155,15 @@ function M.follow(on_event, since)
       end
       offset = offset + #chunk
       partial = partial .. chunk
-      for line in partial:gmatch("([^\n]*)\n") do
-        emit(line)
+      -- Up to the last newline, found from the end. partial:match("[^\n]*$") tries every start
+      -- in the chunk and scans each to its line's end: seconds for a 64 KiB read of a backlog.
+      local cut = partial:match(".*()\n")
+      if cut then
+        for line in partial:sub(1, cut):gmatch("([^\n]*)\n") do
+          emit(line)
+        end
+        partial = partial:sub(cut + 1)
       end
-      partial = partial:match("[^\n]*$")
     end
   end
   local function open(at_start)

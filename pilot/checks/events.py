@@ -166,9 +166,17 @@ try:
     iso.wait(lambda: has(odd_listener, odd_topic, addr=odd, scope="o/50%.x%2E", id="a1", state="idle"), "a % address, encoded by the hook")
     assert "/".join(unquote(part) for part in odd_topic.split(".")[1:3]) == odd
 
-    seen = everything.topics()
-    for listener in crowd:
-        iso.wait(lambda: listener.topics() == seen, "every listener sees every event")
+    # Against the log, read again each time: an agent's late event can still land after a snapshot.
+    log = iso.tmp / "home" / "events" / "events.jsonl"
+
+    def all_agree():
+        logged = [json.loads(line)["topic"] for line in log.read_text().splitlines() if line]
+        behind = [(i, len(listener.topics()), len(logged)) for i, listener in enumerate([everything, *crowd])
+                  if listener.topics() != logged]
+        if behind:
+            raise AssertionError(f"listeners (index, seen, logged) not matching the log: {behind}")
+        return logged
+    seen = iso.wait(all_agree, "every listener sees every event")
     print(f"{len(seen)} events, the same in {len(crowd) + 1} '**' listeners")
 
     # Idle: nothing happens, and the listeners do nothing.
@@ -180,7 +188,6 @@ try:
     assert used <= 0.02, used
 
     # Past 1 MiB the log moves aside; listeners carry on in the new one, missing nothing in between.
-    log = iso.tmp / "home" / "events" / "events.jsonl"
     filler = "".join(json.dumps({"topic": "filler", "time": time.time(), "pad": "x" * 200}) + "\n" for _ in range(5200))
     with open(log, "a") as f:
         f.write(filler)
