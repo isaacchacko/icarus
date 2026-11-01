@@ -333,13 +333,14 @@ function M.delete_surface(item)
     surfaces.scan(entry.repo)
     require("isovim.surfaces").recheck()
     return M.refresh()
-  elseif (kind == "file" or kind == "folder") and entry.needs_you then
+  elseif (kind == "file" or kind == "folder" or kind == "link") and entry.needs_you then
     -- Not opened yet: one key too many shouldn't lose what an agent left for you.
-    if not confirmed(("You haven't opened %q yet. Remove it (the %s stays)?"):format(title, kind)) then
+    local stays = kind == "link" and "what it points at" or ("the " .. kind)
+    if not confirmed(("You haven't opened %q yet. Remove it (%s stays)?"):format(title, stays)) then
       return
     end
     surfaces.remove(entry)
-  elseif kind == "file" or kind == "folder" or kind == "chat" then
+  elseif kind == "file" or kind == "folder" or kind == "link" or kind == "chat" then
     surfaces.remove(entry)
   elseif kind == "question" and not entry.answer then
     if not confirmed(("%q waits on your answer, and its asker on it. Remove it anyway?"):format(title)) then
