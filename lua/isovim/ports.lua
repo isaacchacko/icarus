@@ -34,7 +34,7 @@ function M.poll(on_change)
     end
     local found = {}
     for name, root in (panes:wait().stdout or ""):gmatch("(%S+) (%d+)") do
-      local ws, agent = name:match("^isovim%-(%x%x%x%x%x%x)%-(%S+)$")
+      local ws, agent = require("isovim.panes").decode(name)
       if ws then
         local set, stack = {}, { root }
         while #stack > 0 do

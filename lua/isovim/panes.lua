@@ -13,10 +13,18 @@ local function tmux(args)
   return vim.system(tmux_cmd(args), { text = true }):wait()
 end
 
--- One tmux session per agent.
-local function session(ws, agent)
+-- One tmux session per agent, named isovim-<ws>-<agent>. Every name is made and read here, so the
+-- shape can change in one place; a name of any other shape isn't an agent's.
+function M.encode(ws, agent)
   return ("isovim-%s-%s"):format(ws, agent)
 end
+
+---@return string? ws, string? agent
+function M.decode(name)
+  return (name or ""):match("^isovim%-(%x%x%x%x%x%x)%-(%S+)$")
+end
+
+local session = M.encode
 
 function M.running(ws, agent)
   return tmux({ "has-session", "-t", "=" .. session(ws, agent) }).code == 0
@@ -325,7 +333,8 @@ function M.pane_pids()
   local result = tmux({ "list-panes", "-a", "-F", "#{session_name} #{pane_pid}" })
   local owners = {}
   for line in (result.code == 0 and result.stdout or ""):gmatch("[^\n]+") do
-    local ws, agent, pid = line:match("^isovim%-(%x%x%x%x%x%x)%-(%S+) (%d+)$")
+    local name, pid = line:match("^(%S+) (%d+)$")
+    local ws, agent = M.decode(name)
     if ws then
       owners[tonumber(pid)] = { ws = ws, agent = agent }
     end
@@ -355,7 +364,7 @@ function M.titles()
   local titles = {}
   for line in (result.code == 0 and result.stdout or ""):gmatch("[^\n]+") do
     local name, title, command, path = line:match("^(.-)\t(.-)\t(.-)\t(.*)$")
-    local ws, agent = (name or ""):match("^isovim%-(%x%x%x%x%x%x)%-(%S+)$")
+    local ws, agent = M.decode(name)
     if ws then
       titles[ws .. "/" .. agent] = { title = title, command = command, path = path }
     end
@@ -395,7 +404,8 @@ function M.sessions()
     return sessions
   end
   for line in result.stdout:gmatch("[^\n]+") do
-    local ws, agent, at = line:match("^isovim%-(%x%x%x%x%x%x)%-(%S+) (%d+)$")
+    local name, at = line:match("^(%S+) (%d+)$")
+    local ws, agent = M.decode(name)
     if ws then
       sessions[ws] = sessions[ws] or {}
       sessions[ws][agent] = tonumber(at)
