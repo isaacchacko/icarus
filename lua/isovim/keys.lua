@@ -310,6 +310,236 @@ function M.previous_repo()
   toast("No other repo yet")
 end
 
+-- What the jump offers: the rows that stand for something (agents, surfaces, the Inbox's items,
+-- repos and the pseudo-repos, terminals, pinned paths), not titles or hints. A surface in a repo's
+-- Inbox is the host Inbox's item already.
+local function jumpable(row)
+  local kinds = { waiting = true, agent = true, surface = true, repo = true, terminals = true, terminal = true, path = true }
+  return kinds[row.kind] and not row.in_inbox
+end
+
+-- A row's chunks for the picker: its indent and tree guide dropped, a right-aligned mark after it,
+-- and the repo of a row whose repo its header gave.
+local function jump_chunks(row)
+  local chunks = {}
+  for _, chunk in ipairs(require("isovim.sidebar").row_chunks(row)) do
+    if #chunks > 0 or not chunk[1]:match("^[%s├└─│▾▸]*$") then
+      chunks[#chunks + 1] = chunk.right and { " " .. chunk[1], chunk[2] } or { chunk[1], chunk[2] }
+    end
+  end
+  local key = row.kind ~= "waiting" and row.kind ~= "repo" and (row.group_key or row.repo_key)
+  if key then
+    chunks[#chunks + 1] = { "  " .. scope.label(key), "Comment" }
+  elseif row.kind == "terminal" then
+    chunks[#chunks + 1] = { "  Terminals", "Comment" }
+  end
+  return chunks
+end
+
+-- The jump's items: the Inbox's first, in its order; then agents and terminals, the one opened last
+-- first (as by_recency); then the rest in the list's order.
+local function jump_items(hidden)
+  local rank = {}
+  for i, key in ipairs(isovim().recent_agents) do
+    rank[key] = i
+  end
+  local items = {}
+  local rows = require("isovim.sidebar").all_rows(hidden)
+  for i, row in ipairs(rows) do
+    if jumpable(row) then
+      local chunks = jump_chunks(row)
+      local order = { 2, 0, i }
+      if row.kind == "waiting" then
+        order = { 0, 0, i }
+      elseif (row.kind == "agent" or row.kind == "terminal") and not row.host then
+        order = { 1, rank[row.ws .. "/" .. row.agent] or math.huge, -vim.fn.getftime(store.state_file(row.ws, row.agent)) }
+      end
+      items[#items + 1] = vim.tbl_extend("force", row, {
+        row = row,
+        chunks = chunks,
+        order = order,
+        text = table.concat(vim.tbl_map(function(chunk)
+          return chunk[1]
+        end, chunks)),
+      })
+    end
+  end
+  table.sort(items, function(a, b)
+    for i = 1, 3 do
+      if a.order[i] ~= b.order[i] then
+        return a.order[i] < b.order[i]
+      end
+    end
+    return false
+  end)
+  return items, rows
+end
+
+local PREVIEW_LINES = 40
+
+-- An ACP agent's last words from its journal's end (its last 64 KB, read once): your prompts, its
+-- messages and its tool calls, plainly, as a chat not yet drawn would show them.
+local function journal_tail(ws, agent)
+  local path = require("isovim.acp.journal").path(ws, agent)
+  local stat = vim.uv.fs_stat(path)
+  local fd = stat and vim.uv.fs_open(path, "r", 420)
+  if not fd then
+    return nil
+  end
+  local size = 65536
+  local data = vim.uv.fs_read(fd, size, math.max(0, stat.size - size)) or ""
+  vim.uv.fs_close(fd)
+  local lines, message = {}, nil
+  local function flush()
+    if message then
+      vim.list_extend(lines, vim.split(vim.trim(message), "\n"))
+      message = nil
+    end
+  end
+  for _, line in ipairs(vim.split(data, "\n", { trimempty = true })) do
+    local ok, entry = pcall(vim.json.decode, line)
+    local update = ok and type(entry) == "table" and entry.update or nil
+    if ok and type(entry) == "table" and entry.kind == "prompt" then
+      flush()
+      vim.list_extend(lines, { "", "❯ " .. tostring(entry.text or entry.message or ""):gsub("\n", " "), "" })
+    elseif type(update) == "table" and update.sessionUpdate == "agent_message_chunk" and type(update.content) == "table" then
+      message = (message or "") .. tostring(update.content.text or "")
+    elseif type(update) == "table" and update.sessionUpdate == "tool_call" then
+      flush()
+      lines[#lines + 1] = "⏺ " .. tostring(update.name or update.title or "tool")
+    end
+  end
+  flush()
+  return #lines > 0 and vim.list_slice(lines, math.max(1, #lines - PREVIEW_LINES + 1)) or nil
+end
+
+-- The end of an agent's chat: its chat buffer's last lines while it's loaded (as the chat draws
+-- them), else its transcript's; nil when it has neither yet.
+local function chat_tail(ws, agent)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.b[buf].isovim_id == ws and vim.b[buf].isovim_agent == agent and vim.api.nvim_buf_is_loaded(buf) then
+      local count = vim.api.nvim_buf_line_count(buf)
+      local lines = vim.api.nvim_buf_get_lines(buf, math.max(0, count - PREVIEW_LINES), count, false)
+      while #lines > 0 and vim.trim(lines[#lines]) == "" do
+        table.remove(lines)
+      end
+      if #lines > 0 then
+        return lines
+      end
+    end
+  end
+  local path = require("isovim.transcript").path(ws, agent)
+  if vim.uv.fs_stat(path) then
+    return vim.fn.readfile(path, "", -PREVIEW_LINES)
+  end
+  return journal_tail(ws, agent)
+end
+
+-- A surface as its view shows it: a question with its options, the Task Board, the PRs surface or
+-- markdown rendered; a file or folder is previewed as one (file set).
+---@return string[] lines, string? ft, string? file
+local function surface_preview(entry)
+  if entry.type == "question" then
+    local lines = { "# " .. (entry.question or entry.title or entry.name), "" }
+    for i, option in ipairs(entry.options or {}) do
+      lines[#lines + 1] = ("%d. **%s**%s"):format(i, option.label or "?", option.description and (": " .. option.description) or "")
+    end
+    if entry.answer then
+      vim.list_extend(lines, { "", "answered: " .. vim.inspect(entry.answer) })
+    end
+    return lines, "markdown"
+  elseif entry.type == "file" or entry.type == "folder" then
+    local path = entry.path or ""
+    if vim.fn.isdirectory(path) == 1 then
+      return vim.fn.readdir(path), nil
+    end
+    return { path }, nil, vim.uv.fs_stat(path) and path or nil
+  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" then
+    return (require("isovim.surface_view").render(entry)), "markdown"
+  end
+  return { (entry.title or entry.name or "?") .. " (" .. tostring(entry.type) .. ")" }
+end
+
+-- What the jump previews for a row: an agent's chat's end under its status, a surface as it opens,
+-- a group's rows as the sidebar lists them, a terminal's pane's last lines. All local and quick:
+-- nothing waits on the network or an agent; anything else is a line about it.
+---@return string[] lines, string? ft, string? file
+local function jump_preview(item, rows)
+  local row = item.row
+  if row.kind == "agent" and not row.host then
+    local head = ("%s · %s · %s"):format(row.name or row.agent, status.get(row.ws, row.agent) or "idle", row.role or "worker")
+    return vim.list_extend({ head, "" }, chat_tail(row.ws, row.agent) or { "(nothing said yet)" })
+  elseif row.kind == "terminal" and not row.host then
+    local ok, text = pcall(require("isovim.panes").capture, row.ws, row.agent, PREVIEW_LINES)
+    return ok and vim.split(vim.trim(text), "\n") or { row.name }
+  elseif (row.kind == "surface" or row.kind == "waiting") and row.surface and not row.host then
+    return surface_preview(row.surface)
+  elseif row.kind == "repo" or row.kind == "terminals" then
+    local lines = {}
+    for _, other in ipairs(rows) do
+      local mine = row.kind == "terminals" and other.kind == "terminal"
+        or row.kind == "repo" and (other.group_key == row.repo_key or (other.repo_key == row.repo_key and other.kind ~= "repo"))
+      if mine and jumpable(other) then
+        lines[#lines + 1] = table.concat(vim.tbl_map(function(chunk)
+          return chunk[1]
+        end, jump_chunks(other)))
+      end
+    end
+    return #lines > 0 and lines or { "(nothing here)" }
+  end
+  return { item.text }
+end
+
+-- <leader><leader>: a jump to any entry the sidebar shows, each as its row on the left, a preview of
+-- it on the right; picking opens it in the main area as <CR> on its row would, and the sidebar's
+-- cursor goes to it. Hidden agents only after H (in the list, or the input in normal mode; <M-h>
+-- while typing), which toggles them.
+function M.jump()
+  local state = { hidden = isovim().show_hidden, rows = {} }
+  Snacks.picker.pick({
+    source = "isovim_jump",
+    title = "Jump",
+    layout = { preset = "default" },
+    finder = function()
+      local items
+      items, state.rows = jump_items(state.hidden)
+      return items
+    end,
+    format = function(item)
+      return item.chunks
+    end,
+    preview = function(ctx)
+      local ok, lines, ft, file = pcall(jump_preview, ctx.item, state.rows)
+      if ok and file then
+        ctx.item.file = file
+        return Snacks.picker.preview.file(ctx)
+      end
+      ctx.preview:reset()
+      ctx.preview:set_lines(ok and lines or { ctx.item.text })
+      if ok and ft then
+        ctx.preview:highlight({ ft = ft })
+      end
+    end,
+    actions = {
+      isovim_toggle_hidden = function(picker)
+        state.hidden = not state.hidden
+        toast(state.hidden and "Hidden agents shown" or "Hidden agents left out")
+        picker:find()
+      end,
+    },
+    win = {
+      input = { keys = { ["H"] = { "isovim_toggle_hidden", mode = { "n" } }, ["<M-h>"] = { "isovim_toggle_hidden", mode = { "i", "n" } } } },
+      list = { keys = { ["H"] = "isovim_toggle_hidden" } },
+    },
+    confirm = function(picker, item)
+      picker:close()
+      if item then
+        require("isovim.sidebar").open_row(item.row)
+      end
+    end,
+  })
+end
+
 -- The prompt queue of the ACP agent whose chat you're in, else the one on screen: its window under
 -- the chat, opened even when nothing waits.
 function M.prompt_queue()
@@ -379,7 +609,7 @@ end
 
 -- {lhs, fn, description}, all in normal mode; `?` in the sidebar lists them.
 M.GLOBAL = {
-  { "<leader><leader>", M.pick_repo, "pick a repo (or Root, General, Terminals)" },
+  { "<leader><leader>", M.jump, "jump to anything the sidebar shows (H: hidden agents too)" },
   { "<leader>ff", M.find_files, "find a file in the repo" },
   { "<leader>/", M.grep, "grep the repo and its agents' transcripts" },
   { "<leader>,", M.buffers, "the repo's buffers" },
@@ -401,6 +631,7 @@ M.GROUP = {
   { "w", M.workers, "a worker in the repo" },
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
+  { "P", M.pick_repo, "pick a repo (or Root, General, Terminals)" },
   { "p", M.previous_repo, "the previous repo (at the agent you last had open there)" },
   { "g", function()
     M.select_scope(scope.GENERAL)
@@ -463,7 +694,7 @@ M.RETIRED = {
   end, "<leader>in" },
   { "w", function()
     isovim().switch_workspace()
-  end, "<leader><leader> or <leader>ia" },
+  end, "<leader>iP or <leader>ia" },
   { "b", function()
     isovim().last_workspace()
   end, "<leader>ip" },

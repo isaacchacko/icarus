@@ -92,7 +92,7 @@ end
 local function actions()
   return {
     { "s", spawn, keys.GROUP, "s" },
-    { "p", keys.pick_repo, keys.GLOBAL, "<leader><leader>" },
+    { "p", keys.jump, keys.GLOBAL, "<leader><leader>" },
     { "j", require("isovim.jump").picker, keys.GROUP, "j" },
     { "i", function()
       sidebar().focus_inbox("host")

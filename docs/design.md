@@ -420,7 +420,12 @@ Plain nvim keys keep their meaning: windows, buffers, hunks, lazygit. File keys 
 and agents, and everything isovim-specific lives under `<leader>i`.
 
 **Global**
-- `<leader><leader>` picks a repo; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
+- `<leader><leader>` jumps to anything the sidebar shows, each drawn as its row on the left (the
+  Inbox's items first, then what you opened last) with a preview on the right: an agent's status
+  and its chat's end (its chat buffer if loaded, else its transcript or its journal's last 64 KB), a
+  surface as it opens, a file or folder, a repo's or Terminals' rows, a terminal's pane; all local,
+  nothing waiting on the network or an agent, opening it as `<CR>` on its row would and moving the sidebar's
+  cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a repo; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
   included.
 - `<leader>,` shows the repo's buffers; `<leader>fr` shows recent agents (`<leader>fR` recent files).
 - `<leader>e` opens or closes the sidebar.
@@ -437,6 +442,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `w` / `a` | pick a worker / pick any agent |
 | `b` | the previous agent |
 | `p` | the previous repo, at the agent last open there |
+| `P` | pick a repo (Root, General and Terminals among them) |
 | `g` / `T` | general / terminals |
 | `s` / `t` | spawn / new terminal |
 | `x` | root mode for this repo |
@@ -451,7 +457,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 - On start, when there is nothing to resume, the editing area shows the landing (`isovim.landing`):
   what isovim is, the Inbox count, the repos in `~/.isovim/repos`, the keys that matter (their words
   read from the key tables, as `?` does) and quick actions on single keys: `s` spawn in a repo picked,
-  `p` pick a repo, `j` jump, `i` the host's Inbox, `t` a terminal, `m` send a repo to a host, `?` help.
+  `p` anything in the sidebar (as `<leader><leader>`), `j` jump to a dir, `i` the host's Inbox, `t` a terminal, `m` send a repo to a host, `?` help.
   `<leader>il` brings it back. It belongs to no workspace, so no layout keeps it.
 
 **In the chat** (the conversation and, at its end, the input box: one buffer)

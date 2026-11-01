@@ -1665,6 +1665,49 @@ local function land(want)
   return false
 end
 
+-- Every row the shown host's list can have, each group open, hidden agents only with hidden: what
+-- <leader><leader> jumps to (isovim.keys.jump).
+---@param hidden boolean
+function M.all_rows(hidden)
+  local collapsed, show_hidden = isovim.collapsed, isovim.show_hidden
+  isovim.collapsed, isovim.show_hidden = {}, hidden
+  local ok, list = pcall(collect)
+  isovim.collapsed, isovim.show_hidden = collapsed, show_hidden
+  return ok and list or error(list)
+end
+
+-- A row's chunks as the list draws them, at no width.
+function M.row_chunks(item)
+  return KINDS[item.kind].format(item)
+end
+
+-- Opens a row as <CR> on it would and puts the list's cursor on it, its group opened: the jump's
+-- pick. Terminals and General have nothing to open, so the cursor only goes there (General's
+-- becoming the scope, as <leader>ig does).
+function M.open_row(item)
+  local host = item.host
+  if item.kind == "terminals" then
+    return M.focus_window("terminals")
+  elseif item.kind == "repo" and item.group_kind == "general" then
+    require("isovim.keys").select_scope(scope.GENERAL)
+  elseif KINDS[item.kind].open then
+    KINDS[item.kind].open(item)
+  end
+  if item.kind == "waiting" then
+    set_collapsed(host, "inbox", nil, false)
+  elseif item.kind == "terminal" then
+    set_collapsed(host, "terminals", nil, false)
+  elseif item.group_key and item.group_key ~= ROOT_KEY then
+    set_collapsed(host, "repo", item.group_key, false)
+  end
+  refresh_now()
+  local wins = windows()
+  local line = wins.list and line_of(rows.list, item)
+  if line then
+    vim.api.nvim_win_set_cursor(wins.list, { line, 0 })
+  end
+end
+
 -- Into the list or the footer, from anywhere; "terminals" is the list on Terminals, expanded.
 ---@param role "list"|"footer"|"terminals"
 function M.focus_window(role)
