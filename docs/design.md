@@ -343,6 +343,14 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   draws from the cache at once with "refreshing…" in its header, says when gh gave nothing, and
   fetches again on a `pr.<repo>.<n>.ci|review|state` event. The sidebar's
   P toggle, which swapped a repo's agents for its PRs, is gone with the PR rows and their `y`.
+- `d` on a surface's row removes it, the user's own action (the router-only rule for `iso/` is
+  the agents'): a file or folder surface only points, so its `.surface` goes at once and what it
+  names stays (a pinned path likewise unpins); a chat pointer goes at once too. Markdown, a page with
+  its comments and an answered question hold content, so they go after a one-key `y` in the command
+  line (`Remove page "X" and its 3 comments? y/n`); a question still waiting goes only on a `y` to
+  "its asker waits on it", else it stays with that hint. The Task Board and the PRs surface are
+  isovim's views: `d` hides them for the repo until they change (a new task, a PR), kept in
+  `run/<repo>/hidden.json`. Each publishes `surface.<repo>.<name>.removed`, and its open tab closes.
 
 ## The sidebar
 

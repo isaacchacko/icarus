@@ -975,6 +975,54 @@ end
 
 M.cache = {} ---@type table<string, isovim.Surface[]> per repo, while watching
 
+-- The user's d in the sidebar, his own action, so the rule that only the router writes iso/ isn't
+-- his to keep.
+
+-- isovim's own views of a repo (the Task Board, the PRs surface) the user hid, by base, each with
+-- the sig it had then: hidden until it changes (a new task, a PR).
+local function hidden_file(repo)
+  return store.run_dir(canon(repo)) .. "/hidden.json"
+end
+
+local function read_hidden(repo)
+  local ok, value = pcall(vim.json.decode, read_file(hidden_file(repo)) or "")
+  return ok and type(value) == "table" and value or {}
+end
+
+local function changed(repo)
+  if M.cache[repo] then
+    M.cache[repo] = M.read(repo)
+    if notify then
+      notify(repo, M.cache[repo])
+    end
+  end
+end
+
+-- Removes a surface: its file, its error file, a page's comments. A file or folder surface only
+-- points, so what it names stays. The scan publishes surface.<repo>.<name>.removed.
+function M.remove(entry)
+  os.remove(entry.file)
+  if entry.error_file and entry.error_file ~= "" then
+    os.remove(entry.error_file)
+  end
+  if entry.type == "page" then
+    os.remove(require("isovim.pages").comments_file(entry.repo, entry.name))
+  end
+  M.scan(entry.repo)
+  changed(entry.repo)
+end
+
+-- Hides the Task Board or the PRs surface until it changes. Publishes surface.<repo>.<name>.removed.
+function M.hide(entry)
+  locked(entry.repo, function()
+    local hidden = read_hidden(entry.repo)
+    hidden[entry.base] = entry.sig
+    write_json(hidden_file(entry.repo), hidden)
+  end)
+  publish(entry, "removed", { hidden = true })
+  changed(entry.repo)
+end
+
 local DAY = 24 * 3600
 
 -- The PRs surface: isovim's own, not a router's file, for a repo (or the root) with PRs registered
@@ -1031,6 +1079,12 @@ function M.list(repo)
     return entry.name == board.name
   end) then
     list = vim.list_extend(vim.list_slice(list), { board })
+  end
+  local hidden = read_hidden(repo)
+  if next(hidden) then
+    list = vim.tbl_filter(function(entry)
+      return hidden[entry.base] ~= entry.sig
+    end, list)
   end
   return list
 end

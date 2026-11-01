@@ -1048,6 +1048,15 @@ end
 
 -- A rescan of repo changed its surfaces: open views redraw, a question answered elsewhere shows its
 -- answer, and one whose surface went says so.
+-- Closes a surface's open tabs, as closing them would: the user removed or hid it (d).
+function M.close(repo, name)
+  for _, view in pairs(M.views) do
+    if view.repo == repo and (view.name == name or (name == "PRs" and view.kind == "prs")) and vim.api.nvim_buf_is_valid(view.buf) then
+      pcall(Snacks.bufdelete, { buf = view.buf, force = true })
+    end
+  end
+end
+
 function M.changed(repo, entries)
   for _, view in pairs(M.views) do
     -- The PRs surface isn't a file: M.refresh_prs draws it.

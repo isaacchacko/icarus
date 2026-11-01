@@ -283,6 +283,49 @@ local KINDS = {
 KINDS.task.open = KINDS.agent.open
 KINDS.waiting.open = KINDS.surface.open
 
+-- y in the command line to a one-key question, anything else no.
+local function confirmed(question)
+  vim.api.nvim_echo({ { question .. " y/n ", "Question" } }, false, {})
+  local ok, key = pcall(vim.fn.getcharstr)
+  vim.api.nvim_echo({ { "" } }, false, {})
+  return ok and (key == "y" or key == "Y")
+end
+
+-- d on a surface: a file or folder surface only points, so it goes at once (what it names stays),
+-- as does a chat's; the Task Board and the PRs surface, isovim's own views, hide until they change;
+-- anything holding content (markdown, a page and its comments, an answered question) goes after a
+-- y; a question still waiting goes only if you say so, its asker waiting on it otherwise.
+function M.delete_surface(item)
+  local entry = item.surface
+  if item.host then
+    return Snacks.notify.info(("That's on %s; remove it there"):format(item.host), { title = "isovim" })
+  end
+  local surfaces, title = M.surfaces(), entry.title or entry.name
+  local kind = entry.type
+  if kind == "tasks" or kind == "prs" then
+    surfaces.hide(entry)
+  elseif kind == "file" or kind == "folder" or kind == "chat" then
+    surfaces.remove(entry)
+  elseif kind == "question" and not entry.answer then
+    if not confirmed(("%q waits on your answer, and its asker on it. Remove it anyway?"):format(title)) then
+      return Snacks.notify.info("Kept it: answer it, or its asker will wait", { title = "isovim" })
+    end
+    surfaces.remove(entry)
+  else
+    local what = kind == "page" and "page" or kind == "question" and "answered question" or "surface"
+    local comments = kind == "page" and #(require("isovim.pages").comments(entry.repo, entry.name) or {}) or 0
+    local tail = comments > 0 and (" and its %d comment%s"):format(comments, comments == 1 and "" or "s") or ""
+    if not confirmed(("Remove %s %q%s?"):format(what, title, tail)) then
+      return
+    end
+    surfaces.remove(entry)
+  end
+  require("isovim.surface_view").close(entry.repo, entry.name)
+  M.refresh()
+end
+KINDS.surface.delete = M.delete_surface
+KINDS.waiting.delete = M.delete_surface
+
 -- A file's or folder's icon, from mini.icons when it's there.
 local function path_icon(path, is_dir)
   if is_dir then
@@ -1527,7 +1570,7 @@ local LIST_KEYS = {
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent or terminal" },
-  { "d", "isovim_delete", "remove the agent, terminal or pinned path, or archive the workspace" },
+  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },
