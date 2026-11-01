@@ -20,6 +20,9 @@
 -- The answer goes through surfaces.answer, as iso answer's does, so the asker gets it the same way;
 -- then the buffer shows it, and q closes it.
 --
+-- Each is a tab of its own in its repo's scope (isovim.scope lists it only there), named and marked
+-- as its Inbox row is; deleting the buffer (closing the tab) closes the view and its input box.
+--
 -- Each follows the file: each rescan that changes the surface (isovim.surfaces.watch) redraws it, a
 -- question answered elsewhere shows its answer, and one that's gone says so.
 local surfaces = require("isovim.surfaces")
@@ -192,6 +195,14 @@ end
 ---@return string[]
 function M.lines(entry)
   return (M.render(entry))
+end
+
+-- Its tab: the Task Board, a markdown surface's title, a question's name, after its Inbox row's glyph
+-- (the starter's bufferline reads b:isovim_tab).
+local function tab(view, entry)
+  local mark = require("isovim.sidebar").surface_chunks(entry)[1]
+  vim.b[view.buf].isovim_tab = { name = view.kind == "question" and entry.name or entry.title, icon = mark[1], hl = mark[2] }
+  vim.cmd.redrawtabline()
 end
 
 local function set_lines(buf, lines, marks)
@@ -566,8 +577,34 @@ local function bind(view)
   -- The input box goes with the view: once no window shows the view (another buffer took its
   -- window, or it closed), its box closes too, rather than stay behind under whatever's there. The
   -- last window beside the sidebar is emptied instead, as :q there would otherwise quit isovim.
+  local group = vim.api.nvim_create_augroup("isovim_surface_view_" .. view.buf, { clear = true })
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = group,
+    buffer = view.buf,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      vim.schedule(function()
+        if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == view.buf then
+          M.dress(view, win)
+        end
+      end)
+    end,
+  })
+  -- Its tab closed (Snacks.bufdelete, :bd): the view goes, its box and its buffers with it.
+  vim.api.nvim_create_autocmd("BufDelete", {
+    group = group,
+    buffer = view.buf,
+    callback = function()
+      vim.schedule(function()
+        close_input(view)
+        M.views[key(view.repo, view.name)] = nil
+        pcall(vim.api.nvim_buf_delete, view.input, { force = true })
+        pcall(vim.api.nvim_buf_delete, view.buf, { force = true })
+      end)
+    end,
+  })
   vim.api.nvim_create_autocmd("BufWinLeave", {
-    group = vim.api.nvim_create_augroup("isovim_surface_view_" .. view.buf, { clear = true }),
+    group = group,
     buffer = view.buf,
     callback = function()
       vim.schedule(function()
@@ -604,6 +641,8 @@ local function make(entry)
     view.buf = scratch(("isovim-surface://%s"):format(id), entry.type == "tasks" and "isovim_tasks" or "markdown")
   end
   vim.b[view.buf].isovim_surface = id
+  vim.b[view.buf].isovim_scope = entry.repo
+  vim.bo[view.buf].buflisted = true
   view.input = scratch(("isovim-surface://%s/input"):format(id), "isovim_surface_input")
   vim.b[view.input].isovim_surface_input = id
   vim.b[view.input].completion = false
@@ -696,6 +735,26 @@ local function place(buf)
   return win, true
 end
 
+-- The window showing the view: its options, and its input box under it (moved there if it shows
+-- anywhere else), whenever the view comes into a window, by Enter in an Inbox or by its tab.
+function M.dress(view, win)
+  local question = view.kind == "question"
+  view_window(win, question, view.kind == "tasks")
+  local boxed = view.kind == "markdown" or (question and view.entry.other and pending(view))
+  local input_win = vim.fn.bufwinid(view.input)
+  if input_win ~= -1 and (view.under ~= win or not boxed) then
+    pcall(vim.api.nvim_win_close, input_win, true)
+    input_win = -1
+  end
+  if input_win == -1 and boxed then
+    input_win = vim.api.nvim_open_win(view.input, false, { split = "below", win = win, height = 3 })
+    view.under = win
+  end
+  if input_win ~= -1 then
+    input_window(input_win, view)
+  end
+end
+
 -- Opens the surface rendered, beside the chat, with its input box under it: a markdown surface's
 -- always, a question's while it waits and takes your own words, the Task Board's never.
 ---@param entry isovim.Surface
@@ -714,21 +773,8 @@ function M.open(entry)
   else
     vim.api.nvim_set_current_win(win)
   end
-  view_window(win, question, entry.type == "tasks")
-  -- Its box under it, moved there if it shows anywhere else.
-  local boxed = view.kind == "markdown" or (question and entry.other and pending(view))
-  local input_win = vim.fn.bufwinid(view.input)
-  if input_win ~= -1 and (view.under ~= win or not boxed) then
-    pcall(vim.api.nvim_win_close, input_win, true)
-    input_win = -1
-  end
-  if input_win == -1 and boxed then
-    input_win = vim.api.nvim_open_win(view.input, false, { split = "below", win = win, height = 3 })
-    view.under = win
-  end
-  if input_win ~= -1 then
-    input_window(input_win, view)
-  end
+  tab(view, entry)
+  M.dress(view, win)
   if question then
     -- Answered in normal mode, whatever was being typed where it was opened from (the composer).
     vim.cmd.stopinsert()
@@ -784,6 +830,14 @@ function M.rebind()
         views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
       end
       local entry = surfaces.get(view.repo, view.name)
+      -- One opened before views had tabs gets its own.
+      if vim.b[view.buf].isovim_scope == nil then
+        vim.b[view.buf].isovim_scope = view.repo
+        vim.bo[view.buf].buflisted = true
+      end
+      if entry then
+        tab(view, entry)
+      end
       if view.kind == "question" then
         draw(view)
       elseif entry then
@@ -806,6 +860,9 @@ function M.changed(repo, entries)
       local entry = vim.iter(entries):find(function(each)
         return each.name == view.name
       end)
+      if entry then
+        tab(view, entry)
+      end
       if view.kind == "question" then
         refresh(view, entry)
       else

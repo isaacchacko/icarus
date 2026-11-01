@@ -50,6 +50,7 @@ In the sidebar, `s` spawns a worker in the repo under the cursor and opens its c
   | chat | `iso router surface chat <agent>` | an agent's chat, gone once you open it |
   | Task Board | the router edits `tasks.md` | headings todo, doing, waiting, blocked, done; one task a line. It opens as the sections that hold tasks, a glyph per status, with no input box: write to the router in its chat |
 
+- A surface you open is a tab of its own in its repo, named as its Inbox row is; close the tab to close it.
 - An **Inbox** is the surfaces waiting on you: each repo has one, the host's gathers the root's surfaces and a row per busy repo, and the top one counts other hosts'. PRs show only once the router registers them (`iso router pr`).
 - **Root mode**: `iso rootmode on <repo|host> [--task "<description>"]` gives a repo (a repo-root) or the host (the root) an agent that decides the routers' questions while you're away, spawning a worker and promoting it if there's no root yet. A question goes to the most specific active root, which answers it (`iso <root|repo-root> answer`) or raises it to your Inbox (`--raise`). `--task` is the root's first message, guidance it narrows itself by. Only the host root's stamped messages carry your authority, and its prompt lists what's permanently off.
 

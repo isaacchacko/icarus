@@ -186,7 +186,11 @@ box, from any terminal or over ssh. `iso phone` picks an agent (needs-you first)
 ## Surfaces
 
 Surfaces are files in a repo's `iso/`, written only by its router. isovim watches them, hot-reloads
-them, and writes a `*.surface.error` beside any that's broken or whose target is gone.
+them, and writes a `*.surface.error` beside any that's broken or whose target is gone. A markdown
+surface, the Task Board or a question opens as a tab of its own in its repo's scope, named as its
+Inbox row is (Task Board, the surface's title, the question's name) after the row's glyph; closing
+the tab closes it and its input box, which, like the chat's composer, has no tab. The landing is
+one tab, isovim, in every scope.
 
 | type | made by | shown as |
 |---|---|---|

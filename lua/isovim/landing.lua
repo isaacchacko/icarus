@@ -275,8 +275,12 @@ local function window_options(win)
   wo.cursorline, wo.cursorcolumn, wo.colorcolumn, wo.list, wo.wrap, wo.spell = false, false, "", false, false, false
 end
 
+-- One tab, "isovim", in every scope (it has none, so isovim.scope leaves it listed); named, as
+-- bufferline finds a tab's icon by its buffer's name.
 local function create()
-  local buf = vim.api.nvim_create_buf(false, true)
+  local buf = vim.api.nvim_create_buf(true, true)
+  pcall(vim.api.nvim_buf_set_name, buf, "isovim-landing://isovim")
+  vim.b[buf].isovim_tab = { name = "isovim", icon = require("isovim.icons").map.landing[1], hl = require("isovim.icons").map.landing[2] }
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = FILETYPE
   vim.bo[buf].modifiable = false
