@@ -56,28 +56,33 @@ mkdir -p "$home/workspaces" "$home/archive"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/isovim"
 [ -e "$config" ] || ln -s "$repo/starter" "$config"
 
-# First run on a host: install the plugins at lazy-lock.json's commits before the TUI. Lazy installs
-# missing plugins at their newest and rewrites the lockfile as it starts, so the lockfile is put back
-# and restored again; parallel clones sometimes fail, so it retries until every locked plugin is there.
+# Puts the plugins at lazy-lock.json's commits, on a host's first run and after an update changes
+# the lockfile. Lazy installs missing plugins at their newest and rewrites the lockfile as it starts,
+# so the lockfile is put back and restored again; parallel clones sometimes fail, so it retries until
+# every locked plugin is there.
 plugins="${XDG_DATA_HOME:-$HOME/.local/share}/isovim/lazy"
 lockfile="$repo/starter/lazy-lock.json"
-locked="$(grep -c '"commit"' "$lockfile")"
 installed() { find "$plugins" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
-if [ "$(installed)" -lt "$locked" ]; then
-  echo "isovim: installing plugins (first run)..." >&2
-  cp "$lockfile" "$lockfile.first-run"
+locked() { grep -c '"commit"' "$lockfile"; }
+restore_plugins() {
+  cp "$lockfile" "$lockfile.restore"
   for _ in 1 2 3; do
     NVIM_APPNAME=isovim nvim --headless "+Lazy! restore" +qa >/dev/null 2>&1 || true
-    cp "$lockfile.first-run" "$lockfile"
-    [ "$(installed)" -ge "$locked" ] && break
+    cp "$lockfile.restore" "$lockfile"
+    [ "$(installed)" -ge "$(locked)" ] && break
   done
-  rm "$lockfile.first-run"
+  rm "$lockfile.restore"
   NVIM_APPNAME=isovim nvim --headless "+Lazy! restore" +qa >/dev/null 2>&1 || true
+}
+if [ "$(installed)" -lt "$(locked)" ]; then
+  echo "isovim: installing plugins (first run)..." >&2
+  restore_plugins
 fi
 
 if [ -f "$lock" ]; then
   pid="$(cat "$lock")"
-  if kill -0 "$pid" 2>/dev/null; then
+  # This script names itself in the lock until the TUI starts; a restart runs it again in the same pid.
+  if [ "$pid" != $$ ] && kill -0 "$pid" 2>/dev/null; then
     if [ -z "$takeover" ]; then
       echo "isovim is already open (pid $pid). Run 'iso --takeover' to close it and open here." >&2
       exit 1
@@ -97,6 +102,19 @@ fi
 # No live isovim holds the socket now; a crashed one may have left it behind.
 rm -f "${ISOVIM_SOCK:-$home/nvim.sock}"
 
-# exec keeps this pid, so the lock names the nvim process.
+# The TUI names itself in the lock as it starts (store.take_lock). It exits with 75 to restart onto
+# an update (isovim.update): the plugins go to the lockfile's commits if it changed, and this script
+# runs again from the top, as the updated bin/iso, with no arguments; the TUI opens what was open.
+# One block, so a pull that rewrites this file while the TUI runs can't change what's left of it.
 echo $$ >"$lock"
-NVIM_APPNAME=isovim exec nvim "$@"
+{
+  before="$(cksum <"$lockfile")"
+  code=0
+  ISOVIM_LOOP=1 NVIM_APPNAME=isovim nvim "$@" || code=$?
+  [ "$code" = 75 ] || exit "$code"
+  if [ "$(cksum <"$lockfile")" != "$before" ]; then
+    echo "isovim: restoring plugins to the updated lazy-lock.json..." >&2
+    restore_plugins
+  fi
+  exec "$repo/bin/iso"
+}

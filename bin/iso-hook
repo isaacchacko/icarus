@@ -169,7 +169,14 @@ edit | bash)
   exit $?
   ;;
 interrupt) set_state idle ;;
-tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && set_state working ;;
+tool-done)
+  grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && set_state working
+  # A push may have moved isovim's own origin: the open TUI looks now rather than within the minute
+  # (isovim.update).
+  case "$(cat)" in
+  *'"Bash"'*git*push*) ("$(dirname "$0")/iso" update </dev/null >/dev/null 2>&1 &) ;;
+  esac
+  ;;
 notification)
   [ -n "$ISOVIM_ACP" ] && exit 0
   case "$(cat)" in

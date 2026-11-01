@@ -250,7 +250,7 @@ streams the matching events, with `*` matching one part and `**` any number.
 **Every role:**
 - talking and watching: `msg`, `ls`, `status`, `peek`, `wait`, `find`, `transcript`, `listen`
 - tools: `browser`, `pilot` (one holder at a time), `spawn`, `promote`, `restart`, `fork`, `checkhealth`,
-  `version`
+  `version`, `update` (the open TUI looks for a new isovim now)
 
 **Router and worker:** `wt`, `setup`, `teardown`, `run <action>`, resolved for the calling agent.
 
@@ -313,6 +313,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `q` | the prompt queue (opened even when empty, to add a line) |
 | `u` / `f` | rewind / fork at the cursor |
 | `l` | the landing |
+| `U` / `!` | check for an isovim update now / restart isovim now |
 
 **The landing**
 - On start, when there is nothing to resume, the editing area shows the landing (`isovim.landing`):
@@ -383,7 +384,9 @@ each directory has its own and one made later (a pull's) is watched as it appear
   through `require`, and the ones that hold a closure (the migrate timer, the chat's spinner) are
   replaced. `starter/lua/config/keymaps.lua` runs again.
 - **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim
-  reads once at startup; a changed `lazy-lock.json` also needs `:Lazy restore`. The toast says so.
+  reads once at startup; a changed `lazy-lock.json` also needs `:Lazy restore`. The toast says so,
+  or, when a self-update brought it, that isovim restarts onto it by itself; `<leader>i!` restarts
+  now.
 - **Agents restart themselves:** the agents' supervisors (`nvim -l agent_host.lua`: `acp/host.lua`,
   `acp/client.lua`, `acp/adapter.lua` and the rest they load) keep the code they started with until
   they restart, which each does by itself at its next idle moment (see Agents run over ACP, Resume);
@@ -394,6 +397,39 @@ or a `git pull` of many files is one reload. Changed files are compiled first: o
 a module that fails as it loads, keeps the old code, and the toast gives the error. The toast names
 the changed files (or how many, past four). A TUI that started on a `reload.lua` from before this
 needs one restart to get it.
+
+## Self-update
+
+isovim keeps the checkout it runs from up to date itself (`isovim.update`), so nobody has to quit,
+pull and start it again. The edit guard still refuses agents' writes and git commands there: the
+pull is the TUI's own, the user's process, not an agent's.
+- **When it looks:** the TUI fetches origin's default branch (`origin/HEAD`, else `main`) 5s after it
+  starts and every minute after, in the background with a 30s timeout and no prompts. `iso update`
+  (`iso <role> update`, any role) asks it to look now over its socket, and `bin/iso-hook` runs it
+  after any agent's Bash call that pushes (`git ... push`), so a push to main lands within seconds.
+  `<leader>iU` looks now and says what it found. An offline fetch is quiet.
+- **When it pulls:** a fast-forward (`git merge --ff-only`), only when the checkout is on the
+  default branch, no tracked file has changes (untracked ones, `.claude/` and `.vibe-wise/`, are
+  fine) and it is behind origin, not diverged. Otherwise it does nothing and says why once (local
+  changes, another branch or a detached HEAD, diverged, a fast-forward git refused), again only
+  when the reason changes. It never stashes, resets or rebases.
+- **What then:** `lua/isovim/` hot reloads through the watcher, as for any pull (`reload.lua`
+  included). `starter/` (but `config/keymaps.lua`) and `bin/iso` are read only at startup, so they
+  restart the TUI; `bin/iso-hook` and `bin/iso-browser.mjs` run fresh each call and need nothing.
+- **The restart:** it waits until you've pressed no key for 20s, are in normal mode, and no picker
+  or float has focus, and no file buffer has unsaved changes (it says once that it waits on one).
+  Then `isovim updated: restarting in 5s · any key to wait`; any key postpones it until you're idle
+  again. It writes `~/.isovim/restart.json` (every open chat, most recent first, the current
+  workspace, the scope, each composer's draft; the current workspace's splits are already in its
+  `layout.json`) and exits with code 75. `bin/iso` runs nvim in a loop: on 75 it runs `Lazy!
+  restore` (as on a first run) if `lazy-lock.json` changed, then runs itself again, the updated
+  `bin/iso`, with no arguments. The new TUI reopens the chats of agents still running, the current
+  workspace's layout, the scope and the drafts, and deletes the file. Agents live in tmux and their
+  supervisors, so they never notice. The TUI names itself in `isovim.lock` (`bin/iso` names itself
+  until then), so `iso --takeover` still stops the TUI, and the loop with it.
+- A TUI started by a `bin/iso` from before the loop (no `ISOVIM_LOOP`) still pulls and hot reloads,
+  but says to quit and run `iso` instead of restarting. `ISOVIM_SELF_UPDATE=0` turns it off; pilots
+  do, but for `pilot/checks/self_update.py`.
 
 ## Cutover
 

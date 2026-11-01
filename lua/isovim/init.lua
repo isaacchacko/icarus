@@ -920,6 +920,8 @@ function M.setup(opts)
   end
   -- Agent dirs with no record, every 10 minutes: logged only, until v0 is cut over.
   require("isovim.lifecycle").start_timer()
+  -- isovim fetches its own origin and pulls and restarts onto what it finds (isovim.update).
+  require("isovim.update").start()
   -- The role prompt files, on first run (and any missing one after): never over yours.
   pcall(require("isovim.config").seed_prompts)
   -- The new isovim.reload's watchers replace the old one's.
@@ -938,6 +940,7 @@ function M.setup(opts)
     sidebar.reopen()
     return
   end
+  store.take_lock()
   if vim.fn.argc() == 0 then
     sidebar.open()
     vim.schedule(function()
@@ -1414,16 +1417,43 @@ function M.open_leaf(ws)
 end
 
 -- A fresh start picks up where the last one left off: the selected workspace's splits, chats and
--- files, or at least its chat if its agent is still running.
+-- files, or at least its chat if its agent is still running. After a restart onto an update
+-- (isovim.update), also every chat that was open, the scope and what was typed in each composer.
 function M.resume()
+  local saved = require("isovim.update").take_saved()
+  if saved then
+    -- Oldest first, so the most recent ends up first in recent_agents again.
+    for _, key in ipairs(vim.fn.reverse(saved.agents or {})) do
+      local ws, agent = key:match("^(.*)/([^/]+)$")
+      if ws and store.agent(ws, agent) and panes.running(ws, agent) then
+        pcall(M.open, ws, agent)
+      end
+    end
+    if saved.current and vim.uv.fs_stat(store.path(saved.current)) then
+      M.remember("current", saved.current)
+    end
+  end
   local ws = M.current
-  if not ws then
+  if ws then
+    local resumed = layout.resume(ws, is_sidebar, M.open_leaf(ws))
+    if not resumed and panes.running(ws, default_agent(ws)) then
+      M.open(ws)
+    end
+  end
+  if not saved then
     return
   end
-  local resumed = layout.resume(ws, is_sidebar, M.open_leaf(ws))
-  if not resumed and panes.running(ws, default_agent(ws)) then
-    M.open(ws)
+  local chat = require("isovim.acp.chat")
+  for key, lines in pairs(saved.drafts or {}) do
+    local open = chat.get(key:match("^(.*)/([^/]+)$"))
+    if open then
+      vim.api.nvim_buf_set_lines(open.composer, 0, -1, false, lines)
+    end
   end
+  if saved.scope then
+    M.set_scope(saved.scope)
+  end
+  vim.cmd.stopinsert()
 end
 
 return M

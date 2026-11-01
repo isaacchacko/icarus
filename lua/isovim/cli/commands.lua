@@ -35,7 +35,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "pilot", "fork", "spawn", "promote", "restart" }
+  "version", "update", "pilot", "fork", "spawn", "promote", "restart" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run" },
   router = { "surface", "pr", "wt", "setup", "teardown", "run" },
@@ -504,6 +504,12 @@ M.list = {
     audience = "user",
     help = [=[
        iso version                   the isovim commit this runs]=],
+  },
+  { name = "update", module = "plumbing",
+    audience = "plumbing",
+    help = [=[
+       iso update                    ask the open TUI to look for a new isovim now (it also does
+                                     every minute, and after an agent's git push)]=],
   },
   { name = "task", module = "agents",
     retired = "the repo's Task Board, ~/.iso/<owner>/<repo>/iso/tasks.md",

@@ -99,4 +99,11 @@ function commands.transcript(args)
   out(require("isovim.transcript").write(ws.id, agent.id) or "")
 end
 
+-- iso update: the open TUI fetches its origin now and pulls what it finds (isovim.update), in the
+-- background, so this returns at once. bin/iso-hook runs it after an agent's git push.
+function commands.update()
+  local open = tui("require('isovim.update').check()")
+  out(open and "isovim is checking for an update" or "isovim isn't open")
+end
+
 return commands

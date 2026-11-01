@@ -238,8 +238,13 @@ function M.write_session(session)
   vim.fn.writefile({ vim.json.encode(session) }, M.session_file)
 end
 
+-- The lock names the TUI process, this Lua server's parent. bin/iso, which waits on the TUI to
+-- relaunch it, names itself until the TUI starts; iso --takeover stops the process it names.
+function M.take_lock()
+  vim.fn.writefile({ tostring(vim.uv.os_getppid()) }, M.lock_file)
+end
+
 -- Only remove the lock if it is ours; a takeover may already have replaced it.
--- bin/iso records the TUI process, which is this Lua server's parent.
 function M.release_lock()
   local ok, lines = pcall(vim.fn.readfile, M.lock_file)
   if ok and tonumber(lines[1]) == vim.uv.os_getppid() then

@@ -433,6 +433,12 @@ M.GROUP = {
   { "l", function()
     require("isovim.landing").open()
   end, "the landing: what isovim is, its keys, quick actions" },
+  { "U", function()
+    require("isovim.update").check(true)
+  end, "check for an isovim update now" },
+  { "!", function()
+    require("isovim.update").restart()
+  end, "restart isovim now, onto the code on disk" },
 }
 
 -- The <leader>a keys from before: {key, what it did, its replacement}.

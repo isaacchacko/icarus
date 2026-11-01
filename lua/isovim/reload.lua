@@ -106,18 +106,22 @@ local function flush()
     end
   end
   local restart = {}
+  -- A self-update (isovim.update) that brought it restarts onto it by itself.
+  local coming = (_G.isovim_update or {}).restart ~= nil
   for _, rel in ipairs(starter_files) do
     if rel == KEYMAPS then
       local ok, err = pcall(dofile, ROOTS.starter .. "/" .. rel)
       table.insert(lines, ok and ("starter/%s ran again"):format(rel) or ("starter/%s failed: %s"):format(rel, err))
     elseif rel == "lazy-lock.json" then
-      table.insert(lines, "starter/lazy-lock.json changed: :Lazy restore, then restart to apply")
+      table.insert(lines, "starter/lazy-lock.json changed: " .. (coming and "isovim restores the plugins and restarts once you're idle"
+        or ":Lazy restore, then restart to apply"))
     else
       table.insert(restart, rel)
     end
   end
   if #restart > 0 then
-    table.insert(lines, ("starter/ changed (%s): restart to apply"):format(describe(restart)))
+    table.insert(lines, ("starter/ changed (%s): %s"):format(describe(restart),
+      coming and "isovim restarts onto it once you're idle" or "restart to apply"))
   end
   if #starter_files > 0 and level == "info" then
     level = "warn"

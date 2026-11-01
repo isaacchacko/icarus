@@ -175,6 +175,8 @@ class Iso:
             "ISOVIM_AUTH_TTL": "0",
             # No real other hosts in the sidebar; pilots that want one set it.
             "ISOVIM_PEERS": "-",
+            # The TUI doesn't fetch and pull its own checkout (isovim.update); self_update.py turns it on.
+            "ISOVIM_SELF_UPDATE": "0",
             # A pilot with a fake peer (fake-ssh runs the remote side here) syncs config into its
             # tmp dir, never into a real home.
             "ISOVIM_SYNC_ROOT": str(self.tmp / "peer-home"),
