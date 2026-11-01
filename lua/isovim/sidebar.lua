@@ -304,6 +304,15 @@ function M.delete_surface(item)
   local kind = entry.type
   if kind == "tasks" or kind == "prs" then
     surfaces.hide(entry)
+  elseif kind == "thread" then
+    -- Resolved by you, kept with its posts (iso <role> thread ls --all, show): it leaves the list.
+    local status, err = require("isovim.threads").resolve(entry.repo, entry.name, "user")
+    if not status then
+      return Snacks.notify.warn(tostring(err), { title = "isovim" })
+    end
+    surfaces.scan(entry.repo)
+    require("isovim.surfaces").recheck()
+    return M.refresh()
   elseif kind == "file" or kind == "folder" or kind == "chat" then
     surfaces.remove(entry)
   elseif kind == "question" and not entry.answer then
@@ -1570,7 +1579,7 @@ local LIST_KEYS = {
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent or terminal" },
-  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change), or archive the workspace" },
+  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; a thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },
