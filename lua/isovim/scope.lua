@@ -129,7 +129,8 @@ function M.list(current, current_scope)
       end
     end
   end
-  vim.cmd.redrawtabline()
+  -- A tab for each of its agents, opened or not (isovim.tabs).
+  require("isovim.tabs").sync(current_scope)
 end
 
 ---@param is_sidebar fun(win: integer): boolean

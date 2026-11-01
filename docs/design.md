@@ -231,6 +231,16 @@ ISOVIM 2de9e2b
 Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
 shows a "root mode" marker beside its count.
 
+## The tab bar
+
+The tab bar holds the current scope (a repo, Root, General or Terminals): every agent of it, opened
+or not, named with its status mark as in the sidebar (`…` working, `●` unread, `●!` waiting on you),
+the router first and then the others by number; then the surfaces you opened, the landing and any
+files. An agent whose chat isn't open is a placeholder that attaches to nothing until it's shown;
+picking any agent's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) opens its chat there with its composer,
+as Enter on its sidebar row does. Agents spawned and removed come and go, and switching scope swaps
+the set. The empty buffer nvim starts with goes once nothing shows it.
+
 ## Events
 
 Every change is appended as a JSON line to `~/.isovim/events/events.jsonl`. Topics:

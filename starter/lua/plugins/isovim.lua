@@ -53,33 +53,21 @@ return {
         text_align = "left",
         separator = true,
       })
+      -- Each tab's name, glyph and place, isovim's own (isovim.tabs): every agent of the scope, a
+      -- surface, the landing; anything else as bufferline would have it.
       local default_icon = opts.options.get_element_icon
       opts.options.get_element_icon = function(element)
-        -- A tab that names itself: a surface's view (isovim.surface_view), the landing.
-        local buf = element.path:match("^isovim%-") and vim.fn.bufnr(element.path) or -1
-        local tab = buf > 0 and vim.b[buf].isovim_tab
-        if tab then
-          return tab.icon, tab.hl
-        end
-        if element.path:match("^isovim://") then
-          local buf = vim.fn.bufnr(element.path)
-          return require("isovim.icons").get(buf > 0 and vim.b[buf].isovim_agent_kind or "claude")
+        local icon, hl = require("isovim.tabs").icon(element.path)
+        if icon then
+          return icon, hl
         end
         return default_icon(element)
       end
       opts.options.name_formatter = function(element)
-        local tab = vim.b[element.bufnr].isovim_tab
-        if tab then
-          return tab.name
-        end
-        if element.path:match("^isovim://") then
-          local name = vim.b[element.bufnr].isovim_agent_name or "isovim"
-          -- Its status, as in the sidebar: working, finished unread, or waiting on you.
-          local ws, agent = vim.b[element.bufnr].isovim_id, vim.b[element.bufnr].isovim_agent
-          local status = ws and require("isovim.status").get(ws, agent or "main")
-          local mark = ({ working = " …", unread = " ●", attention = " ●!" })[status or ""]
-          return name .. (mark or "")
-        end
+        return require("isovim.tabs").name(element.bufnr)
+      end
+      opts.options.sort_by = function(a, b)
+        return require("isovim.tabs").before(a, b)
       end
     end,
   },
