@@ -106,6 +106,27 @@ local KINDS = {
       end
     end
   end,
+  -- The actions in the caller's repo's config. Which repo is a hint, not proof: $ISOVIM_WS (a repo
+  -- key, or a workspace's checkout), else the cwd's origin.
+  action = function(found)
+    local repos = require("isovim.repos")
+    local ws = vim.env.ISOVIM_WS
+    local repo
+    if ws and ws ~= "_" and store.v2(ws) then
+      repo = ws
+    elseif ws and ws ~= "" and not store.v2(ws) and vim.uv.fs_stat(store.path(ws)) then
+      repo = repos.of(store.dir(ws))
+    else
+      repo = repos.of(vim.uv.cwd())
+    end
+    local config = repo and repos.config(repo)
+    local actions = config and type(config.actions) == "table" and not vim.islist(config.actions) and config.actions or {}
+    for name, listed in pairs(actions) do
+      if type(name) == "string" then
+        found[#found + 1] = { name, vim.islist(listed) and table.concat(listed, " && ") or nil }
+      end
+    end
+  end,
   command = function(found)
     for _, entry in ipairs(commands.list) do
       if not entry.hidden then

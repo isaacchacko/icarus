@@ -6,7 +6,8 @@
 --   args      its words in order, as usage writes them: <kind>, literal|literal|<kind>, and a last
 --             one ending in ... repeats. Kinds are what Tab offers: ws, archived, agent (this host's),
 --             address (an agent here or <host>:<agent>), host, kind, role, command, topic (an
---             event pattern), path, dir, and text and n, which offer nothing
+--             event pattern), action (the caller's repo's), path, dir, and text and n, which
+--             offer nothing
 --   flags     flag -> the kind of its value, or false for a flag without one
 --   subs      subcommand -> { args, flags }, for a command whose first word picks what it does
 --   help      its lines in `iso help`, verbatim; summary is its one line in completion, when the
@@ -32,7 +33,7 @@ end
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
   "version", "pilot", "fork", "spawn", "promote" }
-M.only = { router = { "pr" } }
+M.only = { worker = { "wt", "setup", "teardown", "run" }, router = { "pr", "wt", "setup", "teardown", "run" } }
 
 M.header = [=[
 usage: iso                           open the TUI (iso --takeover to steal it from another terminal)]=]
@@ -56,7 +57,10 @@ M.list = {
                                      what an agent runs, under its role: iso <role> help lists
                                      a role's actions. isovim checks the role against the
                                      agent's record and, for now, warns on a mismatch; an
-                                     agent running a bare iso <command> is warned too]=],
+                                     agent running a bare iso <command> is warned too. A
+                                     worker's and a router's own work: iso <role> wt makes
+                                     its worktree, iso <role> setup|teardown|run [<action>]
+                                     runs its repo's scripts there]=],
   },
   { name = "router", module = "roles",
     summary = "a router's actions (iso router help)",
@@ -470,6 +474,37 @@ M.role_actions = {
                                      promote gets a stamped message saying who and why. A
                                      router made root is forked: the fork is the root, the
                                      router stays]=],
+  },
+  wt = { name = "wt", module = "work",
+    flags = { ["--from"] = "<text>" },
+    summary = "make your worktree (aN/w) if you have none, and print its path",
+    help = [=[
+       iso wt [--from <branch|PR>]   your worktree, made if you have none, and its path: a
+                                     new-layout agent's is aN/w (you start in aN, so cd w),
+                                     on a new branch $USER/<your name> off origin's default
+                                     branch, or --from an existing branch or PR (number or
+                                     URL), from the repo's base clone (made if missing); then
+                                     the repo's worktree_setup runs in it. A workspace's
+                                     agent has the workspace's checkout]=],
+  },
+  setup = { name = "setup", module = "work",
+    summary = "run your repo's setup script in a pane named setup",
+    help = [=[
+       iso setup|teardown            run your repo's setup or teardown script (in
+                                     ~/.isovim/repos/<owner>/<repo>/config.json) in your
+                                     worktree (else aN), in a pane named for it, listed
+                                     under Terminals; prints the pane's address, which peek
+                                     and wait take. Again restarts it]=],
+  },
+  teardown = { name = "teardown", module = "work",
+    summary = "run your repo's teardown script in a pane named teardown",
+  },
+  run = { name = "run", module = "work",
+    args = { "<action>" },
+    summary = "run your repo's run script, or one of its actions, in a pane named for it",
+    help = [=[
+       iso run [<action>]            the same for the run script, or one of the config's
+                                     actions (name -> command list)]=],
   },
 }
 

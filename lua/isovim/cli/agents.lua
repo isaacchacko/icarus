@@ -104,7 +104,12 @@ function commands.agent(args)
   local parent = option(args, "--parent")
   local v2 = flag(args, "--v2")
   local read_only = flag(args, "--read-only")
-  local ws = v2 and unit(args[1]) or resolve(args[1])
+  local ws, checkout
+  if v2 then
+    ws, checkout = unit(args[1])
+  else
+    ws = resolve(args[1])
+  end
   local kind = args[2]
   if not vim.tbl_contains(panes.kinds, kind) then
     fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r] [--parent agent] [--v2 [--read-only]]")
@@ -120,7 +125,7 @@ function commands.agent(args)
   end
   parent = parent and parent_address(parent) or caller_address()
   out(spawn(ws, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role, parent = parent,
-    read_only = read_only or nil }))
+    read_only = read_only or nil, checkout = checkout }))
 end
 
 -- The role picks the prompt an agent is told at launch, so a change reaches it only when it restarts.

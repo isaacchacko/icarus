@@ -209,12 +209,15 @@ local function with_right_mark(chunks, mark, width)
 end
 
 -- A row of the Terminals window: a terminal, or a repo script's pane, named for its action and
--- workspace with the robot at the right. width: the window's.
+-- workspace (a new-layout one's <repo>/<agent>) with the robot at the right. width: the window's.
 KINDS.terminal = {
   format = function(item, width)
     local icon, hl = status.icon(item.status)
     local kind_icon, kind_hl = icons.get(item.agent_kind)
-    local label = item.script and ("%s · %s"):format(item.name, item.ws_name) or item.name
+    local label = item.name
+    if item.script then
+      label = ("%s · %s%s"):format(item.name, item.ws_name, item.of and ("/" .. item.of) or "")
+    end
     local row = { { "  " }, { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { label, not item.running and "Comment" or nil } }
     if isovim.show_ports and item.ports and #item.ports > 0 then
       row[#row + 1] = { "  :" .. table.concat(item.ports, " :"), "Special" }
@@ -392,6 +395,7 @@ local function local_terminals(workspaces)
         name = agent.name,
         agent_kind = agent.kind,
         script = agent.script,
+        of = agent.of,
         status = agent.status,
         running = agent.running,
         subtitle = agent.running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
@@ -419,6 +423,7 @@ local function remote_terminals(name, ssh, rows)
         name = row.agent,
         agent_kind = row.kind,
         script = row.script,
+        of = row.of,
         status = agent.status,
         running = agent.running,
         subtitle = row.doing,

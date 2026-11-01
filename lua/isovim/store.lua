@@ -269,13 +269,27 @@ function M.create(name, project, worktree)
   return id
 end
 
--- Where the agent starts: a new-layout agent in its own dir, <key>/aN, or a read-only one in its
--- repo's base clone when there is one; any other agent in its workspace's dir.
+-- Where the agent's work is, which its repo's scripts run in: a new-layout agent's worktree, <key>/aN/w
+-- (iso <role> wt), else its own dir <key>/aN; any other agent's workspace's dir.
+function M.work_dir(ws, agent)
+  if not M.v2(ws) then
+    return M.dir(ws)
+  end
+  local own = M.dir(ws) .. "/" .. agent
+  return vim.fn.isdirectory(own .. "/w") == 1 and own .. "/w" or own
+end
+
+-- Where the agent starts: a new-layout agent in its own dir, <key>/aN, a read-only one in its repo's
+-- base clone when there is one, and a script pane in the work dir of the agent it runs for (`of`);
+-- any other agent in its workspace's dir.
 function M.agent_dir(ws, agent)
   if not M.v2(ws) then
     return M.dir(ws)
   end
   local spec = M.agent(ws, agent) or {}
+  if spec.of then
+    return M.work_dir(ws, spec.of)
+  end
   local base = spec.read_only and spec.repo and require("isovim.repos").dir(spec.repo) .. "/base-clone"
   if base and vim.fn.isdirectory(base) == 1 then
     return base
@@ -449,6 +463,11 @@ end
 ---@field repo? string a new-layout agent's repo key; nil in "_"
 ---@field created? integer when a new-layout agent was made
 ---@field session? string a new-layout agent's conversation id, as also kept in its run dir
+---@field script? string on a "command" pane isovim runs a repo script or action in: its name ("setup",
+--- "run", "lint"), which lists it under Terminals with the robot
+---@field of? string a new-layout script pane's agent: the aN whose work dir it runs in
+---@field checkout? string the clone a new-layout agent was made from, for its repo's base clone
+---@field branch? string a new-layout agent's worktree branch (iso <role> wt)
 
 -- The root sets the north star, a repo-root holds one repo's, the router is a repo's one interface
 -- to the user, workers do the work.
@@ -554,13 +573,16 @@ local function add_record(key, spec)
   local id = "a" .. n
   local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
     read_only = spec.read_only or false, repo = key ~= "_" and key or nil, created = os.time(), cmd = spec.cmd,
-    hidden = spec.hidden or nil, prompt = spec.prompt }
+    hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of }
   write_json(M.record_file(key, id), record)
   return record
 end
 
 -- Ids come from the name or kind, numbered when taken: codex, codex2, ...; in a repo key, a0, a1, ...
----@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean}
+-- A pane a repo script runs in (isovim.scripts) has its script, and in a repo key the agent it runs
+-- for as `of`; checkout is the clone a new-layout agent was made from, which a base clone can be
+-- made from (isovim.repoconf.base).
+---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean, checkout?: string, script?: string, of?: string}
 ---@return isovim.Agent? agent, string? err nil only for a repo key
 function M.add_agent(ws, spec)
   if M.v2(ws) then
@@ -576,7 +598,7 @@ function M.add_agent(ws, spec)
     id = base .. n
   end
   local agent = { id = id, name = spec.name or id, kind = spec.kind, cmd = spec.cmd, hidden = spec.hidden or nil, prompt = spec.prompt,
-    parent = spec.parent }
+    parent = spec.parent, script = spec.script }
   agent.role = spec.role ~= "worker" and spec.role or nil
   agents[#agents + 1] = agent
   meta.agents = agents

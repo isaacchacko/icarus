@@ -179,7 +179,8 @@ try:
     check("pr" in router and "pr" not in worker and "promote" in worker and "spawn" in worker and "help" in worker,
           "iso router <Tab> has pr, iso worker <Tab> doesn't", f"{router} / {worker}")
     check(set(worker) - {":"} == {"msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "checkhealth", "version", "pilot",
-                                  "fork", "spawn", "promote", "help"} | ({"listen"} if "listen" in worker else set()), "worker actions", worker)
+                                  "fork", "spawn", "promote", "help", "wt", "setup", "teardown", "run"}
+          | ({"listen"} if "listen" in worker else set()), "worker actions", worker)
     r = run("__complete", "worker", "spawn", "--role", "")[1].split()
     check({"worker", "router", "repo-root", "root"} <= set(r), "iso worker spawn --role <Tab> lists roles", r)
     r = run("__complete", "root", "")[1]

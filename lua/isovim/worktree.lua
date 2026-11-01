@@ -1,5 +1,6 @@
 -- A workspace can work in its own git worktree: a new branch <prefix>/<slug> checked
 -- out under ~/.isovim/worktrees/<repo>/<branch>, so agents in different workspaces never share a checkout.
+-- A new-layout agent's is its aN/w, made from the repo's base clone (iso <role> wt, isovim.cli.work).
 local M = {}
 
 M.root = (vim.env.ISOVIM_HOME or vim.fs.normalize("~/.isovim")) .. "/worktrees"
@@ -44,15 +45,22 @@ local function base(repo)
   return default
 end
 
+-- A branch name is taken when the repo has it; given a path (a new-layout agent's w/, whose repo is
+-- a base clone that other hosts' agents push from too), also when origin has it.
+---@param path? string where the worktree goes; default ~/.isovim/worktrees/<repo>/<branch>
 ---@return string? path, string? branch_or_err
-function M.create(repo, name)
+function M.create(repo, name, path)
+  local function taken(branch)
+    return out(git(repo, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }))
+      or (path and out(git(repo, { "rev-parse", "--verify", "--quiet", "refs/remotes/origin/" .. branch })))
+  end
   local branch = M.branch_for(name)
   local n = 1
-  while out(git(repo, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch })) do
+  while taken(branch) do
     n = n + 1
     branch = M.branch_for(name) .. "-" .. n
   end
-  local path = ("%s/%s/%s"):format(M.root, repo_name(repo), branch)
+  path = path or ("%s/%s/%s"):format(M.root, repo_name(repo), branch)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   local added = git(repo, { "worktree", "add", "-b", branch, path, base(repo) })
   if added.code ~= 0 then
@@ -63,8 +71,9 @@ end
 
 -- A worktree of a branch someone already pushed, or a PR's (its number or URL): to review it or
 -- carry it on. The local branch is used if there is one; else it's made to track origin's.
+---@param path? string where the worktree goes, as for M.create
 ---@return string? path, string? branch_or_err
-function M.create_from(repo, ref)
+function M.create_from(repo, ref, path)
   local number = ref:match("^#?(%d+)$") or ref:match("/pull/(%d+)")
   local branch = ref:gsub("^origin/", "")
   if number then
@@ -88,7 +97,7 @@ function M.create_from(repo, ref)
       return nil, ("no branch %s here or on origin"):format(branch)
     end
   end
-  local path = ("%s/%s/%s"):format(M.root, repo_name(repo), branch)
+  path = path or ("%s/%s/%s"):format(M.root, repo_name(repo), branch)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   local args = exists("refs/heads/" .. branch) and { "worktree", "add", path, branch }
     or { "worktree", "add", "--track", "-b", branch, path, "origin/" .. branch }

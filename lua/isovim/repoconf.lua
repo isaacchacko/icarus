@@ -1,11 +1,13 @@
 -- What isovim keeps for a repo besides its glyph and color (isovim.repos), in ~/.isovim/repos/<owner>/<repo>/,
 -- which is yours to edit:
 --   config.json     setup, teardown, run, worktree_setup: command lists in Superset's format, run in
---                   the checkout; actions: name -> command list, for `iso <role> run <action>` later.
+--                   the checkout (worktree_setup in a new-layout agent's new worktree); actions:
+--                   name -> command list, for `iso <role> run <action>` (isovim.cli.work).
 --                   A command whose first word is a file in this folder runs that file, so scripts
 --                   can live beside the config: "./setup.sh --fast".
 --                   imported_from and imported_at record the one import from the repo's own files.
---   base-clone/     a clone of origin, detached at its default branch; made by M.base on request
+--   base-clone/     a clone of origin, detached at its default branch, which new-layout agents'
+--                   worktrees are made from; made by M.base on request
 -- and, for the repo's work, ~/iso/<owner>/<repo>/ ($ISOVIM_WORK), whose iso/ holds isovim's own files.
 -- Nothing copies these to the other hosts yet.
 local repos = require("isovim.repos")

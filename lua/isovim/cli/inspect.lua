@@ -34,6 +34,8 @@ function commands.ls(args)
         kind = agent.kind,
         -- Set on a repo script's pane (setup, run), which the sidebar lists under Terminals.
         script = require("isovim.scripts").of(agent),
+        -- A new-layout script pane's agent (aN), whose work dir it runs in.
+        of = agent.of,
         role = store.role(agent),
         hidden = agent.hidden or false,
         status = running and (status.get(ws.id, agent.id) or "idle") or "stopped",
@@ -56,8 +58,8 @@ function commands.ls(args)
     return
   end
   for _, row in ipairs(rows) do
-    local label = ("%s · %s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
-      row.parent and (" (parent " .. row.parent .. ")") or "")
+    local label = ("%s · %s%s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
+      row.parent and (" (parent " .. row.parent .. ")") or "", row.of and (" (script for " .. row.of .. ")") or "")
     out(("%-18s %-9s %-6s %s%s"):format(row.id, row.status, row.role, label, row.doing and ("  — " .. row.doing) or ""))
   end
 end

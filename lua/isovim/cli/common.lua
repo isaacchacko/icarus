@@ -178,14 +178,17 @@ end
 -- Where a new-layout agent for target goes: target is a repo key ("owner/repo", or "_" for no
 -- repo), or a dir, which means its repo's key, or "_" outside one. A dir that exists wins.
 ---@return table ws a store.list() entry for the key, made up when it has no agents yet
+---@return string? checkout the dir, when it's a clone of the repo
 local function unit(target)
   if not target then
     fail("missing repo or dir\n" .. usage())
   end
   local dir = vim.fs.normalize(target)
-  local key
+  local key, checkout
   if vim.fn.isdirectory(dir) == 1 then
-    key = require("isovim.repos").of(vim.uv.fs_realpath(dir) or dir) or "_"
+    dir = vim.uv.fs_realpath(dir) or dir
+    key = require("isovim.repos").of(dir) or "_"
+    checkout = key ~= "_" and dir or nil
   elseif store.v2(target) and store.valid_key(target) then
     key = target:lower()
   else
@@ -193,7 +196,7 @@ local function unit(target)
   end
   return vim.iter(store.list()):find(function(ws)
     return ws.id == key
-  end) or { id = key, name = key, dir = store.dir(key), repo = key ~= "_" and key or nil }
+  end) or { id = key, name = key, dir = store.dir(key), repo = key ~= "_" and key or nil }, checkout
 end
 
 -- Adds an agent to ws and starts it; a new-layout one (ws a repo key) gets the next aN there.
