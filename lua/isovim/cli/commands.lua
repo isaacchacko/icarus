@@ -20,6 +20,8 @@
 --             lands (task, pin, ask, pr, ...), left alone; "plumbing" is isovim's own hooks,
 --             hosts and shell completion, which any refusal of agents or users lets through
 --   role_form the action an agent runs instead, as iso <role> <action>, when it isn't the same word
+--   retired   what replaced a command v0 drops: once enforcement is on (iso cutover), running it
+--             fails with this, and help and completion leave it out
 -- Agents run their commands as iso <role> <action>: M.roles and M.shared below say which.
 local M = {}
 
@@ -92,6 +94,7 @@ M.list = {
                                      clone, fetched first, and refuses its edits]=],
   },
   { name = "new", module = "workspaces",
+    retired = "iso spawn starts an agent, in a repo with --repo",
     audience = "user",
     role_form = "spawn",
     args = { "<text>..." },
@@ -105,6 +108,7 @@ M.list = {
                                      (number or URL). Archiving removes it if clean]=],
   },
   { name = "dir", module = "workspaces",
+    retired = "an agent's repo is set when it's spawned: iso spawn --repo owner/repo|dir",
     audience = "user",
     args = { "<ws>", "<dir>|-" },
     help = [=[
@@ -117,17 +121,20 @@ M.list = {
        iso rename <ws|agent> <name>   rename a workspace, or an agent (<ws>/<agent>)]=],
   },
   { name = "archive", module = "workspaces",
+    retired = "iso rm <agent> stops an agent and tears down its worktree",
     audience = "user",
     args = { "<ws>" },
     help = [=[
        iso archive <ws>              stop its agents and move it to the archive]=],
   },
   { name = "archived", module = "workspaces",
+    retired = "nothing is archived any more; the old workspaces are in ~/.isovim/legacy-backup-*",
     audience = "user",
     help = [=[
        iso archived                  list archived workspaces, newest first]=],
   },
   { name = "unarchive", module = "workspaces",
+    retired = "nothing is archived any more; the old workspaces are in ~/.isovim/legacy-backup-*",
     audience = "user",
     args = { "<archived>" },
     help = [=[
@@ -189,6 +196,7 @@ M.list = {
        iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)]=],
   },
   { name = "prs", module = "workspaces",
+    retired = "iso listen 'pr.<owner/repo>.**' follows a repo's PRs",
     audience = "user",
     args = { "<ws>" },
     flags = { ["--json"] = false },
@@ -196,12 +204,14 @@ M.list = {
        iso prs <ws> [--json]         its PRs with their state]=],
   },
   { name = "hide", module = "agents",
+    retired = "every agent shows under its repo; iso rm <agent> removes one",
     audience = "user",
     args = { "<agent>" },
     help = [=[
        iso hide|unhide <agent>       hidden agents stay out of the sidebar and never notify]=],
   },
   { name = "unhide", module = "agents",
+    retired = "every agent shows under its repo; iso rm <agent> removes one",
     audience = "user",
     args = { "<agent>" },
     summary = "show a hidden agent again",
@@ -272,6 +282,7 @@ M.list = {
                                      seq of a journal entry, as <leader>if in its chat gives)]=],
   },
   { name = "ask", module = "messaging",
+    retired = "a worker asks its router (iso worker msg parent); a router asks you with iso router surface question",
     args = { "<text>..." },
     help = [=[
        iso ask <question...>         from an agent: ask the root; the root (or anyone, with no
@@ -335,6 +346,7 @@ M.list = {
                                      names, branch, PRs, what they're on, their conversation]=],
   },
   { name = "pin", module = "workspaces",
+    retired = "iso <role> surface file|folder <path> puts it in your repo's Inbox",
     args = { "<ws>", "<path>" },
     flags = { ["--label"] = "<text>" },
     help = [=[
@@ -342,6 +354,7 @@ M.list = {
                                      (workspace agents; retired at cutover: surface file|folder)]=],
   },
   { name = "unpin", module = "workspaces",
+    retired = "a surface leaves the Inbox when its file goes, or once opened",
     args = { "<ws>", "<path>" },
     summary = "stop showing a pinned file or folder",
     help = [=[
@@ -424,6 +437,16 @@ M.list = {
                                      hosts, and ~/.isovim/repos/ but base clones) to every host
                                      in hosts now; every write isovim makes there sends it too]=],
   },
+  { name = "cutover", module = "cutover",
+    audience = "user",
+    flags = { ["--dry-run"] = false, ["--yes"] = false },
+    help = [=[
+       iso cutover --dry-run         what moving to v0 pushes, stops, seeds and moves away,
+                                     touching nothing; the plan goes to ~/.isovim/cutover-plan.txt
+       iso cutover --yes             carry out that plan, while a fresh dry run still matches it:
+                                     the old layout goes to ~/.isovim/legacy-backup-<date>/ and
+                                     enforcement comes on]=],
+  },
   -- One reaper pass now; the TUI runs one every 10 minutes. Dry (logging to ~/.isovim/reaper.log)
   -- unless --live, until v0 is cut over.
   { name = "reap", module = "lifecycle",
@@ -461,6 +484,7 @@ M.list = {
        iso version                   the isovim commit this runs]=],
   },
   { name = "task", module = "agents",
+    retired = "the repo's Task Board, ~/iso/<owner>/<repo>/iso/tasks.md",
     subs = {
       set = {
         args = { "<text>", "<text>..." },
@@ -730,10 +754,21 @@ function M.find(name)
   return name and by_name[name]
 end
 
+-- A retired command, once enforcement is on: help and completion leave it out, and it fails.
+local enforced
+function M.retired(entry)
+  if enforced == nil then
+    enforced = require("isovim.config").enforced()
+  end
+  return entry.retired ~= nil and enforced
+end
+
 function M.usage()
   local parts = { M.header }
   for _, entry in ipairs(M.list) do
-    parts[#parts + 1] = entry.help
+    if not M.retired(entry) then
+      parts[#parts + 1] = entry.help
+    end
   end
   parts[#parts + 1] = M.footer
   return table.concat(parts, "\n")

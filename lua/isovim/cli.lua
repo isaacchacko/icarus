@@ -19,6 +19,10 @@ if not entry or not entry.module then
   io.stdout:write(commands.usage(), "\n")
   os.exit((command == "help" or command == "--help" or command == "-h") and 0 or 1)
 end
+if commands.retired(entry) then
+  io.stderr:write(("iso: iso %s was retired at the cutover: %s\n"):format(command, entry.retired))
+  os.exit(1)
+end
 if entry.audience ~= "plumbing" then
   local roles = require("isovim.cli.roles")
   if roles.namespace(command, args) then

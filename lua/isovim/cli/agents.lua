@@ -250,6 +250,8 @@ function commands.fork(args)
     return fork_acp(ws, agent, name, prompt, at, caller)
   elseif at then
     fail("--at forks an ACP agent at a message; " .. agent.name .. " runs in Claude's TUI")
+  elseif not store.v2(ws.id) and require("isovim.config").enforced() then
+    fail("a workspace's fork was retired at the cutover: fork a new-layout agent (iso fork <owner>/<repo>/aN), its next aN")
   end
   local session = store.session_id(ws.id, agent.id)
   if agent.kind ~= "claude" or not session then

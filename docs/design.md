@@ -267,7 +267,7 @@ Then, after your go, `iso cutover`:
 1. pushes any dirty or unpushed worktree to a `wip/<agent>` branch;
 2. stops every legacy agent;
 3. seeds the repo configs and base clones;
-4. wipes the old layout.
+4. wipes the old layout: it is moved, not deleted, into `~/.isovim/legacy-backup-<date>/`.
 
 The old conversations in `~/.claude/projects` are left untouched. Every agent, including clu's root,
 starts cold.

@@ -1,7 +1,8 @@
 -- Roles on the command line: iso <role> <action> runs the action under the role the agent states,
 -- and bare iso <command> is the user's. isovim checks both against who is calling, proven by
--- ancestry (root.caller) and that agent's record; for now it only warns, so agents can switch
--- before anything is refused. Also iso spawn and iso <role> promote, whose rules are enforced.
+-- ancestry (root.caller) and that agent's record. Until iso cutover turns enforcement on
+-- (config.enforced) it only warns, so agents can switch before anything is refused. Also iso spawn
+-- and iso <role> promote, whose rules are always enforced.
 local store = require("isovim.store")
 local commands = require("isovim.cli.commands")
 local c = require("isovim.cli.common")
@@ -41,21 +42,30 @@ function M.namespace(command, args)
   return command ~= "root" or args[1] == "help" or commands.action("root", args[1]) ~= nil
 end
 
--- Warns when the caller isn't who iso <role> <name> is for.
+-- Until the cutover turns enforcement on, a refusal is only a warning that says it will be one.
+local function refuse(message, later)
+  if require("isovim.config").enforced() then
+    fail(message)
+  end
+  warn(message .. later)
+end
+
+-- Refuses (or warns) when the caller isn't who iso <role> <name> is for.
 local function check_role(role, name)
   local address, mine = caller()
+  local later = " (this will be refused later)"
   if not address then
     local bare = commands.find(name) and (": the user runs iso " .. name) or ""
-    warn(("iso %s ... is for agents, and this isn't one%s (this will be refused later)"):format(role, bare))
+    refuse(("iso %s ... is for agents, and this isn't one%s"):format(role, bare), later)
   elseif mine ~= role and commands.action(mine, name) then
-    warn(("you are a %s, not a %s: run iso %s %s (this will be refused later)"):format(mine, role, mine, name))
+    refuse(("you are a %s, not a %s: run iso %s %s"):format(mine, role, mine, name), later)
   elseif mine ~= role then
-    warn(("you are a %s, not a %s, and %s isn't a %s action (this will be refused later)"):format(mine, role, name, mine))
+    refuse(("you are a %s, not a %s, and %s isn't a %s action"):format(mine, role, name, mine), later)
   end
 end
 
--- Warns an agent off a bare command, which is the user's, pointing at its role form if it has one.
--- Commands agents still run until their replacement lands (no audience) are left alone.
+-- Refuses (or warns) an agent a bare command, which is the user's, pointing at its role form if it
+-- has one. Commands agents still run until their replacement lands (no audience) are left alone.
 function M.warn_bare(entry)
   local form = entry.role_form or entry.name
   local has_form = vim.iter(commands.roles):any(function(role)
@@ -69,9 +79,10 @@ function M.warn_bare(entry)
     return
   elseif commands.action(role, form) then
     local instead = form ~= entry.name and (", not iso " .. entry.name) or ""
-    warn(("agents run iso %s %s%s; bare iso commands are the user's and will be refused to agents later"):format(role, form, instead))
+    refuse(("agents run iso %s %s%s; bare iso commands are the user's"):format(role, form, instead),
+      " and will be refused to agents later")
   elseif entry.audience == "user" then
-    warn(("iso %s is the user's; it will be refused to agents later"):format(entry.name))
+    refuse(("iso %s is the user's"):format(entry.name), "; it will be refused to agents later")
   end
 end
 
@@ -91,6 +102,8 @@ function M.run(role, args)
   local entry = commands.action(role, name)
   if not entry then
     fail(("%s isn't a %s action; iso %s help lists them"):format(name, role, role))
+  elseif commands.retired(entry) then
+    fail(("iso %s %s was retired at the cutover: %s"):format(role, name, entry.retired))
   end
   check_role(role, name)
   if not entry.module then

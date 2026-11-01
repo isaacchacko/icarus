@@ -7,8 +7,8 @@
 --   config.json  merged into theirs key by key, the newer of each winning: config.keys.json beside
 --                it records when each key last changed (refreshed at each sync from the file's
 --                mtime); a key with no record on a side counts as as old as that side's file. self,
---                hosts and reaper say who a host is, who its peers are and whether it's cut over,
---                so stay that host's own
+--                hosts, reaper and enforce say who a host is, who its peers are and whether it's
+--                cut over, so stay that host's own
 -- events/, run/ and the rest of ~/.isovim stay on their host. A host that's down is logged to
 -- ~/.isovim/sync.log and simply tried again on the next write, since each sync sends everything.
 -- One sync runs at a time; a write during one makes it go round again.
@@ -19,8 +19,8 @@ local M = {}
 M.log_file = store.root .. "/sync.log"
 -- Where isovim's home is on the other hosts: relative to their home dir, as ssh starts there.
 M.remote_root = vim.env.ISOVIM_SYNC_ROOT or ".isovim"
--- Keys of config.json that belong to one host.
-M.local_keys = { self = true, hosts = true, reaper = true }
+-- Keys of config.json that belong to one host; enforce is on once that host is cut over.
+M.local_keys = { self = true, hosts = true, reaper = true, enforce = true }
 local MAX_LOG = 256 * 1024
 
 local function peers()

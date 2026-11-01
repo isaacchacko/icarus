@@ -116,7 +116,7 @@ Everything lives in `~/.isovim/`:
 
 ### Cutover
 
-v0 starts fresh rather than migrating. Until then, the workspaces and agents from before (in Claude's TUI, with `iso task`, `iso pin` and `iso ask`) keep running beside v0's and fold under their repo in the sidebar. `iso cutover --dry-run` will list what goes (every workspace, legacy agent, worktree and pin), and after your go `iso cutover` pushes any unsaved work to a `wip/<agent>` branch, stops the legacy agents, seeds the repo configs and base clones, and wipes the old layout. Conversations in `~/.claude/projects` are left alone. The reaper, which tears down `aN/` dirs with no agent every 10 minutes, only logs (to `~/.isovim/reaper.log`) until then.
+v0 starts fresh rather than migrating. Until then, the workspaces and agents from before (in Claude's TUI, with `iso task`, `iso pin` and `iso ask`) keep running beside v0's and fold under their repo in the sidebar. `iso cutover --dry-run` lists what goes (every workspace, legacy agent, worktree and pin) in `~/.isovim/cutover-plan.txt`, and after your go `iso cutover --yes` runs exactly that plan: it pushes any unsaved work to a `wip/<ws>/<agent>` branch, stops the legacy agents, seeds the repo configs and base clones, and moves the old layout into `~/.isovim/legacy-backup-<date>/`. Then enforcement comes on: role mismatches are refused, and the retired commands fail, naming their replacement. Conversations in `~/.claude/projects` are left alone. The reaper, which tears down `aN/` dirs with no agent every 10 minutes, only logs (to `~/.isovim/reaper.log`) until then.
 
 ## Develop
 

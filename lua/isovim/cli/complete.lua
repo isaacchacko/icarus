@@ -178,7 +178,7 @@ local KINDS = {
   end,
   command = function(found)
     for _, entry in ipairs(commands.list) do
-      if not entry.hidden then
+      if not entry.hidden and not commands.retired(entry) then
         found[#found + 1] = { entry.name, commands.summary(entry) }
       end
     end

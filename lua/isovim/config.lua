@@ -12,6 +12,7 @@
 --   repo_defaults  {glyph, palette}: the glyph and the list of colors (names or "#rrggbb") written into a
 --              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
 --              red to pink. Repos take the colors in the order they're first seen, wrapping round.
+--   enforce    true once iso cutover has run on this host (M.enforced)
 local store = require("isovim.store")
 
 local M = {}
@@ -23,6 +24,47 @@ function M.get()
   local ok, lines = pcall(vim.fn.readfile, M.path)
   local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
   return decoded and type(config) == "table" and config or {}
+end
+
+-- Enforcement: role mismatches and agents running the user's commands are refused rather than
+-- warned about, and the commands v0 retired fail. iso cutover turns it on (config "enforce": true,
+-- this host's own, never synced); ISOVIM_ENFORCE=1 or 0 overrides the config.
+function M.enforced()
+  local env = vim.env.ISOVIM_ENFORCE
+  if env and env ~= "" then
+    return env == "1"
+  end
+  return M.get().enforce == true
+end
+
+-- Sets "enforce": true in config.json, keeping the rest of the file as written.
+---@return boolean? ok, string? err
+function M.enforce()
+  local ok, lines = pcall(vim.fn.readfile, M.path)
+  local text = ok and table.concat(lines, "\n") or ""
+  local decoded, config = pcall(vim.json.decode, text ~= "" and text or "{}")
+  if not decoded or type(config) ~= "table" or (vim.islist(config) and next(config)) then
+    return nil, M.path .. " isn't a JSON object"
+  end
+  if config.enforce == true then
+    return true
+  end
+  local new
+  if config.enforce ~= nil then
+    new = text:gsub('("enforce"%s*:%s*)[^,}%s]+', "%1true", 1)
+  elseif next(config) == nil then
+    new = '{\n  "enforce": true\n}'
+  else
+    new = text:gsub("%s*}%s*$", ',\n  "enforce": true\n}', 1)
+  end
+  local check_ok, check = pcall(vim.json.decode, new)
+  if not check_ok or type(check) ~= "table" or check.enforce ~= true then
+    config.enforce = true
+    new = vim.json.encode(config)
+  end
+  local tmp = M.path .. ".tmp"
+  vim.fn.writefile(vim.split(new, "\n"), tmp)
+  return vim.uv.fs_rename(tmp, M.path)
 end
 
 -- The prompt file configured for a role, as an absolute path, or nil.

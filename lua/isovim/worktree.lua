@@ -129,6 +129,27 @@ function M.repo_of(path)
   return common and vim.fs.dirname(common) or nil
 end
 
+-- A commit of everything uncommitted in the checkout, untracked files too (ignored ones aside), on top
+-- of HEAD, made without touching the checkout or its index; nil when git can't.
+---@return string? sha
+function M.snapshot(path, message)
+  local index = vim.fn.tempname()
+  local env = { GIT_INDEX_FILE = index }
+  -- A host with no git identity still gets its snapshot.
+  if not out(git(path, { "config", "user.email" })) then
+    env = vim.tbl_extend("force", env, { GIT_AUTHOR_NAME = "isovim", GIT_AUTHOR_EMAIL = "isovim@localhost",
+      GIT_COMMITTER_NAME = "isovim", GIT_COMMITTER_EMAIL = "isovim@localhost" })
+  end
+  local function indexed(args)
+    return vim.system(vim.list_extend({ "git", "-C", path }, args), { text = true, env = env }):wait()
+  end
+  indexed({ "read-tree", "HEAD" })
+  indexed({ "add", "-A" })
+  local tree = out(indexed({ "write-tree" }))
+  vim.fn.delete(index)
+  return tree and out(indexed({ "commit-tree", tree, "-p", "HEAD", "-m", message })) or nil
+end
+
 -- For iso move: writes a bundle of the branch's commits beyond the remote default branch (the other
 -- host has those) plus a commit of everything uncommitted, untracked files too, without touching
 -- the checkout or its index.
@@ -138,16 +159,7 @@ function M.pack(path, bundle)
   if not branch then
     return nil, "its worktree is not on a branch"
   end
-  local index = vim.fn.tempname()
-  local env = { GIT_INDEX_FILE = index }
-  local function indexed(args)
-    return vim.system(vim.list_extend({ "git", "-C", path }, args), { text = true, env = env }):wait()
-  end
-  indexed({ "read-tree", "HEAD" })
-  indexed({ "add", "-A" })
-  local tree = out(indexed({ "write-tree" }))
-  vim.fn.delete(index)
-  local wip = tree and out(git(path, { "commit-tree", tree, "-p", "HEAD", "-m", "iso move: uncommitted work" }))
+  local wip = M.snapshot(path, "iso move: uncommitted work")
   if not wip then
     return nil, "could not snapshot its uncommitted work"
   end
