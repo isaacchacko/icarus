@@ -444,14 +444,36 @@ function M.create(name, project, worktree)
   return id
 end
 
--- Where the agent's work is, which its repo's scripts run in: a new-layout agent's worktree, <key>/aN/w
--- (iso <role> wt), else its own dir <key>/aN; any other agent's workspace's dir.
+-- The name of a new-layout agent's worktree dir: its repo's short name and its number, app-a7 for
+-- acme/app's a7, as a compose project name may be (lowercase letters, digits, - and _). It's unique on
+-- the host, so a setup script that names its compose project, ports or hostnames after the checkout's
+-- dir gets names no other agent's has. aN/w is a symlink to it, for the paths and habits that say w.
+function M.worktree_name(key, agent)
+  local repo = (M.canon(key):match("([^/]+)$") or "repo"):lower():gsub("[^%w_-]+", "-"):gsub("^[-_]+", "")
+  return (repo ~= "" and repo or "repo") .. "-" .. agent
+end
+
+-- A new-layout agent's worktree, by its real path (never through the w symlink: a shell keeps the
+-- path it was given, so a script there would read its dir's name as w): <key>/aN/<worktree_name>, or
+-- an old one's <key>/aN/w, a dir until isovim.migrate names it; nil while it has none.
+---@return string?
+function M.worktree(key, agent)
+  local own = M.dir(key) .. "/" .. agent
+  local named = own .. "/" .. M.worktree_name(key, agent)
+  if vim.fn.isdirectory(named) == 1 then
+    return named
+  end
+  local old = vim.uv.fs_lstat(own .. "/w")
+  return old and old.type == "directory" and own .. "/w" or nil
+end
+
+-- Where the agent's work is, which its repo's scripts run in: a new-layout agent's worktree
+-- (M.worktree; iso <role> wt), else its own dir <key>/aN; any other agent's workspace's dir.
 function M.work_dir(ws, agent)
   if not M.v2(ws) then
     return M.dir(ws)
   end
-  local own = M.dir(ws) .. "/" .. agent
-  return vim.fn.isdirectory(own .. "/w") == 1 and own .. "/w" or own
+  return M.worktree(ws, agent) or M.dir(ws) .. "/" .. agent
 end
 
 -- Where the agent starts: a new-layout agent in its own dir, <key>/aN, a read-only one in its repo's

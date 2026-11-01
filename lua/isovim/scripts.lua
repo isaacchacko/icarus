@@ -3,7 +3,10 @@
 -- They come from the repo's config (isovim.repoconf), into which the repo's own .isovim/config.json or
 -- .superset/config.json is imported once; a script the config lacks is still read from those files.
 -- Any other name is one of the config's actions. A new-layout agent's run in its work dir
--- (store.work_dir: its worktree aN/w, else aN), by iso <role> setup|teardown|run (isovim.cli.work).
+-- (store.work_dir: its worktree aN/<repo>-aN, else aN), by iso <role> setup|teardown|run
+-- (isovim.cli.work), with ISOVIM_WORKTREE_NAME and COMPOSE_PROJECT_NAME set to the worktree's name,
+-- unique on the host, so two agents' stacks never share a compose project. The repo's config.json
+-- may set env: {NAME: value}, which wins over these; NAME: false keeps isovim from setting one.
 local M = {}
 
 -- The scripts with a name of their own; any other name is an action.
@@ -54,22 +57,38 @@ end
 ---@param root string the repo's main checkout
 ---@param repo? string the repo's name, as for commands
 ---@param lookup? boolean as for commands
-function M.line(dir, root, name, which, repo, lookup)
+---@param worktree? string a new-layout agent's worktree name (store.worktree_name)
+function M.line(dir, root, name, which, repo, lookup, worktree)
   local listed = commands(dir, which, repo, lookup)
   if not listed then
     return nil
   end
-  local env = {
-    SUPERSET_ROOT_PATH = root,
-    SUPERSET_WORKSPACE_PATH = dir,
-    SUPERSET_WORKSPACE_NAME = name,
-  }
   local exports = {}
-  for key, value in pairs(env) do
+  for key, value in pairs(M.env(dir, root, name, repo, worktree)) do
     exports[#exports + 1] = ("export %s=%s"):format(key, vim.fn.shellescape(value))
   end
   table.sort(exports)
   return table.concat(exports, "; ") .. "; " .. table.concat(listed, " && ")
+end
+
+-- The variables a script in dir runs with, as for M.line.
+---@return table<string, string>
+function M.env(dir, root, name, repo, worktree)
+  local env = {
+    SUPERSET_ROOT_PATH = root,
+    SUPERSET_WORKSPACE_PATH = dir,
+    SUPERSET_WORKSPACE_NAME = name,
+    ISOVIM_WORKTREE_NAME = worktree,
+    COMPOSE_PROJECT_NAME = worktree,
+  }
+  local repo_name = repo or require("isovim.repos").of(dir)
+  local config = repo_name and require("isovim.repos").config(repo_name)
+  for key, value in pairs(config and type(config.env) == "table" and config.env or {}) do
+    if type(key) == "string" and key:match("^[%a_][%w_]*$") then
+      env[key] = (type(value) == "string" or type(value) == "number") and tostring(value) or nil
+    end
+  end
+  return env
 end
 
 -- Runs a script or action as a terminal of its own, named after it, which ends in a shell so the
@@ -88,9 +107,13 @@ function M.start(ws, which, owner)
   end
   local dir = v2 and store.work_dir(ws, owner) or store.dir(ws)
   local name = v2 and record.name or store.name(ws)
-  local line = M.line(dir, worktree.repo_of(dir) or dir, name, which, v2 and record.repo or nil)
+  local line = M.line(dir, worktree.repo_of(dir) or dir, name, which, v2 and record.repo or nil, nil,
+    v2 and store.worktree_name(ws, owner) or nil)
   if not line then
     return nil
+  end
+  if v2 and which == "setup" then
+    store.update_agent(ws, owner, { setup_ran = os.time() })
   end
   -- It reports like an agent: working while it runs, then finished (a toast, the Inbox).
   local hook = vim.fn.shellescape(panes.hook_script)

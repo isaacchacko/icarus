@@ -30,6 +30,15 @@
 -- messaged at _/aN, and the root among them holds the role. Once moved, old _/aN addresses keep
 -- working: the move's map (~/.isovim/migrated.json) says where each went (store.canon_address).
 -- Every step is logged to ~/.isovim/migrate.log.
+--
+-- Then the agents' worktrees: every one was aN/w until each was named for its agent, aN/<repo>-aN
+-- (store.worktree_name), so setup scripts that name a compose project, ports or hostnames after the
+-- checkout's dir stop giving every agent's stack the same ones. Each old one moves to its name once
+-- (M.name_worktrees), with aN/w left a symlink to it, so whatever still says w keeps working: a
+-- running agent's cwd, its shells' and script panes' (the dir moves under them), records and habits.
+-- One whose agent is mid-turn waits, as the moves above do, for a later command or start, and so
+-- does one a script pane of its is still running in, or a compose stack runs from (docker ps): its
+-- dev server's watchers and its containers' bind mounts name the old path.
 local store = require("isovim.store")
 
 local M = {}
@@ -665,12 +674,15 @@ local function move_work(opts)
     if vim.startswith(from, home .. "/") then
       froms[#froms + 1] = "~" .. from:sub(#home + 1)
     end
-    -- The agents' worktrees, aN/w, by where they are now.
+    -- The agents' worktrees (aN/<repo>-aN, or an old aN/w; not the w symlink), by where they are now.
     local worktrees = {}
     for _, folder in ipairs(key_folders(from)) do
       for _, name in ipairs(names(from .. "/" .. folder)) do
-        if number(name) and lstat(from .. "/" .. folder .. "/" .. name .. "/w/.git") then
-          worktrees[#worktrees + 1] = folder .. "/" .. name .. "/w"
+        local own = from .. "/" .. folder .. "/" .. name
+        for _, sub in ipairs(number(name) and is_dir(own) and names(own) or {}) do
+          if is_dir(own .. "/" .. sub) and lstat(own .. "/" .. sub .. "/.git") then
+            worktrees[#worktrees + 1] = folder .. "/" .. name .. "/" .. sub
+          end
         end
       end
     end
@@ -746,6 +758,116 @@ local function move_work(opts)
   return "done"
 end
 
+M.named_file = store.root .. "/worktrees-named"
+local naming_lock = store.root .. "/worktrees-naming.lock"
+-- While one waits, a pass runs at most this often (every iso command would try).
+local NAMING_EVERY = 30
+
+-- Whether old aN/w worktrees may be left to name: until a pass finds none, which a stat says after.
+function M.naming_pending()
+  return vim.uv.fs_stat(M.named_file) == nil
+end
+
+-- Moves each old aN/w worktree to its name and links aN/w to it (see the top of this file); the
+-- one of an agent mid-turn is left for the next pass. Returns how many moved and how many wait.
+---@return integer moved, integer waiting
+function M.name_worktrees()
+  if not M.naming_pending() then
+    return 0, 0
+  end
+  local last = vim.uv.fs_stat(naming_lock .. ".last")
+  if last and os.time() - last.mtime.sec < NAMING_EVERY then
+    return 0, 1
+  end
+  vim.fn.mkdir(store.root, "p")
+  if not vim.uv.fs_mkdir(naming_lock, 448) then
+    local stat = vim.uv.fs_stat(naming_lock)
+    if not (stat and os.time() - stat.mtime.sec > STALE) then
+      return 0, 1
+    end
+    log("took over a stale lock " .. naming_lock)
+  end
+  local panes, work, status = require("isovim.panes"), require("isovim.cli.work"), require("isovim.status")
+  local moved, waiting = 0, 0
+  local ok, err = pcall(function()
+    -- The dirs running compose stacks were brought up from, asked once there's a worktree to name.
+    local stacks
+    -- Whether w is in use: a compose stack runs from it, a script pane of its agent is running, or
+    -- its agent is mid-turn.
+    local function in_use(key, id, w)
+      if not stacks then
+        stacks = {}
+        local ps = vim.fn.executable("docker") == 1 and vim.system({ "docker", "ps", "--format",
+          '{{.Label "com.docker.compose.project.working_dir"}}' }, { text = true, timeout = 3000 }):wait()
+        for dir in (ps and ps.code == 0 and ps.stdout or ""):gmatch("[^\n]+") do
+          stacks[#stacks + 1] = vim.uv.fs_realpath(dir) or dir
+        end
+      end
+      local real = vim.uv.fs_realpath(w) or w
+      for _, dir in ipairs(stacks) do
+        if dir == real or vim.startswith(dir, real .. "/") then
+          return true
+        end
+      end
+      for _, pane in ipairs(store.agents(key)) do
+        if pane.of == id and BUSY[status.state(key, pane.id) or ""] and panes.running(key, pane.id) then
+          return true
+        end
+      end
+      return BUSY[status.state(key, id) or ""] and panes.running(key, id)
+    end
+    for _, ws in ipairs(store.list()) do
+      for _, record in ipairs(store.v2(ws.id) and store.agents(ws.id) or {}) do
+        local own = store.dir(ws.id) .. "/" .. record.id
+        local w = own .. "/w"
+        local stat = lstat(w)
+        local dotgit = stat and stat.type == "directory" and lstat(w .. "/.git")
+        if dotgit and dotgit.type == "file" then
+          local name = store.worktree_name(ws.id, record.id)
+          local busy = not record.of and in_use(ws.id, record.id, w)
+          if busy then
+            waiting = waiting + 1
+          elseif lstat(own .. "/" .. name) then
+            log(("left %s as it is: %s/%s is there already"):format(w, own, name))
+          else
+            local named = own .. "/" .. name
+            local common = vim.system({ "git", "-C", w, "rev-parse", "--path-format=absolute", "--git-common-dir" },
+              { text = true }):wait()
+            local result = common.code == 0
+              and vim.system({ "git", "--git-dir", vim.trim(common.stdout), "worktree", "move", w, named }, { text = true }):wait()
+              or common
+            if result.code ~= 0 then
+              -- git won't move one with submodules: a rename, and git told where it went.
+              local renamed, rename_err = vim.uv.fs_rename(w, named)
+              if renamed then
+                repair_worktree(named, w)
+              else
+                log(("could not name the worktree %s (%s; %s)"):format(w, vim.trim(result.stderr or ""), tostring(rename_err)))
+              end
+            end
+            if lstat(named) then
+              work.link_w(own, name)
+              moved = moved + 1
+              log(("named the worktree %s: %s, with w linked to it"):format(w, named))
+            end
+          end
+        end
+      end
+    end
+  end)
+  vim.fn.writefile({}, naming_lock .. ".last")
+  vim.uv.fs_rmdir(naming_lock)
+  if not ok then
+    log("naming the worktrees failed: " .. tostring(err))
+    return moved, waiting + 1
+  end
+  if waiting == 0 then
+    vim.fn.writefile({ os.date("!%Y-%m-%dT%H:%M:%SZ") }, M.named_file)
+    log("every worktree is named")
+  end
+  return moved, waiting
+end
+
 -- Moves an old work root and an old _/ if there are. opts.wait: seconds to wait for another
 -- process's move (default 20); opts.force: move even with an agent mid-turn. Returns "none", "done",
 -- "deferred" or "locked", and on "done" the map of old addresses to new ones (empty when only the
@@ -755,6 +877,7 @@ end
 function M.run(opts)
   if not M.pending() then
     store.refresh_work()
+    pcall(M.name_worktrees)
     return "none"
   end
   vim.fn.mkdir(store.root, "p")

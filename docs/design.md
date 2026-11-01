@@ -26,7 +26,7 @@ gets. It's a personal tool, not built for teams.
 ~/.isovim/
   config.json                    hosts, prompts per role, repo_defaults {glyph, palette}
   repos/<owner>/<repo>/
-    config.json                  glyph, color, setup / teardown / worktree_setup / run / actions
+    config.json                  glyph, color, setup / teardown / worktree_setup / run / actions, env
     base-clone/                  detached at origin's default branch; read-only agents work here
   events/events.jsonl            the event bus
 ~/.iso/
@@ -37,7 +37,8 @@ gets. It's a personal tool, not built for teams.
       transcripts/               plain-text transcripts, for grep
       *.surface, *.md            surfaces; tasks.md is the Task Board
       images/                    images pasted or dropped into an input box
-    aN/w/                        an agent's worktree, made the first time it needs one
+    aN/<repo>-aN/                an agent's worktree (app-a7), made the first time it needs one
+    aN/w -> <repo>-aN            a symlink to it, for paths and habits that say w
   root/  general/                the pseudo-repos, same shape
 ```
 
@@ -48,6 +49,15 @@ gets. It's a personal tool, not built for teams.
   at the same address: chat agents restart there on their sessions, worktrees are repaired, terminals
   keep running. With an agent mid-turn (or claude logged out) it waits, and `~/iso` stays the work
   root until it moves.
+- Every worktree was `aN/w`, so a setup script that names its compose project, ports or hostnames
+  after the checkout's dir (as Superset's and `~/Worktrees/<name>` repos do) gave every agent's stack
+  the same ones. Now each has a name unique on the host. Whatever is handed to an agent or a script
+  (the scripts' cwd and `SUPERSET_WORKSPACE_PATH`, `wt`'s output, the first edit's word on where to
+  cd, the edit guard's comparison) names the real dir, never `w`: a shell keeps the path it was given,
+  so `basename "$PWD"` under `w` would say `w` again. The first `iso` command or TUI start moves each
+  old `aN/w` to its name (`git worktree move`) and leaves `w` linked to it, an agent mid-turn's at a
+  later one; its cwd keeps working, as `w` still leads there. `~/.isovim/worktrees-named` says it's
+  done.
 - Config syncs to the other hosts (`~/.isovim/repos/` and `config.json`, skipping `base-clone/`) on
   every write.
 
@@ -577,9 +587,13 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 - **Read-only agents** (`--read-only`) run in `base-clone/`, fetched at start, and their write tools
   are refused.
 - **Worktrees:** an agent gets one with `wt`, or automatically on its first edit. `setup` runs the
-  repo's setup script only when asked.
+  repo's setup script only when asked; `wt` says when the repo has one that hasn't run in the
+  worktree. The scripts get Superset's variables, and `ISOVIM_WORKTREE_NAME` and
+  `COMPOSE_PROJECT_NAME`, both the worktree's name, unless the repo's config sets them in `env`
+  (`false` for none). `setup` first looks at what docker runs here and warns, without refusing, when
+  another stack has the same compose project or a port the repo's compose file publishes.
 - **The edit guard:** every agent's edit in a clone of a repo isovim knows (one under
-  `~/.isovim/repos/`), outside its own `aN/w`, is refused, with word to spawn an agent into that repo;
+  `~/.isovim/repos/`), outside its own worktree, is refused, with word to spawn an agent into that repo;
   repos isovim doesn't know, like `~/.clu/discs` and dotfiles, stay editable. For v0 it reads Bash
   only for git commands, so a shell write (`sed -i`, `cp`, `>>`) or git behind a variable gets
   through: agents aren't dumb, and the guard is there for mistakes, not for an agent working round it.

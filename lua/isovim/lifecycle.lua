@@ -1,8 +1,8 @@
 -- The end of a new-layout agent's life. Removing one (iso rm, d in the sidebar) tears it down: its
--- script panes stop, its repo's teardown script runs in its work dir (aN/w, else aN), its worktree is
--- removed from the clone it came from (`git worktree remove --force`: unsaved work is discarded) and
--- aN/ is deleted. The reaper looks every 10 minutes for aN/ dirs under the work root with no record
--- (<key>/iso/agents/aN.json) and would tear those down too; until v0 is cut over it runs dry, only
+-- script panes stop, its repo's teardown script runs in its work dir (its worktree aN/<repo>-aN, an
+-- old one's aN/w, else aN), its worktree is removed from the clone it came from (`git worktree remove
+-- --force`: unsaved work is discarded) and aN/ is deleted. The reaper looks every 10 minutes for aN/
+-- dirs under the work root with no record (<key>/iso/agents/aN.json) and would tear those down too; until v0 is cut over it runs dry, only
 -- writing what it would do to ~/.isovim/reaper.log ("reaper": "live" in config.json, or
 -- `iso reap --live`, lets it act). A workspace's agents keep their own way out (store.archive_workspace).
 --
@@ -84,9 +84,15 @@ function M.plan(key, id, record)
     return { path = path, link = true, cwd = path }
   end
   local plan = { path = path, cwd = path }
-  local w = path .. "/w"
-  local wstat = lstat(w)
-  if wstat and wstat.type == "directory" and not in_base_clone(w) then
+  -- The worktree's own dir, never the aN/w symlink to it.
+  local w
+  for _, name in ipairs({ store.worktree_name(key, id), "w" }) do
+    local stat = lstat(path .. "/" .. name)
+    if not w and stat and stat.type == "directory" then
+      w = path .. "/" .. name
+    end
+  end
+  if w and not in_base_clone(w) then
     plan.cwd = w
     -- A linked worktree has a .git file naming its clone; anything else is just files.
     local dotgit = lstat(w .. "/.git")
@@ -102,7 +108,7 @@ function M.plan(key, id, record)
     local name = record and record.name or id
     -- Looked up only: an agent's dir never imports its own scripts into the repo's config.
     plan.teardown = require("isovim.scripts").line(plan.cwd, require("isovim.worktree").repo_of(plan.cwd) or plan.cwd, name,
-      "teardown", repo, true)
+      "teardown", repo, true, repo and store.worktree_name(key, id) or nil)
   end
   return plan
 end

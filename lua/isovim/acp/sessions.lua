@@ -202,7 +202,7 @@ local function git(dir, args, env)
   return result.code == 0, vim.trim(result.stdout or ""), vim.trim(result.stderr or "")
 end
 
--- The git checkout the agent's files are in: its worktree (aN/w) once it has one, else its dir
+-- The git checkout the agent's files are in: its worktree (aN/<repo>-aN) once it has one, else its dir
 -- when that's in a checkout; nil when there's none.
 function M.checkout(ws, agent)
   for _, dir in ipairs({ store.work_dir(ws, agent), store.agent_dir(ws, agent) }) do

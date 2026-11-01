@@ -6,6 +6,8 @@
 --                   A command whose first word is a file in this folder runs that file, so scripts
 --                   can live beside the config: "./setup.sh --fast".
 --                   imported_from and imported_at record the one import from the repo's own files.
+--                   env: name -> value (false for none), over the variables isovim gives the
+--                   scripts (isovim.scripts), COMPOSE_PROJECT_NAME among them.
 --   base-clone/     a clone of origin, detached at its default branch, which new-layout agents'
 --                   worktrees are made from; made by M.base on request
 -- and, for the repo's work, ~/.iso/<owner>/<repo>/ ($ISOVIM_WORK), whose iso/ holds isovim's own files.

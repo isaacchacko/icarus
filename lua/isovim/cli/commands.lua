@@ -90,7 +90,8 @@ M.list = {
                                      repo's next <owner>/<repo>/aN (from an agent, in its own
                                      repo; from a shell, the clone it's in; else general/aN),
                                      and print its address. It starts in aN/ and gets its
-                                     worktree, aN/w, on its first edit (or iso <role> wt).
+                                     worktree, aN/<repo>-aN (aN/w links to it), on its first
+                                     edit (or iso <role> wt).
                                      An agent's spawn is its child, of a role no higher than
                                      its own; one router per repo here, one repo-root per repo,
                                      one root per host. --read-only runs it in the repo's base
@@ -155,9 +156,10 @@ M.list = {
        iso move <owner>/<repo>/aN <host>
                                      move one agent (its exact address): record, journal,
                                      queue and session go, its worktree's branch is pushed and
-                                     made again there as aN/w, and it resumes there. Refused
-                                     mid-turn, with uncommitted work, and for roots; it keeps
-                                     its aN unless that host has used it, and prints its address
+                                     made again there as aN/<repo>-aN, and it resumes there.
+                                     Refused mid-turn, with uncommitted work, and for roots; it
+                                     keeps its aN unless that host has used it, and prints its
+                                     address
        iso move <owner>/<repo> <host> --all
                                      move every agent of the repo (or general), each as above,
                                      parents first; its terminals stay. All are checked first,
@@ -858,15 +860,17 @@ M.role_actions = {
   },
   wt = { name = "wt", module = "work",
     flags = { ["--from"] = "<text>" },
-    summary = "make your worktree (aN/w) if you have none, and print its path",
+    summary = "make your worktree (aN/<repo>-aN) if you have none, and print its path",
     help = [=[
        iso wt [--from <branch|PR>]   your worktree, made if you have none, and its path: a
-                                     new-layout agent's is aN/w (you start in aN, so cd w),
-                                     on a new branch $USER/<your name> off origin's default
-                                     branch, or --from an existing branch or PR (number or
-                                     URL), from the repo's base clone (made if missing); then
-                                     the repo's worktree_setup runs in it. A workspace's
-                                     agent has the workspace's checkout]=],
+                                     new-layout agent's is aN/<repo>-aN, a name no other
+                                     agent's has (aN/w links to it; you start in aN, so cd to
+                                     the path it prints), on a new branch $USER/<your name>
+                                     off origin's default branch, or --from an existing branch
+                                     or PR (number or URL), from the repo's base clone (made
+                                     if missing); then the repo's worktree_setup runs in it.
+                                     It says when the repo has a setup script that hasn't run
+                                     there. A workspace's agent has the workspace's checkout]=],
   },
   setup = { name = "setup", module = "work",
     summary = "run your repo's setup script in a pane named setup",
@@ -875,7 +879,14 @@ M.role_actions = {
                                      ~/.isovim/repos/<owner>/<repo>/config.json) in your
                                      worktree (else aN), in a pane named for it, listed
                                      under Terminals; prints the pane's address, which peek
-                                     and wait take. Again restarts it]=],
+                                     and wait take. Again restarts it. Scripts get
+                                     SUPERSET_WORKSPACE_PATH|NAME, SUPERSET_ROOT_PATH, and
+                                     ISOVIM_WORKTREE_NAME and COMPOSE_PROJECT_NAME, both the
+                                     worktree's dir name (<repo>-aN); the config's env
+                                     ({NAME: value}, or false for none) wins over them.
+                                     setup warns when another stack running here (docker
+                                     ps) has the same compose project or a port the repo's
+                                     compose file publishes, and runs anyway]=],
   },
   teardown = { name = "teardown", module = "work",
     summary = "run your repo's teardown script in a pane named teardown",

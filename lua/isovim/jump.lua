@@ -134,9 +134,10 @@ function agent_node(key, id)
       local rows = {}
       for _, name in ipairs(subdirs(dir)) do
         local path = dir .. "/" .. name
-        if name == "w" then
+        -- Its worktree, by its own name (aN/w is a symlink to it), or an old one's w/.
+        if name == "w" or name == store.worktree_name(key, id) then
           local branch = git_branch(path)
-          rows[#rows + 1] = leaf("w", path, "\u{e725}", "w", "its worktree" .. (branch and (", on " .. branch) or ""))
+          rows[#rows + 1] = leaf(name, path, "\u{e725}", name, "its worktree" .. (branch and (", on " .. branch) or ""))
         else
           rows[#rows + 1] = leaf(name, path, icons.get("workspace"), name, "")
         end

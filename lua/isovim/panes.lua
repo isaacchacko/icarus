@@ -174,11 +174,15 @@ local V0 = {
     .. "<owner>/<repo>/aN, general/aN outside any repo, or root/aN for the host root. Run isovim's commands under your role, as "
     .. "`iso {role} <action>` (`iso {role} help` lists yours); bare `iso <command>` is the user's, not yours.",
   work = "You start in your agent dir, aN/. In a repo, your first edit is refused once while isovim makes "
-    .. "your worktree, aN/w, on a new branch $USER/<your name> off origin's default branch: `cd w` and "
-    .. "redo it there. A read-only agent works in the repo's base clone and every edit is refused.",
+    .. "your worktree, aN/<repo>-aN (aN/w links to it), on a new branch $USER/<your name> off origin's "
+    .. "default branch: cd to the path it gives (by that name, not w, so the scripts you run there see a "
+    .. "dir name of their own) and redo it there. A read-only agent works in the repo's base clone and "
+    .. "every edit is refused.",
   scripts = " `iso {role} wt [--from <branch|PR>]` makes the worktree up front, or from an existing branch "
-    .. "or PR. `iso {role} setup`, `teardown` and `run [<action>]` run your repo's scripts in it, each in a "
-    .. "pane of its own whose address they print (`peek` and `wait` take it); setup never runs by itself.",
+    .. "or PR, and prints its path. `iso {role} setup`, `teardown` and `run [<action>]` run your repo's "
+    .. "scripts in it, each in a pane of its own whose address they print (`peek` and `wait` take it), "
+    .. "with COMPOSE_PROJECT_NAME and ISOVIM_WORKTREE_NAME set to the worktree's name; setup never runs "
+    .. "by itself.",
   messages = "A message, the user's or another agent's, that comes while you're working waits in your queue "
     .. "and arrives as its own prompt when your turn ends; nothing is ever typed over you. Agents' messages "
     .. "start with isovim's stamp, [from <host>:<address> · m<id>], which isovim checks and tells you about "

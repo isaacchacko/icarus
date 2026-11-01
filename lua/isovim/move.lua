@@ -8,10 +8,11 @@
 -- A new-layout agent (<key>/aN) moves on its own (M.send_agent): its record, its journal (with its
 -- queue file and the sessions it kept), its plain-text transcript and its session's transcript
 -- (Claude's, filed on the other host under the key of the path it will run in there; Codex's
--- rollout). Its worktree goes as its branch: pushed to origin here and made again there, as aN/w
--- from that host's base clone, so uncommitted changes to tracked files are refused (commit first).
--- The rest of aN/ goes as files, whole: what's beside w/, and in w/ what git doesn't carry (ignored
--- and untracked files). Everything that goes (aN/, the record, which is in the hashed manifest, the
+-- rollout). Its worktree goes as its branch: pushed to origin here and made again there, as
+-- aN/<repo>-aN (with aN/w linked to it) from that host's base clone, so uncommitted changes to tracked
+-- files are refused (commit first). The rest of aN/ goes as files, whole: what's beside the worktree,
+-- and in it what git doesn't carry (ignored and untracked files), put in the worktree there whatever
+-- its name (an aN taken there changes it). Everything that goes (aN/, the record, which is in the hashed manifest, the
 -- journal, queue file, kept sessions and transcripts) is listed with sizes and sha256 (streamed by
 -- sha256sum, never read into memory here), and checked: as it's staged here, as it arrives there
 -- and where it lands. Before the agent is stopped, every file is checked readable and the staged
@@ -572,8 +573,8 @@ function M.refusal(key, agent)
   elseif running and require("isovim.status").get(key, id) == "working" then
     return address .. " is mid-turn; wait for its turn to end, or cancel it"
   end
-  local w = store.dir(key) .. "/" .. id .. "/w"
-  if is_dir(w) then
+  local w = store.worktree(key, id)
+  if w then
     -- Untracked and ignored files go along as files, with the rest of aN/.
     local _, dirty = run_git(w, { "status", "--porcelain", "--untracked-files=no" })
     if dirty ~= "" then
@@ -605,9 +606,9 @@ function M.send_agent(key, agent, host, opts)
     return false, blocked .. "; it stays running here"
   end
   -- Its worktree goes as its branch, pushed to origin.
-  local w = store.dir(key) .. "/" .. id .. "/w"
+  local w = store.worktree(key, id)
   local branch
-  if is_dir(w) then
+  if w then
     local _, current = run_git(w, { "branch", "--show-current" })
     branch = current
     local pushed, _, err = run_git(w, { "push", "--quiet", "origin", "HEAD:refs/heads/" .. branch }, 120000)
@@ -616,7 +617,7 @@ function M.send_agent(key, agent, host, opts)
     end
   end
   local manifest = { agent = true, key = key, record = vim.deepcopy(agent), running = running, branch = branch,
-    from = require("isovim.remote").self() }
+    worktree = w and vim.fs.basename(w), from = require("isovim.remote").self() }
   local repo_dir = agent.repo and require("isovim.repos").dir(agent.repo) .. "/base-clone"
   if repo_dir and is_dir(repo_dir) then
     local _, url = run_git(repo_dir, { "remote", "get-url", "origin" })
@@ -636,7 +637,7 @@ function M.send_agent(key, agent, host, opts)
 
   -- Before it's stopped: everything that goes can be read, and what's staged fits.
   local own = store.dir(key) .. "/" .. id
-  local skip = branch and "w/.git" or nil
+  local skip = branch and manifest.worktree .. "/.git" or nil
   local stage = vim.fn.tempname()
   local unfit = preflight(own, skip, agent_files(key, id, agent.kind), vim.fs.dirname(stage))
   if unfit then
@@ -927,6 +928,7 @@ function M.receive_agent(stage, manifest)
     if not (saved and vim.deep_equal(saved, adopted)) then
       return undo("its record didn't save whole here")
     end
+    local made
     if manifest.branch then
       local log = store.run_dir(key) .. "/" .. id .. ".worktree_setup.log"
       vim.fn.mkdir(store.run_dir(key), "p")
@@ -935,17 +937,34 @@ function M.receive_agent(stage, manifest)
       if not path then
         return undo("could not make its worktree here: " .. tostring(branch_or_err))
       end
+      made = vim.fs.basename(path)
     end
-    -- Its aN/, over the worktree just made (whose own .git stays).
+    -- Its aN/, over the worktree just made (whose own .git stays, as does its aN/w).
     local files = manifest.files
     if files then
-      local skip = manifest.branch and "w/.git" or nil
       local from = stage .. "/" .. was
       if not is_dir(from) then
         return undo(("its files (%s/) didn't arrive"):format(was))
       end
-      if skip then
-        vim.fn.delete(from .. "/" .. skip, "rf")
+      if made then
+        -- Its worktree's files go in the one made here, whose name has this host's aN (and a host
+        -- before named worktrees sent its old aN/w).
+        local sent = manifest.worktree or "w"
+        vim.fn.delete(from .. "/" .. sent .. "/.git", "rf")
+        if vim.uv.fs_lstat(from .. "/w") and sent ~= "w" then
+          os.remove(from .. "/w")
+        end
+        if sent ~= made and is_dir(from .. "/" .. sent) then
+          vim.uv.fs_rename(from .. "/" .. sent, from .. "/" .. made)
+        end
+        files = vim.tbl_map(function(entry)
+          if entry.path == "w" and entry.type == "link" then
+            return vim.tbl_extend("force", entry, { target = made })
+          elseif entry.path == sent or vim.startswith(entry.path, sent .. "/") then
+            return vim.tbl_extend("force", entry, { path = made .. entry.path:sub(#sent + 1) })
+          end
+          return entry
+        end, files)
       end
       vim.fn.mkdir(own, "p")
       local copied = vim.system({ "cp", "-pR", from .. "/.", own }, { text = true }):wait()
