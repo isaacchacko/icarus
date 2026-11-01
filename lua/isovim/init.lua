@@ -560,6 +560,26 @@ function M.setup(opts)
       end
     end,
   })
+  -- A chat scrolls no further down than its last line and never sideways. The window would scroll
+  -- past the end, the terminal snap it back on its next refresh, and a trackpad's momentum would
+  -- scroll it past again, over and over. Runs before the redraw, so the overshoot never shows.
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = group,
+    callback = function()
+      for id in pairs(vim.v.event) do
+        local win = tonumber(id)
+        if win and vim.api.nvim_win_is_valid(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_agent_kind then
+          vim.api.nvim_win_call(win, function()
+            local view = vim.fn.winsaveview()
+            local last = math.max(1, vim.api.nvim_buf_line_count(0) - vim.api.nvim_win_get_height(0) + 1)
+            if view.topline > last or view.leftcol > 0 then
+              vim.fn.winrestview({ topline = math.min(view.topline, last), leftcol = 0 })
+            end
+          end)
+        end
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "WinResized", "WinEnter", "BufWinEnter" }, {
     group = group,
     callback = function()
