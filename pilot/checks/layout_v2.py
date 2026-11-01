@@ -1,6 +1,6 @@
 """The new layout, opt-in (iso agent --v2): an agent in a repo is <owner>/<repo>/aN, with its own dir
 ~/iso/<owner>/<repo>/aN/, its record in ~/iso/<owner>/<repo>/iso/agents/aN.json and a tmux session
-iso2-<owner>+<repo>+aN; one outside any repo is _/aN under ~/iso/_/. aN numbers come from a per-repo
+iso2-<owner>+<repo>+aN; one outside any repo is general/aN under ~/iso/general/. aN numbers come from a per-repo
 counter and are never given out twice, even after the agent and the counter file go. The sidebar,
 iso ls and --json list them beside legacy workspaces; a restart resumes the conversation by session
 id (from the run dir, or the record when the run dir lost it); iso msg parent from a child reaches its
@@ -152,16 +152,17 @@ try:
     assert iso.cli("agent", "acme/app", "terminal") == "acme/app/a4"
     assert not (records / "a0.json").exists() and not (records / "a1.json").exists()
 
-    # Outside any repo: _/aN under ~/iso/_/.
+    # Outside any repo: general/aN under ~/iso/general/ ("_", its old name, still reads as general).
     loose = iso.cli("agent", str(plain), "terminal", "--v2", "--name", "loose")
-    assert loose == "_/a0", loose
-    assert (work / "_" / "a0").is_dir() and (work / "_" / "iso" / "agents" / "a0.json").exists()
-    assert "iso2-_+a0" in sessions(iso)
-    assert iso.cli("agent", "_", "terminal", "--v2") == "_/a1"
+    assert loose == "general/a0", loose
+    assert (work / "general" / "a0").is_dir() and (work / "general" / "iso" / "agents" / "a0.json").exists()
+    assert not (work / "_").exists()
+    assert "iso2-general+a0" in sessions(iso)
+    assert iso.cli("agent", "_", "terminal", "--v2") == "general/a1"
     # Spawned at once, each takes its own number.
-    racing = [subprocess.Popen([ISO, "agent", "_", "terminal", "--v2", "--hidden"], env=iso.env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
+    racing = [subprocess.Popen([ISO, "agent", "general", "terminal", "--v2", "--hidden"], env=iso.env, stdout=subprocess.PIPE, text=True) for _ in range(4)]
     taken = sorted(p.communicate()[0].strip() for p in racing)
-    assert taken == ["_/a2", "_/a3", "_/a4", "_/a5"], taken
+    assert taken == ["general/a2", "general/a3", "general/a4", "general/a5"], taken
 
     # A read-only one starts in the repo's base clone, when there is one.
     base = iso.tmp / "home" / "repos" / "acme" / "app" / "base-clone"
@@ -173,12 +174,12 @@ try:
 
     # iso ls: every agent, legacy and new, by address; --json carries where each works and its repo.
     text = iso.cli("ls")
-    for address in (f"{legacy}/main", grandkid, "acme/app/a3", "_/a0", "_/a1"):
+    for address in (f"{legacy}/main", grandkid, "acme/app/a3", "general/a0", "general/a1"):
         assert address in text, (address, text)
         assert address in listed, address
     assert listed["acme/app/a3"]["dir"] == str(unit / "a3"), listed["acme/app/a3"]
     assert listed["acme/app/a3"]["repo"]["name"] == "acme/app", listed["acme/app/a3"]
-    assert listed["_/a0"]["workspace"] == "_" and listed["_/a0"]["agent"] == "loose"
+    assert listed["general/a0"]["workspace"] == "general" and listed["general/a0"]["agent"] == "loose"
     assert listed[f"{legacy}/main"]["dir"] == str(app) and listed[f"{legacy}/main"]["status"] != "stopped"
 
     # A repo key isn't a workspace: no archive, no move, no project dir.

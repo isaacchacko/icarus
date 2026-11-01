@@ -65,7 +65,7 @@ local agent_node
 
 -- A repo key's level: its agents (orphan dirs too), iso/, its config and base clone.
 local function repo_node(key, title)
-  local dir = store.work .. "/" .. key
+  local dir = store.key_dir(key)
   return {
     path = dir,
     title = title or key,
@@ -105,7 +105,7 @@ local function repo_node(key, title)
         local surfaces = #vim.fn.glob(dir .. "/iso/*.surface", false, true) + #vim.fn.glob(dir .. "/iso/*.md", false, true)
         rows[#rows + 1] = leaf("iso", dir .. "/iso", icons.get("workspace"), "iso", ("isovim's files: %s, journals, transcripts"):format(plural(surfaces, "surface")))
       end
-      if key ~= "_" then
+      if not store.is_pseudo(key) then
         local repos = require("isovim.repos")
         local config = repos.dir(key)
         if is_dir(config) then
@@ -122,7 +122,7 @@ end
 
 -- An agent's level: its worktree and any other dirs in aN/.
 function agent_node(key, id)
-  local dir = store.work .. "/" .. key .. "/" .. id
+  local dir = store.key_dir(key) .. "/" .. id
   local names = subdirs(dir)
   if #names == 0 then
     return nil
@@ -161,7 +161,7 @@ local function group_node(prefix)
     rows = function()
       local rows = {}
       for _, name in ipairs(subdirs(dir)) do
-        local key = prefix .. "/" .. name
+        local key = store.folder_key(prefix .. "/" .. name)
         local path = dir .. "/" .. name
         if is_key(path) then
           local agents = #vim.tbl_filter(function(n)
@@ -171,7 +171,7 @@ local function group_node(prefix)
           local glyph = type(config.glyph) == "string" and config.glyph ~= "" and config.glyph or icons.get("repo")
           rows[#rows + 1] = { id = name, path = path, glyph = glyph, label = name, desc = key .. " · " .. plural(agents, "agent"), node = repo_node(key) }
         elseif #subdirs(path) > 0 then
-          rows[#rows + 1] = { id = name, path = path, glyph = icons.get("workspace"), label = name, desc = key, node = group_node(key) }
+          rows[#rows + 1] = { id = name, path = path, glyph = icons.get("workspace"), label = name, desc = key, node = group_node(prefix .. "/" .. name) }
         end
       end
       return rows
@@ -214,7 +214,7 @@ function M.top()
       local rows = {
         { id = "config", path = store.root, glyph = "\u{f013}", label = "config", desc = "isovim's config, " .. store.home_relative(store.root), node = config_node() },
       }
-      local pseudo = { root = { "root", "Root, the host root's" }, general = { "general", "General, agents in no repo" }, _ = { "general", "General, agents in no repo" } }
+      local pseudo = { root = { "root", "Root, the host root's" }, general = { "general", "General, agents in no repo" } }
       for _, name in ipairs(subdirs(work)) do
         local path = work .. "/" .. name
         local special = pseudo[name]

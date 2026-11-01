@@ -125,10 +125,10 @@ local function repo_key(dir)
   return keys[dir] or nil
 end
 
--- A workspace's repo; a new-layout unit is named for its repo (nil for "_").
+-- A workspace's repo; a new-layout unit is named for its repo (nil for a pseudo-repo).
 local function ws_key(ws)
   if store.v2(ws.id) then
-    return ws.id ~= "_" and ws.id or nil
+    return not store.is_pseudo(ws.id) and ws.id or nil
   end
   return repo_key(ws.dir)
 end
@@ -202,7 +202,7 @@ local function send_as(from, ws, agent, text)
 end
 
 -- A new-layout agent (<repo key>/aN) that runs over ACP (isovim.acp), in the repo dir names, else
--- the spawner's repo, else in no repo ("_", General). A read-only one starts in its repo's base
+-- the spawner's repo, else in no repo (general/aN). A read-only one starts in its repo's base
 -- clone, fetched first (panes.start).
 local function spawn_acp(key, dir, spec)
   local agent, err = store.add_agent(key, vim.tbl_extend("force", spec, { kind = "claude", acp = true, checkout = dir }))
@@ -227,6 +227,11 @@ end
 -- dir, as spawns did before. --acp is the default now, and still accepted.
 function M.spawn(args)
   local repo = option(args, "--repo")
+  -- --repo general (or _, its old name) is General, no repo.
+  local to_general = repo and store.canon(repo) == store.GENERAL
+  if to_general then
+    repo = nil
+  end
   local role = option(args, "--role", "worker")
   local read_only = flag(args, "--read-only")
   local legacy = flag(args, "--legacy")
@@ -241,15 +246,20 @@ function M.spawn(args)
     fail(("a %s spawns roles up to its own, and %s is higher"):format(mine, role))
   end
   local dir = repo and repo_dir(repo)
-  if not dir and caller_ws and not store.v2(caller_ws) and store.dir(caller_ws) ~= store.path(caller_ws) then
+  if not dir and not to_general and caller_ws and not store.v2(caller_ws) and store.dir(caller_ws) ~= store.path(caller_ws) then
     dir = store.dir(caller_ws)
   end
-  if not dir and not address and not legacy then
+  if not dir and not address and not legacy and not to_general then
     dir = checkout_of(vim.uv.cwd())
   end
-  local key = not legacy and (dir and require("isovim.repos").of(dir) or (caller_ws and store.v2(caller_ws) and caller_ws) or "_") or nil
-  check_unique(role, dir and repo_key(dir) or (key and key ~= "_" and key or nil))
-  if read_only and key == "_" then
+  -- An agent in root/ (the host root) spawns into general/, as the root's own key is its alone.
+  local caller_key = caller_ws and store.v2(caller_ws) and store.canon(caller_ws) or nil
+  if caller_key == store.ROOT then
+    caller_key = nil
+  end
+  local key = not legacy and (dir and require("isovim.repos").of(dir) or (not to_general and caller_key) or store.GENERAL) or nil
+  check_unique(role, dir and repo_key(dir) or (key and not store.is_pseudo(key) and key or nil))
+  if read_only and key and store.is_pseudo(key) then
     fail("a read-only agent works in its repo's base clone: spawn it with --repo and a git repo")
   end
   if not name then

@@ -67,31 +67,23 @@ end
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
 
--- The pseudo-repos, keys beside owner/repo: root (the host root's surfaces) and general (no repo's).
--- "_" is general too: it's the key store gives agents in no repo, so it's taken and made general.
-M.pseudo = { root = true, general = true }
-local ALIAS = { _ = "general" }
-
-local function canon(repo)
-  return ALIAS[repo] or repo
-end
+-- The pseudo-repos, keys beside owner/repo: root (the host root's) and general (no repo's), the same
+-- keys store gives agents. "_" (general's old key) is still read as general.
+M.pseudo = store.pseudo
+local canon = store.canon
 
 -- The surface key for a repo key (owner/repo, root, general or _); nil when it's none of those.
 ---@return string?
 function M.key(key)
-  key = canon(key)
-  if M.pseudo[key] or (key ~= "_" and store.valid_key(key)) then
+  key = store.canon(key)
+  if store.valid_key(key) then
     return key
   end
 end
 
 -- A repo's iso/.
 function M.dir(repo)
-  repo = canon(repo)
-  if M.pseudo[repo] then
-    return store.work .. "/" .. repo .. "/iso"
-  end
-  return store.path(repo)
+  return store.path(store.canon(repo))
 end
 
 -- Where a broken surface's reason goes.
@@ -123,7 +115,7 @@ local function write_json(path, value)
 end
 
 -- The repo keys with an iso/ under the work root, the pseudo-repos among them; nothing below one is
--- looked in. _/ is store's (its agents' records), not general's.
+-- looked in. An old _/ is isovim.migrate's to move into general/.
 ---@return string[]
 function M.repos()
   local found = {}
@@ -132,8 +124,9 @@ function M.repos()
       found[#found + 1] = name
     end
   end
-  local function walk(dir, key, depth)
-    if depth == 1 and (M.pseudo[key] or key == "_") then
+  local function walk(dir, folder, depth)
+    local key = folder and store.folder_key(folder)
+    if depth == 1 and (M.pseudo[folder] or folder == "_") then
       return
     elseif key and store.valid_key(key) and vim.fn.isdirectory(dir .. "/iso") == 1 then
       found[#found + 1] = key
@@ -144,7 +137,7 @@ function M.repos()
     end
     for name, kind in vim.fs.dir(dir) do
       if kind == "directory" and not vim.startswith(name, ".") then
-        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+        walk(dir .. "/" .. name, folder and folder .. "/" .. name or name, depth + 1)
       end
     end
   end

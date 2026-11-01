@@ -7,6 +7,11 @@ package.path = lua_dir .. "/?.lua;" .. lua_dir .. "/?/init.lua;" .. package.path
 
 local commands = require("isovim.cli.commands")
 
+-- An old ~/iso/_/ moves to general/ and root/ first, whatever the command (one stat when it's gone).
+pcall(function()
+  require("isovim.migrate").run()
+end)
+
 local args = vim.deepcopy(_G.arg)
 local command = table.remove(args, 1)
 local entry = commands.find(command)

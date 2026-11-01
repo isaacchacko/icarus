@@ -107,15 +107,16 @@ local function reroute(address)
   return moved
 end
 
--- A scope from what was typed: host, owner/repo, or a dir in a repo.
+-- A scope from what was typed: host (or root), owner/repo, or a dir in a repo.
 local function scope_of(text)
-  if text == "host" then
+  -- root, the host root's pseudo-repo, is the host's too.
+  if text == "host" or text == store.ROOT then
     return "host"
   end
   local dir = vim.fs.normalize(text)
   if vim.fn.isdirectory(dir) == 1 then
     return require("isovim.repos").of(vim.uv.fs_realpath(dir) or dir) or fail(text .. " isn't in a repo with an origin")
-  elseif text ~= "_" and store.valid_key(text) then
+  elseif not store.is_pseudo(text) and store.valid_key(text) then
     return text:lower()
   end
   fail(("%s is neither host, a repo (owner/repo) nor a dir in one"):format(text))
@@ -162,7 +163,8 @@ local function on(scope, task)
     out(("root mode is on for %s: %s, its %s already, answers its routers now"):format(label(scope), address, role))
   else
     -- A worker, promoted before its first session opens, so that session has the role's prompt.
-    local key = scope == "host" and "_" or scope
+    -- The host root lives in root/, the pseudo-repo of its own.
+    local key = scope == "host" and store.ROOT or scope
     local dir = scope ~= "host" and known_clone(scope) or nil
     local agent, err = store.add_agent(key, { kind = "claude", acp = true, name = role, role = "worker", checkout = dir,
       prompt = first })
@@ -186,7 +188,7 @@ local function off(scope)
   end
   rootmode.set(scope, nil)
   local moved = reroute(mode.agent)
-  local next_root = rootmode.route(scope ~= "host" and scope or "_")
+  local next_root = rootmode.route(scope ~= "host" and scope or store.GENERAL)
   local ws, id = mode.agent:match("^(.*)/([^/]+)$")
   if ws and store.agent(ws, id) then
     send(mode.agent, ("Root mode is off for %s: its routers' questions go to %s now. You keep your role.")

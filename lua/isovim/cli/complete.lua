@@ -119,9 +119,9 @@ local KINDS = {
   -- key, or a workspace's checkout), else the cwd's origin.
   action = function(found)
     local repos = require("isovim.repos")
-    local ws = vim.env.ISOVIM_WS
+    local ws = vim.env.ISOVIM_WS and store.canon(vim.env.ISOVIM_WS)
     local repo
-    if ws and ws ~= "_" and store.v2(ws) then
+    if ws and not store.is_pseudo(ws) and store.v2(ws) then
       repo = ws
     elseif ws and ws ~= "" and not store.v2(ws) and vim.uv.fs_stat(store.path(ws)) then
       repo = repos.of(store.dir(ws))

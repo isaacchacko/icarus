@@ -228,7 +228,7 @@ try:
 
     print("\n# root mode on for the host")
     rc, out, err = run("rootmode", "on", "host")
-    HR = "_/a0"
+    HR = "root/a0"
     check(rc == 0 and HR in out and "a new root" in out, "iso rootmode on host spawns the host root", (rc, out, err))
     check(record(HR)["role"] == "root" and record(HR).get("acp"), "a worker promoted to root, over ACP", record(HR))
     new = opened(HR)

@@ -4,7 +4,8 @@ _meta, the TUI's chat drawing it, isovim's hooks firing from _meta's settings (t
 the session kept with CLAUDE_CODE_ENTRYPOINT=isovim (so claude --resume lists it), and a restart
 resuming that session without a model call. Then the sessions (L2), on a few more haiku prompts:
 a fork at the first answer doesn't know what came after it and a whole fork does (each resumed in its
-own dir), and AskUserQuestion comes as a question surface whose answer reaches the agent
+own dir), AskUserQuestion comes as a question surface whose answer reaches the agent, and a host root
+kept the old way at _/a0 is moved to root/a0 and resumes its session from there, remembering it
 (ISOVIM_ACP_REAL_SESSIONS=0 skips these). It spends a little of your Claude usage, so it only runs
 with ISOVIM_ACP_REAL=1; otherwise it says it skipped.
 Run from pilot/: ISOVIM_ACP_REAL=1 uv run --with pynvim --with pillow --with fonttools python checks/acp_real.py"""
@@ -43,7 +44,7 @@ def run(*args, timeout=200, cwd=None):
 
 
 def journal():
-    path = iso.tmp / "work" / "_" / "iso" / "journal" / "a0.jsonl"
+    path = iso.tmp / "work" / "general" / "iso" / "journal" / "a0.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
@@ -57,7 +58,7 @@ try:
     prompt = ("Answer with one lowercase word and nothing else: the name of the agent multiplexer "
               "your system prompt says you are running inside.")
     rc, addr, err = run("spawn", "--name", "smoke", prompt, cwd=iso.tmp)
-    check(rc == 0 and addr == "_/a0", "iso spawn (ACP by default) with the real adapter", (rc, addr, err))
+    check(rc == 0 and addr == "general/a0", "iso spawn (ACP by default) with the real adapter", (rc, addr, err))
     iso.wait(lambda: any(e["kind"] == "turn" and e["state"] == "end" for e in journal()), "the turn to end", 180)
     ended = [e for e in journal() if e["kind"] == "turn" and e["state"] == "end"][0]
     notices = [e["text"] for e in journal() if e["kind"] == "notice"]
@@ -68,10 +69,10 @@ try:
     sid = next(e["sessionId"] for e in journal() if e["kind"] == "session")
     # What your own CLAUDE.md files @import, appended to the session prompt by the supervisor.
     print("     imports:", next(e for e in journal() if e["kind"] == "session").get("imports"))
-    transcript = iso.tmp / "work" / "_" / "iso" / "transcripts" / "a0.txt"
+    transcript = iso.tmp / "work" / "general" / "iso" / "transcripts" / "a0.txt"
     iso.wait(lambda: transcript.exists(), "the hooks' transcript", 30)
     check(transcript.exists(), "isovim's hooks fire from _meta's settings (the prompt hook wrote the transcript)")
-    hook_session = iso.tmp / "home" / "run" / "_" / "a0.session"
+    hook_session = iso.tmp / "home" / "run" / "general" / "a0.session"
     check(hook_session.read_text().strip() == sid, "the session id is recorded", hook_session.read_text())
     config = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     found = list((config / "projects").glob(f"*/{sid}.jsonl"))
@@ -82,7 +83,7 @@ try:
         modes = {json.loads(line).get("permissionMode") for line in found[0].read_text().splitlines()} - {None}
         check(modes == {"bypassPermissions"}, "Claude Code ran the prompt in bypassPermissions", modes)
     iso.cli("open", addr)
-    chat = lambda: iso.lua("local c = require('isovim.acp.chat').get('_', 'a0')"  # noqa: E731
+    chat = lambda: iso.lua("local c = require('isovim.acp.chat').get('general', 'a0')"  # noqa: E731
                            " return c and vim.api.nvim_buf_get_lines(c.buf, 0, -1, false) or {}")
     iso.wait(lambda: any(line.startswith("⏺ ") and "isovim" in line.lower() for line in chat()), "the chat drawn", 20)
     check(any(line.startswith("❯ Answer with one lowercase word") for line in chat()), "the chat shows the prompt and the answer",
@@ -133,13 +134,13 @@ try:
         print("\n# sessions (L2): a fork at a message and a whole one, AskUserQuestion through the Inbox")
 
         def journal_of(agent):
-            path = iso.tmp / "work" / "_" / "iso" / "journal" / f"{agent}.jsonl"
+            path = iso.tmp / "work" / "general" / "iso" / "journal" / f"{agent}.jsonl"
             return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
         def turn(agent, text, timeout=180):
             ends = len([e for e in journal_of(agent) if e["kind"] == "turn" and e["state"] == "end"])
             seq = journal_of(agent)[-1]["seq"] if journal_of(agent) else 0
-            rc, _, err = run("send", f"_/{agent}", text)
+            rc, _, err = run("send", f"general/{agent}", text)
             assert rc == 0, err
             iso.wait(lambda: len([e for e in journal_of(agent) if e["kind"] == "turn" and e["state"] == "end"]) > ends,
                      f"{agent}'s turn", timeout)
@@ -150,20 +151,20 @@ try:
         check(bool(first["update"].get("messageId")), "the adapter stamps its chunks with a messageId", first["update"])
         turn("a0", "Remember the word kiwi. Reply with just: ok")
         recall = "Did I ask you to remember a word? Reply with only that word, or with none."
-        rc, at, err = run("fork", "_/a0", "--at", str(first["seq"]))
-        check(rc == 0 and at == "_/a1", "iso fork --at the first answer", (rc, at, err))
+        rc, at, err = run("fork", "general/a0", "--at", str(first["seq"]))
+        check(rc == 0 and at == "general/a1", "iso fork --at the first answer", (rc, at, err))
         iso.wait(lambda: any(e["kind"] == "session" and e["how"] == "fork" for e in journal_of("a1")), "a1's forked session", 120)
         notices = [e["text"] for e in journal_of("a1") if e["kind"] == "notice"]
         check(not notices, "it forked at that message", notices)
         answer = turn("a1", recall)
         check("kiwi" not in answer.lower(), "the fork at the first answer doesn't know kiwi (its own cwd, resumed there)", answer)
-        rc, whole, err = run("fork", "_/a0")
+        rc, whole, err = run("fork", "general/a0")
         iso.wait(lambda: any(e["kind"] == "session" and e["how"] == "fork" for e in journal_of("a2")), "a2's forked session", 120)
         answer = turn("a2", recall)
         check("kiwi" in answer.lower(), "the whole fork does", answer)
 
         seq = journal_of("a0")[-1]["seq"]
-        run("send", "_/a0", "Use the AskUserQuestion tool to ask me which color I prefer, with the options Red and Blue."
+        run("send", "general/a0", "Use the AskUserQuestion tool to ask me which color I prefer, with the options Red and Blue."
                              " After I answer, reply with only the color I chose.")
         asked = iso.wait(lambda: next((e for e in journal_of("a0") if e["seq"] > seq and e["kind"] == "question"
                                        and e["state"] == "asked"), None), "AskUserQuestion as a question surface", 180)
@@ -175,6 +176,41 @@ try:
         replies = "".join(e["update"]["content"].get("text", "") for e in journal_of("a0")
                           if e["seq"] > asked["seq"] and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
         check("blue" in replies.lower(), "the answer reached the agent", replies)
+
+        print("\n# the old _/ moved: a host root that lived at _/a0 resumes its session from root/a0")
+        # a0 (it knows kiwi) as the old isovim kept a host root: stopped, its files under _/.
+        work, run_root = iso.tmp / "work", iso.tmp / "home" / "run"
+        subprocess.run(["tmux", "-L", iso.env["ISOVIM_TMUX_SOCKET"], "kill-session", "-t", "=iso2-general+a0"], capture_output=True)
+        iso.wait(lambda: "iso2-general+a0" not in subprocess.run(["tmux", "-L", iso.env["ISOVIM_TMUX_SOCKET"], "list-sessions"],
+                                                                capture_output=True, text=True).stdout, "a0 stopped", 10)
+        old_sid = json.loads((work / "general" / "iso" / "agents" / "a0.json").read_text())["session"]
+        (work / "_" / "iso" / "agents").mkdir(parents=True)
+        (work / "_" / "iso" / "journal").mkdir(parents=True)
+        (run_root / "_").mkdir(parents=True)
+        rec = json.loads((work / "general" / "iso" / "agents" / "a0.json").read_text())
+        rec["role"] = "root"
+        (work / "_" / "iso" / "agents" / "a0.json").write_text(json.dumps(rec))
+        (work / "general" / "iso" / "agents" / "a0.json").unlink()
+        (work / "general" / "a0").rename(work / "_" / "a0")
+        (work / "general" / "iso" / "journal" / "a0.jsonl").rename(work / "_" / "iso" / "journal" / "a0.jsonl")
+        for f in (run_root / "general").glob("a0.*"):
+            f.rename(run_root / "_" / f.name)
+        rc, out, err = run("ls")
+        check(rc == 0 and not (work / "_").exists() and (work / "root" / "iso" / "agents" / "a0.json").exists(),
+              "iso ls moved _/a0 to root/a0", (rc, err))
+        moved_journal = lambda: [json.loads(line) for line in (work / "root" / "iso" / "journal" / "a0.jsonl").read_text().splitlines()]  # noqa: E731
+        ends = len([e for e in moved_journal() if e["kind"] == "turn" and e["state"] == "end"])
+        seq = moved_journal()[-1]["seq"]
+        rc, _, err = run("send", "_/a0", recall)
+        check(rc == 0, "iso send _/a0 starts it at root/a0", err)
+        iso.wait(lambda: len([e for e in moved_journal() if e["kind"] == "turn" and e["state"] == "end"]) > ends, "root/a0's turn", 180)
+        sessions = [e for e in moved_journal() if e["seq"] > seq and e["kind"] == "session"]
+        notices = [e["text"] for e in moved_journal() if e["seq"] > seq and e["kind"] == "notice"]
+        check(sessions and sessions[-1]["sessionId"] == old_sid and sessions[-1]["how"] in ("resume", "load") and not notices,
+              "it resumed the same session from its new dir", (sessions, notices))
+        answer = "".join(e["update"]["content"].get("text", "") for e in moved_journal()
+                         if e["seq"] > seq and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
+        check("kiwi" in answer.lower(), "and remembers what it was told before the move", answer)
 finally:
     iso.stop()
 

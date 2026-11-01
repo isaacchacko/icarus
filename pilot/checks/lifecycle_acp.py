@@ -121,7 +121,7 @@ try:
     check(rc == 0 and a1 == "acme/app/a1" and record(a1).get("checkout") == str(app.resolve()),
           "from a shell in the clone (a subdir), iso spawn picks its repo and the clone", (rc, a1, err, record(a1) if rc == 0 else None))
     rc, g0, err = run("spawn", "--name", "loose", cwd=plain)
-    check(rc == 0 and g0 == "_/a0" and record(g0).get("acp") is True, "outside a repo, iso spawn goes to General (_/a0)", (rc, g0, err))
+    check(rc == 0 and g0 == "general/a0" and record(g0).get("acp") is True, "outside a repo, iso spawn goes to General (general/a0)", (rc, g0, err))
     rc, out, err = run("spawn", "--read-only", cwd=plain)
     check(rc == 1 and "read-only agent works in its repo's base clone" in err, "a read-only spawn in no repo is refused", (rc, out, err))
 
@@ -209,12 +209,12 @@ try:
     check(True, "and its chat opens")
     iso.focus_sidebar()
     lua("vim.cmd.stopinsert()")
-    before = agents_of("_")
+    before = agents_of("general")
     i = iso.wait(lambda: header("general"), "the general header")
     lua("vim.api.nvim_win_set_cursor(0, {..., 0})", i + 1)
     iso.keys("s")
-    new = iso.wait(lambda: agents_of("_") - before, "s spawned in General", 30)
-    check(record("_/" + new.pop()).get("acp") is True, "s on General makes _/aN, over ACP")
+    new = iso.wait(lambda: agents_of("general") - before, "s spawned in General", 30)
+    check(record("general/" + new.pop()).get("acp") is True, "s on General makes general/aN, over ACP")
 finally:
     iso.stop()
 

@@ -19,6 +19,7 @@ end
 -- key holds either). Every name is made and read here, so the shape can change in one place; a
 -- name of any other shape isn't an agent's.
 function M.encode(ws, agent)
+  ws = store.canon(ws)
   if store.v2(ws) then
     return ("iso2-%s+%s"):format((ws:gsub("/", "+"):gsub("%.", ",")), agent)
   end
@@ -29,7 +30,12 @@ end
 function M.decode(name)
   local key, agent = (name or ""):match("^iso2%-(.+)%+(a%d+)$")
   if key then
-    return (key:gsub("%+", "/"):gsub(",", ".")), agent
+    key = key:gsub("%+", "/"):gsub(",", ".")
+    -- An agent's session from before general/ and root/ (iso2-_+aN) is read as where it is now.
+    if key == "_" then
+      return (store.canon_address("_/" .. agent)):match("^(.*)/([^/]+)$")
+    end
+    return key, agent
   end
   return (name or ""):match("^isovim%-(%x%x%x%x%x%x)%-(%S+)$")
 end
@@ -38,6 +44,22 @@ local session = M.encode
 
 function M.running(ws, agent)
   return tmux({ "has-session", "-t", "=" .. session(ws, agent) }).code == 0
+end
+
+-- A session by its name as it is, for one named before its agent moved (isovim.migrate): whether
+-- it's up, its pane's pid, and ending it.
+function M.raw_running(name)
+  return tmux({ "has-session", "-t", "=" .. name }).code == 0
+end
+
+---@return integer?
+function M.raw_pid(name)
+  local result = tmux({ "list-panes", "-t", "=" .. name, "-F", "#{pane_pid}" })
+  return result.code == 0 and tonumber((result.stdout or ""):match("%d+")) or nil
+end
+
+function M.raw_kill(name)
+  return tmux({ "kill-session", "-t", "=" .. name }).code == 0
 end
 
 -- This file sits at <repo>/lua/isovim/panes.lua.

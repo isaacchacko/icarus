@@ -83,7 +83,7 @@ M.list = {
        iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [<prompt...>]
                                      start a claude agent over ACP on the prompt, as the
                                      repo's next <owner>/<repo>/aN (from an agent, in its own
-                                     repo; from a shell, the clone it's in; else General, _/aN),
+                                     repo; from a shell, the clone it's in; else general/aN),
                                      and print its address. It starts in aN/ and gets its
                                      worktree, aN/w, on its first edit (or iso <role> wt).
                                      An agent's spawn is its child, of a role no higher than

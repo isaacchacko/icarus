@@ -5,7 +5,7 @@
 -- runs while nothing happens. Past 1 MiB the log moves to events.jsonl.1 and a new one starts.
 --
 -- Topics are dot-separated parts. An agent is two parts, its scope and its id: a new-layout agent's
--- scope is its repo key (<owner>/<repo>, or "_" in no repo) and its id aN; a legacy agent's scope
+-- scope is its repo key (<owner>/<repo>, or general or root) and its id aN; a legacy agent's scope
 -- is its workspace id and its id the agent's. A repo (<owner>/<repo>) is one part.
 --   agent.<scope>.<id>.status    its hooks wrote a new state   {addr, scope, id, state, previous}
 --   agent.<scope>.<id>.spawned   its program started           {addr, scope, id, kind, name, role, parent}

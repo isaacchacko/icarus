@@ -20,16 +20,35 @@ local META = ".isovim.json"
 --   <key>/iso/next             the next N, taken under a lock: a number is never given out twice
 --   <key>/iso/                 also the repo's transcripts/, layout.json and the .isovim.json
 --                              holding its PRs and pins, as a workspace's own dir holds them
--- <key> is the repo as isovim.repos names it ("owner/repo"), or "_" for agents in no repo. A key
--- stands wherever a workspace id does (store.list, run dirs, tmux names), so an agent's address is
--- <key>/aN. A workspace id never holds a "/" and is never "_", so the two can't be confused.
-function M.v2(id)
-  return id == "_" or (type(id) == "string" and id:find("/", 1, true) ~= nil)
+-- <key> is the repo as isovim.repos names it ("owner/repo"), or a pseudo-repo: "general" for agents
+-- in no repo, "root" for the host root that `iso rootmode on host` spawns. A key stands wherever a
+-- workspace id does (store.list, run dirs, tmux names), so an agent's address is <key>/aN. A
+-- workspace id is six hex digits, never holding a "/" nor being a pseudo-repo's name, so the two
+-- can't be confused.
+-- "_" was general's key before; it is still read as general wherever one is typed (M.canon, and
+-- M.canon_address for _/aN, which isovim.migrate may have moved to root/ or renumbered), but it's
+-- never written: isovim.migrate moves an old ~/iso/_/ on the first start.
+M.GENERAL, M.ROOT = "general", "root"
+M.pseudo = { general = true, root = true }
+
+---@return string
+function M.canon(key)
+  return key == "_" and M.GENERAL or key
 end
 
--- A key safe as a path under the work root: "_", or two or more names as repos.normalize makes them.
+function M.is_pseudo(key)
+  return M.pseudo[M.canon(key) or ""] == true
+end
+
+function M.v2(id)
+  id = M.canon(id)
+  return M.pseudo[id or ""] == true or (type(id) == "string" and id:find("/", 1, true) ~= nil)
+end
+
+-- A key safe as a path under the work root: a pseudo-repo (or "_"), or two or more names as
+-- repos.normalize makes them.
 function M.valid_key(key)
-  if key == "_" then
+  if M.is_pseudo(key) then
     return true
   end
   local parts = vim.split(key or "", "/", { plain = true })
@@ -38,8 +57,76 @@ function M.valid_key(key)
   end)
 end
 
+-- root and general are reserved under the work root: a real owner of one of those names (or "_",
+-- the old general's) gets its folder with a "_" after it, and one already ending in "_"s gets one
+-- more, so a folder name always says which owner it is.
+local function reserved(owner)
+  return owner:match("^root_*$") or owner:match("^general_*$") or owner:match("^_+$")
+end
+
+-- A key's folder relative to the work root.
+function M.key_folder(key)
+  key = M.canon(key)
+  if M.pseudo[key] then
+    return key
+  end
+  local owner, rest = key:match("^([^/]+)(/.*)$")
+  if owner and reserved(owner) then
+    return owner .. "_" .. rest
+  end
+  return key
+end
+
+-- The key a folder under the work root (relative, "owner/repo") is: M.key_folder's inverse.
+function M.folder_key(folder)
+  local owner, rest = folder:match("^([^/]+)(/.*)$")
+  if owner and owner:match("_$") and reserved(owner:sub(1, -2)) then
+    return owner:sub(1, -2) .. rest
+  end
+  return folder
+end
+
+-- The migration's map of old addresses to new ones (_/aN to general/aM or root/aM), isovim.migrate's.
+M.migrated_file = M.root .. "/migrated.json"
+local migrated = { at = -1 }
+local function migrated_map()
+  local stat = vim.uv.fs_stat(M.migrated_file)
+  local at = stat and stat.mtime.sec + stat.mtime.nsec / 1e9 or 0
+  if at ~= migrated.at then
+    local ok, lines = pcall(vim.fn.readfile, M.migrated_file)
+    local decoded, map = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+    migrated = { at = at, map = decoded and type(map) == "table" and map or {} }
+  end
+  return migrated.map
+end
+
+-- An address as it is now: _/aN (and _ alone, and _/<name>) as general's, or where the migration
+-- moved it. A host prefix is kept; another host's _/aN only becomes general/aN, as that host's own
+-- map isn't known here (it resolves the address itself when a command goes there).
+---@param address string? <ws>/<agent>, <host>:<ws>/<agent>, or a key
+---@param here? boolean the host prefix, if any, is this host's
+function M.canon_address(address, here)
+  if type(address) ~= "string" then
+    return address
+  end
+  local host, rest = address:match("^([%w_.-]+:)(.*)$")
+  rest = rest or address
+  if rest == "_" then
+    return (host or "") .. M.GENERAL
+  elseif rest:sub(1, 2) ~= "_/" then
+    return address
+  end
+  local moved = (not host or here) and migrated_map()[rest]
+  return (host or "") .. (type(moved) == "string" and moved or M.GENERAL .. rest:sub(2))
+end
+
+-- A key's folder under the work root.
+function M.key_dir(key)
+  return M.work .. "/" .. M.key_folder(key)
+end
+
 local function records(key)
-  return M.work .. "/" .. key .. "/iso/agents"
+  return M.key_dir(key) .. "/iso/agents"
 end
 
 -- Where a new-layout agent's record is; also its ISOVIM_META.
@@ -83,7 +170,7 @@ end
 -- A repo key's "/" becomes "+" (never in a key), so every run dir sits right under run/, where the
 -- sidebar watches.
 function M.run_dir(id)
-  return M.run .. "/" .. id:gsub("/", "+")
+  return M.run .. "/" .. M.canon(id):gsub("/", "+")
 end
 
 function M.state_file(ws, agent)
@@ -111,7 +198,7 @@ end
 -- A workspace's own dir, or a repo key's iso/: where its .isovim.json, layout.json and transcripts are.
 function M.path(id)
   if M.v2(id) then
-    return M.work .. "/" .. id .. "/iso"
+    return M.key_dir(id) .. "/iso"
   end
   return M.workspaces .. "/" .. id
 end
@@ -160,7 +247,7 @@ end
 -- A repo key's dir holds its agents' own dirs (M.agent_dir).
 function M.dir(id)
   if M.v2(id) then
-    return M.work .. "/" .. id
+    return M.key_dir(id)
   end
   return project_dir(id, read_meta(M.path(id)))
 end
@@ -188,7 +275,12 @@ end
 ---@return string[]
 local function keys()
   local found = {}
-  local function walk(dir, key, depth)
+  local function walk(dir, folder, depth)
+    -- An old _/ is isovim.migrate's to move, never a key of its own.
+    if folder == "_" then
+      return
+    end
+    local key = folder and M.folder_key(folder)
     if key and vim.uv.fs_stat(dir .. "/iso/agents") then
       if M.valid_key(key) and #vim.fn.glob(records(key) .. "/a*.json", false, true) > 0 then
         found[#found + 1] = key
@@ -200,7 +292,7 @@ local function keys()
     end
     for name, kind in vim.fs.dir(dir) do
       if kind == "directory" and not vim.startswith(name, ".") then
-        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+        walk(dir .. "/" .. name, folder and folder .. "/" .. name or name, depth + 1)
       end
     end
   end
@@ -219,7 +311,7 @@ function M.list()
       dir = M.dir(key),
       created = created_at(M.path(key), {}) or 0,
       modified = stat and stat.mtime.sec or 0,
-      repo = key ~= "_" and key or nil,
+      repo = not M.pseudo[key] and key or nil,
     }
   end
   for id, kind in vim.fs.dir(M.workspaces) do
@@ -468,7 +560,7 @@ end
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 ---@field read_only? boolean a new-layout agent that works in its repo's base clone; on a workspace's
 --- agent, iso spawn --read-only records it and nothing enforces it yet
----@field repo? string a new-layout agent's repo key; nil in "_"
+---@field repo? string a new-layout agent's repo key; nil in a pseudo-repo (general, root)
 ---@field created? integer when a new-layout agent was made
 ---@field session? string a new-layout agent's conversation id, as also kept in its run dir
 ---@field script? string on a "command" pane isovim runs a repo script or action in: its name ("setup",
@@ -581,7 +673,7 @@ local function add_record(key, spec)
   end
   local id = "a" .. n
   local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
-    read_only = spec.read_only or false, repo = key ~= "_" and key or nil, created = os.time(), cmd = spec.cmd,
+    read_only = spec.read_only or false, repo = not M.pseudo[key] and key or nil, created = os.time(), cmd = spec.cmd,
     hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of,
     acp = spec.acp or nil }
   write_json(M.record_file(key, id), record)
@@ -595,6 +687,7 @@ end
 ---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean, checkout?: string, script?: string, of?: string, acp?: boolean}
 ---@return isovim.Agent? agent, string? err nil only for a repo key
 function M.add_agent(ws, spec)
+  ws = M.canon(ws)
   if M.v2(ws) then
     return add_record(ws, spec)
   end

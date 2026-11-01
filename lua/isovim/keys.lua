@@ -22,13 +22,6 @@ local function toast(message, level)
   Snacks.notify(message, { title = "isovim", level = level })
 end
 
--- A key whose target isn't built yet says so.
-local function not_yet(what)
-  return function()
-    toast(what .. ": not yet")
-  end
-end
-
 local hinted = {} ---@type table<string, true>
 
 -- The first press of a retiring key in a session names the key that replaced it.
@@ -236,7 +229,7 @@ function M.repo_dir()
   end
   if not ws or current_scope() == scope.TERMINALS then
     return vim.fs.normalize("~")
-  elseif store.v2(ws) and ws ~= "_" then
+  elseif store.v2(ws) and not store.is_pseudo(ws) then
     local base = repos.dir(ws) .. "/base-clone"
     return vim.fn.isdirectory(base) == 1 and base or store.dir(ws)
   end
@@ -398,7 +391,9 @@ M.GROUP = {
   { ">", function()
     sidebar().step_host(1)
   end, "the next host" },
-  { "x", not_yet("Root mode"), "root mode on the repo (not yet)" },
+  { "x", function()
+    sidebar().toggle_root_mode()
+  end, "root mode on or off for the repo in focus (in Root or General: the host)" },
   { "j", function()
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },

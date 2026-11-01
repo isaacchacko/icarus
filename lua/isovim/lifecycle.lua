@@ -39,14 +39,16 @@ end
 -- itself may be one), and inside the work root. nil, why otherwise.
 ---@return string? path, string? why
 function M.agent_path(key, id)
-  if not (is_agent_id(id) and (store.valid_key(key) or key == "root" or key == "general")) then
+  key = store.canon(key)
+  if not (is_agent_id(id) and store.valid_key(key)) then
     return nil, ("%s/%s is not an agent's address"):format(tostring(key), tostring(id))
   end
   local work = real(store.work)
   if not work then
     return nil, "the work root " .. store.work .. " is missing"
   end
-  local path = store.work .. "/" .. key .. "/" .. id
+  local folder = store.key_folder(key)
+  local path = store.work .. "/" .. folder .. "/" .. id
   local stat = lstat(path)
   if not stat then
     return nil, path .. " is gone"
@@ -55,8 +57,8 @@ function M.agent_path(key, id)
   elseif stat.type ~= "directory" then
     return nil, path .. " is not a dir"
   end
-  if real(path) ~= work .. "/" .. key .. "/" .. id then
-    return nil, ("%s resolves to %s, outside %s/%s"):format(path, tostring(real(path)), work, key)
+  if real(path) ~= work .. "/" .. folder .. "/" .. id then
+    return nil, ("%s resolves to %s, outside %s/%s"):format(path, tostring(real(path)), work, folder)
   end
   return path
 end
@@ -96,7 +98,7 @@ function M.plan(key, id, record)
   end
   -- A script pane has nothing of its own to tear down.
   if not (record and record.of) then
-    local repo = record and record.repo or (key ~= "_" and store.valid_key(key) and key or nil)
+    local repo = record and record.repo or (not store.is_pseudo(key) and store.valid_key(key) and key or nil)
     local name = record and record.name or id
     -- Looked up only: an agent's dir never imports its own scripts into the repo's config.
     plan.teardown = require("isovim.scripts").line(plan.cwd, require("isovim.worktree").repo_of(plan.cwd) or plan.cwd, name,
@@ -158,7 +160,45 @@ function M.teardown(key, record, ended)
     events.publish_agent(key, id, "exited", { reason = "removed" })
   end
   local plan = M.plan(key, id, record)
-  return plan and carry_out(plan) or {}
+  local done = {}
+  if plan and not plan.link then
+    local base = record.read_only and record.repo and require("isovim.repos").dir(record.repo) .. "/base-clone" or nil
+    done = M.prune_snapshots(id, { plan.cwd, base })
+  end
+  return vim.list_extend(done, plan and carry_out(plan) or {})
+end
+
+-- Deletes the agent's per-turn snapshots (isovim.acp.sessions, refs/isovim/snapshots/<id>/*) from
+-- the clone each dir is a checkout of: its worktree's (a clone's worktrees share its refs) or its
+-- read-only base clone's. Only those refs go; nothing else in a clone is touched.
+---@param dirs (string|nil)[]
+---@return string[] done
+function M.prune_snapshots(id, dirs)
+  local done, seen = {}, {}
+  if not is_agent_id(id) then
+    return done
+  end
+  for i = 1, table.maxn(dirs) do
+    local dir = dirs[i]
+    local stat = dir and lstat(dir)
+    local common = stat and stat.type == "directory" and git(dir, { "rev-parse", "--path-format=absolute", "--git-common-dir" })
+    local git_dir = common and common.code == 0 and vim.trim(common.stdout) or nil
+    if git_dir and not seen[git_dir] then
+      seen[git_dir] = true
+      local prefix = "refs/isovim/snapshots/" .. id .. "/"
+      local refs = git(dir, { "for-each-ref", "--format=%(refname)", prefix })
+      local lines = refs.code == 0 and vim.split(vim.trim(refs.stdout), "\n", { trimempty = true }) or {}
+      if #lines > 0 then
+        local stdin = table.concat(vim.tbl_map(function(ref)
+          return "delete " .. ref
+        end, lines), "\n") .. "\n"
+        local deleted = vim.system({ "git", "-C", dir, "update-ref", "--stdin" }, { text = true, stdin = stdin, timeout = 60000 }):wait()
+        done[#done + 1] = deleted.code == 0 and ("deleted %d snapshot ref(s) under %s in %s"):format(#lines, prefix, git_dir)
+          or ("could not delete the snapshot refs in %s: %s"):format(git_dir, vim.trim(deleted.stderr or ""))
+      end
+    end
+  end
+  return done
 end
 
 local function log(lines)
@@ -174,13 +214,17 @@ local function log(lines)
   end
 end
 
--- The repo keys under the work root: every dir (up to four names down) with an iso/ in it.
+-- The repo keys under the work root: every dir (up to four names down) with an iso/ in it. An old
+-- _/ is isovim.migrate's, never reaped.
 local function key_dirs()
   local found = {}
-  local function walk(dir, key, depth)
-    local iso = key and lstat(dir .. "/iso")
+  local function walk(dir, folder, depth)
+    if folder == "_" then
+      return
+    end
+    local iso = folder and lstat(dir .. "/iso")
     if iso and iso.type == "directory" then
-      found[#found + 1] = key
+      found[#found + 1] = store.folder_key(folder)
       return
     end
     if depth == 4 then
@@ -189,7 +233,7 @@ local function key_dirs()
     for name, kind in vim.fs.dir(dir) do
       -- Never follow a symlink out of the work root.
       if kind == "directory" and not vim.startswith(name, ".") then
-        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+        walk(dir .. "/" .. name, folder and folder .. "/" .. name or name, depth + 1)
       end
     end
   end
@@ -236,11 +280,17 @@ function M.reap(opts)
   local function say(line)
     result.lines[#result.lines + 1] = ("%s %s %s"):format(stamp, mode, line)
   end
+  -- Agents' dirs move while the old _/ is migrated (isovim.migrate): no pass then.
+  if require("isovim.migrate").busy() then
+    say("skipped: the _/ migration is running")
+    log(result.lines)
+    return result
+  end
   for _, key in ipairs(key_dirs()) do
-    local records = store.work .. "/" .. key .. "/iso/agents"
+    local dir = store.key_dir(key)
+    local records = dir .. "/iso/agents"
     local rstat = lstat(records)
     local readable = rstat and rstat.type == "directory" and vim.uv.fs_access(records, "RX")
-    local dir = store.work .. "/" .. key
     local has_agents = false
     for name in vim.fs.dir(dir) do
       has_agents = has_agents or is_agent_id(name)

@@ -25,11 +25,12 @@ function M.is_root(ws, agent)
   return store.role(agent) == "root" or root.is_root(root.address(ws, agent.id))
 end
 
--- A workspace's scope: a new-layout repo key's repo ("_" is General); a workspace holding the host
--- root is Root's; else the repo its dir is a checkout of, or General outside git.
+-- A workspace's scope: a new-layout repo key's repo (general and root are General's and Root's); a
+-- workspace holding the host root is Root's; else the repo its dir is a checkout of, or General
+-- outside git.
 function M.of_workspace(ws)
   if store.v2(ws) then
-    return ws == "_" and M.GENERAL or ws
+    return store.canon(ws)
   end
   for _, agent in ipairs(store.agents(ws)) do
     if M.is_root(ws, agent) then

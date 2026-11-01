@@ -440,11 +440,12 @@ local function surfaces()
 end
 M.surfaces = surfaces
 
--- The surface keys a host's groups are under: a repo's key, "_" for general, "root" for the root.
--- isovim.surfaces calls general "general".
-local GENERAL_KEY, ROOT_KEY = "_", "root"
+-- The keys a host's groups are under: a repo's key, "general" for general, "root" for the root, as
+-- store and isovim.surfaces name them. "_" is general's old key, which a host on an older isovim
+-- still lists its agents under.
+local GENERAL_KEY, ROOT_KEY = store.GENERAL, store.ROOT
 local function group_key(surface_key)
-  return surface_key == "general" and GENERAL_KEY or surface_key
+  return store.canon(surface_key)
 end
 
 -- This host's surfaces by key, each list in the module's order.
@@ -1099,7 +1100,7 @@ local function inbox_lines()
   }
   rows.inbox = { { kind = "inbox" } }
   for _, entry in ipairs(isovim.inbox_collapsed and {} or M.queue) do
-    local where = entry.repo_key == "_" and "general" or (entry.repo_key:match("[^/]+$") or entry.repo_key)
+    local where = entry.repo_key:match("[^/]+$") or entry.repo_key
     local line = { { "  " }, { entry.host, "Comment" }, { " · " .. where .. " · ", "Comment" } }
     lines[#lines + 1] = vim.list_extend(line, M.surface_chunks(entry.surface))
     rows.inbox[#rows.inbox + 1] = entry
@@ -1365,7 +1366,7 @@ local LIST_KEYS = {
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "move it to another host, or here" },
-  { "x", "isovim_root_mode", "root mode on the repo (not yet)" },
+  { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the host Inbox or General: the host)" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
   { "y", "isovim_yank_url", "copy the PR's URL" },
   { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
@@ -1541,8 +1542,8 @@ function M.focus_window(role)
   end
 end
 
--- The list's group key a workspace (or repo key) is under: its repo, "_" for general, "root" for
--- the root's workspace.
+-- The list's group key a workspace (or repo key) is under: its repo, "general" for general, "root"
+-- for the root's workspace.
 function M.group_key(ws)
   local name = scope.of_workspace(ws)
   if name == scope.GENERAL then
@@ -1724,7 +1725,7 @@ local function new_workspace(name, dir)
 end
 
 -- The repo a spawn from target goes to, and the clone it's made from: a repo or Inbox row's repo,
--- an agent's (a workspace's agent's, the repo its dir is a clone of), else General ("_").
+-- an agent's (a workspace's agent's, the repo its dir is a clone of), else General.
 ---@param target? table|string a sidebar row, or a workspace or repo key
 ---@return string key, string? checkout
 local function spawn_target(target)
@@ -1750,6 +1751,56 @@ end
 function M.spawn(target)
   local key, checkout = spawn_target(target)
   return add_agent(key, { kind = "claude", acp = true, checkout = checkout })
+end
+
+-- The root-mode scope of a row (or, with none, of what's in focus): its repo, or "host" for the
+-- host Inbox, the root's rows and General (which has no root of its own: its questions go to the
+-- host root).
+---@param item? table a sidebar row
+---@return string scope
+function M.root_mode_scope(item)
+  local key
+  if item then
+    if item.kind == "host_inbox" or (item.kind == "surface" and item.depth == 1) then
+      return "host"
+    end
+    key = item.repo_key or item.group_key
+    if not key and item.ws then
+      key = M.group_key(item.ws)
+    end
+  else
+    local current = isovim.current_scope
+    if current and current ~= scope.TERMINALS then
+      key = current
+    elseif isovim.current then
+      key = M.group_key(isovim.current)
+    end
+  end
+  key = key and store.canon(key)
+  if not key or store.is_pseudo(key) then
+    return "host"
+  end
+  return key
+end
+
+-- x and <leader>ix: root mode on for the scope (iso rootmode on, which spawns its root if it has
+-- none), or off when it's on. It runs in the background; a toast says how it went.
+---@param item? table a sidebar row, else what's in focus
+function M.toggle_root_mode(item)
+  if item and item.host then
+    return Snacks.notify.info(("That's on %s; turn root mode on there"):format(item.host), { title = "isovim" })
+  end
+  local where = M.root_mode_scope(item)
+  local mode = require("isovim.rootmode").entry(where) and "off" or "on"
+  local label = where == "host" and "this host" or where
+  Snacks.notify.info(("Root mode %s for %s…"):format(mode, label), { title = "isovim" })
+  vim.system({ panes.bin, "rootmode", mode, where }, { text = true }, vim.schedule_wrap(function(result)
+    local text = vim.trim(result.code == 0 and result.stdout or (result.stderr or ""):gsub("^iso: ", ""))
+    Snacks.notify(text ~= "" and text or ("root mode " .. mode .. " for " .. label),
+      { title = "isovim", level = result.code == 0 and "info" or "warn" })
+    M.refresh()
+  end))
+  return where, mode
 end
 
 M.actions = {
@@ -1835,8 +1886,8 @@ M.actions = {
     end
     M.spawn(item or isovim.current)
   end,
-  isovim_root_mode = function()
-    Snacks.notify.info("Root mode: not yet", { title = "isovim" })
+  isovim_root_mode = function(item)
+    M.toggle_root_mode(item)
   end,
   isovim_add_agent = function(item)
     if not item or not item.ws then

@@ -1,8 +1,8 @@
 """The keymap: LazyVim's global keys turned to repos (<leader><leader> picks a repo or Root, General,
 Terminals; <leader>ff, <leader>/ with transcripts, <leader>, scoped to the repo, <leader>fr recent
 agents), the <leader>i group (needs-you, the Inbox, router and roots by role, worker and agent
-pickers, the previous agent, General, Terminals, spawn, terminal, hosts, the keys not built yet), the
-sidebar's s spawn, x, S and its retiring a/A/b/T, the retiring <leader>a keys, buffers scoped by repo,
+pickers, the previous agent, General, Terminals, spawn, terminal, hosts, root mode), the sidebar's s
+spawn, x (root mode), S and its retiring a/A/b/T, the retiring <leader>a keys, buffers scoped by repo,
 and the help. Keys are pressed in the pilot's own TUI.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/keymap.py"""
 
@@ -93,7 +93,11 @@ def toasts():
 
 
 def toasted(text):
-    return iso.wait(lambda: any(text in t for t in toasts()) and True, f"a toast with {text!r}")
+    try:
+        return iso.wait(lambda: any(text in t for t in toasts()) and True, f"a toast with {text!r}")
+    except AssertionError:
+        print("toasts:", toasts()[-5:])
+        raise
 
 
 def edit(path):
@@ -284,16 +288,25 @@ try:
     iso.wait(lambda: lua("return vim.g.isovim_sidebar_host") is None, "<leader>i<: back")
     check(True, "<leader>i< and <leader>i> step the host list")
 
-    # Not yet.
+    # <leader>ix: root mode for the repo in focus (acme/web, web1's), on and then off.
+    leader("i", "x")
+    toasted("Root mode on for acme/web")
+    toasted("root mode is on for acme/web: ")
+    mode = lambda: json.loads((Path(iso.env["ISOVIM_HOME"]) / "rootmode.json").read_text())  # noqa: E731
+    check(mode()["repos"].get("acme/web", {}).get("agent"), "<leader>ix turns root mode on for the repo in focus", mode())
+    leader("i", "x")
+    toasted("Root mode off for acme/web")
+    toasted("root mode is off for acme/web")
+    check(not mode()["repos"].get("acme/web"), "<leader>ix again turns it off", mode())
+
+    # The keys that need an ACP chat.
     leader("i", "q")
     toasted("The prompt queue: open an ACP agent's chat first")
-    leader("i", "x")
-    toasted("Root mode: not yet")
     leader("i", "u")
     toasted("rewind: put the cursor on one of your prompts in an ACP agent's chat")
     leader("i", "f")
     toasted("fork: open an ACP agent's chat first")
-    check(True, "ix says not yet; iq, iu and if that they need an ACP chat")
+    check(True, "iq, iu and if say that they need an ACP chat")
 
     # Retiring <leader>a keys: they still work, and say once what replaced them.
     lua("require('isovim.root').raise(..., 'main', 'again?')", ws["api1"])
@@ -336,8 +349,22 @@ try:
     iso.focus_sidebar()
     lua("vim.cmd.stopinsert()")
     iso.keys("Escape")
+    # x on a repo row: that repo's root mode (acme/api, the row the cursor was put on).
+    lua("vim.api.nvim_win_set_cursor(0, {..., 0})", target + 1)
     iso.keys("x")
-    toasted("Root mode: not yet")
+    toasted("Root mode on for acme/api")
+    toasted("root mode is on for acme/api")
+    iso.keys("x")
+    toasted("root mode is off for acme/api")
+    # On the host Inbox, the host's.
+    host_row = lua("return require('isovim.sidebar').debug_kinds()").index("host_inbox")
+    lua("vim.api.nvim_win_set_cursor(0, {..., 0})", host_row + 1)
+    iso.keys("x")
+    toasted("Root mode on for this host")
+    toasted("root mode is on for this host: root/a0")
+    check(mode().get("host", {}).get("agent") == "root/a0", "x on the host Inbox: the host root, in root/", mode())
+    iso.keys("x")
+    toasted("root mode is off for this host")
     sort = lua("return require('isovim').sort")
     iso.keys("S")
     iso.wait(lambda: lua("return require('isovim').sort") != sort, "S sorts")
@@ -375,7 +402,7 @@ try:
     check("  s " in host_list and "  x " in host_list and "  a " not in host_list and "  T " not in host_list, "the host list's keys: s and x, no a or T", host_list)
     check("<leader><leader>" in section("Anywhere") and "<leader>ff" in section("Anywhere"), "the global keys", section("Anywhere"))
     group_help = section("<leader>i")
-    check(all(f"<leader>i{k}" in group_help for k in "niIhrRHwabgTstxjquf") and "not yet" in group_help, "the <leader>i group", group_help)
+    check(all(f"<leader>i{k}" in group_help for k in "niIhrRHwabgTstxjquf") and "not yet" not in group_help, "the <leader>i group", group_help)
     check("<leader>aj" in section("Retiring") and "<leader>in" in section("Retiring"), "the retiring keys", section("Retiring"))
     iso.screenshot("help")
     iso.keys("G")

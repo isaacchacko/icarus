@@ -40,12 +40,13 @@ local function unique(query, candidates, keys, what, exact_only)
   fail(("no %s matches %q"):format(what, query))
 end
 
--- A repo key (store.v2) is matched by its start only when the query has a "/" or is "_", so a
--- workspace id's prefix never runs into one.
+-- A repo key (store.v2) is matched by its start only when the query has a "/" or is a pseudo-repo's
+-- (general, root, or _ for general), so a workspace id's prefix never runs into one.
 local function resolve(query, exact)
   if not query then
     fail("missing workspace\n" .. usage())
   end
+  query = store.canon(query)
   local by_key = store.v2(query)
   return unique(query, store.list(), function(ws)
     return (by_key or not store.v2(ws.id)) and { ws.id, ws.name } or {}
@@ -59,6 +60,8 @@ local function resolve_agent(query, exact)
   if not query then
     fail("missing agent\n" .. usage())
   end
+  -- _/aN, from before general/ and root/, is where it is now.
+  query = store.canon_address(query)
   -- The last "/" splits it, as a repo key (owner/repo/aN) has one of its own, unless the whole of
   -- it is a repo key: owner/repo means its first agent.
   local ws_query, agent_query = query:match("^(.*)/([^/]*)$")
@@ -214,8 +217,9 @@ local function prompt(ws, agent, text, msg)
   require("isovim.events").publish_msg(ws.id, agent.id, msg)
 end
 
--- Where a new-layout agent for target goes: target is a repo key ("owner/repo", or "_" for no
--- repo), or a dir, which means its repo's key, or "_" outside one. A dir that exists wins.
+-- Where a new-layout agent for target goes: target is a repo key ("owner/repo", or general, or _
+-- for general), or a dir, which means its repo's key, or general outside one. A dir that exists
+-- wins.
 ---@return table ws a store.list() entry for the key, made up when it has no agents yet
 ---@return string? checkout the dir, when it's a clone of the repo
 local function unit(target)
@@ -226,16 +230,16 @@ local function unit(target)
   local key, checkout
   if vim.fn.isdirectory(dir) == 1 then
     dir = vim.uv.fs_realpath(dir) or dir
-    key = require("isovim.repos").of(dir) or "_"
-    checkout = key ~= "_" and dir or nil
+    key = require("isovim.repos").of(dir) or store.GENERAL
+    checkout = key ~= store.GENERAL and dir or nil
   elseif store.v2(target) and store.valid_key(target) then
-    key = target:lower()
+    key = store.canon(target:lower())
   else
-    fail(("%s is neither a dir nor a repo (owner/repo, or _ for none)"):format(target))
+    fail(("%s is neither a dir nor a repo (owner/repo, or general for none)"):format(target))
   end
   return vim.iter(store.list()):find(function(ws)
     return ws.id == key
-  end) or { id = key, name = key, dir = store.dir(key), repo = key ~= "_" and key or nil }, checkout
+  end) or { id = key, name = key, dir = store.dir(key), repo = not store.is_pseudo(key) and key or nil }, checkout
 end
 
 -- Adds an agent to ws and starts it; a new-layout one (ws a repo key) gets the next aN there.

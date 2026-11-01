@@ -184,8 +184,15 @@ function M.check(tag, to)
     return false, "isovim has no record of " .. tag.id
   elseif entry.from ~= tag.from or (entry.root or false) ~= tag.root or (entry.kind or "from") ~= tag.kind then
     return false, "the tag doesn't match what isovim recorded for " .. tag.id
-  elseif not vim.iter(to):any(function(name)
-    return entry.to == name or vim.endswith(entry.to, ":" .. name)
+  end
+  -- A stamp sent before the receiver moved out of _/ (isovim.migrate) names its old address.
+  local sent_to = entry.to
+  if type(sent_to) == "string" then
+    local to_host = sent_to:match("^([^:]+):")
+    sent_to = store.canon_address(sent_to, to_host == nil or to_host == self())
+  end
+  if not vim.iter(to):any(function(name)
+    return entry.to == name or vim.endswith(entry.to, ":" .. name) or sent_to == name or vim.endswith(sent_to, ":" .. name)
   end) then
     return false, tag.id .. " was sent to " .. entry.to
   elseif not M.same_text(entry, tag.body) then

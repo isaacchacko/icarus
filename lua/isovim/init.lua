@@ -536,9 +536,51 @@ function M.reveal(ws, path)
 end
 
 ---@param opts? {reload?: boolean}
+-- Moves an old ~/iso/_/ (isovim.migrate). One that waits on a busy agent is tried again every 20s;
+-- once it's done, the chats of agents that moved open at their new addresses.
+function M.migrate()
+  local migrate = require("isovim.migrate")
+  local ok, result, map = pcall(migrate.run, { wait = 5 })
+  if ok and result == "done" and map then
+    local chat = require("isovim.acp.chat")
+    for from, to in pairs(map) do
+      local old_ws, old_id = from:match("^(.*)/([^/]+)$")
+      local new_ws, new_id = to:match("^(.*)/([^/]+)$")
+      local open = chat.get(old_ws, old_id)
+      local win = open and vim.fn.bufwinid(open.buf) or -1
+      if open then
+        chat.close(old_ws, old_id)
+        if win ~= -1 and vim.api.nvim_win_is_valid(win) then
+          pcall(chat.open, new_ws, new_id, win)
+        end
+      end
+    end
+    if M.current and store.canon_address(M.current) ~= M.current then
+      M.current = store.canon(M.current)
+    end
+    pcall(M.refresh)
+  end
+  if ok and (result == "deferred" or result == "locked") then
+    if not _G.isovim_migrate_timer then
+      _G.isovim_migrate_timer = vim.uv.new_timer()
+      _G.isovim_migrate_timer:start(20000, 20000, vim.schedule_wrap(function()
+        if not require("isovim.migrate").pending() then
+          _G.isovim_migrate_timer:close()
+          _G.isovim_migrate_timer = nil
+          return
+        end
+        require("isovim").migrate()
+      end))
+    end
+  end
+  return ok and result or nil
+end
+
 function M.setup(opts)
   local reloading = opts and opts.reload
+  M.migrate()
   local session = store.read_session()
+  session.current = session.current and store.canon(session.current)
   if session.current and vim.uv.fs_stat(store.path(session.current)) then
     M.current = session.current
   end

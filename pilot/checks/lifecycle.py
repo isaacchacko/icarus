@@ -132,6 +132,10 @@ try:
     git("-C", str(base), "worktree", "add", "-q", "-b", "t1", str(w))
     (w / "README.md").write_text("unsaved edit\n")
     (w / "untracked.txt").write_text("unsaved\n")
+    # Per-turn snapshots (isovim.acp.sessions) of a0 and of a1, kept in the clone its worktree is of.
+    head = subprocess.run(["git", "-C", str(w), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    for ref in ("a0/p1", "a0/p2", "a1/p1"):
+        git("-C", str(w), "update-ref", f"refs/isovim/snapshots/{ref}", head)
     pane = lua("return require('isovim.scripts').start('o/r', 'run', 'a0')")
     iso.wait(lambda: f"o/r/{pane}" in agents() and agents()[f"o/r/{pane}"]["status"] != "stopped", "the run script's pane")
     iso.cli("rm", "o/r/a0")
@@ -149,6 +153,9 @@ try:
     check("agent.o/r.a0.exited" in topics and f"agent.o/r.{pane}.exited" in topics, "the agent and its pane are published exited",
           [t for t in topics if "exited" in t])
     check(git("-C", str(base), "branch", "--list", "t1") != "", "the worktree's branch stays in the base clone")
+    snapshot_refs = subprocess.run(["git", "-C", str(base), "for-each-ref", "--format=%(refname)", "refs/isovim/snapshots/"],
+                                   capture_output=True, text=True).stdout.split()
+    check(snapshot_refs == ["refs/isovim/snapshots/a1/p1"], "its snapshot refs are pruned from the clone, another agent's kept", snapshot_refs)
 
     # The reaper.
     r = work / "o" / "r"
