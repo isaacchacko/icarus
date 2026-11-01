@@ -973,7 +973,10 @@ function M.setup(opts)
       name_chat(buf)
     end
     if next(_G.isovim_acp_chats or {}) then
-      require("isovim.acp.chat").rebind()
+      -- Drawn again only when the chat's drawing changed (or a reload that doesn't say what did).
+      local changed = opts.changed
+      require("isovim.acp.chat").rebind(not changed or vim.tbl_contains(changed, "acp/chat.lua")
+        or vim.tbl_contains(changed, "acp/look.lua"))
     end
     if next(_G.isovim_surface_views or {}) then
       require("isovim.surface_view").rebind()

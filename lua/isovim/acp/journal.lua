@@ -131,15 +131,17 @@ end
 -- stop() is called; drain() reads what's been added at once. A journal that's replaced (another
 -- inode) or cut short starts over, after on_reset. It watches the journal's folder (FSEvents/kqueue or inotify, through libuv), as
 -- isovim.events does, and reads only what was added; on_entry runs on the main loop. Each read
--- runs inside around, if given (the chat draws what one read brings as one batch).
+-- runs inside around, if given (the chat draws what one read brings as one batch). from, what
+-- another follower's at() said, starts where that one got to instead (a hot reload's).
 ---@param on_entry fun(entry: table)
 ---@param on_reset? fun()
 ---@param around? fun(read: fun())
----@return fun() stop, fun() drain
-function M.follow(ws, agent, on_entry, on_reset, around)
+---@param from? {inode: integer, offset: integer}
+---@return fun() stop, fun() drain, fun(): {inode: integer, offset: integer} at
+function M.follow(ws, agent, on_entry, on_reset, around, from)
   local path = M.path(ws, agent)
   vim.fn.mkdir(M.dir(ws), "p")
-  local inode, offset, partial = nil, 0, ""
+  local inode, offset, partial = from and from.inode, from and from.offset or 0, ""
   local stopped = false
   local function drain()
     if stopped then
@@ -206,7 +208,9 @@ function M.follow(ws, agent, on_entry, on_reset, around)
       watcher:stop()
       watcher:close()
     end
-  end, drain
+  end, drain, function()
+    return { inode = inode, offset = offset - #partial }
+  end
 end
 
 return M

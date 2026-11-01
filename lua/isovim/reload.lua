@@ -38,7 +38,8 @@ local function git_dir()
 end
 
 -- Unloads every isovim module and runs setup on the new code; on an error, the old code again.
-local function swap()
+-- files: what changed, relative to lua/isovim/ (setup draws the chats again only if their drawing did).
+local function swap(files)
   local old = {}
   for name, mod in pairs(package.loaded) do
     if name == "isovim" or name:match("^isovim%.") then
@@ -47,7 +48,7 @@ local function swap()
     end
   end
   local ok, err = pcall(function()
-    require("isovim").setup({ reload = true })
+    require("isovim").setup({ reload = true, changed = files })
   end)
   if ok then
     return true
@@ -60,14 +61,14 @@ local function swap()
   for name, mod in pairs(old) do
     package.loaded[name] = mod
   end
-  pcall(old.isovim.setup, { reload = true })
+  pcall(old.isovim.setup, { reload = true, changed = files })
   return false, err
 end
 
 -- Timers and the supervisors' pushes wait it out (isovim.safe.ticker).
-local function reload()
+local function reload(files)
   _G.isovim_reloading = true
-  local ok, done, err = pcall(swap)
+  local ok, done, err = pcall(swap, files)
   _G.isovim_reloading = false
   if not ok then
     return false, done
@@ -102,7 +103,7 @@ local function flush()
     end
     local ok, err = #errors == 0, table.concat(errors, "\n")
     if ok then
-      ok, err = reload()
+      ok, err = reload(lua_files)
     end
     if ok then
       table.insert(lines, "isovim reloaded: " .. describe(lua_files))

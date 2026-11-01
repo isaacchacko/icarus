@@ -494,8 +494,11 @@ end
 
 -- The agent's dir as paths in its tool calls start, for showing them short.
 local function dirs(chat)
-  local dir = store.agent_dir(chat.ws, chat.agent)
-  return { dir, vim.uv.fs_realpath(dir) or dir }
+  if not chat.dirs then
+    local dir = store.agent_dir(chat.ws, chat.agent)
+    chat.dirs = { dir, vim.uv.fs_realpath(dir) or dir }
+  end
+  return chat.dirs
 end
 
 -- Markdown's marks on rows from..to (0-based, inclusive) of the agent's text.
@@ -1027,6 +1030,14 @@ local function drop_boxes(chat)
   end
 end
 
+-- The queue window shows the live chat's queue: one being drawn again (a hot reload's, in a buffer
+-- of its own) leaves it alone until it's swapped in.
+local function refresh_queue(chat)
+  if not chat.backlog then
+    queue.refresh(chat)
+  end
+end
+
 function RENDER.prompt(chat, entry)
   -- Sent now: it leaves the queue.
   local before = #chat.queue
@@ -1034,7 +1045,7 @@ function RENDER.prompt(chat, entry)
     return item.id ~= entry.id
   end, chat.queue)
   if #chat.queue ~= before then
-    queue.refresh(chat)
+    refresh_queue(chat)
   end
   -- Yours: typed in a composer or on Claude's screen, or iso spawn's; not one iso send or msg
   -- delivered.
@@ -1058,14 +1069,14 @@ end
 
 function RENDER.queued(chat, entry)
   chat.queue[#chat.queue + 1] = { id = entry.id or "", text = entry.text or "" }
-  queue.refresh(chat)
+  refresh_queue(chat)
 end
 
 function RENDER.queue(chat, entry)
   chat.queue = vim.tbl_map(function(item)
     return { id = item.id, text = item.text or "" }
   end, entry.items or {})
-  queue.refresh(chat)
+  refresh_queue(chat)
 end
 
 function RENDER.update(chat, entry)
@@ -1260,7 +1271,8 @@ local function render(chat, entry)
     draw(chat, entry)
     chat.entry = nil
   end
-  if not chat.batch then
+  -- Drawing many at once (a journal read, a hot reload's redraw), the bar is drawn once after.
+  if not (chat.batch or chat.backlog) then
     update_bar(chat)
   end
 end
@@ -1286,7 +1298,7 @@ M.push = safe.wrap("the chat's stream", function(ws, agent, entry)
     return
   end
   local chat = chats[key(ws, agent)]
-  if chat and type(entry) == "table" then
+  if chat and type(entry) == "table" and not chat.retiring then
     ingest(chat, entry, true)
   end
 end)
@@ -1306,7 +1318,7 @@ local function reset(chat)
       vim.api.nvim_buf_set_lines(buf, 0, body_end(chat), false, { "" })
     end)
   end
-  queue.refresh(chat)
+  refresh_queue(chat)
 end
 
 -- Subscribes to the supervisor's entries, if it's up and the chat isn't already.
@@ -1774,9 +1786,11 @@ end
 -- Catches a change of yours that reaches the conversation, as it happens: one that starts above
 -- the conversation's last line, or changes it. The drawing's own (edit) are let be.
 local function guard(chat)
+  local token = {}
+  chat.guard = token
   vim.api.nvim_buf_attach(chat.buf, false, {
     on_bytes = function(_, buf, _, row)
-      if chat.dead then
+      if chat.dead or chat.guard ~= token then
         return true
       end
       if chat.edit_from or chat.broken then
@@ -2024,7 +2038,7 @@ end
 
 decorate = function(chat)
   local buf = chat.buf
-  if chat.edit_from or not vim.api.nvim_buf_is_loaded(buf) then
+  if chat.edit_from or chat.backlog or not vim.api.nvim_buf_is_loaded(buf) then
     return
   end
   local first, count = chat.lines, vim.api.nvim_buf_line_count(buf)
@@ -2054,12 +2068,8 @@ local GROUP = vim.api.nvim_create_augroup("isovim_acp_chat", { clear = false })
 -- The old code's, which kept the composer's window in its place under the chat.
 pcall(vim.api.nvim_del_augroup_by_name, "isovim_acp_column")
 
--- A new chat, or with old (a hot reload, a repair) the same chat made again on old's buffer and
--- drawn again. lines are the composer's to begin with.
-local function make(ws, agent, old, lines)
-  local spec = store.agent(ws, agent) or {}
-  local name = (spec.name or agent)
-  local buf = old and old.buf or scratch(("isovim-acp://%s/%s · %s"):format(ws, agent, name))
+-- The options and variables of a chat's buffer.
+local function setup_buffer(ws, agent, name, buf)
   vim.bo[buf].filetype = "isovim_acp"
   -- Wrapped lines line up under the text after their glyph.
   vim.bo[buf].formatlistpat = [[^\s*\(❯\|⏺\|✻\|⎿\)\s\+]]
@@ -2073,18 +2083,28 @@ local function make(ws, agent, old, lines)
   vim.b[buf].completion = false
   -- No undo of nvim's: the composer keeps its own (see the top).
   vim.bo[buf].undolevels = -1
+end
 
+-- A chat's state, drawn into buf: an empty conversation (its placeholder line) and lines, the
+-- composer's.
+local function new_chat(ws, agent, buf, lines)
+  local spec = store.agent(ws, agent) or {}
   lines = lines and #lines > 0 and lines or { "" }
   local chat = { ws = ws, agent = agent, buf = buf, tools = {}, queue = {}, history = {}, history_images = {}, seq = 0,
     fresh = true, busy = false, handover = false, marks = {}, boxes = {}, options = {}, kind = spec.kind or "claude",
     lines = 1, last = "", undo = { states = { lines }, at = 1 } }
-  -- The conversation's placeholder line, then the composer's.
   for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS, COMPOSER }) do
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   end
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", unpack(lines) })
+  return chat
+end
 
+-- The chat's autocmds and keys on its buffer. A hot reload takes them off (unbind) and binds them
+-- again with its own code.
+local function bind(chat)
+  local ws, agent, buf = chat.ws, chat.agent, chat.buf
   images.setup(buf, store.path(ws) .. "/images", {
     first = function()
       local each = by_buf(buf)
@@ -2155,44 +2175,6 @@ local function make(ws, agent, old, lines)
     end),
   })
   map_keys(chat)
-  -- Each entry on its own, so one that fails to draw doesn't stop the rest.
-  chat.stop, chat.drain = journal.follow(ws, agent, safe.wrap("the chat's journal", function(entry)
-    ingest(chat, entry, false)
-  end), safe.wrap("the chat's journal", function()
-    reset(chat)
-  end), function(read)
-    batch(chat, read)
-  end)
-  guard(chat)
-  subscribe(chat)
-  -- What the journal can't say: whether the supervisor is still at it (it may have died mid-turn).
-  local ok, state = acp.call(ws, agent, "status")
-  if ok and type(state) == "table" then
-    chat.busy, chat.handover = state.busy == true, state.handover == true
-  else
-    chat.busy = false
-  end
-  -- A supervisor that comes back (a restart, a handover's end) is subscribed to again.
-  chat.timer = vim.uv.new_timer()
-  chat.timer:start(1000, 1000, safe.ticker("the chat's subscription", function()
-    if not chat.dead and vim.api.nvim_buf_is_loaded(buf) then
-      subscribe(chat)
-    end
-  end))
-  local stop = chat.stop
-  chat.unfollow = stop
-  chat.stop = function()
-    chat.dead = true
-    stop()
-    if chat.timer and not chat.timer:is_closing() then
-      chat.timer:stop()
-      chat.timer:close()
-    end
-    if chat.chan then
-      pcall(vim.fn.chanclose, chat.chan)
-      chat.chan = nil
-    end
-  end
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = GROUP,
     buffer = buf,
@@ -2222,6 +2204,91 @@ local function make(ws, agent, old, lines)
       end)
     end,
   })
+end
+
+-- Takes off what bind put on the chat's buffer (and an old composer's), and what an isovim from
+-- before GROUP put there (it had none).
+local function unbind(chat, composer)
+  for _, buf in ipairs({ chat.buf, composer }) do
+    for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
+      if au.group == nil or au.group == GROUP then
+        vim.api.nvim_del_autocmd(au.id)
+      end
+    end
+    for _, mode in ipairs({ "n", "i", "x" }) do
+      for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+        if vim.startswith(map.desc or "", "isovim: ") then
+          pcall(vim.api.nvim_buf_del_keymap, buf, mode, map.lhs)
+        end
+      end
+    end
+  end
+end
+
+-- Follows the agent's journal from its start, or from where an old follower got to (from), and its
+-- supervisor. While the chat has a backlog (a hot reload drawing it again) entries wait there, and
+-- the supervisor is subscribed to once it's swapped in.
+local function follow(chat, from)
+  local ws, agent = chat.ws, chat.agent
+  -- Each entry on its own, so one that fails to draw doesn't stop the rest.
+  chat.stop, chat.drain, chat.journal_at = journal.follow(ws, agent, safe.wrap("the chat's journal", function(entry)
+    if chat.backlog then
+      chat.backlog[#chat.backlog + 1] = entry
+    else
+      ingest(chat, entry, false)
+    end
+  end), safe.wrap("the chat's journal", function()
+    if chat.backlog then
+      chat.backlog, chat.backlog_at = {}, 1
+    end
+    reset(chat)
+  end), function(read)
+    batch(chat, read)
+  end, from)
+  if not chat.backlog then
+    subscribe(chat)
+  end
+  -- What the journal can't say: whether the supervisor is still at it (it may have died mid-turn).
+  local ok, state = acp.call(ws, agent, "status")
+  if ok and type(state) == "table" then
+    chat.busy, chat.handover = state.busy == true, state.handover == true
+  else
+    chat.busy = false
+  end
+  -- A supervisor that comes back (a restart, a handover's end) is subscribed to again.
+  chat.timer = vim.uv.new_timer()
+  chat.timer:start(1000, 1000, safe.ticker("the chat's subscription", function()
+    if not chat.dead and not chat.backlog and vim.api.nvim_buf_is_loaded(chat.buf) then
+      subscribe(chat)
+    end
+  end))
+  local stop = chat.stop
+  chat.unfollow = stop
+  chat.stop = function()
+    chat.dead = true
+    stop()
+    if chat.timer and not chat.timer:is_closing() then
+      chat.timer:stop()
+      chat.timer:close()
+    end
+    if chat.chan then
+      pcall(vim.fn.chanclose, chat.chan)
+      chat.chan = nil
+    end
+  end
+end
+
+-- A new chat, or with old (a repair, an old code's chat) the same chat made again on old's buffer
+-- and drawn again. lines are the composer's to begin with.
+local function make(ws, agent, old, lines)
+  local spec = store.agent(ws, agent) or {}
+  local name = (spec.name or agent)
+  local buf = old and old.buf or scratch(("isovim-acp://%s/%s · %s"):format(ws, agent, name))
+  setup_buffer(ws, agent, name, buf)
+  local chat = new_chat(ws, agent, buf, lines)
+  bind(chat)
+  follow(chat)
+  guard(chat)
   decorate(chat)
   return chat
 end
@@ -2397,20 +2464,7 @@ remake = function(old, lines)
   end
   pcall(old.stop)
   old.dead = true
-  for _, buf in ipairs({ old.buf, composer }) do
-    for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
-      if au.group == nil or au.group == GROUP then
-        vim.api.nvim_del_autocmd(au.id)
-      end
-    end
-    for _, mode in ipairs({ "n", "i", "x" }) do
-      for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
-        if vim.startswith(map.desc or "", "isovim: ") then
-          pcall(vim.api.nvim_buf_del_keymap, buf, mode, map.lhs)
-        end
-      end
-    end
-  end
+  unbind(old, composer)
   if composer then
     images.move(composer, old.buf)
     pcall(vim.api.nvim_buf_delete, composer, { force = true })
@@ -2450,9 +2504,138 @@ remake = function(old, lines)
   return chat
 end
 
--- After a hot reload each open chat is made again by the new code on its own buffer (remake).
--- Autocmds of an isovim from before GROUP had none.
-function M.rebind()
+-- Hot reloads' redraws, waiting their turn: each chat is drawn again by the new code into a buffer
+-- of its own, a few milliseconds at a time so your keys never wait on it, while the old chat goes on
+-- as it was; once it's done, its conversation takes the old one's place in the chat's buffer, under
+-- which your draft stays as it is (isovim.tabs, windows and layout keep the buffer). In _G, so a
+-- reload during one drops it.
+_G.isovim_acp_builds = _G.isovim_acp_builds or {}
+local builds = _G.isovim_acp_builds
+local BUDGET = 8e6 -- ns of drawing per turn of the loop
+
+local function drop(build)
+  if build.chat.stop then
+    pcall(build.chat.stop)
+  end
+  pcall(vim.api.nvim_buf_delete, build.chat.buf, { force = true })
+  build.old.retiring = nil
+end
+
+-- The chat drawn again in its own buffer takes old's place: its conversation's lines and marks
+-- (their ids kept, as the chat's places refer to them) replace old's, above old's draft.
+local function swap(build)
+  local old, chat = build.old, build.chat
+  local k = key(old.ws, old.agent)
+  if chats[k] ~= old or old.dead or not vim.api.nvim_buf_is_loaded(old.buf) then
+    return drop(build)
+  end
+  local hidden, buf, count = chat.buf, old.buf, old.lines
+  local views, at, opened = {}, {}, {}
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    views[win] = { view = vim.api.nvim_win_call(win, vim.fn.winsaveview), follows = vim.w[win].isovim_follows }
+    local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+    if row > count then
+      at[win] = { row - count, col }
+    end
+  end
+  for i, call in ipairs(placed(old)) do
+    opened[i] = call.open
+  end
+  pcall(old.stop)
+  old.dead = true
+  unbind(old)
+  local namespaces = vim.tbl_values(M.ns)
+  for _, ns in ipairs(namespaces) do
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, count)
+  end
+  writable(buf, function()
+    vim.api.nvim_buf_set_lines(buf, 0, count, false, vim.api.nvim_buf_get_lines(hidden, 0, chat.lines, false))
+  end)
+  for _, ns in ipairs(namespaces) do
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(hidden, ns, 0, -1, { details = true })) do
+      local opts = mark[4]
+      opts.ns_id, opts.id = nil, mark[1]
+      vim.api.nvim_buf_set_extmark(buf, ns, mark[2], mark[3], opts)
+    end
+  end
+  pcall(vim.api.nvim_buf_delete, hidden, { force = true })
+  chat.buf, chat.backlog, chat.backlog_at = buf, nil, nil
+  chat.last = vim.api.nvim_buf_get_lines(buf, chat.lines - 1, chat.lines, false)[1] or ""
+  chat.tick = vim.api.nvim_buf_get_changedtick(buf)
+  chat.rewind, chat.recall, chat.undo = old.rewind, old.recall, old.undo or chat.undo
+  for i, call in ipairs(placed(chat)) do
+    if opened[i] ~= nil and call.open ~= opened[i] then
+      call.open = opened[i]
+      draw_tool(chat, call)
+    end
+  end
+  bind(chat)
+  guard(chat)
+  chats[k] = chat
+  subscribe(chat)
+  decorate(chat)
+  local last = vim.api.nvim_buf_line_count(buf)
+  for win, was in pairs(views) do
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      if at[win] then
+        pcall(vim.api.nvim_win_set_cursor, win, { math.min(chat.lines + at[win][1], last), at[win][2] })
+      end
+      if was.follows then
+        pcall(to_end, win)
+      elseif not at[win] then
+        vim.api.nvim_win_call(win, function()
+          vim.fn.winrestview(was.view)
+        end)
+      end
+    end
+  end
+  guard_cursor(chat)
+  queue.refresh(chat)
+  set_unseen(chat)
+  update_bar(chat)
+  M.settle(chat)
+end
+
+local ingest_safely = safe.wrap("the chat's journal", function(chat, entry)
+  ingest(chat, entry, false)
+end)
+
+local pump
+pump = safe.wrap("drawing the chats again", function()
+  local start = vim.uv.hrtime()
+  while builds[1] do
+    local chat = builds[1].chat
+    -- Its journal read in its own turn, not all of them at once in the reload's.
+    if not chat.stop then
+      follow(chat)
+    end
+    local over = false
+    batch(chat, function()
+      while chat.backlog[chat.backlog_at] and not over do
+        ingest_safely(chat, chat.backlog[chat.backlog_at])
+        chat.backlog_at = chat.backlog_at + 1
+        over = vim.uv.hrtime() - start > BUDGET
+      end
+    end)
+    if over then
+      return vim.defer_fn(pump, 1)
+    end
+    swap(table.remove(builds, 1))
+  end
+end)
+
+-- After a hot reload the open chats take the new code. Their keys, autocmds, guard and journal
+-- follower are bound again, which is all it takes while the chat's drawing (this file,
+-- isovim.acp.look) is what drew them. When it changed (redraw), each is drawn again (builds above),
+-- those on screen first. A chat of the old code, whose composer was a buffer of its own, is made
+-- again at once (remake).
+function M.rebind(redraw)
+  for _, build in ipairs(builds) do
+    drop(build)
+  end
+  for i = #builds, 1, -1 do
+    builds[i] = nil
+  end
   local spinner = _G.isovim_acp_spinner
   if spinner and not spinner:is_closing() then
     spinner:close()
@@ -2465,11 +2648,30 @@ function M.rebind()
     -- loaded again as a file) is closed, and opened afresh where it shows.
     local intact = vim.api.nvim_buf_is_loaded(old.buf) and vim.bo[old.buf].buftype == "nofile"
       and (not composer or vim.api.nvim_buf_is_loaded(composer) and vim.bo[composer].buftype == "nofile")
-    if intact then
-      remake(old)
-    else
+    if not intact then
       broken[#broken + 1] = { old = old, composer = composer, win = vim.fn.bufwinid(old.buf) }
+    elseif composer then
+      remake(old)
+    elseif not redraw then
+      local from = old.journal_at and old.journal_at()
+      pcall(old.stop)
+      old.dead = nil
+      unbind(old)
+      bind(old)
+      follow(old, from)
+      guard(old)
+      decorate(old)
+      update_bar(old)
+    else
+      local hidden = vim.api.nvim_create_buf(false, true)
+      local chat = new_chat(old.ws, old.agent, hidden)
+      chat.backlog, chat.backlog_at = {}, 1
+      old.retiring = true
+      table.insert(builds, vim.fn.bufwinid(old.buf) ~= -1 and 1 or #builds + 1, { old = old, chat = chat })
     end
+  end
+  if builds[1] then
+    vim.defer_fn(pump, 1)
   end
   -- The fresh one goes into its window before the old buffers are wiped, so the window stays.
   for _, each in ipairs(broken) do
@@ -2478,12 +2680,8 @@ function M.rebind()
     old.dead = true
     chats[key(old.ws, old.agent)] = nil
     queue.close(old.ws, old.agent)
+    unbind(old, each.composer)
     for _, buf in ipairs({ old.buf, each.composer }) do
-      for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
-        if au.group == nil or au.group == GROUP then
-          vim.api.nvim_del_autocmd(au.id)
-        end
-      end
       pcall(vim.api.nvim_buf_set_name, buf, vim.api.nvim_buf_get_name(buf) .. " (closing)")
     end
     if each.win ~= -1 and vim.api.nvim_win_is_valid(each.win) then

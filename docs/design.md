@@ -437,11 +437,15 @@ The TUI watches its own source (`isovim.reload`): `lua/isovim/` and every direct
 each directory has its own and one made later (a pull's) is watched as it appears.
 - **Hot reloads:** any `.lua` under `lua/isovim/`, `acp/` and `cli/` included, and `reload.lua`
   itself. Every isovim module is unloaded and `setup` runs again. What's on screen takes the new
-  code: an open chat is made again on its own buffer and drawn again from its journal, keeping
-  each window's scroll, your draft, its undo and your cursor in it, the tool calls and thoughts you
-  opened or collapsed and a rewind you're editing (a chat from before its input box joined its
-  buffer gives that box's text and images to the one buffer); surface views and the sidebar re-bind
-  their keys and redraw; timers call
+  code: an open chat's keys, autocmds, guard and journal follower are bound again (its follower
+  going on from where the old one got to), and nothing is redrawn unless the chat's drawing changed
+  (`acp/chat.lua` or `acp/look.lua`). Then each chat is drawn again from its journal into a buffer
+  of its own, a few milliseconds a turn (those on screen first) while the old one goes on as it was,
+  and once done its conversation takes the old one's place above your draft, keeping each window's
+  scroll, your draft, its undo and your cursor in it, the tool calls and thoughts you opened or
+  collapsed and a rewind you're editing. A reload doesn't hold up your keys either way. A chat from
+  before its input box joined its buffer is made again at once, giving that box's text and images
+  to the one buffer. Surface views and the sidebar re-bind their keys and redraw; timers call
   through `require`, and the ones that hold a closure (the migrate timer, the chat's spinner) are
   replaced. `starter/lua/config/keymaps.lua` runs again.
 - **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim
