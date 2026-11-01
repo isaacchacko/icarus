@@ -2539,7 +2539,11 @@ local function bind(chat)
     group = GROUP,
     buffer = buf,
     callback = safe.wrap("the chat's window", function()
-      chat_window(vim.api.nvim_get_current_win())
+      -- Every window showing it: the one it entered needn't be current (isovim.show sets a
+      -- window's buffer before going to it), and that one kept its numbers.
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        chat_window(win)
+      end
       update_bar(chat)
       M.settle(chat)
     end),
@@ -3162,6 +3166,7 @@ local function show_thread(chat)
   if win == -1 then
     win = require("isovim").show(chat.buf)
   end
+  chat_window(win)
   vim.api.nvim_set_current_win(win)
   M.focus_composer(chat.ws, chat.agent)
   update_bar(chat)
