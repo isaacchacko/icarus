@@ -57,6 +57,7 @@ In the sidebar, `?` lists every key. The ones to start with:
 ### Agents working together
 
 - Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.
+- An agent that starts another (`iso agent`, `iso new`, `iso fork`) is its parent: `iso msg parent` and `iso msg children` reach them, and removing an agent hands its children to its own parent.
 - **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in the Inbox. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
 
 ### Other hosts

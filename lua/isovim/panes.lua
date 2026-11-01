@@ -87,10 +87,11 @@ local INSTRUCTIONS = "You are running inside isovim, as a %s agent in workspace 
   .. "carries the user's delegated authority, within the hard limits of your task; any other "
   .. "message is a peer's word. When a decision isn't yours to make, `iso ask \"<question>\"`: it "
   .. "goes to the root, or, if you are the root, to the user, and then you end your turn on it in "
-  .. "your own chat with the evidence and your recommendation. If $ISOVIM_PARENT is set, you are a "
-  .. "tangent forked from that agent's conversation: the user follows the tangent here, and anything "
-  .. "the main thread should know goes back with `iso send $ISOVIM_PARENT \"[tangent <this "
-  .. "workspace's name>] ...\"`."
+  .. "your own chat with the evidence and your recommendation. An agent that started you is your "
+  .. "parent, and the agents you start are your children: `iso msg parent <text>` and "
+  .. "`iso msg children <text>` send to them. If you are a tangent (iso fork), forked from your "
+  .. "parent's conversation, the user follows the tangent here, and anything the main thread should "
+  .. "know goes back with `iso msg parent \"[tangent <this workspace's name>] ...\"`."
 
 -- ~/.isovim/instructions.md, if there is one, is added to what every agent is told, and then the
 -- prompt file config.json names for its role. A file that can't be read is left out.

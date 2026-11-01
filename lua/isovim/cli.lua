@@ -15,7 +15,7 @@ end
 
 local USAGE = [[
 usage: iso                           open the TUI (iso --takeover to steal it from another terminal)
-       iso ls [--json]               list agents: ws/agent, status, role, workspace · agent
+       iso ls [--json]               list agents: ws/agent, status, role, workspace · agent, parent
        iso new <name> [--dir path] [--worktree | --from <branch|PR>]
                                      create a workspace, print its id; its agents and files
                                      live in path (a project), else its own dir. --worktree
@@ -30,13 +30,17 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso move <ws> <host> [--force]   move it to another host (ssh name); its agents resume
                                      there. --force moves it even while an agent is working
        iso agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r]
+                     [--parent agent]
                                      add an agent (claude|codex|terminal|command), start it;
                                      --prompt starts a claude or codex agent on that prompt;
                                      --role root|router|worker (default worker) picks the
-                                     role prompt it's told (prompts in ~/.isovim/config.json)
+                                     role prompt it's told (prompts in ~/.isovim/config.json).
+                                     Its parent is the agent running this (iso new and iso fork
+                                     set it too), or --parent
        iso role <agent> [root|router|worker]   print or change its role; a change takes effect
                                      when it next restarts
-       iso rm <agent>                stop an agent and remove it from its workspace
+       iso rm <agent>                stop an agent and remove it from its workspace; its children
+                                     go to its parent (archiving a workspace does the same)
        iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)
        iso prs <ws> [--json]         its PRs with their state
        iso hide|unhide <agent>       hidden agents stay out of the sidebar and never notify
@@ -48,6 +52,9 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso send <agent> <text...>    type text into it and submit (starts it if needed); from
                                      an agent it starts with isovim's stamp,
                                      "[from <host>:<ws>/<agent> · m<id>]", to reply to
+       iso msg <parent|children|agent> <text...>
+                                     iso send to the agent that started this one, to each agent
+                                     it started, or to any agent
        iso fork [<agent>] [--name n] [--prompt text]
                                      a tangent: a new workspace in the same project whose agent
                                      starts from a copy of <agent>'s conversation (default: the
@@ -80,7 +87,7 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso pilot status|release      off | asking | active | denied; release hands control back
                                      (pressing Esc in the TUI takes control back too)
 <ws> is a workspace id, name, or unique prefix of either. <agent> is <ws>/<agent id or name>,
-or just <ws> for the workspace's first visible agent. send, status, wait and peek also take
+or just <ws> for the workspace's first visible agent. send, msg, status, wait and peek also take
 <host>:<agent> for an agent on another host (hosts in ~/.isovim/config.json).]]
 
 local function fail(message)
@@ -136,6 +143,38 @@ local function resolve_agent(query)
   return ws, unique(agent_query, agents, function(agent)
     return { agent.id, agent.name }
   end, "agent in " .. ws.name)
+end
+
+-- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
+-- sidebar lists them. This host's own name, or none, means here.
+---@return string? host, string query
+local function split_host(query)
+  local name, rest = (query or ""):match("^([%w_.-]+):(.+)$")
+  if not name then
+    return nil, query
+  end
+  local remote = require("isovim.remote")
+  local host, canonical = remote.host_of(name)
+  if canonical == remote.self() or name == vim.fn.hostname() then
+    return nil, rest
+  end
+  return host or fail(("no host named %s in %s"):format(name, require("isovim.config").path)), rest
+end
+
+-- An agent as a parent field names it: <ws>/<agent> by ids here, <host>:<ws>/<agent> elsewhere.
+local function parent_address(query)
+  local host, rest = split_host(query)
+  if host then
+    return query:match("^([^:]+):") .. ":" .. rest
+  end
+  local ws, agent = resolve_agent(rest)
+  return ws.id .. "/" .. agent.id
+end
+
+-- The agent running this, as a parent field names it; nil from a plain shell.
+local function caller_address()
+  local ws, agent = require("isovim.root").caller()
+  return ws and ws .. "/" .. agent
 end
 
 -- Runs Lua in the open TUI; returns false when it isn't open.
@@ -247,6 +286,7 @@ function commands.ls(args)
         active = running or nil,
         dir = ws.dir,
         repo = repo,
+        parent = agent.parent,
         tasks = agent.tasks,
       }
     end
@@ -259,7 +299,8 @@ function commands.ls(args)
     return
   end
   for _, row in ipairs(rows) do
-    local label = ("%s · %s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "")
+    local label = ("%s · %s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
+      row.parent and (" (parent " .. row.parent .. ")") or "")
     out(("%-18s %-9s %-6s %s%s"):format(row.id, row.status, row.role, label, row.doing and ("  — " .. row.doing) or ""))
   end
 end
@@ -285,6 +326,10 @@ function commands.new(args)
   end
   if worktree then
     require("isovim.scripts").start(id, "setup")
+  end
+  local parent = caller_address()
+  if parent then
+    store.update_agent(id, "main", { parent = parent })
   end
   out(id)
   tui("require('isovim').refresh()")
@@ -516,6 +561,7 @@ end
 function commands.archive(args)
   local ws = resolve(args[1])
   panes.stop_all(ws.id)
+  store.reparent(ws.id)
   local ok, err, note = store.archive_workspace(ws.id)
   if not ok then
     fail(err)
@@ -532,10 +578,11 @@ function commands.agent(args)
   local prompt = option(args, "--prompt")
   local hidden = flag(args, "--hidden")
   local role = option(args, "--role")
+  local parent = option(args, "--parent")
   local ws = resolve(args[1])
   local kind = args[2]
   if not vim.tbl_contains(panes.kinds, kind) then
-    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r]")
+    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r] [--parent agent]")
   end
   if kind == "command" and not cmd then
     fail("a command agent needs --cmd")
@@ -543,7 +590,8 @@ function commands.agent(args)
   if role and not vim.tbl_contains(store.roles, role) then
     fail("--role is one of " .. table.concat(store.roles, ", "))
   end
-  local agent = store.add_agent(ws.id, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role })
+  parent = parent and parent_address(parent) or caller_address()
+  local agent = store.add_agent(ws.id, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role, parent = parent })
   ensure_running(ws, agent)
   out(ws.id .. "/" .. agent.id)
   tui("require('isovim').refresh()")
@@ -637,23 +685,6 @@ function commands.restart(args)
   end
 end
 
--- Returns once a hooked agent has taken the prompt, so a following `iso wait` waits for the answer.
--- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
--- sidebar lists them. This host's own name, or none, means here.
----@return string? host, string query
-local function split_host(query)
-  local name, rest = (query or ""):match("^([%w_.-]+):(.+)$")
-  if not name then
-    return nil, query
-  end
-  local remote = require("isovim.remote")
-  local host, canonical = remote.host_of(name)
-  if canonical == remote.self() or name == vim.fn.hostname() then
-    return nil, rest
-  end
-  return host or fail(("no host named %s in %s"):format(name, require("isovim.config").path)), rest
-end
-
 -- Runs the same command on the peer and ends with its output and exit code.
 local function forward(host, args)
   local result = require("isovim.remote").run(host, args)
@@ -665,6 +696,7 @@ end
 -- An agent sending to another says who it is, so the receiver can answer with iso send.
 -- What one agent sends another is stamped by isovim with who sent it (proven, not claimed), so the
 -- receiver can trust the stamp and answer to the address in it.
+-- Returns once a hooked agent has taken the prompt, so a following `iso wait` waits for the answer.
 ---@param kind "from"|"ask"
 local function deliver(query, text, kind)
   local root = require("isovim.root")
@@ -701,6 +733,31 @@ function commands.send(args)
     fail("usage: iso send <agent> <text...>")
   end
   deliver(query, text, "from")
+end
+
+-- iso send, with the agent's parent or children as the target; any other target is an agent.
+function commands.msg(args)
+  local target = table.remove(args, 1)
+  local text = table.concat(args, " ")
+  if not target or text == "" then
+    fail("usage: iso msg <parent|children|agent> <text...>")
+  end
+  if target ~= "parent" and target ~= "children" then
+    deliver(target, text, "from")
+    return
+  end
+  local ws, agent = require("isovim.root").caller()
+  if not ws then
+    fail("iso msg " .. target .. " runs inside an agent: it means that agent's " .. target)
+  end
+  local to = target == "parent" and { store.agent(ws, agent).parent } or store.children(ws, agent)
+  if #to == 0 then
+    fail(("%s/%s has no %s"):format(ws, agent, target))
+  end
+  for _, address in ipairs(to) do
+    out(address)
+    deliver(address, text, "from")
+  end
 end
 
 -- A worker's question goes to the root; the root's own (or any agent's while there's no root) is
@@ -810,16 +867,12 @@ end
 
 -- A tangent: a new workspace whose agent starts from a copy of <agent>'s conversation (default: the
 -- agent running this), in the same project dir. It shows in the sidebar but nothing opens it, so
--- your focus stays put; it reports back with iso send $ISOVIM_PARENT.
+-- your focus stays put; it reports back with iso msg parent.
 function commands.fork(args)
   local name = option(args, "--name")
   local prompt = option(args, "--prompt")
-  local target = args[1]
-  if not target then
-    local ws, agent = require("isovim.root").caller()
-    target = ws and (ws .. "/" .. agent) or fail("iso fork needs an <agent> outside an isovim agent")
-  end
-  local ws, agent = resolve_agent(target)
+  local caller = caller_address()
+  local ws, agent = resolve_agent(args[1] or caller or fail("iso fork needs an <agent> outside an isovim agent"))
   local session = store.session_id(ws.id, agent.id)
   if agent.kind ~= "claude" or not session then
     fail(("%s · %s has no Claude conversation to fork"):format(ws.name, agent.name))
@@ -828,7 +881,7 @@ function commands.fork(args)
   local tangent = store.create(name or (ws.name .. " tangent"), dir ~= store.path(ws.id) and dir or nil)
   store.remove_agent(tangent, "main")
   local fork = store.add_agent(tangent, { kind = "claude", name = agent.name, prompt = prompt })
-  store.update_agent(tangent, fork.id, { fork_of = session, parent = ws.id .. "/" .. agent.id })
+  store.update_agent(tangent, fork.id, { fork_of = session, parent = caller or (ws.id .. "/" .. agent.id) })
   fork = store.agent(tangent, fork.id)
   local result = panes.start(tangent, fork, store.dir(tangent))
   if result.code ~= 0 then

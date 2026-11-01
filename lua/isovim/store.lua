@@ -330,6 +330,7 @@ end
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
 ---@field role? "root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 
 -- The root sets the north star, the router is a repo's one interface to the user, workers do the work.
 M.roles = { "root", "router", "worker" }
@@ -364,7 +365,7 @@ local function has_agent(agents, id)
 end
 
 -- Ids come from the name or kind, numbered when taken: codex, codex2, ...
----@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string}
+---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string}
 ---@return isovim.Agent
 function M.add_agent(ws, spec)
   local dir = M.path(ws)
@@ -376,7 +377,8 @@ function M.add_agent(ws, spec)
     n = n + 1
     id = base .. n
   end
-  local agent = { id = id, name = spec.name or id, kind = spec.kind, cmd = spec.cmd, hidden = spec.hidden or nil, prompt = spec.prompt }
+  local agent = { id = id, name = spec.name or id, kind = spec.kind, cmd = spec.cmd, hidden = spec.hidden or nil, prompt = spec.prompt,
+    parent = spec.parent }
   agent.role = spec.role ~= "worker" and spec.role or nil
   agents[#agents + 1] = agent
   meta.agents = agents
@@ -455,19 +457,54 @@ function M.remove_task(ws, agent, id)
 end
 
 function M.update_agent(ws, id, fields)
-  local dir = M.path(ws)
-  local meta = read_meta(dir) or {}
-  for _, agent in ipairs(meta.agents or {}) do
-    if agent.id == id then
-      for key, value in pairs(fields) do
-        agent[key] = value
+  with_agent(ws, id, function(agent)
+    for key, value in pairs(fields) do
+      agent[key] = value
+    end
+  end)
+end
+
+-- The agents ws/agent started, across this host's workspaces, as <ws>/<agent>.
+---@return string[]
+function M.children(ws, agent)
+  local found = {}
+  for _, workspace in ipairs(M.list()) do
+    for _, child in ipairs(M.agents(workspace.id)) do
+      if child.parent == ws .. "/" .. agent then
+        found[#found + 1] = workspace.id .. "/" .. child.id
       end
     end
   end
-  write_meta(dir, meta)
+  return found
+end
+
+-- An agent going away hands its children to its own parent; with none, they become top-level.
+-- With no agent, every agent of the workspace goes.
+function M.reparent(ws, agent)
+  local leaving = agent and { agent } or vim.tbl_map(function(entry)
+    return entry.id
+  end, M.agents(ws))
+  for _, id in ipairs(leaving) do
+    -- Read again each time: handing down the previous one may have changed this one's parent.
+    local gone = M.agent(ws, id) or {}
+    for _, workspace in ipairs(M.list()) do
+      local dir = M.path(workspace.id)
+      local meta = read_meta(dir) or {}
+      local changed = false
+      for _, child in ipairs(meta.agents or {}) do
+        if child.parent == ws .. "/" .. id then
+          child.parent, changed = gone.parent, true
+        end
+      end
+      if changed then
+        write_meta(dir, meta)
+      end
+    end
+  end
 end
 
 function M.remove_agent(ws, id)
+  M.reparent(ws, id)
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}
   meta.agents = vim.tbl_filter(function(agent)

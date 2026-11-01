@@ -72,6 +72,7 @@ local KINDS = {
     delete = function(item)
       Snacks.picker.util.confirm("Archive " .. item.ws_name .. "?", function()
         panes.stop_all(item.ws)
+        store.reparent(item.ws)
         local ok, err, note = store.archive_workspace(item.ws)
         if not ok then
           Snacks.notify.error("Could not archive " .. item.ws_name .. ":\n" .. err)
