@@ -110,6 +110,26 @@ if [ -f "$lock" ]; then
   fi
 fi
 
+# A TUI's nvim server whose TUI is gone (one stuck at a prompt when its terminal closed outlived
+# it, under launchd) still holds the socket and its swap files, and would remove the socket's path
+# as it exited, by then the new TUI's. It ends itself (isovim.orphan) unless it's wedged; if it's
+# still here, it's killed, with SIGKILL, which removes nothing. Only an orphaned nvim --embed: the
+# pid may since be another process's.
+server_file="$home/isovim.server"
+if [ -f "$server_file" ]; then
+  server="$(head -n1 "$server_file")"
+  if [ -n "$server" ] && [ "$(ps -o ppid= -p "$server" 2>/dev/null | tr -d ' ')" = 1 ] &&
+    ps -o command= -p "$server" 2>/dev/null | grep -q 'nvim.*--embed'; then
+    echo "isovim: ending the last TUI's server (pid $server), left behind when its TUI went" >&2
+    kill -KILL "$server" 2>/dev/null || true
+    for _ in $(seq 30); do
+      kill -0 "$server" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  rm -f "$server_file"
+fi
+
 # No live isovim holds the socket now; a crashed one may have left it behind.
 rm -f "${ISOVIM_SOCK:-$home/nvim.sock}"
 

@@ -146,10 +146,10 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
     local acp = not placeholder and vim.b[ev.buf].isovim_acp
     if not (placeholder or acp) or opening then
       -- Anything else in a chat's window: its composer goes with it.
-      return vim.schedule(close_stray_composers)
+      return require("isovim.safe").schedule("closing a stray composer", close_stray_composers)
     end
     local win = vim.api.nvim_get_current_win()
-    vim.schedule(function()
+    require("isovim.safe").schedule("opening a tab's chat", function()
       if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= ev.buf then
         return
       end

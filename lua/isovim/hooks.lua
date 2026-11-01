@@ -51,5 +51,6 @@ function M.check_idle()
   _G.isovim_idle_fired_for = latest
   M.run("idle", { ISOVIM_QUIET = tostring(os.time() - latest) })
 end
+M.check_idle = require("isovim.safe").wrap("the idle check", M.check_idle)
 
 return M

@@ -402,11 +402,11 @@ end
 -- The pane follows the terminal's size; a resize redraws from the pane.
 vim.api.nvim_create_autocmd({ "WinResized", "VimResized", "BufWinEnter", "TermEnter" }, {
   group = vim.api.nvim_create_augroup("isovim_stream", { clear = true }),
-  callback = function()
+  callback = require("isovim.safe").wrap("a terminal chat's size", function()
     for buf in pairs(streams) do
       fit(buf)
     end
-  end,
+  end),
 })
 
 return M

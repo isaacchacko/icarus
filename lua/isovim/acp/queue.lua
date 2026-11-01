@@ -174,7 +174,7 @@ local function buffer(ws, agent)
     callback = function()
       if q.pinned and not vim.bo[buf].modified then
         q.pinned = nil
-        vim.schedule(function()
+        require("isovim.safe").schedule("the queue window", function()
           local chat = chat_of(q)
           if chat then
             M.sync(chat)
@@ -280,14 +280,17 @@ function M.sync(chat)
       end)
       vim.w[win].isovim_queue_above = cwin
     end
-    vim.wo[win][0].winbar = bar
-    -- Its lines as they wrap, and the title (the winbar counts in a window's height).
-    local rows = vim.api.nvim_win_text_height(win, {}).all
-    local height = math.max(1, math.min(MAX_HEIGHT, rows)) + 1
-    if vim.api.nvim_win_get_height(win) ~= height then
-      keeping_composers(chat, function()
-        vim.api.nvim_win_set_height(win, height)
-      end)
+    -- Gone already if opening it set off something that closed it.
+    if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      vim.wo[win][0].winbar = bar
+      -- Its lines as they wrap, and the title (the winbar counts in a window's height).
+      local ok, measured = pcall(vim.api.nvim_win_text_height, win, {})
+      local height = math.max(1, math.min(MAX_HEIGHT, ok and measured.all or 1)) + 1
+      if vim.api.nvim_win_get_height(win) ~= height then
+        keeping_composers(chat, function()
+          vim.api.nvim_win_set_height(win, height)
+        end)
+      end
     end
   end
   -- One whose composer went elsewhere (another agent's chat took its window, or it closed).

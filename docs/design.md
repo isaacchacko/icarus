@@ -157,6 +157,11 @@ chat instead.
 `<C-j>` / `<C-k>` walk down and up the column, chat → queue → input box, as they walk the sidebar's
 windows; with no queue showing they go straight between the chat and the input box.
 
+Closing the chat's tab (`Snacks.bufdelete`, `:bd`) closes the chat whole, its input box and queue
+with it; opening it again draws it afresh from the journal. (`:bd` unloads rather than wipes, and an
+unloaded scratch buffer comes back as an empty file with a swap file.) Following and measuring skip
+a window that's gone, shows another buffer or has no rows.
+
 `iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat and input
 box, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.
 
@@ -409,6 +414,15 @@ each directory has its own and one made later (a pull's) is watched as it appear
   `acp/client.lua`, `acp/adapter.lua` and the rest they load) keep the code they started with until
   they restart, which each does by itself at its next idle moment (see Agents run over ACP, Resume);
   `R` in the sidebar restarts one at once. The toast names such files.
+
+Nothing that runs on its own (timers, scheduled callbacks, autocmds, the supervisors' pushes) raises
+into nvim's messages, where an error's hit-enter prompt held the whole TUI: `isovim.safe` catches
+it and toasts it at WARN with its stack, at most once a minute for each place, and the TUI carries
+on. isovim also sets `messagesopt=wait:0` and `nomore`, so a message that does reach the command
+line never waits on a key. The TUI's nvim server ends itself once its TUI process is gone, even
+while it waits on a key (`isovim.orphan`, a libuv timer), and names itself in
+`~/.isovim/isovim.server`, so `bin/iso` kills one left behind before it starts a TUI; the TUI binds
+its socket again whenever the path is missing.
 
 Events are taken together (200ms after the last, and not while git holds its index lock), so a save
 or a `git pull` of many files is one reload. Changed files are compiled first: one that doesn't, or

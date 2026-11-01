@@ -72,7 +72,7 @@ end
 
 local function flush()
   if vim.uv.fs_stat(git_dir() .. "/index.lock") then
-    return state.timer:start(200, 0, vim.schedule_wrap(flush))
+    return state.timer:start(200, 0, require("isovim.safe").schedule_wrap("hot reload", flush))
   end
   local lua_files, starter_files = vim.tbl_keys(state.changed.lua), vim.tbl_keys(state.changed.starter)
   table.sort(lua_files)
@@ -136,7 +136,7 @@ local function changed(root_name, rel)
   end
   state.changed[root_name][rel] = true
   state.timer:stop()
-  state.timer:start(200, 0, vim.schedule_wrap(flush))
+  state.timer:start(200, 0, require("isovim.safe").schedule_wrap("hot reload", flush))
 end
 
 local function watch_dir(root_name, root, dir)
@@ -145,7 +145,7 @@ local function watch_dir(root_name, root, dir)
   end
   local prefix = dir == root and "" or dir:sub(#root + 2) .. "/"
   local handle = assert(vim.uv.new_fs_event())
-  local started = handle:start(dir, { recursive = RECURSIVE }, vim.schedule_wrap(function(err, name)
+  local started = handle:start(dir, { recursive = RECURSIVE }, require("isovim.safe").schedule_wrap("hot reload's watch", function(err, name)
     if err or not name then
       return
     end

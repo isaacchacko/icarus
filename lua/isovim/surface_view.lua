@@ -576,7 +576,7 @@ local function bind(view)
     buffer = view.buf,
     callback = function()
       local win = vim.api.nvim_get_current_win()
-      vim.schedule(function()
+      require("isovim.safe").schedule("a surface's view", function()
         if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == view.buf then
           M.dress(view, win)
         end
@@ -588,7 +588,7 @@ local function bind(view)
     group = group,
     buffer = view.buf,
     callback = function()
-      vim.schedule(function()
+      require("isovim.safe").schedule("closing a surface's view", function()
         close_input(view)
         M.views[key(view.repo, view.name)] = nil
         pcall(vim.api.nvim_buf_delete, view.input, { force = true })
@@ -600,7 +600,7 @@ local function bind(view)
     group = group,
     buffer = view.buf,
     callback = function()
-      vim.schedule(function()
+      require("isovim.safe").schedule("a surface's input box", function()
         local input_win = vim.fn.bufwinid(view.input)
         if vim.fn.bufwinid(view.buf) ~= -1 or input_win == -1 then
           return

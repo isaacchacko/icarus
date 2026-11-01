@@ -6,6 +6,7 @@ local prs = require("isovim.prs")
 local icons = require("isovim.icons")
 local stream = require("isovim.stream")
 local layout = require("isovim.layout")
+local safe = require("isovim.safe")
 local diffstat = require("isovim.diffstat")
 local remote = require("isovim.remote")
 
@@ -627,7 +628,7 @@ function M.migrate()
       -- root still holds work, a glob or two), so this process isn't long on a work root that's
       -- gone; the move is tried again every 20s.
       local ticks = 0
-      _G.isovim_migrate_timer:start(5000, 5000, vim.schedule_wrap(function()
+      _G.isovim_migrate_timer:start(5000, 5000, safe.schedule_wrap("the move's retry", function()
         ticks = ticks + 1
         -- Another process made the move: the work root is the new one now.
         local before = store.work
@@ -649,6 +650,14 @@ end
 
 function M.setup(opts)
   local reloading = opts and opts.reload
+  -- Nothing waits on Enter: a message longer than the command line (most often an error's stack)
+  -- shows and the TUI carries on, rather than stop at a hit-enter or more prompt. noice draws
+  -- messages in floats, but what it can't take falls back to the command line, which is 0 rows
+  -- tall, so the prompt that held everything couldn't even be seen.
+  pcall(function()
+    vim.o.messagesopt = "wait:0,history:500"
+  end)
+  vim.o.more = false
   -- The migrate timer's closure is the old code's: M.migrate starts it again if it's still needed.
   if reloading and _G.isovim_migrate_timer then
     _G.isovim_migrate_timer:close()
@@ -738,22 +747,24 @@ function M.setup(opts)
     if not win then
       return "<ScrollWheelDown>"
     end
-    local below = require("isovim.acp.chat").rows_to_end(win) - vim.api.nvim_win_get_height(win)
+    local below = (require("isovim.acp.chat").rows_to_end(win) or 0) - vim.api.nvim_win_get_height(win)
     local step = math.min(below, tonumber(vim.o.mousescroll:match("ver:(%d+)")) or 3)
     return step > 0 and ("<Cmd>lua vim.api.nvim_win_call(%d, function() vim.cmd('normal! %d\\5') end)<CR>"):format(win, step)
       or ""
   end, { expr = true, desc = "isovim: scroll a chat down, no further than its end" })
   vim.api.nvim_create_autocmd("WinScrolled", {
     group = group,
-    callback = function()
+    callback = safe.wrap("the chat's scroll clamp", function()
       for id in pairs(vim.v.event) do
         local win = tonumber(id)
         if win and vim.api.nvim_win_is_valid(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_agent_kind then
-          local past = require("isovim.acp.chat").rows_to_end(win) < vim.api.nvim_win_get_height(win)
+          local rows = require("isovim.acp.chat").rows_to_end(win)
+          local past = rows and rows < vim.api.nvim_win_get_height(win)
           vim.api.nvim_win_call(win, function()
             local view = vim.fn.winsaveview()
-            if past and (view.topline > 1 or view.skipcol > 0) then
-              vim.fn.winrestview(require("isovim.acp.chat").end_view(win))
+            local at_end = past and (view.topline > 1 or view.skipcol > 0) and require("isovim.acp.chat").end_view(win)
+            if at_end then
+              vim.fn.winrestview(at_end)
             end
             if view.leftcol > 0 then
               vim.fn.winrestview({ leftcol = 0 })
@@ -761,12 +772,12 @@ function M.setup(opts)
           end)
         end
       end
-    end,
+    end),
   })
   vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "WinResized", "WinEnter", "BufWinEnter" }, {
     group = group,
     callback = function()
-      vim.schedule(function()
+      safe.schedule("saving the layout", function()
         layout.save(M.current, is_sidebar)
       end)
     end,
@@ -787,7 +798,7 @@ function M.setup(opts)
     group = group,
     callback = function()
       local by_quit = quitting
-      vim.schedule(function()
+      safe.schedule("keeping a window beside the sidebar", function()
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
           if not is_sidebar(win) then
             return
@@ -839,6 +850,7 @@ function M.setup(opts)
     callback = function()
       status.stop()
       store.release_lock()
+      require("isovim.orphan").stop()
     end,
   })
 
@@ -846,6 +858,8 @@ function M.setup(opts)
   if not vim.tbl_contains(vim.fn.serverlist(), store.socket) then
     pcall(vim.fn.serverstart, store.socket)
   end
+  -- This server ends itself once its TUI is gone, even stuck at a prompt (isovim.orphan).
+  require("isovim.orphan").start()
 
   enter_dir(M.current)
   -- A hot reload stays in the scope it was in (Terminals, or Root on the root's chat, aren't the
@@ -873,7 +887,7 @@ function M.setup(opts)
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
       local buf = vim.api.nvim_win_get_buf(win)
       if vim.b[buf].isovim_id and status.state(vim.b[buf].isovim_id, vim.b[buf].isovim_agent or "main") ~= "working" then
-        vim.defer_fn(function()
+        safe.defer("checking a chat's stream", function()
           stream.check(buf)
         end, 500)
       end
@@ -945,7 +959,7 @@ function M.setup(opts)
   store.take_lock()
   if vim.fn.argc() == 0 then
     sidebar.open()
-    vim.schedule(function()
+    safe.schedule("reopening what was open", function()
       M.resume()
       require("isovim.landing").open_if_empty()
     end)
@@ -1248,6 +1262,7 @@ function M.poll_prs()
     end
   end
 end
+M.poll_prs = safe.wrap("watching PRs", M.poll_prs)
 
 -- iso find as a live picker, like <leader>/: each keystroke searches every host; the preview
 -- shows the agent's transcript at the match, or where else the query turned up. iso find prints one JSON array; jq makes it a row per agent.
@@ -1383,13 +1398,16 @@ end
 -- What changes with no hook to say so: titles and terminals' commands, the ports they serve on,
 -- and the current workspace's +/- after a commit made in a terminal. The sidebar redraws when any does.
 local last_titles, ticks = nil, 0
-function M.poll()
+M.poll = safe.wrap("the 3s poll", function()
   ticks = ticks + 1
-  -- The socket's file gone while this TUI still listens on it (an older nvim exiting removes the
-  -- path it listened on, whoever binds it now): bound again, so iso and the hooks reach it.
-  if not vim.uv.fs_stat(store.socket) and vim.tbl_contains(vim.fn.serverlist(), store.socket) then
-    pcall(vim.fn.serverstop, store.socket)
+  -- The socket's file gone (an older nvim exiting removes the path it listened on, whoever binds
+  -- it now; or it was taken when this TUI started): bound again, so iso and the hooks reach it.
+  if not vim.uv.fs_stat(store.socket) then
+    if vim.tbl_contains(vim.fn.serverlist(), store.socket) then
+      pcall(vim.fn.serverstop, store.socket)
+    end
     pcall(vim.fn.serverstart, store.socket)
+    require("isovim.orphan").bound()
   end
   local now = vim.json.encode(panes.titles())
   if now ~= last_titles then
@@ -1409,17 +1427,29 @@ function M.poll()
   if M.current then
     diffstat.get(store.dir(M.current), require("isovim.sidebar").refresh)
   end
-end
+end)
 
--- How a layout.json leaf comes back in its window: the agent's chat, or the file.
+-- How a layout.json leaf comes back in its window: the agent's chat, or the file. A file another
+-- nvim has a swap for (an older TUI still going down, or one left frozen) opens read-only rather
+-- than asking: nothing here waits on a key.
 function M.open_leaf(ws)
   return function(win, leaf)
     if leaf.agent and store.agent(ws, leaf.agent) then
       M.open(ws, leaf.agent, win)
     elseif leaf.file and vim.fn.filereadable(leaf.file) == 1 then
+      local swap = vim.api.nvim_create_autocmd("SwapExists", {
+        callback = function()
+          vim.v.swapchoice = "o"
+          local name = vim.fn.fnamemodify(leaf.file, ":~")
+          vim.schedule(function()
+            Snacks.notify.warn(name .. ": another nvim has it open (its swap file), so it's opened read-only")
+          end)
+        end,
+      })
       vim.api.nvim_win_call(win, function()
-        vim.cmd.edit(vim.fn.fnameescape(leaf.file))
+        pcall(vim.cmd.edit, vim.fn.fnameescape(leaf.file))
       end)
+      vim.api.nvim_del_autocmd(swap)
     end
   end
 end

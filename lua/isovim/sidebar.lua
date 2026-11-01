@@ -1343,7 +1343,7 @@ function M.refresh()
   pending = true
   vim.defer_fn(function()
     pending = false
-    refresh_now()
+    require("isovim.safe").wrap("the sidebar", refresh_now)()
   end, 30)
 end
 

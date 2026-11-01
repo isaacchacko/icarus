@@ -270,7 +270,7 @@ local function on_key()
   state.last_key = vim.uv.now()
   if state.notice_at then
     state.notice_at = nil
-    vim.schedule(function()
+    require("isovim.safe").schedule("the restart's notice", function()
       Snacks.notifier.hide(NOTICE_ID)
       notify("isovim's restart waits until you're idle again")
     end)
@@ -284,7 +284,7 @@ function M.arm()
   end
   _G.isovim_restart_timer = vim.uv.new_timer()
   _G.isovim_restart_timer:start(1000, 1000, vim.schedule_wrap(function()
-    require("isovim.update").tick()
+    require("isovim.safe").wrap("the restart's clock", require("isovim.update").tick)()
   end))
 end
 
@@ -298,7 +298,7 @@ function M.start()
   if M.enabled and not _G.isovim_update_timer then
     _G.isovim_update_timer = vim.uv.new_timer()
     _G.isovim_update_timer:start(math.min(5000, M.INTERVAL), M.INTERVAL, vim.schedule_wrap(function()
-      require("isovim.update").check()
+      require("isovim.safe").wrap("the update check", require("isovim.update").check)()
     end))
   end
 end

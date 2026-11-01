@@ -186,7 +186,7 @@ function M.follow(ws, agent, on_entry, on_reset)
   end
   -- Watching before reading, so nothing written in between is missed.
   local watcher = assert(vim.uv.new_fs_event())
-  watcher:start(M.dir(ws), {}, vim.schedule_wrap(function(err)
+  watcher:start(M.dir(ws), {}, require("isovim.safe").schedule_wrap("the journal's watch", function(err)
     if not err then
       drain()
     end
