@@ -1,7 +1,9 @@
--- Root mode: a root answers the routers' questions in your place. iso rootmode on|off <repo|host>
--- (isovim.cli.rootmode) turns it on for one repo (a repo root) or the whole host (the host root);
--- this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it isn't synced),
--- and says where a router's question goes: the most specific active root, else you.
+-- Root mode: a root is in charge of clearing the Inbox, which it shares with you. iso rootmode
+-- on|off <repo|host> (isovim.cli.rootmode) turns it on for one repo (its repo root) or the whole
+-- host (the host root); this module keeps which is on, in ~/.isovim/rootmode.json (this host's
+-- alone: it isn't synced), and says which roots may answer a question and which one is told of it.
+-- A question isn't routed anywhere: it stays in its repo's Inbox, and the first answer wins,
+-- yours or a root's.
 --   { "host": {agent, task?, since}, "repos": { "<owner/repo>": {agent, task?, since} } }
 -- An entry is active while its agent's record still holds the role it needs (root for the host,
 -- repo-root for a repo); one whose agent went away is off.
@@ -68,7 +70,7 @@ function M.active(scope)
   end
 end
 
--- Where a question asked in repo goes: the repo's root, else the host root, else nil (you).
+-- The root in charge of repo's Inbox: the repo's root, else the host root, else nil (only you).
 ---@return string? address, isovim.RootMode? entry, string? scope "host" or the repo
 function M.route(repo)
   for _, scope in ipairs({ repo, "host" }) do
@@ -79,10 +81,33 @@ function M.route(repo)
   end
 end
 
--- Whether address is a root a question asked in repo can wait on now: the repo's or the host's,
--- while its root mode is on. One that went away (removed, or root mode off) isn't.
-function M.serving(address, repo)
-  return address ~= nil and (M.active(repo) == address or M.active("host") == address)
+-- Whether a root may answer a question still open to roots: pending, not the user's (raised), and
+-- one not asked by the root itself.
+local function open(entry)
+  return entry.type == "question" and not entry.answer and not entry.raised
+end
+
+-- Whether address may answer the question: it's the root of the question's repo or the host's,
+-- while root mode is on there. You may answer any question; a root never answers its own, nor one
+-- that's yours (raised: a root's --raise, or a permission request).
+function M.may_answer(address, entry)
+  return open(entry) and address ~= entry.asker
+    and (M.active(entry.repo) == address or M.active("host") == address)
+end
+
+-- The root told of a question, the one in charge of its repo's Inbox: the repo's root, else the
+-- host root, passing over the one that asked it (a repo root's own question goes to the host root).
+---@return string? address, string? scope
+function M.root_for(entry)
+  if not open(entry) then
+    return nil
+  end
+  for _, scope in ipairs({ entry.repo, "host" }) do
+    local address = M.active(scope)
+    if address and address ~= entry.asker then
+      return address, scope
+    end
+  end
 end
 
 -- Whether root mode is on for a repo (its own root) or, with "host", for the host.

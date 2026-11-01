@@ -316,25 +316,27 @@ M.list = {
                                      names repeat across repos): an option's label or
                                      number, several for a multi question, or your own
                                      words where it takes them; with no answer, print
-                                     the question and its options. A root answers the
-                                     ones root mode gave it with iso <root|repo-root>
-                                     answer, and --raise gives one to the user instead]=],
+                                     the question and its options. In root mode the
+                                     root answers its Inbox's questions too, with iso
+                                     <root|repo-root> answer (the first answer wins),
+                                     and --raise leaves one to the user alone]=],
   },
   { name = "rootmode", module = "rootmode",
     audience = "user",
     args = { "on|off", "host|<repo>" },
     flags = { ["--task"] = "<text>" },
-    summary = "let a root answer the routers' questions, for a repo or the host",
+    summary = "put a root in charge of clearing the Inbox, for a repo or the host",
     help = [=[
        iso rootmode on|off <repo|host> [--task "<description>"]
-                                     root mode: the routers' questions go to the most
-                                     specific active root (the repo's, else the host's)
-                                     instead of your Inbox. on spawns a worker over ACP
-                                     and promotes it (repo-root, or root for the host),
-                                     or uses the agent holding that role; --task is
-                                     its first message, guidance it narrows itself by,
-                                     raising what's outside it to you. off sends its
-                                     waiting questions on; the root keeps its role]=],
+                                     root mode: a root clears the Inbox with you,
+                                     answering any question in it however it was asked
+                                     (permission requests stay yours); it's told of each
+                                     new one, and on lists those waiting. on spawns a
+                                     worker over ACP and promotes it (repo-root, or root
+                                     for the host), or uses the agent holding that
+                                     role; --task is its first message, guidance it
+                                     narrows itself by, leaving what's outside it to
+                                     you. off stops telling it; it keeps its role]=],
   },
   { name = "root", module = "messaging",
     args = { "<address>" },
@@ -614,6 +616,12 @@ M.list = {
   -- A repo's surfaces, scanned, as JSON (isovim.surfaces): for scripts, checks and other hosts.
   { name = "__surfaces", module = "surfaces",
     args = { "<repo>..." },
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- Tells a repo's root of its new questions, in root mode (a scan that sees one runs it).
+  { name = "__rootmode-tell", module = "rootmode",
+    args = { "<repo>" },
     hidden = true,
     audience = "plumbing",
   },

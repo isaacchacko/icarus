@@ -17,7 +17,7 @@
 --                                went                          {repo, name, type, file, title, error?}
 --   surface.<repo>.<name>.answered   a question was answered   {..., answer: {labels, other?, by, at}}
 --   surface.<repo>.<name>.consumed   the user opened a chat or consumable surface (isovim.surfaces)
---   root.<scope>.raised|decided   a root gave a question to the user (iso <root|repo-root> answer
+--   root.<scope>.raised|decided   a root left a question to the user (iso <root|repo-root> answer
 --                                --raise) or answered it itself; scope is "host" for the host root,
 --                                else the repo root's repo   {scope, root, question, repo, name, text,
 --                                answer? (decided: {labels, other?, by, at})}
@@ -52,7 +52,7 @@ M.topics = {
   { "surface.*.*.removed", "a surface went" },
   { "surface.*.*.answered", "a question surface was answered" },
   { "surface.*.*.consumed", "the user opened a chat or consumable surface" },
-  { "root.*.raised", "a root gave a question to the user" },
+  { "root.*.raised", "a root left a question to the user" },
   { "root.*.decided", "a root answered a question itself" },
   { "**", "everything" },
 }

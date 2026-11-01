@@ -1,15 +1,15 @@
 -- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode on <repo|host>
--- makes a root answer in your place: an agent spawned over ACP with the role (repo-root for a repo,
--- root for the host), or the agent that holds that role already, with --task "<description>" as
--- its first message (guidance only: the root decides what's outside it and raises that to you).
--- iso rootmode off hands its waiting questions on, to the host root or to you, as iso rm of a root
--- does. iso rootmode on host takes the place of a root the iso root file names, and tells it so.
+-- puts a root in charge of clearing the Inbox: an agent spawned over ACP with the role (repo-root
+-- for a repo, root for the host), or the agent that holds that role already, with --task
+-- "<description>" as its first message (guidance only: the root decides what's outside it and
+-- leaves that to you). iso rootmode off just stops telling it of questions. iso rootmode on host
+-- takes the place of a root the iso root file names, and tells it so.
 --
--- A router's question goes to the most specific active root: the question surface stays in the
--- router's repo, marked as routed to that root (so it waits on the root, not on you), and the root
--- gets it as a message, stamped as from the router. The root answers with iso <role> answer
--- <question> <answer>, which unblocks the router's iso router surface question, or gives it to
--- you with iso <role> answer <question> --raise.
+-- The root and you share the Inbox. The root is told of each new question open to roots (one
+-- message per batch, by iso __rootmode-tell, which a scan that sees one starts), and of those
+-- already waiting when root mode turns on (one message listing them). It answers with iso <role>
+-- answer <question> <answer>, which reaches the asker as yours does (a router blocked in iso router
+-- surface question, an ACP agent's supervisor), or leaves it to you with --raise.
 local store = require("isovim.store")
 local rootmode = require("isovim.rootmode")
 local surfaces = require("isovim.surfaces")
@@ -42,91 +42,78 @@ end
 -- The --task text, as the root's first message.
 local function task_text(scope, task)
   return ("Root mode is on for %s, and you are its %s. Your task, as guidance (you decide what falls "
-    .. "outside it, and raise that to the user with iso %s answer <question> --raise):\n\n%s")
+    .. "outside it, and leave that to the user with iso %s answer <question> --raise):\n\n%s")
     :format(label(scope), scope == "host" and "host root" or "repo root", rootmode.role(scope), task)
 end
 
--- The question as its root gets it.
-local function question_text(entry, scope, mode, from)
+-- The questions as their root gets them: each with its options, then how to answer.
+local function questions_text(intro, entries, scope)
   local role = rootmode.role(scope)
-  local id = entry.repo .. "/" .. entry.name
-  local lines = { ("[question %s, from %s] %s%s"):format(id, from and ("the router " .. from) or "a shell",
-    entry.question, entry.multi and " (pick any)" or "") }
-  for i, opt in ipairs(entry.options) do
-    lines[#lines + 1] = ("  %d. %s%s"):format(i, opt.label, opt.description and (" · " .. opt.description) or "")
+  local lines = { intro }
+  for _, entry in ipairs(entries) do
+    lines[#lines + 1] = ("[question %s/%s, from %s] %s%s"):format(entry.repo, entry.name, entry.asker or "a shell",
+      entry.question, entry.multi and " (pick any)" or "")
+    for i, opt in ipairs(entry.options) do
+      lines[#lines + 1] = ("  %d. %s%s"):format(i, opt.label, opt.description and (" · " .. opt.description) or "")
+    end
+    if entry.other then
+      lines[#lines + 1] = "  (or your own words)"
+    end
   end
-  if entry.other then
-    lines[#lines + 1] = "  (or your own words)"
-  end
-  lines[#lines + 1] = ("Root mode gives it to you, the %s of %s, and the router waits on it. Answer with "
-    .. "`iso %s answer %s <answer>`, or give it to the user with `iso %s answer %s --raise`.")
-    :format(scope == "host" and "host root" or "repo root", label(scope), role, id, role, id)
+  lines[#lines + 1] = ("Answer what you can stand behind with `iso %s answer <repo>/<name> <answer...>`; leave "
+    .. "the rest to the user with `iso %s answer <repo>/<name> --raise`. The user may answer first: the first "
+    .. "answer wins."):format(role, role)
+  local mode = rootmode.entry(scope)
   if mode and mode.task then
     lines[#lines + 1] = "Your task (raise what's outside it): " .. mode.task
   end
   return table.concat(lines, "\n")
 end
 
--- The roots a question asked in repo goes to, most specific first: the repo's root, then the
--- host root, while root mode is on for each. A root never gets its own question (from, the asker):
--- a repo root's goes on to the host root.
-local function roots_for(repo, from)
-  local found = {}
-  for _, scope in ipairs({ repo, "host" }) do
-    local to, mode = rootmode.active(scope)
-    if to and to ~= from and not vim.iter(found):any(function(r)
-      return r.to == to
-    end) then
-      found[#found + 1] = { to = to, mode = mode, scope = scope }
-    end
-  end
-  return found
-end
-
--- Sends a pending question to the most specific active root, or back to the user when there's
--- none; one a root raised stays with the user. from is the asking router (<ws>/<agent>), if any
--- (else the one that asked it first). It's marked routed to a root only once the root has it: a
--- root the send fails for is passed over, for the next root or the user. resend gives it to a
--- root that has it already (it was reworded).
----@return string? to the root it went to
-function M.route_question(entry, from, resend)
-  -- The root pseudo-repo's questions are the host root's own, to you.
-  if entry.answer or entry.raised or entry.repo == "root" then
-    return entry.routed
-  end
-  from = from or entry.asker
-  for _, root in ipairs(roots_for(entry.repo, from)) do
-    if root.to == entry.routed and not resend then
-      return root.to
-    end
-    local ok, err = c.try(send, root.to, question_text(entry, root.scope, root.mode, from), from)
-    if ok then
-      surfaces.route(entry, root.to, nil, from)
-      return root.to
-    end
-    io.stderr:write(("iso: root mode: %s/%s could not go to the root %s (%s); passing it on\n")
-      :format(entry.repo, entry.name, root.to, err))
-  end
-  if entry.routed then
-    surfaces.route(entry, nil, nil, from)
-  end
-end
-
--- Hands on every pending question routed to address, a root whose root mode went off or that was
--- removed: to the next root, or to the user.
----@return {entry: isovim.Surface, to?: string}[] moved
-function M.reroute(address)
-  local moved = {}
-  for _, repo in ipairs(surfaces.repos()) do
-    for _, entry in ipairs(surfaces.scan(repo)) do
-      if entry.type == "question" and not entry.answer and entry.routed == address then
-        moved[#moved + 1] = { entry = entry, to = M.route_question(entry) }
+-- Tells each root of the questions it's in charge of, one message per root; intro(scope) opens it.
+-- A root the message can't reach is skipped: the questions wait in the Inbox all the same.
+local function tell(entries, intro)
+  local by_root, order = {}, {}
+  for _, entry in ipairs(entries) do
+    local address, scope = rootmode.root_for(entry)
+    if address then
+      if not by_root[address] then
+        by_root[address] = { scope = scope, entries = {} }
+        order[#order + 1] = address
       end
+      table.insert(by_root[address].entries, entry)
     end
   end
-  return moved
+  for _, address in ipairs(order) do
+    local group = by_root[address]
+    local ok, err = c.try(send, address, questions_text(intro(group.scope, #group.entries), group.entries, group.scope))
+    if not ok then
+      io.stderr:write(("iso: root mode: could not tell %s of %d question(s): %s\n"):format(address, #group.entries, err))
+    end
+  end
 end
-local reroute = M.reroute
+
+-- iso __rootmode-tell <repo>: tells the repo's root of its questions no root was told of yet.
+-- A scan that sees a new question starts it; the pause lets an ACP agent's several questions, asked
+-- one surface at a time, go in one message.
+M["__rootmode-tell"] = function(args)
+  local repo = surfaces.key(args[1] or fail("usage: iso __rootmode-tell <repo>")) or fail("no repo " .. args[1])
+  vim.uv.sleep(1500)
+  tell(surfaces.take_untold(repo), function(_, n)
+    return ("%s in %s's Inbox, which root mode has you clear with the user:")
+      :format(n == 1 and "A new question" or (n .. " new questions"), repo == store.ROOT and "Root" or repo)
+  end)
+end
+
+-- The questions waiting in the scope's Inbox (every repo's, for the host) when root mode turns on,
+-- marked told so the new root hears of each once.
+local function waiting(scope)
+  local list = {}
+  for _, repo in ipairs(scope == "host" and surfaces.repos() or { scope }) do
+    vim.list_extend(list, surfaces.take_untold(repo, true))
+  end
+  return list
+end
 
 -- A scope from what was typed: host (or root), owner/repo, or a dir in a repo.
 local function scope_of(text)
@@ -177,6 +164,16 @@ local function tell_replaced(before, scope, address)
   end
 end
 
+-- Tells the scope's root of the questions already waiting, in one message.
+local function tell_waiting(scope, address)
+  tell(vim.tbl_filter(function(entry)
+    return rootmode.root_for(entry) == address
+  end, waiting(scope)), function(_, n)
+    return ("Root mode is on for %s: you clear its Inbox with the user. %s waiting there now:")
+      :format(label(scope), n == 1 and "One question is" or (n .. " questions are"))
+  end)
+end
+
 local function on(scope, task)
   local before = scope == "host" and require("isovim.root").get() or nil
   local role = rootmode.role(scope)
@@ -188,6 +185,7 @@ local function on(scope, task)
       send(address, task_text(scope, task))
     end
     out(("root mode is already on for %s: %s%s"):format(label(scope), address, task and "; it has the task now" or ""))
+    tell_waiting(scope, address)
     return
   end
   local roles = require("isovim.cli.roles")
@@ -198,7 +196,7 @@ local function on(scope, task)
     if first then
       send(address, first)
     end
-    out(("root mode is on for %s: %s, its %s already, answers its routers now"):format(label(scope), address, role))
+    out(("root mode is on for %s: %s, its %s already, clears its Inbox with you now"):format(label(scope), address, role))
   else
     -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
     -- the role's prompt, which a resumed or reloaded session couldn't take as its system prompt.
@@ -218,9 +216,10 @@ local function on(scope, task)
     address = key .. "/" .. agent.id
     rootmode.set(scope, { agent = address, task = task, since = os.time() })
     c.ensure_running(c.resolve(key), store.agent(key, agent.id))
-    out(("root mode is on for %s: %s, a new %s, answers its routers"):format(label(scope), address, role))
+    out(("root mode is on for %s: %s, a new %s, clears its Inbox with you"):format(label(scope), address, role))
   end
   tell_replaced(before, scope, address)
+  tell_waiting(scope, address)
   c.tui("require('isovim').refresh()")
 end
 
@@ -231,15 +230,10 @@ local function off(scope)
     return
   end
   rootmode.set(scope, nil)
-  local moved = reroute(mode.agent)
-  local next_root = rootmode.route(scope ~= "host" and scope or store.GENERAL)
   local ws, id = mode.agent:match("^(.*)/([^/]+)$")
   if ws and store.agent(ws, id) then
-    send(mode.agent, ("Root mode is off for %s: its routers' questions go to %s now. You keep your role.")
-      :format(label(scope), next_root or "the user"))
-  end
-  for _, m in ipairs(moved) do
-    out(("%s/%s goes to %s"):format(m.entry.repo, m.entry.name, m.to or "the user"))
+    c.try(send, mode.agent, ("Root mode is off for %s: you aren't told of its questions now, and they're the "
+      .. "user's to answer. You keep your role."):format(label(scope)))
   end
   out(("root mode is off for %s; %s keeps its role"):format(label(scope), mode.agent))
   c.tui("require('isovim').refresh()")

@@ -198,12 +198,22 @@ box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-yo
   repo's router.
 - **Role prompts** are files set in `config.json` (`prompts`). The host root's prompt lists the actions
   that are permanently off; agents are trusted to follow it.
-- **Root mode:** `iso rootmode on|off <repo|host> [--task "<description>"]` spawns a worker and promotes
-  it.
-  - A router's questions go to the most specific active root.
-  - A repo root narrowed by `--task` raises everything outside it to your Inbox. The description is
-    guidance only, delivered as the root's first message.
-  - Roots answer questions with `iso <root|repo-root> answer`.
+- **Root mode:** a root is in charge of clearing the Inbox, and it and you share it.
+  `iso rootmode on|off <repo|host> [--task "<description>"]` turns it on for a repo (its repo-root) or
+  the host (the host root), spawning a worker and promoting it if the role is empty.
+  - Questions aren't routed: each stays in its repo's Inbox. While root mode is on for its repo or
+    the host, that root may answer it (`iso <root|repo-root> answer`), however it was asked: a
+    router's surface question, an ACP agent's AskUserQuestion, a shell. You may answer anything. The
+    first answer wins, and reaches the asker the same way whoever gave it.
+  - The root in charge of a question (the repo's root, else the host root, never the one that asked
+    it) is told of each new one, in one message per batch, and when root mode turns on gets one
+    message listing those already waiting.
+  - A root leaves a question to you with `--raise`: it's marked yours (the sidebar says "yours")
+    and no root answers it after. An ACP agent's permission requests are yours from the start, since
+    they let it run a tool its mode stopped.
+  - `iso rootmode off` stops the telling and the root's answering; there's nothing to hand on.
+  - A root narrowed by `--task` raises everything outside it. The description is guidance only,
+    delivered as the root's first message.
   - Your delegated authority (stamps) belongs to the host root.
 
 ## Surfaces
@@ -251,7 +261,7 @@ ISOVIM 2de9e2b
 ```
 
 Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
-shows a "root mode" marker beside its count.
+shows a "root mode" marker beside its count, and a question a root left to you says "yours".
 
 ## The tab bar
 

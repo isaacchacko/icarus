@@ -12,7 +12,10 @@
 --   A permission request (session/request_permission, which bypassPermissions mode still lets
 --     through for some tools): a surface with Allow and Deny, answered with the request's
 --     allow_once (else allow_always) or reject_once (else reject_always) option.
--- Surfaces are named <agent>-ask-<id>-<n> and <agent>-perm-<id>. One still waiting when the turn
+-- Surfaces are named <agent>-ask-<id>-<n> and <agent>-perm-<id>, asked as from the agent. In root
+-- mode a question is the root's to answer too (isovim.rootmode), and its answer comes back the same
+-- way; a permission request is yours alone (raised), as it lets the agent run a tool its mode
+-- stopped. One still waiting when the turn
 -- ends (a cancel) is taken down, and the request answered cancelled; a supervisor that starts again
 -- takes down any its last run left (the adapter that asked is gone).
 local surfaces = require("isovim.surfaces")
@@ -95,9 +98,9 @@ local function unwatch(asks)
   end
 end
 
--- Puts one question in the Inbox; nil and why when it couldn't.
-local function ask_one(asks, spec, name)
-  local entry, how = surfaces.ask(asks.repo, spec, name)
+-- Puts one question in the Inbox; nil and why when it couldn't. yours keeps it from the roots.
+local function ask_one(asks, spec, name, yours)
+  local entry, how = surfaces.ask(asks.repo, spec, name, asks.ws .. "/" .. asks.agent, yours)
   if not entry then
     return nil, how
   end
@@ -276,7 +279,7 @@ function M.permission(asks, params, answer)
   local entry, err = ask_one(asks, {
     question = ("%s asks to run: %s"):format(name_of(asks), tool),
     options = { { label = "Allow", description = "this once" }, { label = "Deny" } },
-  }, name)
+  }, name, true)
   if not entry then
     asks.journal("permission", { tool = tool, toolCallId = call.toolCallId, decision = "denied",
       reason = "could not ask in the Inbox: " .. tostring(err) })

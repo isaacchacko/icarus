@@ -10,8 +10,10 @@
 --                   gone from the Inbox once opened, until the router rewrites it)
 --   <name>.surface  JSON with a type, made by iso router surface:
 --                   question  {question, options: [{label, description?}], multi?, other?, created,
---                             by? (who asked), answer?: {labels, other?, by, at}}: answered with
---                             iso answer or M.answer, then removed when its asker collects the answer
+--                             by? (who asked), raised? (the user's: no root answers it), answer?:
+--                             {labels, other?, by, at}}: answered with iso answer or M.answer (by
+--                             the user, or in root mode a root, isovim.rootmode), then removed when
+--                             its asker collects the answer
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
@@ -62,8 +64,8 @@ end
 ---@field multi? boolean
 ---@field other? boolean
 ---@field answer? {labels: string[], other?: string, by: string, at: number}
----@field routed? string question: the root it went to (isovim.rootmode), <ws>/<agent>; waits on it, not you
----@field raised? boolean question: a root gave it back to you, so it isn't routed again
+---@field asker? string question: who asked it, <ws>/<agent>; nil from a shell
+---@field raised? boolean question: yours alone (a root raised it, or it's a permission request)
 ---@field path? string file, folder: the target
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
@@ -348,12 +350,10 @@ local function parse_surface(entry, text)
     if type(data.answer) == "table" then
       entry.answer = data.answer
     end
-    entry.routed = type(data.to) == "string" and data.to or nil
     entry.raised = data.raised == true or nil
     entry.asker = type(data.by) == "string" and data.by or nil
-    -- One routed to a root that's gone waits on you until it's routed on.
+    -- The Inbox is shared: a root may answer it too, but until someone does it waits on you.
     entry.needs_you = not entry.answer
-      and not (entry.routed and require("isovim.rootmode").serving(entry.routed, entry.repo))
   elseif data.type == "file" or data.type == "folder" then
     if type(data.path) ~= "string" or data.path == "" then
       return "path is the " .. data.type .. "'s path, a string"
@@ -534,9 +534,17 @@ local function sync_error_files(repo, entries)
   end
 end
 
+-- In root mode, the repo's root is told of new questions by iso __rootmode-tell, run on the tmux
+-- server so neither the scan nor whoever asked waits on it.
+local function tell_root(repo)
+  if require("isovim.rootmode").route(repo) then
+    require("isovim.panes").later({ "__rootmode-tell", repo }, store.run .. "/rootmode.log")
+  end
+end
+
 -- A repo's surfaces, as M.read gives them, after bringing its error files and events up to date.
 -- Changes to the surfaces named in quiet are taken in without a changed event (their writer
--- published what happened).
+-- published what happened). A new question open to roots tells the repo's root, in root mode.
 ---@param quiet? table<string, true> base file names
 ---@return isovim.Surface[]
 function M.scan(repo, quiet)
@@ -544,7 +552,8 @@ function M.scan(repo, quiet)
   if vim.fn.isdirectory(M.dir(repo)) == 0 then
     return {}
   end
-  return locked(repo, function()
+  local asked = false
+  local entries = locked(repo, function()
     local state = read_state(repo)
     local entries = M.read(repo, state)
     sync_error_files(repo, entries)
@@ -555,6 +564,7 @@ function M.scan(repo, quiet)
       if not seen then
         state[entry.base] = { sig = entry.sig, first = entry.created or now }
         publish(entry, "created", { title = entry.title })
+        asked = asked or (entry.type == "question" and not entry.answer and not entry.raised)
         dirty = true
       elseif seen.sig ~= entry.sig then
         seen.sig = entry.sig
@@ -582,6 +592,10 @@ function M.scan(repo, quiet)
     end
     return entries
   end)
+  if asked then
+    tell_root(repo)
+  end
+  return entries
 end
 
 -- making them
@@ -624,11 +638,11 @@ end
 -- Asks a question in the repo, or finds it asked already: by name (spec.name, or name), else by
 -- the same question, options, multi and other. A pending question of that name asked differently
 -- is reworded in place; an answered one keeps its answer. by is who asks (<ws>/<agent>), which its
--- view shows.
+-- view shows; yours makes it the user's alone from the start (raised).
 ---@param spec table as M.validate_question takes it
 ---@return isovim.Surface? entry, string how_or_err "asked", "reattached", "reworded", "kept" (answered
 --- before it was asked differently), or what's wrong
-function M.ask(repo, spec, name, by)
+function M.ask(repo, spec, name, by, yours)
   repo = canon(repo)
   local q, err, asked_name = M.validate_question(spec)
   if not q then
@@ -646,12 +660,12 @@ function M.ask(repo, spec, name, by)
   if existing and existing.key ~= key and not existing.answer then
     how = "reworded"
     put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised, by = existing.asker or by })
+      other = q.other, created = existing.created, raised = existing.raised, by = existing.asker or by })
   elseif not existing then
     how = "asked"
     name = name or free_name(repo, q.question)
     local ok, why = put(repo, name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = os.time(), by = by })
+      other = q.other, created = os.time(), by = by, raised = yours or nil })
     if not ok then
       return nil, why
     end
@@ -659,23 +673,42 @@ function M.ask(repo, spec, name, by)
   return scanned(repo, existing and existing.name or name), how
 end
 
--- Sends a pending question to a root (its address), or with nil back to the user's Inbox; raised
--- says a root gave it back, so it stays with the user. by is the router that asked (<ws>/<agent>),
--- kept so a question routed on later still says who asked.
+-- Makes a pending question the user's alone (a root's --raise): no root answers it after.
 ---@return isovim.Surface? entry, string? err
-function M.route(entry, to, raised, by)
+function M.raise(entry)
   local current = M.get(entry.repo, entry.name)
   if not current or current.type ~= "question" or current.answer then
     return nil, ("%s/%s isn't a pending question"):format(entry.repo, entry.name)
   end
   locked(entry.repo, function()
     local data = vim.json.decode(read_file(current.file))
-    data.to = to
-    data.raised = raised or nil
-    data.by = by or data.by
+    data.raised = true
     write_json(current.file, data)
   end)
   return scanned(entry.repo, entry.name)
+end
+
+-- The repo's pending questions open to a root that no root was told of yet, marked told now (in
+-- the scan's state, not the surface), so each is handed out once whoever asks. all marks every
+-- one told and returns them all, told before or not (root mode turning on lists what waits).
+---@return isovim.Surface[]
+function M.take_untold(repo, all)
+  repo = canon(repo)
+  return locked(repo, function()
+    local state = read_state(repo)
+    local taken = {}
+    for _, entry in ipairs(M.read(repo, state)) do
+      local seen = state[entry.base]
+      if entry.type == "question" and not entry.answer and not entry.raised and seen and (all or not seen.told) then
+        seen.told = true
+        taken[#taken + 1] = entry
+      end
+    end
+    if #taken > 0 then
+      write_json(state_file(repo), state)
+    end
+    return taken
+  end)
 end
 
 -- Points the repo's Inbox at a file or folder; its name defaults to the path's last part.

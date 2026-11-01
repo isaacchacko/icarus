@@ -1,7 +1,7 @@
 -- Surfaces on the command line (isovim.surfaces): iso router surface question|file|folder|chat puts
 -- one in the router's repo's Inbox, iso answer answers a question (also iso <root|repo-root>
 -- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first. In root mode
--- a question goes to the most specific active root instead of you (isovim.cli.rootmode).
+-- the root answers the Inbox's questions with you, the first answer winning (isovim.rootmode).
 local store = require("isovim.store")
 local surfaces = require("isovim.surfaces")
 local c = require("isovim.cli.common")
@@ -70,9 +70,9 @@ local function question_spec(args)
   return spec
 end
 
--- Blocks until the question is answered, prints the answer and removes the question. One routed
--- to a root that goes away meanwhile is routed on, to the next root or to the user.
-local function await(entry, from)
+-- Blocks until the question is answered (by the user or a root), prints the answer and removes
+-- the question.
+local function await(entry)
   local done = false
   local watcher = assert(vim.uv.new_fs_event())
   watcher:start(surfaces.dir(entry.repo), {}, function()
@@ -90,12 +90,6 @@ local function await(entry, from)
       break
     elseif not vim.uv.fs_stat(entry.file) then
       fail(("%s/%s was removed without an answer"):format(entry.repo, entry.name))
-    end
-    local current = surfaces.get(entry.repo, entry.name)
-    if current and current.routed and not require("isovim.rootmode").serving(current.routed, current.repo) then
-      local to = require("isovim.cli.rootmode").route_question(current, from)
-      note(("root mode: %s/%s's root %s is gone; it went to %s"):format(entry.repo, entry.name, current.routed,
-        to or "the user"))
     end
     done = false
     -- The watcher wakes it; the poll covers a filesystem that doesn't say.
@@ -122,10 +116,9 @@ local function question(args)
     fail(how)
   end
   local id = entry.repo .. "/" .. entry.name
-  local was = entry.routed
-  local to = require("isovim.cli.rootmode").route_question(entry, from, how == "reworded")
-  if to and (to ~= was or how == "reworded") then
-    note(("root mode: %s went to the root %s, which answers it"):format(id, to))
+  local root = require("isovim.rootmode").root_for(entry)
+  if root and how == "asked" then
+    note(("root mode: %s, the root, is told of %s and may answer it"):format(root, id))
   end
   if how == "kept" then
     note(id .. " was answered before it was asked this way; its answer stands")
@@ -136,7 +129,7 @@ local function question(args)
   else
     note(("%s %s; waiting for the answer"):format(how == "reworded" and "reworded" or "reattached to", id))
   end
-  await(entry, from)
+  await(entry)
 end
 
 local function show(kind, args)
@@ -234,9 +227,10 @@ local function publish_root(what, me, entry, details)
   }, details or {}))
 end
 
--- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes only
--- the questions root mode gave it, and --raise to give one to the user instead. A root's answer
--- and its raise are published as root.<scope>.decided and root.<scope>.raised.
+-- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes any
+-- question in the Inbox root mode has it clear (isovim.rootmode.may_answer), and --raise to leave
+-- one to the user alone. A root's answer and its raise are published as root.<scope>.decided and
+-- root.<scope>.raised.
 function M.answer(args)
   local raise = flag(args, "--raise")
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
@@ -244,19 +238,23 @@ function M.answer(args)
   local id = entry.repo .. "/" .. entry.name
   -- The agent answering; nil for the user, in a shell or one of isovim's terminals.
   local me = require("isovim.cli.roles").caller()
-  if me and entry.routed ~= me and not entry.answer then
-    fail(("%s isn't yours to answer: it waits on %s"):format(id, entry.routed or "the user"))
+  if me and not entry.answer and not require("isovim.rootmode").may_answer(me, entry) then
+    fail(("%s isn't yours to answer: %s"):format(id, entry.raised and "it's the user's"
+      or entry.asker == me and "you asked it"
+      or "only the user, and a root while root mode is on for its repo or the host, answer it"))
   end
   if raise then
-    if not entry.routed then
-      fail(id .. " is waiting on the user already")
+    if not me then
+      fail("--raise is a root's, to leave a question to you")
+    elseif entry.answer then
+      fail(("%s is already answered: %s"):format(id, surfaces.answer_text(entry.answer)))
     end
-    local raised, err = surfaces.route(entry, nil, true)
+    local raised, err = surfaces.raise(entry)
     if not raised then
       fail(err)
     end
     publish_root("raised", me, entry)
-    out(id .. " is in the user's Inbox now")
+    out(id .. " is the user's now: no root answers it")
     c.tui("require('isovim').refresh()")
     return
   end

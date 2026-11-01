@@ -190,10 +190,6 @@ function commands.rm(args)
     panes.stop(ws.id, agent.id)
     store.remove_agent(ws.id, agent.id)
   end
-  -- A root's waiting questions go on to the next root, or to you.
-  for _, moved in ipairs(require("isovim.cli.rootmode").reroute(ws.id .. "/" .. agent.id)) do
-    out(("%s/%s goes to %s"):format(moved.entry.repo, moved.entry.name, moved.to or "the user"))
-  end
 end
 
 local function set_hidden(args, hidden)

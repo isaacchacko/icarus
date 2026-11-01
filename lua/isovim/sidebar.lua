@@ -305,6 +305,10 @@ function M.surface_chunks(entry)
     elseif entry.options then
       row[#row + 1] = { ("  %d options"):format(#entry.options), "Comment" }
     end
+    -- Raised: no root answers it, even in root mode.
+    if entry.raised and not entry.answer then
+      row[#row + 1] = { "  yours", "DiagnosticWarn" }
+    end
   elseif kind == "tasks" then
     for _, name in ipairs({ "doing", "blocked", "waiting", "todo" }) do
       local n = entry.counts and entry.counts[name] or 0

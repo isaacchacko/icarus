@@ -18,7 +18,7 @@
 -- worktree repaired, if it has one), the journal and the sessions it kept (iso/journal/aN.jsonl,
 -- aN.sessions/), its transcript, and its run dir files (run/_/aN.* to run/<key>/aN.*). Then every
 -- reference to an old address: other agents' parent fields, rootmode.json, ~/.isovim/root, and the
--- question surfaces routed to a moved root. Nothing in general/ or root/ is ever overwritten: a
+-- question surfaces a moved agent asked. Nothing in general/ or root/ is ever overwritten: a
 -- file whose place is taken is kept under ~/.isovim/migrate-leftover-<time>/.
 --
 -- A running agent is stopped first and started again at its new address, where it resumes its
