@@ -1416,7 +1416,7 @@ local function measure()
   end
   usage[name] = "busy"
   M.redraw()
-  vim.system(cmd, { text = true, timeout = 15000 }, vim.schedule_wrap(function(result)
+  vim.system(cmd, { text = true, timeout = 15000 }, require("isovim.safe").schedule_wrap("the CPU and RAM meter", function(result)
     local cpu, used, total = (result.stdout or ""):match("([%d.]+) (%d+) (%d+)")
     usage[name] = cpu and { cpu = tonumber(cpu), used = tonumber(used), total = tonumber(total), at = os.time() } or false
     M.redraw()
@@ -1895,7 +1895,7 @@ function M.toggle_root_mode(item)
   local mode = require("isovim.rootmode").entry(where) and "off" or "on"
   local label = where == "host" and "this host" or where
   Snacks.notify.info(("Root mode %s for %s…"):format(mode, label), { title = "isovim" })
-  vim.system({ panes.bin, "rootmode", mode, where }, { text = true }, vim.schedule_wrap(function(result)
+  vim.system({ panes.bin, "rootmode", mode, where }, { text = true }, require("isovim.safe").schedule_wrap("root mode's toggle", function(result)
     local text = vim.trim(result.code == 0 and result.stdout or (result.stderr or ""):gsub("^iso: ", ""))
     Snacks.notify(text ~= "" and text or ("root mode " .. mode .. " for " .. label),
       { title = "isovim", level = result.code == 0 and "info" or "warn" })
@@ -2113,7 +2113,7 @@ M.actions = {
       local function move(force)
         Snacks.notify.info(("Moving %s to %s…"):format(name, host), { title = "isovim" })
         local cmd = { panes.bin, "move", ws, peers[host], all and "--all" or (force and "--force") or nil }
-        vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
+        vim.system(cmd, { text = true }, require("isovim.safe").schedule_wrap("moving to a host", function(result)
           local busy = result.stderr:match("iso: (.- is working)")
           if busy then
             Snacks.picker.util.confirm(busy .. ". Move anyway?", function()
@@ -2268,7 +2268,7 @@ function M.open(opts)
     vim.wo[win].cursorline = role == "list"
   end
   if not version then
-    vim.system({ "git", "-C", vim.fs.dirname(panes.bin), "rev-parse", "--short", "HEAD" }, { text = true }, vim.schedule_wrap(function(result)
+    vim.system({ "git", "-C", vim.fs.dirname(panes.bin), "rev-parse", "--short", "HEAD" }, { text = true }, require("isovim.safe").schedule_wrap("the sidebar's version", function(result)
       version = result.code == 0 and vim.trim(result.stdout) or "?"
       M.redraw()
     end))
@@ -2328,7 +2328,7 @@ function M.show_explorer(opts)
   if open then
     open:close()
   end
-  vim.schedule(function()
+  require("isovim.safe").schedule("the explorer", function()
     -- Each workspace's explorer reopens where it was left: its root (a jump, <BS>, .) and the item
     -- the cursor was on; a workspace never moved around in opens at its dir.
     local key = isovim.current or ""
@@ -2364,7 +2364,7 @@ function M.show_workspaces()
   if explorer then
     explorer:close()
   end
-  vim.schedule(M.open)
+  require("isovim.safe").schedule("the sidebar", M.open)
 end
 
 -- Focuses the sidebar (the column or the file explorer), or closes it when already there.
@@ -2430,12 +2430,12 @@ function M.reopen()
       end
     end
   end
-  vim.schedule(function()
+  require("isovim.safe").schedule("the sidebar's close", function()
     if explorer then
       -- The old explorer saved where it was as it closed.
       isovim.explorer_roots = store.read_session().explorer_roots or {}
       M.show_explorer({ enter = in_sidebar })
-      vim.schedule(put_back_cursor)
+      require("isovim.safe").schedule("the sidebar's close", put_back_cursor)
     else
       M.open({ enter = in_sidebar })
       put_back_cursor()
