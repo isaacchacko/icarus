@@ -38,7 +38,7 @@ function M.wrap(name, fn)
       M.report(name, result[2])
       return
     end
-    return vim.F.unpack_len(result, 2)
+    return unpack(result, 2, result.n)
   end
 end
 
