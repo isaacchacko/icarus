@@ -328,6 +328,7 @@ function M.draw(view, entry)
   table.sort(view.placed, function(a, b)
     return a.first < b.first
   end)
+  require("isovim.links").decorate(buf)
 end
 
 -- The comment under the cursor (on one of its lines), if any.
@@ -408,6 +409,7 @@ end
 
 -- The page view's keys (surface_view's bind calls this for a page), and the input box's <C-c>.
 function M.bind(view)
+  require("isovim.links").attach(view.buf)
   local function on(modes, lhs, fn, desc)
     vim.keymap.set(modes, lhs, fn, { buffer = view.buf, nowait = true, desc = "isovim: " .. desc })
   end

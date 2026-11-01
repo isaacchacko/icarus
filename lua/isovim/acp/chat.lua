@@ -523,6 +523,8 @@ local function markup(chat, from, to)
       vim.api.nvim_buf_set_extmark(buf, MD, from + row - 1, c[1], { end_col = c[2], conceal = "" })
     end
   end
+  -- Its iso: addresses as chips (isovim.links).
+  require("isovim.links").decorate(buf, from, to + 1)
 end
 
 -- How wide a table may be drawn: the text width of the widest window showing a chat (this one's
@@ -1145,6 +1147,7 @@ function RENDER.prompt(chat, entry)
     span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
   end
   chips(chat.buf, row, lines)
+  require("isovim.links").decorate(chat.buf, row, row + #lines)
   mark_message(chat, row, mine)
   if mine and entry.text and chat.history[#chat.history] ~= entry.text then
     chat.history[#chat.history + 1] = entry.text
@@ -1244,6 +1247,7 @@ local function draw_box(chat, title, body, border, tint, mine)
   if tint then
     line_hl(chat.buf, row, #lines, tint)
   end
+  require("isovim.links").decorate(chat.buf, row, row + #lines)
   mark_message(chat, row, mine)
   return row
 end
@@ -2409,7 +2413,19 @@ local function map_keys(chat)
   map("n", "<C-o>", function()
     toggle_all(chat)
   end, "open every tool call's output and thought, or collapse them all")
+  -- An iso: link under the cursor opens its target (isovim.links); <Tab> elsewhere is vim's own.
+  map("n", "<Tab>", function()
+    local addr = require("isovim.links").at_cursor()
+    if addr then
+      return require("isovim.links").open(addr)
+    end
+    vim.api.nvim_feedkeys(vim.v.count1 .. vim.keycode("<C-i>"), "n", false)
+  end, "open the link under the cursor (else jump forward)")
   map("n", "gf", function()
+    local addr = require("isovim.links").at_cursor()
+    if addr then
+      return require("isovim.links").open(addr)
+    end
     open_file(chat)
   end, "open the file on the line as a tab")
   require("isovim").map_to_sidebar(buf, { "n", "i" })

@@ -17,6 +17,8 @@
 --                             root, isovim.rootmode), then removed when its asker collects it
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
+--                   link      {address, label?}: a link to anything in isovim (isovim.links), opened
+--                             by <CR>; listed with the files
 --   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
 --                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
 --   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
@@ -51,7 +53,8 @@ end
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"broken"
+---@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
+---@field address? string link: what it points at, an iso: address
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -342,7 +345,7 @@ end
 
 -- parsing
 
-local TYPES = { question = true, file = true, folder = true, chat = true }
+local TYPES = { question = true, file = true, folder = true, chat = true, link = true }
 
 local function parse_surface(entry, text)
   local ok, data = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
@@ -351,7 +354,7 @@ local function parse_surface(entry, text)
     return "isn't JSON: " .. (ok and "not an object" or tostring(data):gsub("^.-:%d+: ", ""))
   elseif not TYPES[data.type] then
     entry.type = "broken"
-    return ("its type is one of question, file, folder, chat, not %s"):format(tostring(data.type))
+    return ("its type is one of question, file, folder, chat, link, not %s"):format(tostring(data.type))
   end
   entry.type = data.type
   entry.created = tonumber(data.created)
@@ -388,6 +391,12 @@ local function parse_surface(entry, text)
     elseif data.type == "folder" and stat.type ~= "directory" then
       return entry.path .. " isn't a folder: make it a file surface"
     end
+  elseif data.type == "link" then
+    if type(data.address) ~= "string" or not require("isovim.links").parse(data.address) then
+      return "address is an iso: address (iso:agent/..., iso:thread/..., iso:pr/..., iso:page/..., iso:file/...)"
+    end
+    entry.address = data.address
+    entry.title = type(data.label) == "string" and data.label ~= "" and data.label or data.address:gsub("^iso:", "")
   elseif data.type == "chat" then
     if type(data.agent) ~= "string" then
       return "agent is the agent's address, a string"
@@ -855,6 +864,26 @@ function M.chat(repo, address, name)
   return scanned(repo, name)
 end
 
+-- Puts a link to address (an iso: address, isovim.links) in the repo, labelled label; its name
+-- defaults to the label's words or the address's last part.
+---@return isovim.Surface? entry, string? err
+function M.link(repo, address, label, name)
+  repo = canon(repo)
+  if not require("isovim.links").parse(address) then
+    return nil, address .. " isn't an iso: address (iso <role> link <thing> prints one)"
+  end
+  name = name or free_name(repo, label or address:match("([^/#]+)[^/]*$") or "link")
+  local current = M.get(repo, name)
+  if current and current.type ~= "link" then
+    return nil, ("%s/%s is already a %s surface"):format(repo, name, current.type)
+  end
+  local ok, err = put(repo, name, { type = "link", address = address, label = label, created = os.time() })
+  if not ok then
+    return nil, err
+  end
+  return scanned(repo, name)
+end
+
 -- answering
 
 local function match_option(entry, word)
@@ -1213,6 +1242,8 @@ function M.open(entry)
     if ws then
       isovim.open(ws, id)
     end
+  elseif entry.type == "link" then
+    require("isovim.links").open(entry.address)
   elseif entry.type == "question" and entry.thread then
     -- Asked in a thread: the thread, at the question, answered there.
     require("isovim.acp.chat").open_thread(entry.repo, entry.thread.id, entry.thread.qid)

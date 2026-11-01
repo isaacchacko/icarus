@@ -110,6 +110,8 @@ end
 -- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them.
 function M.markdown(text, width)
   local look = require("isovim.acp.look")
+  -- Its iso: addresses as tokens that wrap whole, drawn over as chips (isovim.links).
+  text = require("isovim.links").compact(text)
   local body = vim.split(vim.trim((text or ""):gsub("\r", "")), "\n", { plain = true })
   local out, fenced, i = {}, false, 1
   local function wrapped(line, base)

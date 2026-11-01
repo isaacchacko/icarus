@@ -244,6 +244,32 @@ host; General, Root and Terminals have none, and starting one there says why.
   waits on you: it's in the repo's and the host's Inbox (`new reply`) until you open it. A resolved
   one drops off the list (`thread ls --all` shows it); the jump picker lists the open ones.
 
+## Links
+
+A link is a one-line pointer to anything in isovim, written as an address in text, so an agent's
+words point at what they mention and you go there with a key (isovim.links):
+
+| address | opens |
+|---|---|
+| `iso:agent/<owner>/<repo>/aN` (`root/aN`, `general/aN`) | the agent's chat |
+| `iso:thread/<repo>#t3` | the thread |
+| `iso:pr/<owner>/<repo>#12` | the PR's view |
+| `iso:surface/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
+| `iso:page/<repo>/<name>[#c4]` | the page, at the comment |
+| `iso:file/<path>` | the file as a tab, a folder in the explorer |
+
+In a chat, a thread, a page and a PR's view each address is drawn over as a chip: the target's
+glyph, a short label and how it is (an agent working or idle, a PR's state, a thread open or
+resolved, a page waiting on you, a file missing), drawn again as you come back to the buffer. The
+chip is an overlay as wide as the address, so nothing moves or rewraps; in a box (a thread's post,
+a PR's description) the address is first swapped for a token as wide as a chip (`iso:@<n>` and
+no-break spaces) that the box's wrapping never cuts, its address kept for the session. `<Tab>` in
+normal mode with the cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` is
+vim's own (`<C-i>`, the jump forward). `iso <role> link <thing>` prints the address of an agent
+(`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or
+surface (its name) or a path; `iso router surface link <address|thing> [label]` lists a link under
+the repo's Files, `<CR>` opening it. The router's role prompt tells it to link what it mentions.
+
 ## Roles and root mode
 
 - **Starting role:** every agent starts as a worker. An agent spawns only roles at or below its own, and

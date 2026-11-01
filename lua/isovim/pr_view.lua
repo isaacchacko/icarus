@@ -336,6 +336,8 @@ local function draw(view)
   view.rows, view.levels = rows, levels
   vim.bo[view.buf].modifiable = true
   vim.api.nvim_buf_set_lines(view.buf, 0, -1, false, lines)
+  -- Its iso: addresses (a description's, a comment's) as chips, <Tab> opening them (isovim.links).
+  require("isovim.links").decorate(view.buf)
   vim.bo[view.buf].modifiable = false
   vim.bo[view.buf].modified = false
   vim.api.nvim_buf_clear_namespace(view.buf, NS, 0, -1)
@@ -564,6 +566,7 @@ function M.open(repo, url)
         end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
       end
     end
+    require("isovim.links").attach(view.buf)
     vim.api.nvim_create_autocmd("BufWinEnter", {
       buffer = view.buf,
       callback = function()

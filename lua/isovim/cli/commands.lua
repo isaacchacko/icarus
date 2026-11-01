@@ -36,7 +36,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug" }
+  "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug", "link" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run", "page", "thread" },
   router = { "surface", "page", "thread", "pr", "rm", "wt", "setup", "teardown", "run" },
@@ -697,6 +697,7 @@ M.role_actions = {
       file = { args = { "<path>" }, flags = SURFACE_FLAGS },
       folder = { args = { "<dir>" }, flags = SURFACE_FLAGS },
       chat = { args = { "<agent>" }, flags = SURFACE_FLAGS },
+      link = { args = { "<text>", "<text>..." }, flags = SURFACE_FLAGS },
     },
     summary = "put a question, a file or folder, or a chat in your repo's Inbox",
     help = [=[
@@ -716,6 +717,10 @@ M.role_actions = {
        iso surface chat <agent> [--name n]
                                      point the user at an agent's chat; it leaves the
                                      Inbox once they open it
+       iso surface link <address|thing> [label] [--name n]
+                                     a link under Files to anything in isovim (an
+                                     iso: address, or what iso link takes); <CR>
+                                     opens it
                                      These go in ~/.iso/<owner>/<repo>/iso/, where you
                                      also write <name>.md surfaces yourself (optional
                                      frontmatter: name, icon, color, consumable) and
@@ -745,6 +750,19 @@ M.role_actions = {
        iso page resolve <page> <id> [<note...>]
                                      resolve a comment once the page does what it asks,
                                      with a note of what changed; it leaves the page]=],
+  },
+  link = { name = "link", module = "surfaces", shared = true,
+    args = { "<text>" },
+    summary = "the iso: address of an agent, PR, thread, page or path, to link it",
+    help = [=[
+       iso link <thing>              print the iso: address of an agent (owner/repo/aN or aN),
+                                     a PR (#12, owner/repo#12 or its URL), a thread (t3), a
+                                     page or surface (its name) or a path. Written in a post,
+                                     a thread, a page or a PR comment, isovim draws it as a
+                                     chip (glyph, label, state) that <Tab> or gf opens:
+                                     iso:agent/<owner>/<repo>/aN, iso:thread/<repo>#t3,
+                                     iso:pr/<owner>/<repo>#12, iso:surface/<repo>/<name>,
+                                     iso:page/<repo>/<name>[#c4], iso:file/<path>]=],
   },
   thread = { name = "thread", module = "surfaces",
     subs = {

@@ -167,8 +167,21 @@ function M.surface(args)
     show(sub, args)
   elseif sub == "chat" then
     chat(args)
+  elseif sub == "link" then
+    local name = option(args, "--name")
+    local repo = my_repo(option(args, "--repo"))
+    local address = table.remove(args, 1) or fail("usage: iso router surface link <address> [label] [--name n]")
+    if not address:match("^iso:") then
+      address = require("isovim.links").address(address, repo) or fail(address .. " isn't an iso: address (iso <role> link <thing> prints one)")
+    end
+    local label = vim.trim(table.concat(args, " "))
+    local entry, err = surfaces.link(repo, address, label ~= "" and label or nil, name)
+    if not entry then
+      fail(err)
+    end
+    out(entry.file)
   else
-    fail("usage: iso router surface question|file|folder|chat ...; iso router help says more")
+    fail("usage: iso router surface question|file|folder|chat|link ...; iso router help says more")
   end
 end
 
@@ -478,6 +491,21 @@ function M.thread(args)
     fail(usage)
   end
   surfaces.scan(repo)
+end
+
+-- iso <role> link <thing>: the iso: address of an agent, a PR, a thread, a page or surface, or a
+-- path, to write in a post, a page or a surface link (isovim.links).
+function M.link(args)
+  local thing = table.concat(args, " ")
+  if vim.trim(thing) == "" then
+    fail("usage: iso <role> link <agent|aN|#12|owner/repo#12|t3|page or surface name|path>")
+  end
+  local ok, repo = pcall(my_repo, nil)
+  local address, err = require("isovim.links").address(thing, ok and repo or nil)
+  if not address then
+    fail(err)
+  end
+  out(address)
 end
 
 -- iso __surfaces [<repo>...]: the repos' surfaces (default every repo's), scanned, as JSON.

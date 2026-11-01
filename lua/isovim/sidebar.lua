@@ -371,6 +371,7 @@ local SURFACE_GLYPHS = {
   markdown = { "\u{f48a}", "Special" }, -- oct-markdown
   page = { "\u{f15c}", "Special" }, -- fa-file-text
   thread = { "\u{f086}", "Special" }, -- fa-comments
+  link = { "\u{f0c1}", "Special" }, -- fa-link
   question = { "?", "DiagnosticWarn" },
   chat = { "●", "DiagnosticOk" },
   tasks = { "\u{f0ae}", "Special" }, -- fa-tasks
@@ -836,7 +837,7 @@ local function group_sections(items, base, host, key, opts)
       threads[#threads + 1] = entry
     elseif entry.needs_you then
       inbox[#inbox + 1] = entry
-    elseif kind == "file" or kind == "folder" then
+    elseif kind == "file" or kind == "folder" or kind == "link" then
       files[#files + 1] = entry
     elseif kind == "tasks" or kind == "prs" then
       boards[#boards + 1] = entry
@@ -1773,6 +1774,10 @@ function M.help()
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
+  section("Links (iso: addresses, drawn as chips in chats, threads, pages and PRs)", {
+    { "<Tab>", "on a link: open what it points at, as a tab (elsewhere, vim's jump forward)" },
+    { "gf", "on a link: the same" },
+  })
   section("PRs surface (on a PR's line)", vim.tbl_map(function(key)
     return { key[1], key[2] }
   end, require("isovim.surface_view").prs_keys))
