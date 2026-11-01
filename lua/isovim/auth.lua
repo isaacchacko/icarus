@@ -2,8 +2,8 @@
 -- `codex login status` (its exit code). A claude that isn't logged in still starts and opens
 -- sessions, and then fails every prompt, so isovim asks first: checkhealth reports it, an ACP
 -- agent's supervisor holds its queue while it's false (isovim.acp.host), and nothing that restarts a
--- running agent (iso restart, a promotion's reload, the migration of _/, iso move, iso rootmode on)
--- does so while it's false: a restart must never turn a running agent into one that can't work.
+-- running agent (iso restart, iso <role> restart, a supervisor's restart onto new code, a promotion's
+-- reload, the migration of _/, iso move, iso rootmode on) does so while it's false: a restart must never turn a running agent into one that can't work.
 --
 -- An answer is kept for ISOVIM_AUTH_TTL seconds (default 20) in run/auth.<kind>.json, since each
 -- iso command is a process of its own. One that can't be had (no claude, no JSON) is unknown (nil),

@@ -35,7 +35,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "pilot", "fork", "spawn", "promote" }
+  "version", "pilot", "fork", "spawn", "promote", "restart" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run" },
   router = { "surface", "pr", "wt", "setup", "teardown", "run" },
@@ -672,6 +672,20 @@ M.role_actions = {
                                      and one you promote gets a stamped message saying who and
                                      why, after that. A router or repo-root made root is
                                      forked: the fork is the root, the original keeps its role]=],
+  },
+  restart = { name = "restart", module = "roles",
+    args = { "<agent>", "<text>" },
+    summary = "restart an agent (default: you) on its session once its turn ends",
+    help = [=[
+       iso restart [<agent>] ["note"]
+                                     restart an ACP agent (default: you) on its session at the
+                                     same address once its running turn ends, its queue kept;
+                                     its next message says who restarted it, and the note
+                                     (else to continue where it left off). You restart
+                                     yourself and the agents below you; a router or repo-root
+                                     any agent in its repo; the root any on this host.
+                                     Supervisors also restart themselves onto isovim's new
+                                     code when it changes on disk, when idle]=],
   },
   wt = { name = "wt", module = "work",
     flags = { ["--from"] = "<text>" },

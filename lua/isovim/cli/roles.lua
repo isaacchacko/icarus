@@ -350,32 +350,13 @@ local PROMOTIONS = {
   root = { worker = true, router = true, ["repo-root"] = true },
 }
 
--- The environment the finisher needs: where isovim keeps things, not who the agent is.
-local AGENT_ENV = { ISOVIM_WS = true, ISOVIM_STATE = true, ISOVIM_AGENT = true, ISOVIM_ROLE = true, ISOVIM_PARENT = true,
-  ISOVIM_META = true, ISOVIM_HIDDEN = true }
-local function finisher_env()
-  local env = {}
-  for key, value in pairs(vim.fn.environ()) do
-    local wanted = key:match("^ISOVIM_") or key:match("^XDG_") or key:match("^FAKE_AGENT") or key == "PATH"
-      or key == "HOME" or key == "CLAUDE_CONFIG_DIR" or key == "CODEX_HOME"
-    if wanted and not AGENT_ENV[key] then
-      env[#env + 1] = vim.fn.shellescape(key .. "=" .. value)
-    end
-  end
-  return table.concat(env, " ")
-end
-
 -- The restart runs on the tmux server, outside the agent: a self-promotion would otherwise kill
 -- its own command along with the agent.
 local function finish_later(address, promoter, reason)
-  local panes = require("isovim.panes")
-  local log = store.run .. "/promote.log"
-  local cmd = ("env %s %s __promote-finish %s %s %s >>%s 2>&1"):format(finisher_env(), vim.fn.shellescape(panes.bin),
-    vim.fn.shellescape(address), vim.fn.shellescape(promoter or "-"), vim.fn.shellescape(reason), vim.fn.shellescape(log))
-  vim.fn.mkdir(store.run, "p")
-  local result = vim.system({ "env", "-u", "TMUX", "tmux", "-L", panes.socket, "run-shell", "-b", cmd }, { text = true }):wait()
-  if result.code ~= 0 then
-    fail("could not schedule the restart: " .. (result.stderr or "") .. "; iso restart " .. address .. " does it")
+  local ok, err = require("isovim.panes").later({ "__promote-finish", address, promoter or "-", reason },
+    store.run .. "/promote.log")
+  if not ok then
+    fail("could not schedule the restart: " .. err .. "; iso restart " .. address .. " does it")
   end
 end
 
@@ -530,6 +511,68 @@ function M.promote(args)
   else
     out(("You are now a %s. End your turn now: isovim then restarts you on this conversation as a %s, with that role's prompt.")
       :format(role, role))
+  end
+end
+
+-- Whether address is by or below it: by started it, or started one that did, and so on up.
+local function descends(address, by)
+  local seen = {}
+  while address and not seen[address] do
+    if address == by then
+      return true
+    end
+    seen[address] = true
+    local ws, id = address:match("^(.*)/([^/]+)$")
+    local record = ws and store.agent(ws, id)
+    address = record and record.parent
+  end
+  return false
+end
+
+-- iso <role> restart [<agent>] ["note"]: an ACP agent (default: you) restarts on its session at the
+-- same address once its running turn ends, keeping its queue, and its first message then says who
+-- restarted it and the note (isovim.acp.host). An agent restarts itself and the agents below it; a
+-- router or repo-root, any agent in its repo; the root, any agent on this host.
+function M.restart(args)
+  local by, role, by_ws, by_id = caller()
+  if not by then
+    fail("only agents run iso <role> restart; from a shell, iso restart <agent>")
+  end
+  local target = args[1] and c.try(c.resolve_agent, args[1], true) and table.remove(args, 1) or by
+  local note = vim.trim(table.concat(args, " "))
+  local ws, agent = c.resolve_agent(target, true)
+  local address = ws.id .. "/" .. agent.id
+  local in_repo = (role == "router" or role == "repo-root") and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
+  if not (descends(address, by) or in_repo or role == "root") then
+    fail(("a %s restarts itself and the agents below it%s, and %s is neither"):format(role,
+      (role == "router" or role == "repo-root") and ", or any in its repo" or "", address))
+  elseif not agent.acp then
+    fail(("%s runs in claude's own screen, not over ACP: iso restart %s is the user's"):format(address, address))
+  end
+  local self = address == by
+  local root = require("isovim.root")
+  local text = ("[isovim: %s%s]"):format(self and "you restarted yourself" or ("you were restarted by " .. root.address(by_ws, by_id)),
+    note ~= "" and (": " .. note) or "; continue where you left off")
+  if not require("isovim.panes").running(ws.id, agent.id) then
+    c.ensure_running(ws, agent)
+    c.prompt(ws, agent, text, { text = text })
+    out(("%s wasn't running: it's started on its session, and told so"):format(address))
+    return
+  end
+  local blocked = require("isovim.auth").restart_blocked(agent)
+  if blocked then
+    fail(("%s keeps running, not restarted: %s"):format(address, blocked))
+  end
+  local ok, result = require("isovim.acp").call(ws.id, agent.id, "restart", { text = text, by = by })
+  if not ok then
+    fail(("could not reach %s to restart it: %s"):format(address, tostring(result)))
+  end
+  if self then
+    out("End your turn now: isovim then restarts you on this session, your queue kept, and your next message says so.")
+  elseif type(result) == "table" and result.waits then
+    out(("%s restarts once its turn ends, its queue kept; then it's told you restarted it"):format(address))
+  else
+    out(("%s is restarting on its session, its queue kept; then it's told you restarted it"):format(address))
   end
 end
 

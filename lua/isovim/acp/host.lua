@@ -20,6 +20,12 @@
 -- Stopping, it stops everything it started, the background shells Claude runs in process groups
 -- of their own too.
 --
+-- Restarts: iso <role> restart asks it to start again on its session (CALLS.restart), once the
+-- running turn ends; its queue is kept on disk, and its first message says who restarted it and why.
+-- It also restarts itself when isovim's code it runs changes on disk (a pull, isovim's
+-- self-update), at its next idle moment, with no message, as nothing was cut off. Either way the
+-- restart is iso restart's, what R in the sidebar does, run by the tmux server.
+--
 -- iso handover: the adapter is stopped (which closes the ACP session), your own claude runs in the
 -- pane on the same session (claude --resume), and when it exits what happened there goes into the
 -- journal from Claude's transcript and the session is opened again. One writer at a time: prompts
@@ -89,6 +95,10 @@ local S = {
   backoff = nil, ---@type number? the last retry's delay, while prompts keep failing: the next one doubles it
   role_hash = nil, ---@type string? isovim.panes.role_hash of the role prompt the last session request sent
   legacy_hash = nil, ---@type string? the same prompt's hash as journals recorded it before role_hash (prompt_hash)
+  restart = nil, ---@type {text?: string, why: string}? a restart that waits for the running turn to end
+  code = {}, ---@type table<string, string> each isovim file it runs, as it was when it started on it (code_stat)
+  code_due = false, -- a restart onto changed code waits its turn (check_code)
+  broken = nil, ---@type string? the changed file that doesn't compile, said once
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -214,7 +224,7 @@ local function show_update(update)
   end
 end
 
-local deliver, reload
+local deliver, reload, restart_now, check_code
 
 -- The next queued prompt goes, unless the session isn't up (a handover, a restart).
 local function next_prompt()
@@ -224,6 +234,9 @@ local function next_prompt()
     S.after_turn = nil
     return after()
   end
+  if not S.busy and S.restart then
+    return restart_now()
+  end
   if S.busy or not S.ready or S.held then
     return
   end
@@ -232,6 +245,7 @@ local function next_prompt()
     deliver(prompt)
   else
     set_state("idle")
+    check_code()
   end
 end
 
@@ -431,8 +445,137 @@ local function cancel_turn()
   return false
 end
 
+-- Starts the supervisor again on its session at the same address: iso restart (what R in the
+-- sidebar does) run by the tmux server, since stopping this pane ends what it runs. Prompts that
+-- come in meanwhile wait in the queue, which the next supervisor loads and sends; the restart's own
+-- text, when it has one, goes first.
+restart_now = function()
+  local restart = S.restart
+  S.restart = nil
+  -- It would come back unable to work.
+  local blocked = auth.why(auth_kind(), true)
+  if blocked then
+    notice("not restarted: " .. blocked)
+    return next_prompt()
+  end
+  local told = restart.text and { id = next_id(), text = restart.text, via = "iso" }
+  if told then
+    table.insert(S.queue, 1, told)
+    queue_changed()
+  end
+  S.ready = false
+  -- Still here: it carries on as it was, its restart's text taken back.
+  local function stay_on(why)
+    if told and S.queue[1] == told then
+      table.remove(S.queue, 1)
+      queue_changed()
+    end
+    S.ready = true
+    notice("not restarted: " .. why)
+    next_prompt()
+  end
+  local log = store.run .. "/restart.log"
+  local ok, err = require("isovim.panes").later({ "restart", S.ws .. "/" .. S.agent }, log)
+  if not ok then
+    return stay_on(tostring(err))
+  end
+  notice("restarting " .. restart.why)
+  vim.defer_fn(function()
+    stay_on("iso restart didn't stop it within a minute (" .. log .. " says why)")
+  end, 60000)
+end
+
+-- isovim's files it runs: the agent_host entry and each isovim module it has loaded, so a change
+-- to one only the TUI runs (the chat, the sidebar) restarts nothing.
+local ISOVIM_DIR = vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)))
+local function code_files()
+  local files = { ISOVIM_DIR .. "/acp/agent_host.lua" }
+  for name in pairs(package.loaded) do
+    local path = (name == "isovim" or name:match("^isovim%.")) and package.searchpath(name, package.path)
+    if path then
+      files[#files + 1] = path
+    end
+  end
+  return files
+end
+
+local function code_stat(path)
+  local stat = vim.uv.fs_stat(path)
+  return stat and ("%d.%d:%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size) or "gone"
+end
+
+-- The files changed since it started on them; a module loaded later counts from when it's first seen.
+local function changed_code()
+  local changed = {}
+  for _, path in ipairs(code_files()) do
+    local now = code_stat(path)
+    S.code[path] = S.code[path] or now
+    if S.code[path] ~= now then
+      changed[#changed + 1] = path
+    end
+  end
+  return changed
+end
+
+-- Nothing it would cut into: no turn, nothing queued or held, no question waiting, no handover.
+local function idle()
+  return S.ready and not S.busy and not S.held and not S.handover and not S.after_turn and not S.restart
+    and #S.queue == 0 and not (S.asks and asks_mod.waiting(S.asks))
+end
+
+-- isovim's code it runs changed on disk (a pull, isovim's self-update): it restarts onto it at its
+-- next idle moment, with no message. Checked every 30s and whenever it goes idle. Each waits a
+-- random 0-60s first, so a dozen agents don't restart in the same second, and goes only if it's
+-- still idle then. A changed file that doesn't compile keeps it on the old code, said once.
+check_code = function()
+  if S.code_due or not idle() then
+    return
+  end
+  local changed = changed_code()
+  if #changed == 0 then
+    return
+  end
+  for _, path in ipairs(changed) do
+    local _, err = loadfile(path)
+    if err and vim.uv.fs_stat(path) then
+      if S.broken ~= path .. code_stat(path) then
+        S.broken = path .. code_stat(path)
+        notice("isovim's new code doesn't compile, so it stays on the old: " .. err)
+      end
+      return
+    end
+  end
+  S.code_due = true
+  vim.defer_fn(function()
+    S.code_due = false
+    if idle() then
+      local names = vim.tbl_map(function(path)
+        return path:sub(#ISOVIM_DIR + 2)
+      end, changed)
+      S.restart = { why = "onto isovim's new code (" .. table.concat(names, ", ") .. ")" }
+      restart_now()
+    end
+  end, math.random(0, 60000))
+end
+
 -- What the socket answers: iso's CLI and the TUI call these (isovim.acp.call).
 local CALLS = {}
+
+-- iso <role> restart: it restarts once the running turn ends (now, with none), and text (who
+-- restarted it, and why) is its first message.
+---@param payload {text: string, by: string}
+function CALLS.restart(payload)
+  if S.handover then
+    error("it's handed over to Claude's screen (iso handover)")
+  elseif S.after_turn then
+    error("it's switching sessions; restart it once that's done")
+  end
+  S.restart = { text = payload.text, why = "as " .. payload.by .. " asked" }
+  if not S.busy then
+    restart_now()
+  end
+  return { waits = S.busy }
+end
 
 -- Each image gets a chip in the text if it has none, so [Image #n] is always there for images[n].
 ---@param payload {text: string, from?: string, kind?: string, stamp?: string, message?: string, publish?: boolean, images?: isovim.acp.Image[]}
@@ -1221,6 +1364,10 @@ function M.run(addr)
     os.exit(1)
   end
   S.ws, S.agent, S.spec = ws, agent, spec
+  -- LuaJIT starts every process on the same seed, which would line up check_code's waits.
+  math.randomseed(vim.uv.hrtime() + vim.uv.os_getpid())
+  changed_code()
+  vim.uv.new_timer():start(30000, 30000, vim.schedule_wrap(check_code))
   vim.fn.mkdir(store.run_dir(ws), "p")
   log.file = store.run_dir(ws) .. "/" .. agent .. ".acp.log"
   S.writer = journal.writer(ws, agent)

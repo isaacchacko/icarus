@@ -196,6 +196,9 @@ local V0 = {
     .. "and prints its address; `iso {role} fork` starts a copy of your conversation. `iso {role} promote "
     .. "[<agent>] router|repo-root|root [\"reason\"]` raises an agent, one way only; a promotion gives you "
     .. "the new role's instructions in a message from isovim, and one you promote is told who and why.",
+  restart = " `iso {role} restart [<agent>] [\"note\"]` restarts you, or an agent below you (a router or "
+    .. "repo-root: any in its repo; the root: any on the host), on the same conversation once its turn "
+    .. "ends, its queue kept; its next message says who restarted it, and the note.",
   events = "To react as things happen instead of polling, `iso {role} listen '<pattern>'... [--once]` prints "
     .. "each matching event as a JSON line: agent.<scope>.<id>.status|spawned|exited|promoted, "
     .. "msg.<scope>.<id>, surface.<owner/repo>.<name>.created|changed|removed|answered|consumed and "
@@ -260,7 +263,7 @@ local AGENTS_BEFORE = V0.agents:gsub(vim.pesc("a promotion gives you the new rol
 ---@param before? boolean the text as it was before 2026-11-01
 local function v0_text(role, before)
   local parts = { V0.intro, V0.work .. ((role == "worker" or role == "router") and V0.scripts or ""), V0.messages,
-    before and AGENTS_BEFORE or V0.agents, V0.events, V0.browser, V0.role[role] or V0.role.worker }
+    before and AGENTS_BEFORE or V0.agents .. V0.restart, V0.events, V0.browser, V0.role[role] or V0.role.worker }
   return (table.concat(parts, "\n\n"):gsub("{role}", role))
 end
 
@@ -585,6 +588,33 @@ function M.stop(ws, agent)
   else
     os.remove(M.stopped_file(ws, agent))
   end
+end
+
+-- The environment a command run on the tmux server needs: where isovim keeps things, not who the
+-- agent is, so iso doesn't take it for the agent.
+local AGENT_ENV = { ISOVIM_WS = true, ISOVIM_STATE = true, ISOVIM_AGENT = true, ISOVIM_ROLE = true, ISOVIM_PARENT = true,
+  ISOVIM_META = true, ISOVIM_HIDDEN = true }
+local function server_env()
+  local env = {}
+  for key, value in pairs(vim.fn.environ()) do
+    local wanted = key:match("^ISOVIM_") or key:match("^XDG_") or key:match("^FAKE_AGENT") or key == "PATH"
+      or key == "HOME" or key == "CLAUDE_CONFIG_DIR" or key == "CODEX_HOME"
+    if wanted and not AGENT_ENV[key] then
+      env[#env + 1] = vim.fn.shellescape(key .. "=" .. value)
+    end
+  end
+  return table.concat(env, " ")
+end
+
+-- Runs iso with args on the tmux server, in the background, its output appended to log: outside
+-- the agent, so a command that stops the agent (a restart, a promotion's) doesn't end itself too.
+---@return boolean ok, string? err
+function M.later(args, log)
+  local cmd = ("env %s %s %s >>%s 2>&1"):format(server_env(), vim.fn.shellescape(M.bin),
+    table.concat(vim.tbl_map(vim.fn.shellescape, args), " "), vim.fn.shellescape(log))
+  vim.fn.mkdir(vim.fs.dirname(log), "p")
+  local result = tmux({ "run-shell", "-b", cmd })
+  return result.code == 0, result.code ~= 0 and vim.trim(result.stderr or "") or nil
 end
 
 function M.stop_all(ws)

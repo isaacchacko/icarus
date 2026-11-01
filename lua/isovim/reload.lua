@@ -102,7 +102,7 @@ local function flush()
       return SUPERVISOR[rel]
     end, lua_files)
     if #supervisor > 0 then
-      table.insert(lines, describe(supervisor) .. ": the agents' supervisors run it; R in the sidebar restarts an agent onto it")
+      table.insert(lines, describe(supervisor) .. ": the agents' supervisors run it, and each restarts onto it once it's idle")
     end
   end
   local restart = {}

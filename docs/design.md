@@ -87,6 +87,19 @@ lifetimes, so agents outlive the TUI).
 
 **Resume, fork, rewind.**
 - A restarted supervisor loads its session by id.
+- `iso <role> restart [<agent>] ["note"]` restarts an agent: itself or one below it (it started it, or
+  started one that did); a router or repo-root, any agent in its repo; the root, any on the host. The
+  supervisor waits for the running turn to end (it never cancels it), puts `[isovim: you were
+  restarted by <who>: <note>]` (with no note, to continue where it left off) first in its queue on
+  disk, and has the tmux server run `iso restart`, what `R` in the sidebar does. The next supervisor
+  resumes the session at the same address and sends the queue, that message first.
+- A supervisor restarts itself onto isovim's new code. Every 30s, and whenever it goes idle, it
+  compares the mtime and size of the files it runs (`acp/agent_host.lua` and every isovim module it
+  has loaded, so a change only the TUI runs, like the chat's, restarts nothing) with what it started
+  on. On a change it waits a random 0-60s, so a dozen agents don't restart in the same second, and
+  restarts if it's still idle: no turn, nothing queued or held, no question waiting, no handover. It
+  gets no message, since nothing was cut off. A changed file that doesn't compile keeps it on the old
+  code, said once in its chat. A pull or isovim's self-update only has to change the files.
 - Fork copies the session, optionally up to a message.
 - Rewind means editing one of your earlier prompts: isovim forks at the message before it, starts the
   agent's new session there, and sends the edited prompt. File changes are restored separately, from
@@ -236,7 +249,8 @@ streams the matching events, with `*` matching one part and `**` any number.
 
 **Every role:**
 - talking and watching: `msg`, `ls`, `status`, `peek`, `wait`, `find`, `transcript`, `listen`
-- tools: `browser`, `pilot` (one holder at a time), `spawn`, `promote`, `fork`, `checkhealth`, `version`
+- tools: `browser`, `pilot` (one holder at a time), `spawn`, `promote`, `restart`, `fork`, `checkhealth`,
+  `version`
 
 **Router and worker:** `wt`, `setup`, `teardown`, `run <action>`, resolved for the calling agent.
 
@@ -370,9 +384,10 @@ each directory has its own and one made later (a pull's) is watched as it appear
   replaced. `starter/lua/config/keymaps.lua` runs again.
 - **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim
   reads once at startup; a changed `lazy-lock.json` also needs `:Lazy restore`. The toast says so.
-- **Needs an agent restart:** the agents' supervisors (`nvim -l agent_host.lua`: `acp/host.lua`,
+- **Agents restart themselves:** the agents' supervisors (`nvim -l agent_host.lua`: `acp/host.lua`,
   `acp/client.lua`, `acp/adapter.lua` and the rest they load) keep the code they started with until
-  the agent restarts (`R` in the sidebar). The toast names such files.
+  they restart, which each does by itself at its next idle moment (see Agents run over ACP, Resume);
+  `R` in the sidebar restarts one at once. The toast names such files.
 
 Events are taken together (200ms after the last, and not while git holds its index lock), so a save
 or a `git pull` of many files is one reload. Changed files are compiled first: one that doesn't, or
