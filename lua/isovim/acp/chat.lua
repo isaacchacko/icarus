@@ -458,9 +458,15 @@ local function eol_hl(buf, row, col, hl)
 end
 
 -- Adds whole lines at the end of the conversation; returns the first one's row.
+local draw_tables
+
 local function add_lines(chat, lines, hl)
   local row
   edit(chat, function(buf)
+    -- The agent's message ends here: a table it ended on is whole.
+    if chat.block == "agent" then
+      draw_tables(chat, true)
+    end
     row = chat.fresh and 0 or body_end(chat)
     vim.api.nvim_buf_set_lines(buf, row, chat.fresh and 1 or row, false, lines)
     if hl then
@@ -518,6 +524,79 @@ local function markup(chat, from, to)
   end
 end
 
+-- How wide a table may be drawn: the text width of the widest window showing a chat (this one's
+-- first), less the message's indent; 100 with none on screen.
+local function table_width(chat)
+  local wins = vim.fn.win_findbuf(chat.buf)
+  if #wins == 0 then
+    wins = vim.tbl_filter(function(win)
+      return vim.b[vim.api.nvim_win_get_buf(win)].isovim_acp == true
+    end, vim.api.nvim_tabpage_list_wins(0))
+  end
+  local width = 0
+  for _, win in ipairs(wins) do
+    width = math.max(width, vim.api.nvim_win_get_width(win))
+  end
+  return (width > 0 and width or 102) - 2
+end
+
+-- Draws the tables in the streaming message whose lines have all come (look.table): a table is
+-- whole once a line that isn't one of its rows follows it, or the message ends (whole). Until then
+-- it shows as the agent wrote it. chat.table_scan is where to look from: the lines above it hold
+-- no table still to draw. Runs inside edit.
+draw_tables = function(chat, whole)
+  local buf = chat.buf
+  local last = body_end(chat) - (whole and 1 or 2)
+  local row = math.max(chat.table_scan or chat.block_row, chat.block_row)
+  local prefix = function(line)
+    return vim.startswith(line, GLYPH.message .. " ") and GLYPH.message .. " " or "  "
+  end
+  while row <= last do
+    local lines = vim.api.nvim_buf_get_lines(buf, row, last + 1, false)
+    local function text(i)
+      local line = lines[i]
+      return line and line:sub(#prefix(line) + 1)
+    end
+    if not look.table_row(text(1)) then
+      row = row + 1
+    elseif not text(2) then
+      break
+    elseif not look.table_alignments(text(2)) then
+      row = row + 1
+    else
+      local n = 3
+      while text(n) and look.table_row(text(n)) do
+        n = n + 1
+      end
+      if not text(n) and not whole then
+        break
+      end
+      local rows = {}
+      for i = 1, n - 1 do
+        rows[i] = text(i)
+      end
+      local drawn, spans = look.table(rows, table_width(chat))
+      local first = prefix(lines[1])
+      for i, line in ipairs(drawn) do
+        drawn[i] = (i == 1 and first or "  ") .. line
+      end
+      vim.api.nvim_buf_clear_namespace(buf, NS, row, row + n - 1)
+      vim.api.nvim_buf_clear_namespace(buf, MD, row, row + n - 1)
+      vim.api.nvim_buf_set_lines(buf, row, row + n - 1, false, drawn)
+      if first ~= "  " then
+        span(buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
+      end
+      -- Its cells' markdown is drawn by look.table, its marks taken out: markup has none to find.
+      for _, s in ipairs(spans) do
+        span(buf, row + s[1], #(s[1] == 0 and first or "  ") + s[2], #(s[1] == 0 and first or "  ") + s[3], s[4], 120)
+      end
+      last = last + #drawn - (n - 1)
+      row = row + #drawn
+    end
+  end
+  chat.table_scan = row
+end
+
 -- Streams the agent's text onto the end of the conversation, a new message after anything else;
 -- its lines after the first are indented under the glyph.
 local function add_text(chat, text)
@@ -525,7 +604,7 @@ local function add_text(chat, text)
     local row = add_block(chat, { GLYPH.message .. " " })
     span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
     mark_message(chat, row, false)
-    chat.block, chat.block_row, chat.at_start = "agent", row, true
+    chat.block, chat.block_row, chat.at_start, chat.table_scan = "agent", row, true, row
   end
   if chat.at_start then
     text = text:gsub("^\n+", "")
@@ -546,6 +625,9 @@ local function add_text(chat, text)
     local col = #(vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or "")
     vim.api.nvim_buf_set_text(buf, row, col, row, col, parts)
     markup(chat, from, body_end(chat) - 1)
+    if #parts > 1 then
+      draw_tables(chat, false)
+    end
   end)
 end
 

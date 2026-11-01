@@ -116,6 +116,10 @@ A chat is a real nvim buffer drawn to look like Claude Code's screen (docs/chat-
 side by side):
 - your prompt on Claude's gray band after `❯`; the agent's text after Claude's bullet (`⏺` on macOS,
   `●` elsewhere, as Claude has it), its markdown's `code` and **bold** drawn, not shown;
+- a markdown table as Claude draws it once its last row has come (until then, as written): box
+  borders, columns as wide as their widest cell as it shows (wide glyphs two cells), each aligned as
+  its `:---:` row says, the header bold, `code` and **bold** in cells drawn with their marks taken
+  out; one wider than the window narrows its widest columns, whose cells wrap within the row;
 - each tool call one line as Claude names it, `Update(app.py)`, `Bash(./count.sh)`, its bullet
   colored by status, and what came back under `⎿`: a read's line count, an edit's diff numbered from
   the file's lines on red and green with the changed words brighter and the code highlighted, a

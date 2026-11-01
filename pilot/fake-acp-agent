@@ -11,7 +11,8 @@ with the outcome. "diff" edits src/app.lua (a diff tool call), "term <cmd>" runs
 output streams as terminal output deltas (claude-agent-acp's _meta extension) and ends with its
 exit code, "stream <n> [<gap>]" streams n words one chunk at a time (gap or $FAKE_STREAM_GAP seconds apart),
 "think" thinks (two chunks) before it answers, "markdown" answers with `code`, **bold** and a heading, and
-"plan" sends a plan. session/cancel ends the running turn as cancelled. Tool calls carry the tool's name in
+"plan" sends a plan, "table" a GFM table streamed in small chunks then a line ("table end": the
+table ends the reply). session/cancel ends the running turn as cancelled. Tool calls carry the tool's name in
 _meta.claudeCode.toolName and its input in rawInput, as claude-agent-acp's do.
 "write <path> <text>", "read <path>" and "bash <cmd>" are Write, Read and Bash tool calls that first
 run the session's PreToolUse hooks (from _meta.claudeCode.options.settings) as Claude Code does: a
@@ -348,6 +349,16 @@ def prompt(rid, params):
         chunk(session, "thought about it")
     elif text == "markdown":
         chunk(session, "Use `greet` and **bold** here.\n\n## A heading\n- a list item")
+    elif text in ("table", "table end"):
+        # A GFM table (aligned columns, **bold**, `code`, a wide glyph, a long cell) streamed a few
+        # characters at a time, then a closing line unless it ends the reply.
+        rows = ["| Agent | State | Notes |", "|:---|:---:|---:|"]
+        for i in range(15):
+            rows.append(f"| **a{i}** | {'✅ done' if i % 2 else '中文'} | `n = {i}`" + (" and a much longer note that keeps going so it has to wrap somewhere" if i == 3 else "") + " |")
+        body = "Here is the table:\n\n" + "\n".join(rows) + ("" if text == "table end" else "\n\nThat's all of them.")
+        for i in range(0, len(body), 12):
+            chunk(session, body[i:i + 12])
+            time.sleep(0.01)
     elif text == "plan":
         update(session, {"sessionUpdate": "plan", "entries": [
             {"content": "read the code", "status": "completed", "priority": "high"},

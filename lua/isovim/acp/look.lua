@@ -635,20 +635,8 @@ end
 
 -- Markdown in the agent's text
 
--- Spans for one line of the agent's text: {col, end_col, hl} and conceals {col, end_col}: `code`
--- in Claude's code color, **bold**, a # heading, and a ``` fence dimmed.
-function M.markdown(line)
-  local spans, conceal = {}, {}
-  if line:match("^%s*```") then
-    spans[#spans + 1] = { 0, #line, "IsovimAcpNotice" }
-    return spans, conceal
-  end
-  local hs, he = line:find("^[%s●⏺]*#+ ")
-  if hs then
-    local glyph = line:match("^[●⏺] ") and #line:match("^[●⏺] ") or (line:match("^%s+") and #line:match("^%s+") or 0)
-    conceal[#conceal + 1] = { glyph, he }
-    spans[#spans + 1] = { he, #line, "IsovimAcpHeading" }
-  end
+-- `code` and **bold** in line, onto spans and conceal.
+local function inline(line, spans, conceal)
   local init = 1
   while true do
     local s, e = line:find("`[^`]+`", init)
@@ -672,6 +660,253 @@ function M.markdown(line)
     init = e + 1
   end
   return spans, conceal
+end
+
+-- Spans for one line of the agent's text: {col, end_col, hl} and conceals {col, end_col}: `code`
+-- in Claude's code color, **bold**, a # heading, and a ``` fence dimmed.
+function M.markdown(line)
+  local spans, conceal = {}, {}
+  if line:match("^%s*```") then
+    spans[#spans + 1] = { 0, #line, "IsovimAcpNotice" }
+    return spans, conceal
+  end
+  local hs, he = line:find("^[%s●⏺]*#+ ")
+  if hs then
+    local glyph = line:match("^[●⏺] ") and #line:match("^[●⏺] ") or (line:match("^%s+") and #line:match("^%s+") or 0)
+    conceal[#conceal + 1] = { glyph, he }
+    spans[#spans + 1] = { he, #line, "IsovimAcpHeading" }
+  end
+  inline(line, spans, conceal)
+  return spans, conceal
+end
+
+-- Tables in the agent's text (GFM: a header row, an alignment row like |---|:---:|, body rows),
+-- drawn as Claude draws them: box-drawing borders, each column as wide as its widest cell, each
+-- cell aligned as its alignment row says, the header bold, a rule under it. A cell's `code` and
+-- **bold** are drawn as highlights with their marks taken out, not concealed (nvim wraps a line by
+-- its concealed text too, which would break the columns), and a wide glyph counts as two cells. A
+-- table wider than width narrows its widest columns, and their cells wrap onto more lines of the
+-- row.
+
+-- A table row's cells: split on | outside `code` (\| is a pipe in the cell), the outer pipes
+-- optional, each trimmed.
+local function cells(line)
+  line = vim.trim(line)
+  if line:sub(1, 1) == "|" then
+    line = line:sub(2)
+  end
+  if line:sub(-1) == "|" and line:sub(-2, -2) ~= "\\" then
+    line = line:sub(1, -2)
+  end
+  local out, cur, code, i = {}, {}, false, 1
+  while i <= #line do
+    local ch = line:sub(i, i)
+    if ch == "\\" and line:sub(i + 1, i + 1) == "|" then
+      cur[#cur + 1], i = "|", i + 2
+    else
+      if ch == "`" then
+        code = not code
+      end
+      if ch == "|" and not code then
+        out[#out + 1], cur = vim.trim(table.concat(cur)), {}
+      else
+        cur[#cur + 1] = ch
+      end
+      i = i + 1
+    end
+  end
+  out[#out + 1] = vim.trim(table.concat(cur))
+  return out
+end
+
+-- Whether a line can be a table's row: it has a pipe.
+function M.table_row(line)
+  return line:find("|", 1, true) ~= nil and vim.trim(line) ~= ""
+end
+
+-- An alignment row's alignments ("left", "center", "right" per column), or nil if line isn't one.
+function M.table_alignments(line)
+  if not (line:find("|", 1, true) and line:find("-", 1, true)) then
+    return nil
+  end
+  local aligns = {}
+  for i, cell in ipairs(cells(line)) do
+    if not cell:match("^:?%-+:?$") then
+      return nil
+    end
+    local left, right = cell:sub(1, 1) == ":", cell:sub(-1) == ":"
+    aligns[i] = left and right and "center" or right and "right" or "left"
+  end
+  return aligns
+end
+
+-- A cell as it shows: its text with the markdown marks taken out, and the highlights they made,
+-- {col, end_col, hl} in that text.
+local function plain(text)
+  local spans, conceal = inline(text, {}, {})
+  table.sort(conceal, function(x, y)
+    return x[1] < y[1]
+  end)
+  local function moved(col)
+    local by = 0
+    for _, c in ipairs(conceal) do
+      if c[2] <= col then
+        by = by + c[2] - c[1]
+      end
+    end
+    return col - by
+  end
+  local parts, at = {}, 0
+  for _, c in ipairs(conceal) do
+    parts[#parts + 1] = text:sub(at + 1, c[1])
+    at = c[2]
+  end
+  parts[#parts + 1] = text:sub(at + 1)
+  return table.concat(parts), vim.tbl_map(function(sp)
+    return { moved(sp[1]), moved(sp[2]), sp[3] }
+  end, spans)
+end
+
+-- text cut into lines no wider than width: at spaces, a word wider than width cut; as byte ranges
+-- {from, to} (0-based, to exclusive).
+local function wrap(text, width)
+  if vim.fn.strdisplaywidth(text) <= width then
+    return { { 0, #text } }
+  end
+  local lines, from, to = {}, nil, nil
+  for s, e in text:gmatch("()%S+()") do
+    s, e = s - 1, e - 1
+    while vim.fn.strdisplaywidth(text:sub(s + 1, e)) > width do
+      if from then
+        lines[#lines + 1], from = { from, to }, nil
+      end
+      local word = text:sub(s + 1, e)
+      local cut = vim.fn.strchars(word)
+      while cut > 1 and vim.fn.strdisplaywidth(vim.fn.strcharpart(word, 0, cut)) > width do
+        cut = cut - 1
+      end
+      local bytes = #vim.fn.strcharpart(word, 0, cut)
+      lines[#lines + 1] = { s, s + bytes }
+      s = s + bytes
+    end
+    if from and vim.fn.strdisplaywidth(text:sub(from + 1, e)) <= width then
+      to = e
+    else
+      if from then
+        lines[#lines + 1] = { from, to }
+      end
+      from, to = s, e
+    end
+  end
+  if from then
+    lines[#lines + 1] = { from, to }
+  end
+  return #lines > 0 and lines or { { 0, 0 } }
+end
+
+local function pad(width, shown, align)
+  local gap = math.max(0, width - shown)
+  if align == "right" then
+    return gap, 0
+  elseif align == "center" then
+    return math.floor(gap / 2), gap - math.floor(gap / 2)
+  end
+  return 0, gap
+end
+
+-- The table's lines (header, alignment row, body rows, as the agent wrote them) drawn no wider
+-- than width where it can be, and their highlights {row, col, end_col, hl} (rows 0-based).
+---@return string[] lines, table[] spans
+function M.table(rows, width)
+  local aligns = M.table_alignments(rows[2]) or {}
+  local grid = { cells(rows[1]) }
+  for i = 3, #rows do
+    grid[#grid + 1] = cells(rows[i])
+  end
+  local n = #aligns
+  for _, row in ipairs(grid) do
+    n = math.max(n, #row)
+  end
+  -- Each cell as it shows: the marks out, their highlights kept (the header's bold too).
+  for r, row in ipairs(grid) do
+    for col = 1, n do
+      local text, spans = plain(row[col] or "")
+      if r == 1 then
+        table.insert(spans, 1, { 0, #text, "IsovimAcpBold" })
+      end
+      row[col] = { text = text, spans = spans }
+    end
+  end
+  local widths = {}
+  for col = 1, n do
+    widths[col] = 1
+    for _, row in ipairs(grid) do
+      widths[col] = math.max(widths[col], vim.fn.strdisplaywidth(row[col].text))
+    end
+  end
+  -- Too wide: the widest column gives a cell at a time, down to a few.
+  local room = width - (3 * n + 1)
+  local total = 0
+  for _, w in ipairs(widths) do
+    total = total + w
+  end
+  while total > room do
+    local widest = 1
+    for col = 2, n do
+      if widths[col] > widths[widest] then
+        widest = col
+      end
+    end
+    if widths[widest] <= 6 then
+      break
+    end
+    widths[widest], total = widths[widest] - 1, total - 1
+  end
+  local lines, spans = {}, {}
+  local function rule(left, mid, right)
+    local parts = {}
+    for col = 1, n do
+      parts[col] = ("─"):rep(widths[col] + 2)
+    end
+    local line = left .. table.concat(parts, mid) .. right
+    spans[#spans + 1] = { #lines, 0, #line, "IsovimAcpRule" }
+    lines[#lines + 1] = line
+  end
+  local function row_lines(row)
+    local wrapped, height = {}, 1
+    for col = 1, n do
+      wrapped[col] = wrap(row[col].text, widths[col])
+      height = math.max(height, #wrapped[col])
+    end
+    for i = 1, height do
+      local line = "│"
+      spans[#spans + 1] = { #lines, 0, #line, "IsovimAcpRule" }
+      for col = 1, n do
+        local cell, range = row[col], wrapped[col][i] or { 0, 0 }
+        local text = cell.text:sub(range[1] + 1, range[2])
+        local left, right = pad(widths[col], vim.fn.strdisplaywidth(text), aligns[col])
+        local start = #line + 1 + left
+        line = line .. " " .. (" "):rep(left) .. text .. (" "):rep(right) .. " "
+        for _, sp in ipairs(cell.spans) do
+          local from, to = math.max(sp[1], range[1]), math.min(sp[2], range[2])
+          if from < to then
+            spans[#spans + 1] = { #lines, start + from - range[1], start + to - range[1], sp[3] }
+          end
+        end
+        spans[#spans + 1] = { #lines, #line, #line + #"│", "IsovimAcpRule" }
+        line = line .. "│"
+      end
+      lines[#lines + 1] = line
+    end
+  end
+  rule("┌", "┬", "┐")
+  row_lines(grid[1])
+  rule("├", "┼", "┤")
+  for i = 2, #grid do
+    row_lines(grid[i])
+  end
+  rule("└", "┴", "┘")
+  return lines, spans
 end
 
 return M
