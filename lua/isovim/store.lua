@@ -737,9 +737,13 @@ function M.reparent(ws, agent)
   end
 end
 
--- A new-layout agent loses its record; its dir stays for now (nothing tears it down yet).
+-- A new-layout agent loses its record first, then is torn down (isovim.lifecycle): its script panes,
+-- its repo's teardown script, its worktree and aN/. A teardown cut short leaves a dir with no record,
+-- which the reaper finds.
 function M.remove_agent(ws, id)
   M.reparent(ws, id)
+  local record = M.v2(ws) and M.agent(ws, id)
+  local ended = record and require("isovim.status").state(ws, id) == "exited"
   if M.v2(ws) then
     os.remove(M.record_file(ws, id))
   else
@@ -753,6 +757,9 @@ function M.remove_agent(ws, id)
   vim.fn.delete(M.state_file(ws, id))
   vim.fn.delete(M.seen_file(ws, id))
   vim.fn.delete(M.run_dir(ws) .. "/" .. id .. ".session")
+  if record then
+    require("isovim.lifecycle").teardown(ws, record, ended)
+  end
 end
 
 function M.set_hidden(ws, id, hidden)

@@ -383,7 +383,9 @@ M.GROUP = {
     sidebar().step_host(1)
   end, "the next host" },
   { "x", not_yet("Root mode"), "root mode on the repo (not yet)" },
-  { "j", not_yet("iso jump"), "iso jump (not yet)" },
+  { "j", function()
+    require("isovim.jump").picker()
+  end, "jump: a dir isovim keeps, one level at a time" },
   { "q", not_yet("The prompt queue"), "the prompt queue (not yet)" },
   { "u", not_yet("Rewind"), "rewind at the prompt under the cursor (not yet)" },
   { "f", not_yet("Fork at a message"), "fork at the message under the cursor (not yet)" },

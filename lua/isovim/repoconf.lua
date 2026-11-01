@@ -9,7 +9,7 @@
 --   base-clone/     a clone of origin, detached at its default branch, which new-layout agents'
 --                   worktrees are made from; made by M.base on request
 -- and, for the repo's work, ~/iso/<owner>/<repo>/ ($ISOVIM_WORK), whose iso/ holds isovim's own files.
--- Nothing copies these to the other hosts yet.
+-- Every write isovim makes here goes to the other hosts too, base-clone/ aside (isovim.sync).
 local repos = require("isovim.repos")
 local store = require("isovim.store")
 

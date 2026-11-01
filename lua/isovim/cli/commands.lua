@@ -371,6 +371,43 @@ M.list = {
     help = [=[
        iso checkhealth               check what isovim needs here and on the other hosts]=],
   },
+  { name = "jump", module = "lifecycle",
+    audience = "user",
+    args = { "<text>..." },
+    help = [=[
+       iso jump [<text>]             go to a dir isovim keeps, in fzf, one level at a time: config
+                                     and owners, then repos, then a repo's agents, iso/, config
+                                     and base clone, then an agent's worktree; each level starts
+                                     with . (here) and .. (up). <text> searches every level and
+                                     jumps straight to a single match. The iso function from
+                                     iso completion zsh|bash cds there; without it the dir is
+                                     printed]=],
+  },
+  { name = "sync", module = "lifecycle",
+    audience = "user",
+    help = [=[
+       iso sync                      send your config (~/.isovim/config.json but its self and
+                                     hosts, and ~/.isovim/repos/ but base clones) to every host
+                                     in hosts now; every write isovim makes there sends it too]=],
+  },
+  -- One reaper pass now; the TUI runs one every 10 minutes. Dry (logging to ~/.isovim/reaper.log)
+  -- unless --live, until v0 is cut over.
+  { name = "reap", module = "lifecycle",
+    flags = { ["--dry-run"] = false, ["--live"] = false },
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- The dir `iso jump` picks, printed: what the shell function cds to.
+  { name = "__jump", module = "lifecycle",
+    args = { "<text>..." },
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- A config sync in the background, after a write (isovim.sync).
+  { name = "__sync", module = "lifecycle",
+    hidden = true,
+    audience = "plumbing",
+  },
   -- checkhealth's old name; drop it after 2026-12-01.
   { name = "doctor", module = "inspect",
     audience = "user",

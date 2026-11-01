@@ -344,10 +344,15 @@ function M.stopped_file(ws, agent)
   return store.run_dir(ws) .. "/" .. agent .. ".stopped"
 end
 
+-- The agents this process stopped (<ws>/<agent>), so a teardown right after doesn't publish them
+-- exited again (isovim.lifecycle).
+M.stopped_here = {} ---@type table<string, true>
+
 function M.stop(ws, agent)
   vim.fn.mkdir(store.run_dir(ws), "p")
   vim.fn.writefile({}, M.stopped_file(ws, agent))
   if tmux({ "kill-session", "-t", "=" .. session(ws, agent) }).code == 0 then
+    M.stopped_here[ws .. "/" .. agent] = true
     events.publish_agent(ws, agent, "exited", { reason = "stopped" })
   else
     os.remove(M.stopped_file(ws, agent))

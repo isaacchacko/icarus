@@ -787,6 +787,8 @@ function M.setup(opts)
       require("isovim.hooks").check_idle()
     end))
   end
+  -- Agent dirs with no record, every 10 minutes: logged only, until v0 is cut over.
+  require("isovim.lifecycle").start_timer()
   if reloading then
     for _, buf in ipairs(chat_bufs()) do
       map_chat_keys(buf)

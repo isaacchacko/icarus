@@ -277,10 +277,10 @@ try:
     check(True, "<leader>i< and <leader>i> step the host list")
 
     # Not yet.
-    for key, text in (("q", "The prompt queue"), ("u", "Rewind"), ("f", "Fork at a message"), ("x", "Root mode"), ("j", "iso jump")):
+    for key, text in (("q", "The prompt queue"), ("u", "Rewind"), ("f", "Fork at a message"), ("x", "Root mode")):
         leader("i", key)
         toasted(f"{text}: not yet")
-    check(True, "iq iu if ix ij say not yet")
+    check(True, "iq iu if ix say not yet")
 
     # Retiring <leader>a keys: they still work, and say once what replaced them.
     lua("require('isovim.root').raise(..., 'main', 'again?')", ws["api1"])

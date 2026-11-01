@@ -139,7 +139,10 @@ local function write(path, repo_config)
   local ok = pcall(vim.fn.writefile, lines, tmp)
   if not (ok and vim.uv.fs_rename(tmp, path)) then
     vim.fn.delete(tmp)
+    return
   end
+  -- The other hosts get it too.
+  require("isovim.sync").changed()
 end
 
 -- ~/.isovim/repos/<name>: the repo's config.json, the scripts it names, its base clone.

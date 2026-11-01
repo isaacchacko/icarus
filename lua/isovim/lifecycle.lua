@@ -1,0 +1,298 @@
+-- The end of a new-layout agent's life. Removing one (iso rm, d in the sidebar) tears it down: its
+-- script panes stop, its repo's teardown script runs in its work dir (aN/w, else aN), its worktree is
+-- removed from the clone it came from (`git worktree remove --force`: unsaved work is discarded) and
+-- aN/ is deleted. The reaper looks every 10 minutes for aN/ dirs under the work root with no record
+-- (<key>/iso/agents/aN.json) and would tear those down too; until v0 is cut over it runs dry, only
+-- writing what it would do to ~/.isovim/reaper.log ("reaper": "live" in config.json, or
+-- `iso reap --live`, lets it act). A workspace's agents keep their own way out (store.archive_workspace).
+--
+-- Every removal is guarded: the dir must really be <work>/<key>/aN (its realpath, with no symlink on
+-- the way), a symlink is only ever unlinked and never followed, and a repo's base clone is never
+-- touched, only told to forget a worktree it no longer has.
+local store = require("isovim.store")
+
+local M = {}
+
+M.reaper_log = store.root .. "/reaper.log"
+M.interval = tonumber(vim.env.ISOVIM_REAP_INTERVAL or "") or 600
+local MAX_LOG = 256 * 1024
+-- An aN/ is made a moment before its record is written (store.take_number), so a young one is left be.
+M.grace = tonumber(vim.env.ISOVIM_REAP_GRACE or "") or 600
+
+local function git(dir, args)
+  return vim.system(vim.list_extend({ "git", "-C", dir }, args), { text = true, timeout = 60000 }):wait()
+end
+
+local function lstat(path)
+  return vim.uv.fs_lstat(path)
+end
+
+local function real(path)
+  return vim.uv.fs_realpath(path)
+end
+
+local function is_agent_id(id)
+  return type(id) == "string" and id:match("^a%d+$") ~= nil
+end
+
+-- <work>/<key>/aN when that's what path really is: no symlink anywhere on the way (the work root
+-- itself may be one), and inside the work root. nil, why otherwise.
+---@return string? path, string? why
+function M.agent_path(key, id)
+  if not (is_agent_id(id) and (store.valid_key(key) or key == "root" or key == "general")) then
+    return nil, ("%s/%s is not an agent's address"):format(tostring(key), tostring(id))
+  end
+  local work = real(store.work)
+  if not work then
+    return nil, "the work root " .. store.work .. " is missing"
+  end
+  local path = store.work .. "/" .. key .. "/" .. id
+  local stat = lstat(path)
+  if not stat then
+    return nil, path .. " is gone"
+  elseif stat.type == "link" then
+    return path, "link"
+  elseif stat.type ~= "directory" then
+    return nil, path .. " is not a dir"
+  end
+  if real(path) ~= work .. "/" .. key .. "/" .. id then
+    return nil, ("%s resolves to %s, outside %s/%s"):format(path, tostring(real(path)), work, key)
+  end
+  return path
+end
+
+-- Whether path is, or is inside, any repo's base clone.
+local function in_base_clone(path)
+  local resolved = real(path)
+  local repos = real(store.root .. "/repos")
+  if not (resolved and repos and vim.startswith(resolved, repos .. "/")) then
+    return false
+  end
+  return ("/" .. resolved:sub(#repos + 2) .. "/"):find("/base-clone/", 1, true) ~= nil
+end
+
+-- What tearing down <key>/<id> involves, without doing any of it.
+---@return {path: string, link?: boolean, worktree?: string, common?: string, teardown?: string, cwd: string}? plan, string? why
+function M.plan(key, id, record)
+  local path, why = M.agent_path(key, id)
+  if not path then
+    return nil, why
+  end
+  if why == "link" then
+    return { path = path, link = true, cwd = path }
+  end
+  local plan = { path = path, cwd = path }
+  local w = path .. "/w"
+  local wstat = lstat(w)
+  if wstat and wstat.type == "directory" and not in_base_clone(w) then
+    plan.cwd = w
+    -- A linked worktree has a .git file naming its clone; anything else is just files.
+    local dotgit = lstat(w .. "/.git")
+    if dotgit and dotgit.type == "file" then
+      local common = git(w, { "rev-parse", "--path-format=absolute", "--git-common-dir" })
+      plan.worktree = w
+      plan.common = common.code == 0 and vim.trim(common.stdout) or nil
+    end
+  end
+  -- A script pane has nothing of its own to tear down.
+  if not (record and record.of) then
+    local repo = record and record.repo or (key ~= "_" and store.valid_key(key) and key or nil)
+    local name = record and record.name or id
+    plan.teardown = require("isovim.scripts").line(plan.cwd, require("isovim.worktree").repo_of(plan.cwd) or plan.cwd, name,
+      "teardown", repo)
+  end
+  return plan
+end
+
+-- Carries out a plan: the teardown script, the worktree, aN/. Returns what was done, as lines.
+---@return string[] done
+local function carry_out(plan)
+  local done = {}
+  if plan.link then
+    os.remove(plan.path)
+    done[#done + 1] = "unlinked " .. plan.path
+    return done
+  end
+  if plan.teardown then
+    local result = vim.system({ "sh", "-c", plan.teardown }, { cwd = plan.cwd, text = true, timeout = 120000 }):wait()
+    done[#done + 1] = ("ran teardown in %s (exit %s)"):format(plan.cwd, tostring(result.code))
+  end
+  if plan.worktree and plan.common and not in_base_clone(plan.worktree) then
+    local removed = git(plan.common, { "worktree", "remove", "--force", "--force", plan.worktree })
+    done[#done + 1] = removed.code == 0 and "removed worktree " .. plan.worktree
+      or ("worktree remove failed (%s); deleting it"):format(vim.trim(removed.stderr))
+  end
+  -- delete() removes a symlink inside, never what it points to.
+  local stat = lstat(plan.path)
+  if stat and stat.type == "directory" and real(plan.path) and not in_base_clone(plan.path) then
+    vim.fn.delete(plan.path, "rf")
+    done[#done + 1] = "deleted " .. plan.path
+  end
+  if plan.common then
+    git(plan.common, { "worktree", "prune" })
+  end
+  return done
+end
+
+-- Tears a removed new-layout agent down: its script panes stop and go, then its teardown, worktree
+-- and dir. Its record is already gone (store.remove_agent); `record` is what it said. An agent this
+-- process didn't just stop and whose program hadn't ended is published as exited, reason removed.
+---@param record isovim.Agent
+---@param ended? boolean its program had already ended, and was published exited then
+---@return string[] done
+function M.teardown(key, record, ended)
+  local panes, events = require("isovim.panes"), require("isovim.events")
+  local id = record.id
+  for _, pane in ipairs(store.agents(key)) do
+    if pane.of == id then
+      if panes.running(key, pane.id) then
+        panes.stop(key, pane.id)
+      end
+      store.remove_agent(key, pane.id)
+    end
+  end
+  if panes.running(key, id) then
+    panes.stop(key, id)
+  elseif not (ended or panes.stopped_here[key .. "/" .. id]) then
+    events.publish_agent(key, id, "exited", { reason = "removed" })
+  end
+  local plan = M.plan(key, id, record)
+  return plan and carry_out(plan) or {}
+end
+
+local function log(lines)
+  vim.fn.mkdir(store.root, "p")
+  local stat = vim.uv.fs_stat(M.reaper_log)
+  if stat and stat.size > MAX_LOG then
+    vim.uv.fs_rename(M.reaper_log, M.reaper_log .. ".1")
+  end
+  local file = io.open(M.reaper_log, "a")
+  if file then
+    file:write(table.concat(lines, "\n"), "\n")
+    file:close()
+  end
+end
+
+-- The repo keys under the work root: every dir (up to four names down) with an iso/ in it.
+local function key_dirs()
+  local found = {}
+  local function walk(dir, key, depth)
+    local iso = key and lstat(dir .. "/iso")
+    if iso and iso.type == "directory" then
+      found[#found + 1] = key
+      return
+    end
+    if depth == 4 then
+      return
+    end
+    for name, kind in vim.fs.dir(dir) do
+      -- Never follow a symlink out of the work root.
+      if kind == "directory" and not vim.startswith(name, ".") then
+        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+      end
+    end
+  end
+  walk(store.work, nil, 0)
+  table.sort(found)
+  return found
+end
+
+-- One reaper pass. Dry (the default), it only logs; live, it tears each orphan down.
+---@param opts? {live?: boolean}
+---@return {orphans: string[], refused: string[], reaped: string[], lines: string[]}
+function M.reap(opts)
+  local live = opts and opts.live
+  local stamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+  local mode = live and "live" or "dry-run"
+  local result = { orphans = {}, refused = {}, reaped = {}, lines = {} }
+  local function say(line)
+    result.lines[#result.lines + 1] = ("%s %s %s"):format(stamp, mode, line)
+  end
+  for _, key in ipairs(key_dirs()) do
+    local records = store.work .. "/" .. key .. "/iso/agents"
+    local rstat = lstat(records)
+    local readable = rstat and rstat.type == "directory" and vim.uv.fs_access(records, "RX")
+    local dir = store.work .. "/" .. key
+    local has_agents = false
+    for name in vim.fs.dir(dir) do
+      has_agents = has_agents or is_agent_id(name)
+    end
+    if has_agents and not readable then
+      result.refused[#result.refused + 1] = key
+      say(("refused %s: its records dir %s is missing or unreadable"):format(key, records))
+    elseif has_agents then
+      local now = os.time()
+      for name in vim.fs.dir(dir) do
+        if is_agent_id(name) and not lstat(records .. "/" .. name .. ".json") then
+          local addr = key .. "/" .. name
+          local stat = lstat(dir .. "/" .. name)
+          if stat and now - stat.mtime.sec < M.grace then
+            say(("skipped %s: made %ds ago, its record may be on its way"):format(addr, now - stat.mtime.sec))
+          else
+            local plan, why = M.plan(key, name, nil)
+            if not plan then
+              result.refused[#result.refused + 1] = addr
+              say(("refused %s: %s"):format(addr, why))
+            else
+              result.orphans[#result.orphans + 1] = addr
+              local steps = {}
+              if plan.link then
+                steps[#steps + 1] = "unlink the symlink " .. plan.path
+              else
+                if plan.teardown then
+                  steps[#steps + 1] = "run teardown in " .. plan.cwd
+                end
+                if plan.worktree then
+                  steps[#steps + 1] = ("remove worktree %s from %s"):format(plan.worktree, tostring(plan.common))
+                end
+                steps[#steps + 1] = "delete " .. plan.path
+              end
+              if live then
+                result.reaped[#result.reaped + 1] = addr
+                say(("tore down %s (no record): %s"):format(addr, table.concat(carry_out(plan), "; ")))
+              else
+                say(("would tear down %s (no record): %s"):format(addr, table.concat(steps, "; ")))
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  say(("done: %d orphan(s), %d torn down, %d refused"):format(#result.orphans, #result.reaped, #result.refused))
+  log(result.lines)
+  return result
+end
+
+-- The last pass's summary line from the log, for checkhealth.
+---@return string?
+function M.last_run()
+  local ok, lines = pcall(vim.fn.readfile, M.reaper_log)
+  for i = ok and #lines or 0, 1, -1 do
+    if lines[i]:find(" done: ", 1, true) then
+      return lines[i]
+    end
+  end
+end
+
+-- Live only when config.json says "reaper": "live"; dry until v0 is cut over.
+function M.live()
+  return require("isovim.config").get().reaper == "live"
+end
+
+-- The TUI's timer: a pass a minute after it starts, then every interval.
+function M.start_timer()
+  if _G.isovim_reap_timer then
+    return
+  end
+  _G.isovim_reap_timer = vim.uv.new_timer()
+  local first = math.min(60, M.interval) * 1000
+  _G.isovim_reap_timer:start(first, M.interval * 1000, vim.schedule_wrap(function()
+    pcall(function()
+      local lifecycle = require("isovim.lifecycle")
+      lifecycle.reap({ live = lifecycle.live() })
+    end)
+  end))
+end
+
+return M

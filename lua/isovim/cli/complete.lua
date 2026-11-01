@@ -320,7 +320,18 @@ _iso() {
   esac
   return ret
 }
-compdef _iso iso]=]
+compdef _iso iso
+# iso jump cds to the dir it picks; every other iso command runs as it is.
+iso() {
+  if [[ ${1-} == jump ]]; then
+    shift
+    local dir
+    dir=$(command iso __jump "$@") || return
+    [[ -n $dir ]] && cd -- "$dir"
+  else
+    command iso "$@"
+  fi
+}]=]
 
 local BASH = [=[
 # iso's Tab completion for bash: `iso __complete` says what can come next.
@@ -349,7 +360,18 @@ _iso() {
   fi
 }
 # With nothing offered (a file argument, free text) bash completes file names itself.
-complete -o default -F _iso iso]=]
+complete -o default -F _iso iso
+# iso jump cds to the dir it picks; every other iso command runs as it is.
+iso() {
+  if [[ ${1-} == jump ]]; then
+    shift
+    local dir
+    dir=$(command iso __jump "$@") || return
+    [[ -n $dir ]] && cd -- "$dir"
+  else
+    command iso "$@"
+  fi
+}]=]
 
 function M.completion(args)
   local script = ({ zsh = ZSH, bash = BASH })[args[1] or ""]

@@ -49,6 +49,9 @@ class Iso:
             "FAKE_AGENT_DELAY": str(agent_delay),
             # No real other hosts in the sidebar; pilots that want one set it.
             "ISOVIM_PEERS": "-",
+            # A pilot with a fake peer (fake-ssh runs the remote side here) syncs config into its
+            # tmp dir, never into a real home.
+            "ISOVIM_SYNC_ROOT": str(self.tmp / "peer-home"),
             # bin/iso links isovim's config here to this tree's starter, which loads this tree.
             "XDG_CONFIG_HOME": str(self.tmp / "config"),
         }

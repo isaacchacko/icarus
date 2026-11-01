@@ -121,6 +121,13 @@ function commands.checkhealth()
       check(false, "prompts." .. role .. " is a role", "roles are " .. table.concat(store.roles, ", "))
     end
   end
+  check(vim.fn.executable("fzf") == 1, "fzf", "install fzf (iso jump runs in it)")
+  check(vim.fn.executable("rsync") == 1, "rsync", "install rsync (config sync sends repos/ with it)")
+  -- The reaper runs dry until v0 is cut over: its last pass says what it would have torn down.
+  local lifecycle = require("isovim.lifecycle")
+  out("     reaper (" .. (lifecycle.live() and "live" or "dry run") .. "): " .. (lifecycle.last_run() or "no pass yet")
+    .. " (" .. store.home_relative(lifecycle.reaper_log) .. ")")
+  out("     config sync: " .. (require("isovim.sync").last() or "nothing synced yet"))
   local here = repo_commit()
   out("     this isovim: " .. here)
   local remote = require("isovim.remote")
