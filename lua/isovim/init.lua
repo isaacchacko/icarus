@@ -848,13 +848,16 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("WinEnter", { group = group, callback = close_stray_prompts })
   -- Insert mode doesn't follow you into a buffer you can't type in. Leaving the composer while
   -- typing (a click on the chat, a window set from Lua without stopinsert) kept insert mode in the
-  -- chat, and every key then was an E21.
+  -- chat, and every key then was an E21. Looked at once the move has settled: what moved you may
+  -- yet put the cursor in a chat's draft, which makes its buffer modifiable.
   vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter" }, {
     group = group,
     callback = function()
-      if not vim.bo.modifiable and vim.api.nvim_get_mode().mode:match("^i") then
-        vim.cmd.stopinsert()
-      end
+      vim.schedule(function()
+        if not vim.bo.modifiable and vim.api.nvim_get_mode().mode:match("^i") then
+          vim.cmd.stopinsert()
+        end
+      end)
     end,
   })
   vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
