@@ -13,9 +13,27 @@ local function out(text)
   io.stdout:write(text, "\n")
 end
 
+-- Inside try(), a fail is an error the caller catches instead of the end of iso.
+local trying = 0
+
 local function fail(message)
+  if trying > 0 then
+    error({ iso_fail = message }, 0)
+  end
   io.stderr:write("iso: " .. message .. "\n")
   os.exit(1)
+end
+
+-- Runs fn(...), catching a fail in it.
+---@return boolean ok, any result_or_message
+local function try(fn, ...)
+  trying = trying + 1
+  local ok, result = pcall(fn, ...)
+  trying = trying - 1
+  if ok then
+    return true, result
+  end
+  return false, type(result) == "table" and result.iso_fail or tostring(result)
 end
 
 -- exact_only (for the commands that destroy or restart something) skips the prefix pass, so a
@@ -302,4 +320,5 @@ return {
   option = option,
   flag = flag,
   forward = forward,
+  try = try,
 }

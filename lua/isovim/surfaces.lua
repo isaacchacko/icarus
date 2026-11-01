@@ -347,7 +347,10 @@ local function parse_surface(entry, text)
     end
     entry.routed = type(data.to) == "string" and data.to or nil
     entry.raised = data.raised == true or nil
-    entry.needs_you = not entry.answer and not entry.routed
+    entry.asker = type(data.by) == "string" and data.by or nil
+    -- One routed to a root that's gone waits on you until it's routed on.
+    entry.needs_you = not entry.answer
+      and not (entry.routed and require("isovim.rootmode").serving(entry.routed, entry.repo))
   elseif data.type == "file" or data.type == "folder" then
     if type(data.path) ~= "string" or data.path == "" then
       return "path is the " .. data.type .. "'s path, a string"
@@ -639,7 +642,7 @@ function M.ask(repo, spec, name)
   if existing and existing.key ~= key and not existing.answer then
     how = "reworded"
     put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised })
+      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised, by = existing.asker })
   elseif not existing then
     how = "asked"
     name = name or free_name(repo, q.question)
@@ -653,9 +656,10 @@ function M.ask(repo, spec, name)
 end
 
 -- Sends a pending question to a root (its address), or with nil back to the user's Inbox; raised
--- says a root gave it back, so it stays with the user.
+-- says a root gave it back, so it stays with the user. by is the router that asked (<ws>/<agent>),
+-- kept so a question routed on later still says who asked.
 ---@return isovim.Surface? entry, string? err
-function M.route(entry, to, raised)
+function M.route(entry, to, raised, by)
   local current = M.get(entry.repo, entry.name)
   if not current or current.type ~= "question" or current.answer then
     return nil, ("%s/%s isn't a pending question"):format(entry.repo, entry.name)
@@ -664,6 +668,7 @@ function M.route(entry, to, raised)
     local data = vim.json.decode(read_file(current.file))
     data.to = to
     data.raised = raised or nil
+    data.by = by or data.by
     write_json(current.file, data)
   end)
   return scanned(entry.repo, entry.name)

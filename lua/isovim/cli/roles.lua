@@ -32,6 +32,7 @@ local function caller()
     return ws .. "/" .. agent, store.role(record), ws, agent
   end
 end
+M.caller = caller
 
 -- iso root <address>|--clear (or nothing) is still the old iso root; any other role word, and
 -- root followed by one of its actions, is a namespace.
@@ -171,16 +172,36 @@ M.holders = holders
 -- One router per repo on a host, one repo-root per repo, one root per host. A router or repo-root
 -- belongs to a repo, so it needs one.
 ---@param address? string the agent being promoted, which doesn't count; nil for a spawn
-local function check_unique(role, key, address)
+---@param by? string the promoter: the root the iso root file names may hand its place on
+local function check_unique(role, key, address, by)
   if (role == "router" or role == "repo-root") and not key then
     fail(address and ("%s isn't in a git repo, and a %s is a repo's"):format(address, role)
       or ("a %s is a repo's: spawn it with --repo and a git repo"):format(role))
   end
   local taken = role ~= "worker" and holders(role, key, address)[1]
+  -- The root the iso root file names holds the place too, while it's here.
+  local root = require("isovim.root")
+  local named = role == "root" and not taken and root.named()
+  local function is(who)
+    return who and named == root.address(who:match("^(.*)/([^/]+)$"))
+  end
+  if named and not is(address) and not is(by) then
+    fail(("this host's root is %s, named by iso root; only the user takes that over, with iso rootmode on host")
+      :format(named))
+  end
   if taken and role == "root" then
     fail("this host already has a root: " .. taken)
   elseif taken then
     fail(("%s already has a %s%s: %s"):format(repo_name(key), role, role == "router" and " here" or "", taken))
+  end
+end
+
+-- iso role keeps a role it sets unique the same way: the agent at address (<ws>/<agent>) in ws. A
+-- repo's role on an agent in no repo has nothing to clash with, and is the user's to set.
+function M.check_unique(ws, role, address)
+  local key = ws_key(ws)
+  if key or role == "root" or role == "worker" then
+    check_unique(role, key, address)
   end
 end
 
@@ -428,7 +449,7 @@ function M.promote(args)
   elseif not require("isovim.panes").reports(agent.kind) then
     fail(("%s is a %s, and only claude and codex agents have roles"):format(address, agent.kind))
   end
-  check_unique(role, ws_key(ws), address)
+  check_unique(role, ws_key(ws), address, promoter)
   if role == "root" and (from == "router" or from == "repo-root") then
     fork_root(ws, agent, promoter, reason)
     return

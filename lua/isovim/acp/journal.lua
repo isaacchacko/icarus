@@ -56,21 +56,36 @@ local function decode(line)
   return ok and type(entry) == "table" and entry or nil
 end
 
--- The last seq in the file, read from its tail.
+-- The last seq in the file: the last whole line that decodes, read back from the end a block at a
+-- time, so a line longer than a block (a big tool result) is read whole.
 local function last_seq(path)
   local fd = vim.uv.fs_open(path, "r", 0)
   if not fd then
     return 0
   end
-  local size = vim.uv.fs_fstat(fd).size
-  local tail = vim.uv.fs_read(fd, math.min(size, 65536), math.max(0, size - 65536)) or ""
-  vim.uv.fs_close(fd)
-  local seq = 0
-  for line in tail:gmatch("[^\n]+") do
-    local entry = decode(line)
-    seq = entry and tonumber(entry.seq) or seq
+  local pos = vim.uv.fs_fstat(fd).size
+  -- The pieces of the line that starts before pos, nearest first once concatenated.
+  local head = {}
+  while pos > 0 do
+    local from = math.max(0, pos - 65536)
+    local chunk = vim.uv.fs_read(fd, pos - from, from) or ""
+    pos = from
+    if pos > 0 and not chunk:find("\n", 1, true) then
+      table.insert(head, 1, chunk)
+    else
+      local lines = vim.split(chunk .. table.concat(head), "\n", { plain = true })
+      head = pos > 0 and { table.remove(lines, 1) } or {}
+      for i = #lines, 1, -1 do
+        local entry = decode(lines[i])
+        if entry and tonumber(entry.seq) then
+          vim.uv.fs_close(fd)
+          return tonumber(entry.seq)
+        end
+      end
+    end
   end
-  return seq
+  vim.uv.fs_close(fd)
+  return 0
 end
 
 ---@class isovim.acp.Writer
@@ -150,10 +165,11 @@ function M.follow(ws, agent, on_entry, on_reset)
         break
       end
       offset = offset + #chunk
+      -- Up to the chunk's last newline. Anchored, so a chunk with none (part of a line over 64 KiB)
+      -- is one scan; unanchored, the match is tried from every start and takes most of a minute.
+      local cut = chunk:match("^.*()\n")
+      cut = cut and #partial + cut
       partial = partial .. chunk
-      -- Up to the last newline, found from the end, as in events.follow: partial:match("[^\n]*$")
-      -- takes seconds on a large backlog.
-      local cut = partial:match(".*()\n")
       if cut then
         for line in partial:sub(1, cut):gmatch("([^\n]*)\n") do
           local entry = decode(line)

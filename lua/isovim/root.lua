@@ -2,7 +2,8 @@
 -- other ([from <host>:<ws>/<agent> · m<id>], with "root" when the root sent it) and keeps a ledger of
 -- the stamps, so a receiver can tell a real stamp from a typed one. A stamp from the root carries
 -- the user's delegated authority, which belongs to the host root: the agent here with the root
--- role. The old `iso root` file (~/.isovim/root) names one only while no agent holds that role.
+-- role. The old `iso root` file (~/.isovim/root) names one only while no agent holds that role, and
+-- that root keeps the role's place: only iso rootmode on host (the user) takes it over.
 -- Workers ask the root with `iso ask`, and the root raises the user's own decisions to them, which
 -- the Inbox shows.
 local store = require("isovim.store")
@@ -21,8 +22,9 @@ function M.address(ws, agent)
   return ("%s:%s/%s"):format(self(), ws, agent)
 end
 
--- The agent on this host with the root role, <ws>/<agent>. Looked up at most every half second:
--- the sidebar asks for each agent it draws.
+-- The agent on this host with the root role, <ws>/<agent>: the first, as iso rootmode picks it
+-- (isovim keeps it to one). Looked up at most every half second: the sidebar asks for each agent it
+-- draws.
 local held = { at = 0 }
 ---@return string?
 function M.holder()
@@ -31,7 +33,7 @@ function M.holder()
     held.at, held.address = now, nil
     for _, ws in ipairs(store.list()) do
       for _, agent in ipairs(store.agents(ws.id)) do
-        if store.role(agent) == "root" then
+        if not held.address and store.role(agent) == "root" then
           held.address = ws.id .. "/" .. agent.id
         end
       end
@@ -40,15 +42,28 @@ function M.holder()
   return held.address
 end
 
+-- The root the `iso root` file names, while that agent is still here (one on another host is
+-- taken as live: it's checked when a message goes to it).
+---@return string? address <host>:<ws>/<agent>
+function M.named()
+  local ok, lines = pcall(vim.fn.readfile, M.file)
+  local address = ok and vim.trim(lines[1] or "") or ""
+  local host, ws, agent = address:match("^([^:]+):(.+)/([^/]+)$")
+  if address == "" or (host == self() and not store.agent(ws, agent)) then
+    return nil
+  end
+  return address
+end
+
+-- The root: the agent with the root role, else the one the file names while it's here, else none
+-- (questions are raised to the user).
 ---@return string? address of the root, <host>:<ws>/<agent>
 function M.get()
   local holder = M.holder()
   if holder then
     return M.address(holder:match("^(.*)/([^/]+)$"))
   end
-  local ok, lines = pcall(vim.fn.readfile, M.file)
-  local address = ok and vim.trim(lines[1] or "") or ""
-  return address ~= "" and address or nil
+  return M.named()
 end
 
 function M.set(address)
@@ -152,7 +167,8 @@ function M.tags(text)
       tag = text:sub(s, e),
       kind = kind == "from" and "from" or "ask",
       from = parts[1],
-      root = vim.tbl_contains(parts, "root") or inner:find("root", 1, true) ~= nil,
+      -- The " · root" part; an address can have "root" in it (acme/root-tools).
+      root = vim.tbl_contains(vim.list_slice(parts, 2), "root"),
       id = id,
       body = text:sub(e + 1),
     }

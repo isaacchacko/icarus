@@ -4,6 +4,7 @@
 --   repos/       with rsync --update over ssh, never a base-clone/ (each host clones its own) nor a
 --                temp file; nothing is deleted on the other side, and a file that's newer there
 --                stays, so a host that slept through an edit never sends its stale copy back
+--   prompts/     the role prompts, the same way, in the same rsync
 --   config.json  merged into theirs key by key, the newer of each winning: config.keys.json beside
 --                it records when each key last changed (refreshed at each sync from the file's
 --                mtime); a key with no record on a side counts as as old as that side's file. self,
@@ -175,14 +176,19 @@ local function push(name, host)
       end
     end
   end
-  local repos = store.root .. "/repos"
-  if vim.fn.isdirectory(repos) == 1 then
+  -- repos/ and the role prompts (isovim.prompts) in one rsync, with --update: a file newer on the
+  -- peer stays.
+  local dirs = vim.tbl_filter(function(dir)
+    return vim.fn.isdirectory(dir) == 1
+  end, { store.root .. "/repos", store.root .. "/prompts" })
+  if #dirs > 0 then
     if vim.fn.executable("rsync") == 0 then
-      return nil, "rsync is missing here, so repos/ wasn't sent"
+      return nil, "rsync is missing here, so repos/ and prompts/ weren't sent"
     end
-    local result = vim.system({ "rsync", "-a", "--update", "--exclude=base-clone/", "--exclude=*.tmp", "--exclude=*.lock",
-      "-e", require("isovim.remote").ssh, "--rsync-path=mkdir -p " .. q(root .. "/repos") .. " && rsync",
-      repos .. "/", host .. ":" .. root .. "/repos/" }, { text = true, timeout = 120000 }):wait()
+    local cmd = { "rsync", "-a", "--update", "--exclude=base-clone/", "--exclude=*.tmp", "--exclude=*.lock",
+      "-e", require("isovim.remote").ssh, "--rsync-path=mkdir -p " .. q(root) .. " && rsync" }
+    local result = vim.system(vim.list_extend(vim.list_extend(cmd, dirs), { host .. ":" .. root .. "/" }),
+      { text = true, timeout = 120000 }):wait()
     if result.code ~= 0 then
       return nil, ("rsync failed (exit %s): %s"):format(tostring(result.code), vim.trim(result.stderr or ""))
     end

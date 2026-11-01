@@ -70,8 +70,9 @@ local function question_spec(args)
   return spec
 end
 
--- Blocks until the question is answered, prints the answer and removes the question.
-local function await(entry)
+-- Blocks until the question is answered, prints the answer and removes the question. One routed
+-- to a root that goes away meanwhile is routed on, to the next root or to the user.
+local function await(entry, from)
   local done = false
   local watcher = assert(vim.uv.new_fs_event())
   watcher:start(surfaces.dir(entry.repo), {}, function()
@@ -89,6 +90,12 @@ local function await(entry)
       break
     elseif not vim.uv.fs_stat(entry.file) then
       fail(("%s/%s was removed without an answer"):format(entry.repo, entry.name))
+    end
+    local current = surfaces.get(entry.repo, entry.name)
+    if current and current.routed and not require("isovim.rootmode").serving(current.routed, current.repo) then
+      local to = require("isovim.cli.rootmode").route_question(current, from)
+      note(("root mode: %s/%s's root %s is gone; it went to %s"):format(entry.repo, entry.name, current.routed,
+        to or "the user"))
     end
     done = false
     -- The watcher wakes it; the poll covers a filesystem that doesn't say.
@@ -114,9 +121,10 @@ local function question(args)
   end
   local id = entry.repo .. "/" .. entry.name
   local ws, agent = require("isovim.root").caller()
+  local from = ws and (ws .. "/" .. agent) or nil
   local was = entry.routed
-  local to = require("isovim.cli.rootmode").route_question(entry, ws and (ws .. "/" .. agent) or nil)
-  if to and to ~= was then
+  local to = require("isovim.cli.rootmode").route_question(entry, from, how == "reworded")
+  if to and (to ~= was or how == "reworded") then
     note(("root mode: %s went to the root %s, which answers it"):format(id, to))
   end
   if how == "kept" then
@@ -128,7 +136,7 @@ local function question(args)
   else
     note(("%s %s; waiting for the answer"):format(how == "reworded" and "reworded" or "reattached to", id))
   end
-  await(entry)
+  await(entry, from)
 end
 
 local function show(kind, args)
@@ -206,8 +214,8 @@ function M.answer(args)
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
   local entry = find_question(query)
   local id = entry.repo .. "/" .. entry.name
-  local ws, agent = require("isovim.root").caller()
-  local me = ws and (ws .. "/" .. agent)
+  -- The agent answering; nil for the user, in a shell or one of isovim's terminals.
+  local me = require("isovim.cli.roles").caller()
   if me and entry.routed ~= me and not entry.answer then
     fail(("%s isn't yours to answer: it waits on %s"):format(id, entry.routed or "the user"))
   end

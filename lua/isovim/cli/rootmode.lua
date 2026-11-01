@@ -2,7 +2,8 @@
 -- makes a root answer in your place: a worker spawned over ACP and promoted (repo-root for a repo,
 -- root for the host), or the agent that holds that role already, with --task "<description>" as
 -- its first message (guidance only: the root decides what's outside it and raises that to you).
--- iso rootmode off hands its waiting questions on, to the host root or to you.
+-- iso rootmode off hands its waiting questions on, to the host root or to you, as iso rm of a root
+-- does. iso rootmode on host takes the place of a root the iso root file names, and tells it so.
 --
 -- A router's question goes to the most specific active root: the question surface stays in the
 -- router's repo, marked as routed to that root (so it waits on the root, not on you), and the root
@@ -66,36 +67,55 @@ local function question_text(entry, scope, mode, from)
   return table.concat(lines, "\n")
 end
 
+-- The roots a question asked in repo goes to, most specific first: the repo's root, then the
+-- host root, while root mode is on for each. A root never gets its own question (from, the asker):
+-- a repo root's goes on to the host root.
+local function roots_for(repo, from)
+  local found = {}
+  for _, scope in ipairs({ repo, "host" }) do
+    local to, mode = rootmode.active(scope)
+    if to and to ~= from and not vim.iter(found):any(function(r)
+      return r.to == to
+    end) then
+      found[#found + 1] = { to = to, mode = mode, scope = scope }
+    end
+  end
+  return found
+end
+
 -- Sends a pending question to the most specific active root, or back to the user when there's
--- none; one a root raised stays with the user. from is the asking router (<ws>/<agent>), if any.
+-- none; one a root raised stays with the user. from is the asking router (<ws>/<agent>), if any
+-- (else the one that asked it first). It's marked routed to a root only once the root has it: a
+-- root the send fails for is passed over, for the next root or the user. resend gives it to a
+-- root that has it already (it was reworded).
 ---@return string? to the root it went to
-function M.route_question(entry, from)
+function M.route_question(entry, from, resend)
   -- The root pseudo-repo's questions are the host root's own, to you.
   if entry.answer or entry.raised or entry.repo == "root" then
     return entry.routed
   end
-  local to, mode, scope = rootmode.route(entry.repo)
-  -- A root never gets its own question: a repo root's goes on to the host root.
-  if to and to == from then
-    local was = scope
-    to, mode, scope = nil, nil, nil
-    if was ~= "host" and rootmode.active("host") ~= from then
-      to, mode = rootmode.active("host")
-      scope = to and "host" or nil
+  from = from or entry.asker
+  for _, root in ipairs(roots_for(entry.repo, from)) do
+    if root.to == entry.routed and not resend then
+      return root.to
     end
+    local ok, err = c.try(send, root.to, question_text(entry, root.scope, root.mode, from), from)
+    if ok then
+      surfaces.route(entry, root.to, nil, from)
+      return root.to
+    end
+    io.stderr:write(("iso: root mode: %s/%s could not go to the root %s (%s); passing it on\n")
+      :format(entry.repo, entry.name, root.to, err))
   end
-  if to == entry.routed then
-    return to
+  if entry.routed then
+    surfaces.route(entry, nil, nil, from)
   end
-  local routed = surfaces.route(entry, to)
-  if to and routed then
-    send(to, question_text(routed, scope, mode, from), from)
-  end
-  return to
 end
 
--- Hands on every pending question routed to address (a root whose root mode went off).
-local function reroute(address)
+-- Hands on every pending question routed to address, a root whose root mode went off or that was
+-- removed: to the next root, or to the user.
+---@return {entry: isovim.Surface, to?: string}[] moved
+function M.reroute(address)
   local moved = {}
   for _, repo in ipairs(surfaces.repos()) do
     for _, entry in ipairs(surfaces.scan(repo)) do
@@ -106,6 +126,7 @@ local function reroute(address)
   end
   return moved
 end
+local reroute = M.reroute
 
 -- A scope from what was typed: host (or root), owner/repo, or a dir in a repo.
 local function scope_of(text)
@@ -140,7 +161,24 @@ end
 
 local USAGE = 'usage: iso rootmode on|off <repo|host> [--task "<description>"]'
 
+-- The iso root file's root, when root mode on the host took its place, is told so.
+local function tell_replaced(before, scope, address)
+  local root = require("isovim.root")
+  local now = root.address(address:match("^(.*)/([^/]+)$"))
+  local local_address = before and before:match("^" .. vim.pesc(require("isovim.remote").self()) .. ":(.+)$")
+  if not local_address or before == now then
+    return
+  end
+  local ok, err = c.try(send, local_address, ("The user turned root mode on for %s: %s holds the root role now, and "
+    .. "the user's authority goes with it, so your messages aren't stamped as the root's. iso root still names you, "
+    .. "and you are the root again if %s goes."):format(label(scope), now, now))
+  if not ok then
+    io.stderr:write(("iso: could not tell %s it isn't the root now: %s\n"):format(before, err))
+  end
+end
+
 local function on(scope, task)
+  local before = scope == "host" and require("isovim.root").get() or nil
   local role = rootmode.role(scope)
   local address, mode = rootmode.active(scope)
   if address then
@@ -177,6 +215,7 @@ local function on(scope, task)
     c.ensure_running(c.resolve(key), store.agent(key, agent.id))
     out(("root mode is on for %s: %s, a new %s, answers its routers"):format(label(scope), address, role))
   end
+  tell_replaced(before, scope, address)
   c.tui("require('isovim').refresh()")
 end
 

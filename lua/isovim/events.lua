@@ -154,10 +154,11 @@ function M.follow(on_event, since)
         return
       end
       offset = offset + #chunk
+      -- Up to the chunk's last newline. Anchored, so a chunk with none (part of a line over 64 KiB)
+      -- is one scan; unanchored, the match is tried from every start and takes most of a minute.
+      local cut = chunk:match("^.*()\n")
+      cut = cut and #partial + cut
       partial = partial .. chunk
-      -- Up to the last newline, found from the end. partial:match("[^\n]*$") tries every start
-      -- in the chunk and scans each to its line's end: seconds for a 64 KiB read of a backlog.
-      local cut = partial:match(".*()\n")
       if cut then
         for line in partial:sub(1, cut):gmatch("([^\n]*)\n") do
           emit(line)

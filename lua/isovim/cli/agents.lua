@@ -171,6 +171,7 @@ function commands.role(args)
     out(("%s is already a %s"):format(address, role))
     return
   end
+  require("isovim.cli.roles").check_unique(ws, role, address)
   store.set_role(ws.id, agent.id, role)
   tui("require('isovim').refresh()")
   out(("%s is now a %s; it takes effect when it next restarts (iso restart %s)"):format(address, role, address))
@@ -181,6 +182,10 @@ function commands.rm(args)
   if not tui("require('isovim').remove_agent(...)", ws.id, agent.id) then
     panes.stop(ws.id, agent.id)
     store.remove_agent(ws.id, agent.id)
+  end
+  -- A root's waiting questions go on to the next root, or to you.
+  for _, moved in ipairs(require("isovim.cli.rootmode").reroute(ws.id .. "/" .. agent.id)) do
+    out(("%s/%s goes to %s"):format(moved.entry.repo, moved.entry.name, moved.to or "the user"))
   end
 end
 

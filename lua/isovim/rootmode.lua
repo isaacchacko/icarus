@@ -79,6 +79,12 @@ function M.route(repo)
   end
 end
 
+-- Whether address is a root a question asked in repo can wait on now: the repo's or the host's,
+-- while its root mode is on. One that went away (removed, or root mode off) isn't.
+function M.serving(address, repo)
+  return address ~= nil and (M.active(repo) == address or M.active("host") == address)
+end
+
 -- Whether root mode is on for a repo (its own root) or, with "host", for the host.
 function M.on(scope)
   return M.active(scope) ~= nil
