@@ -693,6 +693,17 @@ function M.setup(opts)
   -- LazyVim's keys, so they replace them.
   require("isovim.keys").setup()
   local group = vim.api.nvim_create_augroup("isovim", { clear = true })
+  -- isovim's own buffers (chats, surfaces, the landing, placeholders) are never files. One unloaded
+  -- (its tab closed with :bd) and shown again was read as a file: its scratch options gone, it got a
+  -- swap file, and when another nvim held one (a TUI that died or was left frozen) E325 kept the chat
+  -- from opening. Reading one is isovim's (BufReadCmd): nothing is read, no swap is made or looked for.
+  vim.api.nvim_create_autocmd("BufReadCmd", {
+    group = group,
+    pattern = { "isovim://*", "isovim-*://*" },
+    callback = function(ev)
+      vim.bo[ev.buf].buftype, vim.bo[ev.buf].swapfile, vim.bo[ev.buf].bufhidden = "nofile", false, "hide"
+    end,
+  })
   vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = require("isovim.meter").setup })
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
