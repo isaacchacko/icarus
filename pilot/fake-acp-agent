@@ -49,6 +49,14 @@ running = {"prompt": None, "cancelled": False}
 state_lock = threading.Lock()
 client = {"capabilities": {}}
 SESSIONS = (LOG + ".sessions") if LOG else None
+EXT = ".json"
+# FAKE_ACP_CLAUDE_KEYED: sessions are kept as Claude Code keeps them, by the path the agent runs in
+# (<CLAUDE_CONFIG_DIR>/projects/<realpath of cwd, every non-alphanumeric as ->/<id>.jsonl), so one
+# resumes only where its transcript is under the cwd's key, as with the real adapter.
+if os.environ.get("FAKE_ACP_CLAUDE_KEYED"):
+    claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    SESSIONS = os.path.join(claude_dir, "projects", re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(os.getcwd())))
+    EXT = ".jsonl"
 memory = {}
 session_lock = threading.Lock()
 turn = {"messageId": None, "text": ""}
@@ -57,7 +65,7 @@ turn = {"messageId": None, "text": ""}
 def load_session(sid):
     if not SESSIONS:
         return memory.get(sid)
-    path = os.path.join(SESSIONS, sid + ".json")
+    path = os.path.join(SESSIONS, sid + EXT)
     if not os.path.exists(path):
         return None
     with open(path) as f:
@@ -72,7 +80,7 @@ def save_session(sid, data):
     tmp = os.path.join(SESSIONS, f".{sid}.{os.getpid()}.tmp")
     with open(tmp, "w") as f:
         json.dump(data, f)
-    os.replace(tmp, os.path.join(SESSIONS, sid + ".json"))
+    os.replace(tmp, os.path.join(SESSIONS, sid + EXT))
 
 
 def remember(sid, message):
@@ -348,6 +356,10 @@ def handle(frame):
             save_session(sid, {"messages": [], "cwd": params.get("cwd")})
         send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
     elif method == "session/resume":
+        if os.environ.get("FAKE_ACP_CLAUDE_KEYED") and load_session(params.get("sessionId")) is None:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603,
+                                                          "message": "No conversation found with session ID: " + str(params.get("sessionId"))}})
+            return
         remember_hooks(params.get("sessionId"), params)
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/load":

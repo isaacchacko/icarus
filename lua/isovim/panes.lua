@@ -106,13 +106,24 @@ function M.hook_settings()
   return vim.json.decode(HOOKS)
 end
 
--- Codex takes the same hooks as config overrides; Interrupt (Esc) is Codex-only.
-local function codex_hooks()
-  local args = {}
+-- Codex takes the same hooks, less PreToolUse (its edits aren't Claude's tools) and Notification;
+-- Interrupt (Esc) is Codex-only. As a table, {<event> = {{hooks = {{type, command}}}}}, which an
+-- ACP codex agent's adapter takes in CODEX_CONFIG (isovim.acp.adapter).
+function M.codex_hook_table()
+  local hooks = {}
   local events = vim.tbl_extend("force", EVENTS, { Interrupt = { { "interrupt" } } })
   events.PreToolUse, events.Notification = nil, nil
   for name, event in pairs(events) do
-    local command = ("'%s' %s"):format(M.hook_script, event[1][1])
+    hooks[name] = { { hooks = { { type = "command", command = ("'%s' %s"):format(M.hook_script, event[1][1]) } } } }
+  end
+  return hooks
+end
+
+-- The same as config overrides on codex's command line.
+local function codex_hooks()
+  local args = {}
+  for name, list in pairs(M.codex_hook_table()) do
+    local command = list[1].hooks[1].command
     vim.list_extend(args, { "-c", ("hooks.%s=[{hooks=[{type=\"command\",command=%s}]}]"):format(name, vim.json.encode(command)) })
   end
   return args
@@ -275,9 +286,11 @@ end
 M.instructions = instructions
 M.v0_text = v0_text
 
--- Claude keeps a workspace's transcripts under ~/.claude/projects/<cwd with / and . as ->.
+-- Claude keeps a workspace's transcripts under ~/.claude/projects/<cwd with every character but
+-- letters and digits as ->, as Claude Code itself names them (so a "_" in an owner or repo is "-"
+-- there too). Past 200 characters Claude cuts the key and adds a hash, which this doesn't follow.
 function M.claude_project(dir)
-  local key = (vim.uv.fs_realpath(dir) or dir):gsub("[/.]", "-")
+  local key = (vim.uv.fs_realpath(dir) or dir):gsub("[^%w]", "-")
   return vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects/" .. key
 end
 

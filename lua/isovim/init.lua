@@ -225,12 +225,17 @@ local function open_beside(chat_win, path, lnum)
   local chat = vim.api.nvim_win_get_buf(chat_win)
   local target
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if win ~= chat_win and not is_sidebar(win) and vim.api.nvim_win_get_buf(win) ~= chat then
+    -- Never a float (a toast, a picker): what's opened would go with it.
+    local float = vim.api.nvim_win_get_config(win).relative ~= ""
+    if win ~= chat_win and not float and not is_sidebar(win) and vim.api.nvim_win_get_buf(win) ~= chat then
       target = target or win
     end
   end
-  local file_buf = vim.fn.bufadd(path)
-  vim.bo[file_buf].buflisted = true
+  -- A buffer number is shown as it is (a rendered surface, isovim.surface_view); a path is listed.
+  local file_buf = type(path) == "number" and path or vim.fn.bufadd(path)
+  if type(path) ~= "number" then
+    vim.bo[file_buf].buflisted = true
+  end
   if target then
     vim.api.nvim_win_set_buf(target, file_buf)
     vim.api.nvim_set_current_win(target)
@@ -526,7 +531,7 @@ end
 -- becomes the explorer's root.
 function M.reveal(ws, path)
   select(ws)
-  if vim.fn.isdirectory(path) == 1 then
+  if type(path) == "string" and vim.fn.isdirectory(path) == 1 then
     return require("isovim.sidebar").show_explorer({ cwd = path })
   end
   local chat_win = vim.tbl_filter(function(win)
@@ -945,7 +950,9 @@ function M.move_here(item)
   local me = remote.self()
   local function move(force)
     Snacks.notify.info(("Moving %s here from %s…"):format(item.ws_name, item.host), { title = "isovim" })
-    local args = item.remote_ws .. " " .. me .. (force and " --force" or "")
+    -- A new-layout agent moves on its own, by its address there.
+    local what = item.v2 and item.address or item.remote_ws
+    local args = what .. " " .. me .. (force and not item.v2 and " --force" or "")
     local cmd = ("%s %s %s"):format(remote.ssh, vim.fn.shellescape(item.ssh), vim.fn.shellescape(remote.remote_bin .. " move " .. args))
     vim.system({ "bash", "-c", cmd }, { text = true }, vim.schedule_wrap(function(result)
       local busy = (result.stderr or ""):match("iso: (.- is working)")
@@ -958,7 +965,11 @@ function M.move_here(item)
       end
       remote.invalidate(item.host)
       M.refresh()
-      if vim.uv.fs_stat(store.path(item.remote_ws)) then
+      local here = item.v2 and (result.stdout or ""):match(" as ([^%s]+/a%d+)")
+      if here then
+        local key, id = here:match("^(.*)/([^/]+)$")
+        return M.open(key, id)
+      elseif not item.v2 and vim.uv.fs_stat(store.path(item.remote_ws)) then
         M.open(item.remote_ws)
       end
     end))

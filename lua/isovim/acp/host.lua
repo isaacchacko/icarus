@@ -16,8 +16,9 @@
 -- journal from Claude's transcript and the session is opened again. One writer at a time: prompts
 -- that come in meanwhile wait in the queue.
 --
--- Permissions: the session runs in bypassPermissions mode, as TUI agents run with
--- --permission-mode bypassPermissions. A permission the agent asks for anyway, and every question
+-- Permissions: the session runs in its adapter's no-prompts mode (claude's bypassPermissions, as TUI
+-- agents run with --permission-mode bypassPermissions; codex's agent-full-access, or read-only for a
+-- read-only agent). A permission the agent asks for anyway, and every question
 -- it asks (AskUserQuestion, as a form elicitation), becomes a question surface in its repo's Inbox,
 -- and the answer goes back to the agent (isovim.acp.asks).
 --
@@ -460,17 +461,15 @@ local function instructions()
   end, parts), "\n\n"), found
 end
 
--- The settings and prompt every session is opened with: the instructions appended to Claude
--- Code's own, and isovim's hooks (the same --settings TUI agents get).
-local function meta()
+-- The settings and prompt every session is opened with, onto a session request's params: the
+-- instructions appended to the agent's own, and for claude isovim's hooks (the same --settings TUI
+-- agents get), as its adapter takes them (isovim.acp.adapter).
+local function with_meta(params)
   local append_text, found = instructions()
   S.imported = vim.tbl_map(function(import)
     return import.path
   end, found)
-  return {
-    systemPrompt = { append = append_text },
-    claudeCode = { options = { settings = require("isovim.panes").hook_settings() } },
-  }
+  return adapter.session_params(S.spec.kind, params, append_text)
 end
 
 local function remember_session(id, how)
@@ -484,11 +483,12 @@ end
 -- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session entry.
 local function session_ready(how, fresh, extra)
   append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported }))
-  S.client:request("session/set_mode", { sessionId = S.session, modeId = "bypassPermissions" }, function(_, err)
+  local mode = adapter.mode(S.spec)
+  S.client:request("session/set_mode", { sessionId = S.session, modeId = mode }, function(_, err)
     if err then
-      notice("could not set bypassPermissions mode: " .. tostring(err.message))
+      notice(("could not set %s mode: %s"):format(mode, tostring(err.message)))
     else
-      append("mode", { modeId = "bypassPermissions" })
+      append("mode", { modeId = mode })
     end
     S.ready = true
     set_state("ready")
@@ -537,13 +537,13 @@ reload = function()
       return done(tostring(close_err.message))
     end
     S.replaying = method == "session/load"
-    S.client:request(method, { sessionId = S.session, cwd = S.cwd, mcpServers = {}, _meta = meta() },
+    S.client:request(method, with_meta({ sessionId = S.session, cwd = S.cwd, mcpServers = {} }),
       function(_, err)
         S.replaying = false
         if err then
           return done(tostring(err.message))
         end
-        S.client:request("session/set_mode", { sessionId = S.session, modeId = "bypassPermissions" }, function()
+        S.client:request("session/set_mode", { sessionId = S.session, modeId = adapter.mode(S.spec) }, function()
           done()
         end)
       end)
@@ -553,7 +553,7 @@ end
 -- A new session. before(id) runs once it's open, before it's ready (a switch replaces the journal
 -- there); on_fail when it couldn't open (default: the supervisor ends, as there's no session).
 local function new_session(how, fresh, before, on_fail, extra)
-  S.client:request("session/new", { cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(result, err)
+  S.client:request("session/new", with_meta({ cwd = S.cwd, mcpServers = {} }), function(result, err)
     if err or not result or not result.sessionId then
       notice("could not open a session: " .. tostring(err and err.message or "no session id"))
       if on_fail then
@@ -575,11 +575,11 @@ end
 
 -- session/fork of source, at messageId (the adapter's fork point) or whole.
 local function fork_request(source, message_id, callback)
-  local fork_meta = meta()
+  local params = with_meta({ sessionId = source, cwd = S.cwd, mcpServers = {} })
   if message_id then
-    fork_meta.jetbrains = { air = { fork = { version = 1, messageId = message_id } } }
+    params._meta.jetbrains = { air = { fork = { version = 1, messageId = message_id } } }
   end
-  S.client:request("session/fork", { sessionId = source, cwd = S.cwd, mcpServers = {}, _meta = fork_meta }, callback)
+  S.client:request("session/fork", params, callback)
 end
 
 -- A fork's first session: an agent iso fork made (fork_from: its journal starts with its parent's up
@@ -637,7 +637,7 @@ local function open_session(init)
     return new_session()
   end
   S.replaying = method == "session/load"
-  S.client:request(method, { sessionId = id, cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(_, err)
+  S.client:request(method, with_meta({ sessionId = id, cwd = S.cwd, mcpServers = {} }), function(_, err)
     S.replaying = false
     if err then
       notice(("could not resume session %s (%s); starting a new one"):format(id, tostring(err.message)))
@@ -715,7 +715,7 @@ function CALLS.resume(payload)
     replace_journal(kept and sessions.carry(kept) or {}, old)
     S.loading = method == "session/load" and not kept
     S.replaying = method == "session/load" and kept ~= nil
-    S.client:request(method, { sessionId = id, cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(_, err)
+    S.client:request(method, with_meta({ sessionId = id, cwd = S.cwd, mcpServers = {} }), function(_, err)
       S.loading, S.replaying = false, false
       if err then
         -- Back to the old one, as it was.
@@ -793,18 +793,48 @@ function CALLS.rewind(payload)
     end
     -- Before anything the agent said: nothing to fork.
     if not cut.messageId then
-      return S.client:request("session/new", { cwd = S.cwd, mcpServers = {}, _meta = meta() }, opened)
+      return S.client:request("session/new", with_meta({ cwd = S.cwd, mcpServers = {} }), opened)
     end
     fork_request(old, cut.messageId, opened)
   end)
   return { rewinding = true, waited = waited }
 end
 
+-- Codex runs a hook only once it's trusted: isovim's (CODEX_CONFIG, isovim.acp.adapter) are
+-- trusted over codex-acp's _codex/hooks/list and /trust, which records their hashes in Codex's
+-- config, as accepting them in Codex's own prompt would. An adapter without those calls (or a
+-- failure) leaves them untrusted, which the journal says; the session opens either way.
+local function trust_hooks(done)
+  if S.spec.kind ~= "codex" then
+    return done()
+  end
+  S.client:request("_codex/hooks/list", { cwd = S.cwd }, function(listed, err)
+    local mine = {}
+    for _, hook in ipairs(type(listed) == "table" and listed.hooks or {}) do
+      if hook.trustStatus ~= "trusted" and tostring(hook.command or vim.json.encode(hook)):find("iso-hook", 1, true) then
+        mine[#mine + 1] = { key = hook.key, currentHash = hook.currentHash }
+      end
+    end
+    if err or #mine == 0 then
+      if err then
+        notice("could not list Codex's hooks, so isovim's may not run: " .. tostring(err.message))
+      end
+      return done()
+    end
+    S.client:request("_codex/hooks/trust", { cwd = S.cwd, hooks = mine }, function(result, trust_err)
+      if trust_err or not (type(result) == "table" and result.trusted) then
+        notice("could not trust isovim's hooks in Codex: " .. tostring(trust_err and trust_err.message or "not trusted"))
+      end
+      done()
+    end)
+  end)
+end
+
 -- Starts the adapter and opens the session. Live Bash output comes as terminal output deltas
 -- (claude-agent-acp's _meta extension), which the chat draws under the tool call.
 local function start_adapter()
   local client
-  S.client = Client.new(adapter.command(S.cwd), vim.tbl_extend("force", handlers, {
+  S.client = Client.new(adapter.command(S.cwd, S.spec), vim.tbl_extend("force", handlers, {
     on_exit = function(...)
       handlers.on_exit(client, ...)
     end,
@@ -829,7 +859,9 @@ local function start_adapter()
       return M.shutdown(1)
     end
     S.init = init
-    open_session(init)
+    trust_hooks(function()
+      open_session(init)
+    end)
   end)
 end
 
@@ -854,7 +886,9 @@ end
 -- iso handover: the ACP session closes (its adapter stops) and your claude takes the pane, on the
 -- tty, until it exits. Refused while a turn runs.
 function CALLS.handover()
-  if S.handover then
+  if S.spec.kind ~= "claude" then
+    error("a handover gives the session to Claude's own screen; this is a " .. tostring(S.spec.kind) .. " agent")
+  elseif S.handover then
     error("it's already handed over")
   elseif S.busy then
     error("it's working; cancel its turn (C-c in the chat) or wait for it to end")
@@ -955,12 +989,19 @@ function M.run(addr)
   os.remove(S.sock)
   vim.fn.serverstart(S.sock)
 
-  if not adapter.installed() and not vim.env.ISOVIM_ACP_CMD then
-    out(("installing %s@%s ...\n"):format(adapter.package, adapter.version))
+  local kind = S.spec.kind
+  if not adapter.supports(kind) then
+    notice(("a %s agent can't run over ACP: the launch table has %s"):format(tostring(kind),
+      table.concat(vim.tbl_keys(adapter.adapters), ", ")))
+    return M.shutdown(1)
   end
-  local installed, err = adapter.ensure()
+  local launch = adapter.get(kind)
+  if not adapter.installed(kind) and not vim.env.ISOVIM_ACP_CMD then
+    out(("installing %s@%s ...\n"):format(launch.package, launch.version))
+  end
+  local installed, err = adapter.ensure(kind)
   if not installed then
-    notice("could not install " .. adapter.package .. ": " .. tostring(err))
+    notice("could not install " .. launch.package .. ": " .. tostring(err))
     return M.shutdown(1)
   end
   start_adapter()

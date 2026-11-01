@@ -78,12 +78,14 @@ M.list = {
   },
   { name = "spawn", module = "roles",
     args = { "<text>..." },
-    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>" },
+    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>",
+      ["--kind"] = "claude|codex" },
     audience = "user",
-    summary = "start a claude agent over ACP, the repo's next aN",
+    summary = "start an agent over ACP (claude, or codex), the repo's next aN",
     help = [=[
-       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [<prompt...>]
-                                     start a claude agent over ACP on the prompt, as the
+       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [--kind claude|codex]
+                 [<prompt...>]       start an agent over ACP on the prompt (claude unless
+                                     --kind says codex, which runs codex-acp), as the
                                      repo's next <owner>/<repo>/aN (from an agent, in its own
                                      repo; from a shell, the clone it's in; else general/aN),
                                      and print its address. It starts in aN/ and gets its
@@ -146,7 +148,13 @@ M.list = {
     flags = { ["--force"] = false },
     help = [=[
        iso move <ws> <host> [--force]   move it to another host (ssh name); its agents resume
-                                     there. --force moves it even while an agent is working]=],
+                                     there. --force moves it even while an agent is working
+       iso move <owner>/<repo>/aN <host>
+                                     move one agent (its exact address): record, journal,
+                                     queue and session go, its worktree's branch is pushed and
+                                     made again there as aN/w, and it resumes there. Refused
+                                     mid-turn, with uncommitted work, and for roots; it keeps
+                                     its aN unless that host has used it, and prints its address]=],
   },
   { name = "agent", module = "agents",
     audience = "user",

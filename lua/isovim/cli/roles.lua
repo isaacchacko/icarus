@@ -239,7 +239,7 @@ end
 -- the spawner's repo, else in no repo (general/aN). A read-only one starts in its repo's base
 -- clone, fetched first (panes.start).
 local function spawn_acp(key, dir, spec)
-  local agent, err = store.add_agent(key, vim.tbl_extend("force", spec, { kind = "claude", acp = true, checkout = dir }))
+  local agent, err = store.add_agent(key, vim.tbl_extend("force", { kind = "claude" }, spec, { acp = true, checkout = dir }))
   if not agent then
     fail(err or "could not add the agent")
   end
@@ -270,10 +270,17 @@ function M.spawn(args)
   local read_only = flag(args, "--read-only")
   local legacy = flag(args, "--legacy")
   flag(args, "--acp")
+  local kind = option(args, "--kind", "claude")
   local name = option(args, "--name")
   local prompt = vim.trim(table.concat(args, " "))
   if not RANK[role] then
     fail("--role is one of " .. table.concat(commands.roles, ", "))
+  end
+  local adapter = require("isovim.acp.adapter")
+  if not adapter.supports(kind) then
+    fail("--kind is one of " .. table.concat(vim.fn.sort(vim.tbl_keys(adapter.adapters)), ", "))
+  elseif legacy and kind ~= "claude" then
+    fail("--legacy spawns claude in its TUI; --kind is for an agent over ACP")
   end
   local address, mine, caller_ws = caller()
   if address and RANK[role] > RANK[mine] then
@@ -300,7 +307,7 @@ function M.spawn(args)
     name = prompt ~= "" and table.concat(vim.list_slice(vim.split(prompt, "%s+"), 1, 4), " "):sub(1, 30) or role
   end
   if key then
-    spawn_acp(key, dir, { name = name, prompt = prompt ~= "" and prompt or nil, role = role,
+    spawn_acp(key, dir, { kind = kind, name = name, prompt = prompt ~= "" and prompt or nil, role = role,
       parent = not ROOTS[role] and address or nil, read_only = read_only or nil })
     c.tui("require('isovim').refresh()")
     return

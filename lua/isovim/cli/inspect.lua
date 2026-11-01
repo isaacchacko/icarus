@@ -96,14 +96,17 @@ function commands.checkhealth()
     local path = panes.exe(name)
     check(vim.fn.executable(path) == 1, name .. " " .. path, "install " .. name .. " (agents of that kind can't start)")
   end
-  -- ACP agents (iso spawn --acp) run claude-agent-acp at a pinned version, which the first one
-  -- installs with npm (isovim.acp.adapter).
+  -- ACP agents run their kind's adapter (claude-agent-acp, codex-acp) at a pinned version, which
+  -- the first agent of that kind installs with npm (isovim.acp.adapter).
   local adapter = require("isovim.acp.adapter")
-  if adapter.installed() then
-    check(true, ("claude-agent-acp %s (ACP agents) at %s"):format(adapter.version, store.home_relative(adapter.dir())))
-  else
-    check(vim.fn.executable("npm") == 1, ("claude-agent-acp %s (ACP agents) not installed yet: the first ACP agent installs it with npm")
-      :format(adapter.version), "put npm on PATH, or run " .. table.concat(adapter.install_cmd(), " "))
+  for _, kind in ipairs({ "claude", "codex" }) do
+    local name, version = adapter.name(kind), adapter.get(kind).version
+    if adapter.installed(kind) then
+      check(true, ("%s %s (%s agents over ACP) at %s"):format(name, version, kind, store.home_relative(adapter.dir(kind))))
+    else
+      check(vim.fn.executable("npm") == 1, ("%s %s (%s agents over ACP) not installed yet: the first one installs it with npm")
+        :format(name, version, kind), "put npm on PATH, or run " .. table.concat(adapter.install_cmd(kind), " "))
+    end
   end
   local link = vim.fn.resolve(vim.fn.exepath("iso"))
   check(link == panes.bin, "iso on PATH is this repo's", "ln -s " .. panes.bin .. " ~/.local/bin/iso")

@@ -112,6 +112,9 @@ local function ensure_worktree(ws, agent, from, log)
   return path, branch, true, worktree_setup(path, base, agent, log), offline
 end
 
+-- For an agent moving in (isovim.move), whose worktree is made again here from its branch.
+M.ensure_worktree = ensure_worktree
+
 -- iso <role> wt [--from <branch|PR>]: the agent's worktree, made if it has none, and its path.
 function M.wt(args)
   local from = option(args, "--from")

@@ -179,7 +179,7 @@ end
 local function ensure_running(ws, agent)
   if panes.running(ws.id, agent.id) then
     -- It may have just been started elsewhere (iso receive); a busy one takes the prompt queued.
-    if agent.kind == "codex" then
+    if agent.kind == "codex" and not agent.acp then
       codex_ready(ws, agent, 5)
     end
     return
@@ -190,7 +190,7 @@ local function ensure_running(ws, agent)
   end
   -- Claude says when it is ready; Codex only opens its session on the first prompt, so wait for
   -- its composer; give the rest a moment to draw a prompt.
-  if agent.kind == "codex" then
+  if agent.kind == "codex" and not agent.acp then
     if not codex_ready(ws, agent, 30) then
       fail(agent.name .. " did not start within 30s")
     end

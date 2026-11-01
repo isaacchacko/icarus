@@ -83,8 +83,22 @@ end
 
 function commands.move(args)
   local force = flag(args, "--force")
+  local host = args[2] or fail("usage: iso move <ws|owner/repo/aN> <host>")
+  -- A new-layout agent moves on its own, by its exact address; it's never moved mid-turn.
+  if args[1] and args[1]:find("/", 1, true) then
+    local ws, agent = resolve_agent(args[1], true)
+    if not store.v2(ws.id) then
+      fail(("%s is a workspace's agent; a workspace moves whole: iso move %s %s"):format(args[1], ws.id, host))
+    end
+    local ok, message = require("isovim.move").send_agent(ws.id, agent, host)
+    if not ok then
+      fail(("could not move %s/%s to %s: %s"):format(ws.id, agent.id, host, message))
+    end
+    tui("require('isovim').refresh()")
+    out(("%s/%s moved to %s as %s"):format(ws.id, agent.id, host, message))
+    return
+  end
   local ws = resolve(args[1], true)
-  local host = args[2] or fail("usage: iso move <ws> <host>")
   if not force then
     for _, agent in ipairs(store.agents(ws.id)) do
       if word(ws.id, agent.id) == "working" then

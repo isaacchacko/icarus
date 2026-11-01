@@ -631,9 +631,11 @@ end
 
 -- The next N for a repo key, under a lock (a dir, which only one process can make): one past the
 -- counter, and past every aN dir and record there, so a number is never given out again even if
--- the counter file goes. aN/ is made before the lock is let go.
+-- the counter file goes. aN/ is made before the lock is let go. want (an agent moving in, iso move)
+-- is taken instead when it's that or later: a number this host never gave out.
+---@param want? integer
 ---@return integer? n, string? err
-local function take_number(key)
+local function take_number(key, want)
   local iso = M.path(key)
   vim.fn.mkdir(records(key), "p")
   local lock = iso .. "/next.lock"
@@ -657,6 +659,9 @@ local function take_number(key)
       n = taken and math.max(n, taken + 1) or n
     end
   end
+  if want and want >= n then
+    n = want
+  end
   vim.fn.writefile({ tostring(n + 1) }, iso .. "/next.tmp")
   vim.uv.fs_rename(iso .. "/next.tmp", iso .. "/next")
   vim.fn.mkdir(M.dir(key) .. "/a" .. n, "p")
@@ -677,6 +682,25 @@ local function add_record(key, spec)
     hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of,
     acp = spec.acp or nil }
   write_json(M.record_file(key, id), record)
+  return record
+end
+
+-- An agent moving in from another host (isovim.move): its record, under its own aN when this host
+-- never gave that number out, else under the next one (a name that was its id follows it).
+---@return isovim.Agent? record, string? err
+function M.adopt_record(key, record)
+  local n, err = take_number(key, number(record.id))
+  if not n then
+    return nil, err
+  end
+  record = vim.deepcopy(record)
+  local was = record.id
+  record.id = "a" .. n
+  if record.name == was then
+    record.name = record.id
+  end
+  record.repo = not M.is_pseudo(key) and key or nil
+  write_json(M.record_file(key, record.id), record)
   return record
 end
 
@@ -809,20 +833,46 @@ function M.children(ws, agent)
   return found
 end
 
--- An agent going away hands its children to its own parent; with none, they become top-level.
--- With no agent, every agent of the workspace goes.
+-- A repo's router on this host (<key>/aN), other than any of except; nil outside a repo key or
+-- when it has none.
+---@param except? table<string, boolean> agent ids that don't count
+---@return string?
+function M.router(key, except)
+  if not M.v2(key) or M.is_pseudo(key) then
+    return nil
+  end
+  for _, agent in ipairs(M.agents(key)) do
+    if M.role(agent) == "router" and not (except or {})[agent.id] then
+      return key .. "/" .. agent.id
+    end
+  end
+end
+
+-- An agent going away hands its children to its own parent; at the top (it has none), a child in
+-- a repo goes to that repo's router (unless it's the one going, or the child itself), else it
+-- becomes top-level. Roots have no parent, so they're never handed on. With no agent, every agent
+-- of the workspace goes.
 function M.reparent(ws, agent)
   local leaving = agent and { agent } or vim.tbl_map(function(entry)
     return entry.id
   end, M.agents(ws))
+  local going = {}
+  for _, id in ipairs(leaving) do
+    going[ws .. "/" .. id] = true
+  end
   for _, id in ipairs(leaving) do
     -- Read again each time: handing down the previous one may have changed this one's parent.
     local gone = M.agent(ws, id) or {}
     for _, workspace in ipairs(M.list()) do
       for _, child in ipairs(M.agents(workspace.id)) do
         if child.parent == ws .. "/" .. id then
+          local parent = gone.parent
+          if not parent then
+            local router = M.router(workspace.id, { [child.id] = true })
+            parent = router and not going[router] and router or nil
+          end
           with_agent(workspace.id, child.id, function(entry)
-            entry.parent = gone.parent
+            entry.parent = parent
           end)
         end
       end

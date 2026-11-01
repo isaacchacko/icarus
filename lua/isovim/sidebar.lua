@@ -1986,6 +1986,14 @@ M.actions = {
       return
     end
     local ws, name = item.ws, item.ws_name
+    -- A new-layout agent moves on its own, by its address; a repo header moves nothing.
+    if store.v2(item.ws) then
+      if not item.agent or item.legacy_main then
+        return Snacks.notify.info("m moves one agent: put the cursor on its row", { title = "isovim" })
+      end
+      ws, name = item.ws .. "/" .. item.agent, item.name or (item.ws .. "/" .. item.agent)
+    end
+    table.sort(hosts)
     vim.ui.select(hosts, { prompt = "Move " .. name .. " to" }, function(host)
       if not host then
         return

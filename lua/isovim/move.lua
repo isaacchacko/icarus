@@ -4,6 +4,15 @@
 -- Claude keys transcripts by the workspace's path, which differs between hosts, so the receiver
 -- files them under its own path's key. A worktree workspace also brings its branch and uncommitted
 -- work as a git bundle, and gets a new worktree of the same repo on the other host.
+--
+-- A new-layout agent (<key>/aN) moves on its own (M.send_agent): its record, its journal (with its
+-- queue file and the sessions it kept), its plain-text transcript and its session's transcript
+-- (Claude's, filed on the other host under the key of the path it will run in there; Codex's
+-- rollout). Its worktree goes as its branch: pushed to origin here and made again there, as aN/w
+-- from that host's base clone, so a dirty worktree is refused (commit first). It keeps its aN when
+-- the other host never gave that number out, else takes the next one there. It's refused mid-turn,
+-- and roots stay on their host. Once the other host has it, it's removed here (its children go on
+-- as when it's removed: to its parent, else the repo's router).
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 local worktree = require("isovim.worktree")
@@ -26,7 +35,7 @@ end
 ---@return boolean ok, string? err
 function M.send(ws, host)
   if store.v2(ws.id) then
-    return false, "a repo's agents (the new layout) don't move between hosts yet"
+    return false, "a repo's agents move one at a time: iso move <owner>/<repo>/aN <host>"
   end
   local dir = store.dir(ws.id)
   local manifest = { id = ws.id, running = {} }
@@ -104,6 +113,9 @@ end
 ---@return boolean ok, string message
 function M.receive(stage)
   local manifest = vim.json.decode(table.concat(vim.fn.readfile(stage .. "/manifest.json"), "\n"))
+  if manifest.agent then
+    return M.receive_agent(stage, manifest)
+  end
   local id = manifest.id
   local dir = store.path(id)
   if vim.uv.fs_stat(dir) then
@@ -166,6 +178,292 @@ function M.receive(stage)
     return true, name .. " is here"
   end
   return true, ("%s is here; resumed %s"):format(name, table.concat(started, ", "))
+end
+
+-- A new-layout agent
+
+local function run_git(dir, args, timeout)
+  local result = vim.system(vim.list_extend({ "git", "-C", dir }, args), { text = true, timeout = timeout }):wait()
+  return result.code == 0, vim.trim(result.stdout or ""), vim.trim(result.stderr or "")
+end
+
+-- Claude's transcript of a session (<session>.jsonl, under whichever project it's in) and the dir
+-- of its subagents' beside it, when there is one.
+---@return string? transcript, string? dir
+local function claude_transcript(session)
+  local projects = vim.fs.dirname(panes.claude_project("/"))
+  local file = vim.fn.glob(projects .. "/*/" .. session .. ".jsonl", false, true)[1]
+  if not file then
+    return nil
+  end
+  local dir = file:sub(1, -7)
+  return file, is_dir(dir) and dir or nil
+end
+
+-- The files of the agent's that go along, as {from, to under the stage}.
+local function agent_files(key, id)
+  local journal = require("isovim.acp.journal")
+  local files = {}
+  for _, name in ipairs({ id .. ".jsonl", id .. ".queue.json", id .. ".sessions" }) do
+    local path = journal.dir(key) .. "/" .. name
+    if vim.uv.fs_stat(path) then
+      files[#files + 1] = { path, "journal/" .. name }
+    end
+  end
+  local text = store.path(key) .. "/transcripts/" .. id .. ".txt"
+  if vim.uv.fs_stat(text) then
+    files[#files + 1] = { text, "transcripts/" .. id .. ".txt" }
+  end
+  return files
+end
+
+-- Moves the new-layout agent key/agent to host (an ssh name): see the top of this file.
+---@param agent isovim.Agent
+---@return boolean ok, string message the address it has there, or why not
+function M.send_agent(key, agent, host)
+  local id = agent.id
+  local address = key .. "/" .. id
+  local role = store.role(agent)
+  if agent.of or not (agent.kind == "claude" or agent.kind == "codex") then
+    return false, address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
+  elseif role == "root" or role == "repo-root" then
+    return false, ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
+  end
+  local running = panes.running(key, id)
+  if running and agent.acp then
+    local up, state = require("isovim.acp").call(key, id, "status")
+    if up and type(state) == "table" and state.handover then
+      return false, address .. " is handed over to Claude's screen; quit claude there first"
+    elseif up and type(state) == "table" and state.busy then
+      return false, address .. " is mid-turn; wait for its turn to end, or cancel it (C-c in its chat)"
+    end
+  elseif running and require("isovim.status").get(key, id) == "working" then
+    return false, address .. " is mid-turn; wait for its turn to end, or cancel it"
+  end
+  -- Its worktree goes as its branch, pushed to origin.
+  local w = store.dir(key) .. "/" .. id .. "/w"
+  local branch
+  if is_dir(w) then
+    local _, dirty = run_git(w, { "status", "--porcelain" })
+    if dirty ~= "" then
+      return false, ("%s's worktree (%s) has uncommitted changes; commit them first, since the move takes its branch")
+        :format(address, store.home_relative(w))
+    end
+    local _, current = run_git(w, { "branch", "--show-current" })
+    if current == "" then
+      return false, ("%s's worktree is on a detached HEAD; put it on a branch first"):format(address)
+    end
+    branch = current
+    local pushed, _, err = run_git(w, { "push", "--quiet", "origin", "HEAD:refs/heads/" .. branch }, 120000)
+    if not pushed then
+      return false, ("could not push %s to origin: %s"):format(branch, err)
+    end
+  end
+  local manifest = { agent = true, key = key, record = vim.deepcopy(agent), running = running, branch = branch,
+    from = require("isovim.remote").self() }
+  local repo_dir = agent.repo and require("isovim.repos").dir(agent.repo) .. "/base-clone"
+  if repo_dir and is_dir(repo_dir) then
+    local _, url = run_git(repo_dir, { "remote", "get-url", "origin" })
+    manifest.origin = url ~= "" and url or nil
+  elseif branch then
+    local _, url = run_git(w, { "remote", "get-url", "origin" })
+    manifest.origin = url ~= "" and url or nil
+  end
+  -- Its parent here is named with this host from there.
+  local parent = manifest.record.parent
+  if parent and not parent:find(":", 1, true) then
+    manifest.record.parent = manifest.from .. ":" .. parent
+  end
+  manifest.record.branch = nil
+
+  if running then
+    panes.stop(key, id)
+    -- The supervisor writes its queue on every change and removes its socket as it exits.
+    local sock = require("isovim.acp").socket(key, id)
+    vim.wait(5000, function()
+      return not vim.uv.fs_stat(sock)
+    end, 50)
+  end
+  local function abort(err)
+    if running then
+      panes.start(key, store.agent(key, id) or agent, store.agent_dir(key, id))
+    end
+    return false, err
+  end
+
+  local stage = vim.fn.tempname()
+  vim.fn.mkdir(stage .. "/journal", "p")
+  for _, file in ipairs(agent_files(key, id)) do
+    copy(file[1], stage .. "/" .. file[2])
+  end
+  local session = store.session_id(key, id)
+  manifest.record.session = session or manifest.record.session
+  if session and agent.kind == "codex" then
+    local rollout = panes.codex_rollout(session)
+    if rollout then
+      copy(rollout, stage .. "/codex/" .. rollout:sub(#panes.codex_sessions + 2))
+    end
+  elseif session then
+    local transcript, subagents = claude_transcript(session)
+    if transcript then
+      copy(transcript, stage .. "/claude/" .. session .. ".jsonl")
+    end
+    if subagents then
+      copy(subagents, stage .. "/claude/" .. session)
+    end
+  end
+  vim.fn.writefile({ vim.json.encode(manifest) }, stage .. "/manifest.json")
+
+  local tar = { "tar", "-cf", "-", "-C", stage, "." }
+  local pipeline = ("set -o pipefail; %s | %s %s %s"):format(
+    table.concat(vim.tbl_map(vim.fn.shellescape, tar), " "),
+    M.ssh,
+    vim.fn.shellescape(host),
+    vim.fn.shellescape(M.remote_bin .. " receive")
+  )
+  local result = vim.system({ "bash", "-c", pipeline }, { text = true }):wait()
+  vim.fn.delete(stage, "rf")
+  if result.code ~= 0 then
+    return abort(vim.trim((result.stderr or "") .. (result.stdout or "")))
+  end
+  local there = vim.trim(result.stdout or ""):match("([^%s]+/a%d+) is here") or address
+  -- It's there now: gone from here, as iso rm removes one, its journal too.
+  store.remove_agent(key, id)
+  for _, file in ipairs(agent_files(key, id)) do
+    vim.fn.delete(file[1], "rf")
+  end
+  return true, there
+end
+
+-- This host's base clone of repo, made from origin's url when there's no checkout here to make it
+-- from (isovim.repoconf.base); fetched when it's there.
+---@return string? path, string? err
+local function base_clone(repo, url)
+  local repoconf = require("isovim.repoconf")
+  local path, err = repoconf.base(repo)
+  if path or not url or is_dir(require("isovim.repos").dir(repo) .. "/base-clone/.git") then
+    return path, err
+  end
+  path = require("isovim.repos").dir(repo) .. "/base-clone"
+  local tmp = ("%s.%d.tmp"):format(path, vim.uv.os_getpid())
+  vim.fn.delete(tmp, "rf")
+  vim.fn.mkdir(vim.fs.dirname(path), "p")
+  local cloned = vim.system({ "git", "clone", "--quiet", url, tmp }, { text = true }):wait()
+  if cloned.code ~= 0 then
+    vim.fn.delete(tmp, "rf")
+    return nil, vim.trim(cloned.stderr)
+  end
+  local _, branch = run_git(tmp, { "symbolic-ref", "--quiet", "--short", "HEAD" })
+  run_git(tmp, { "checkout", "--quiet", "--detach" })
+  if branch ~= "" then
+    run_git(tmp, { "branch", "--quiet", "-D", branch })
+  end
+  if not vim.uv.fs_rename(tmp, path) then
+    vim.fn.delete(tmp, "rf")
+  end
+  return is_dir(path .. "/.git") and path or nil, "could not clone " .. url
+end
+
+-- The other end of send_agent: files what it packed, makes its worktree from its branch, and
+-- starts it if it was running there.
+---@return boolean ok, string message
+function M.receive_agent(stage, manifest)
+  local key, record = manifest.key, manifest.record
+  if not (type(key) == "string" and store.valid_key(key) and type(record) == "table" and record.id) then
+    return false, "the move's manifest names no agent"
+  end
+  local role = store.role(record)
+  if role == "router" and store.router(key) then
+    return false, ("%s has a router here already (%s); one router per repo per host"):format(key, store.router(key))
+  end
+  local repo = record.repo
+  if record.read_only or manifest.branch then
+    if not repo then
+      return false, "a read-only agent or one with a worktree belongs to a repo, and this one names none"
+    end
+    local base, err = base_clone(repo, manifest.origin)
+    if not base then
+      return false, ("no base clone of %s here: %s"):format(repo, tostring(err))
+    end
+    if manifest.branch then
+      -- A branch of that name left here from before is moved to what was pushed, unless it's in use.
+      run_git(base, { "fetch", "--quiet", "origin", manifest.branch }, 60000)
+      local has_local = run_git(base, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. manifest.branch })
+      if has_local then
+        local moved, _, err2 = run_git(base, { "branch", "-f", manifest.branch, "origin/" .. manifest.branch })
+        if not moved then
+          return false, ("%s here has its own %s, in use: %s"):format(repo, manifest.branch, err2)
+        end
+      end
+    end
+  end
+  if record.checkout and not is_dir(record.checkout) then
+    record.checkout = nil
+  end
+  local was = record.id
+  local adopted, err = store.adopt_record(key, record)
+  if not adopted then
+    return false, err
+  end
+  local id = adopted.id
+  local address = key .. "/" .. id
+  local function undo(why)
+    os.remove(store.record_file(key, id))
+    vim.fn.delete(store.dir(key) .. "/" .. id, "rf")
+    return false, why
+  end
+  if manifest.branch then
+    local log = store.run_dir(key) .. "/" .. id .. ".worktree_setup.log"
+    vim.fn.mkdir(store.run_dir(key), "p")
+    local path, branch_or_err = require("isovim.cli.work").ensure_worktree(key, adopted, manifest.branch, log)
+    if not path then
+      return undo("could not make its worktree here: " .. tostring(branch_or_err))
+    end
+  end
+  -- Its journal and transcript, under its id here.
+  local journal = require("isovim.acp.journal")
+  vim.fn.mkdir(journal.dir(key), "p")
+  for _, suffix in ipairs({ ".jsonl", ".queue.json", ".sessions" }) do
+    local from = stage .. "/journal/" .. was .. suffix
+    if vim.uv.fs_stat(from) then
+      vim.fn.delete(journal.dir(key) .. "/" .. id .. suffix, "rf")
+      copy(from, journal.dir(key) .. "/" .. id .. suffix)
+    end
+  end
+  local text = stage .. "/transcripts/" .. was .. ".txt"
+  if vim.uv.fs_stat(text) then
+    copy(text, store.path(key) .. "/transcripts/" .. id .. ".txt")
+  end
+  -- Its session: Claude finds a session by the path it runs in, so the transcript goes under that
+  -- path's project here.
+  local session = adopted.session
+  if session then
+    vim.fn.mkdir(store.run_dir(key), "p")
+    vim.fn.writefile({ session }, store.run_dir(key) .. "/" .. id .. ".session")
+  end
+  if is_dir(stage .. "/claude") then
+    local cwd = store.agent_dir(key, id)
+    vim.fn.mkdir(cwd, "p")
+    local project = panes.claude_project(cwd)
+    vim.fn.mkdir(project, "p")
+    vim.system({ "cp", "-R", stage .. "/claude/.", project }):wait()
+  end
+  for _, file in ipairs(vim.fn.glob(stage .. "/codex/**/*.jsonl", false, true)) do
+    local target = panes.codex_sessions .. "/" .. file:sub(#stage + #"/codex/" + 1)
+    if not vim.uv.fs_stat(target) then
+      copy(file, target)
+    end
+  end
+  vim.fn.delete(stage, "rf")
+  local renamed = id ~= was and (" (%s was taken here)"):format(was) or ""
+  if manifest.running then
+    local started = panes.start(key, adopted, store.agent_dir(key, id))
+    if started.code ~= 0 then
+      return true, ("%s is here%s; it didn't start: %s"):format(address, renamed, vim.trim(started.stderr or ""))
+    end
+    return true, ("%s is here%s; resumed"):format(address, renamed)
+  end
+  return true, ("%s is here%s"):format(address, renamed)
 end
 
 return M

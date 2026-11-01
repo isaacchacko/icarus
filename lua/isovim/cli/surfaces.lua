@@ -207,8 +207,36 @@ local function print_question(entry)
   end
 end
 
+-- The root-mode scope a root answers for: "host" for the host root, else the repo key of the repo
+-- root (rootmode's entry first, then its record).
+local function root_scope(me, entry)
+  local rootmode = require("isovim.rootmode")
+  if rootmode.active("host") == me then
+    return "host"
+  elseif rootmode.active(entry.repo) == me then
+    return entry.repo
+  end
+  local ws, id = me:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, id)
+  if record and store.role(record) == "root" then
+    return "host"
+  end
+  return store.v2(ws) and ws or entry.repo
+end
+
+-- root.<scope>.raised|decided: a root gave a question to the user, or answered it itself.
+local function publish_root(what, me, entry, details)
+  local events = require("isovim.events")
+  local scope = root_scope(me, entry)
+  events.publish(events.topic("root", scope, what), vim.tbl_extend("force", {
+    scope = scope, root = me, question = entry.repo .. "/" .. entry.name, repo = entry.repo, name = entry.name,
+    text = entry.question,
+  }, details or {}))
+end
+
 -- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes only
--- the questions root mode gave it, and --raise to give one to the user instead.
+-- the questions root mode gave it, and --raise to give one to the user instead. A root's answer
+-- and its raise are published as root.<scope>.decided and root.<scope>.raised.
 function M.answer(args)
   local raise = flag(args, "--raise")
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
@@ -227,6 +255,7 @@ function M.answer(args)
     if not raised then
       fail(err)
     end
+    publish_root("raised", me, entry)
     out(id .. " is in the user's Inbox now")
     c.tui("require('isovim').refresh()")
     return
@@ -240,6 +269,9 @@ function M.answer(args)
   local answer, err = surfaces.answer(entry, args, me or "user")
   if not answer then
     fail(err)
+  end
+  if me then
+    publish_root("decided", me, entry, { answer = answer })
   end
   out(surfaces.answer_text(answer))
 end

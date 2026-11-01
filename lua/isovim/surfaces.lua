@@ -877,8 +877,8 @@ function M.list(repo)
   return M.cache[repo] or M.scan(repo)
 end
 
--- Opens a surface in the TUI: a markdown surface, the Task Board, a file or a folder beside the
--- chat; a chat in the chat window; a question as a picker, which answers it. Opening consumes
+-- Opens a surface in the TUI: a markdown surface or the Task Board rendered with an input box
+-- under it (isovim.surface_view), a broken one's file, a file or a folder beside the chat; a chat in the chat window; a question as a picker, which answers it. Opening consumes
 -- what's consumable.
 function M.open(entry)
   local isovim = require("isovim")
@@ -890,7 +890,11 @@ function M.open(entry)
   if entry.error then
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
-  if entry.type == "markdown" or entry.type == "tasks" or entry.type == "broken" then
+  if entry.type == "markdown" or entry.type == "tasks" then
+    -- Rendered, with an input box to the repo's router under it.
+    require("isovim.surface_view").open(entry)
+    M.consume(entry)
+  elseif entry.type == "broken" then
     reveal(entry.file)
     M.consume(entry)
   elseif entry.type == "file" or entry.type == "folder" then
@@ -988,8 +992,15 @@ function M.watch(on_change)
   local function rescan(repo)
     local before = signature(M.cache[repo] or {})
     M.cache[repo] = M.scan(repo)
-    if on_change and signature(M.cache[repo]) ~= before then
-      on_change(repo, M.cache[repo])
+    if signature(M.cache[repo]) ~= before then
+      if on_change then
+        on_change(repo, M.cache[repo])
+      end
+      -- Open rendered views follow their file.
+      local view = package.loaded["isovim.surface_view"]
+      if view then
+        view.changed(repo, M.cache[repo])
+      end
     end
   end
   local discover

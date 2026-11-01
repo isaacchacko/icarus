@@ -17,6 +17,10 @@
 --                                went                          {repo, name, type, file, title, error?}
 --   surface.<repo>.<name>.answered   a question was answered   {..., answer: {labels, other?, by, at}}
 --   surface.<repo>.<name>.consumed   the user opened a chat or consumable surface (isovim.surfaces)
+--   root.<scope>.raised|decided   a root gave a question to the user (iso <root|repo-root> answer
+--                                --raise) or answered it itself; scope is "host" for the host root,
+--                                else the repo root's repo   {scope, root, question, repo, name, text,
+--                                answer? (decided: {labels, other?, by, at})}
 -- So agent.<owner>/<repo>.** is everything about a repo's agents, agent.<ws>.*.status every state
 -- in a workspace, agent.*.*.status everyone's. Inside a part "%" is written %25 and then "." %2E
 -- (M.encode), so agent owner/site.com/a3's status is agent.owner/site%2Ecom.a3.status. Every
@@ -24,8 +28,7 @@
 -- way); patterns are matched against the encoded topic as given, never decoded, and the details
 -- carry addr (<scope>/<id>), scope and repo raw. An agent event's id is the agent's; a msg's id is
 -- its stamp's, as before, the agent's being the end of addr.
--- The root's decisions (root.*) and other hosts (host.*, <host>: prefixes) publish here too once
--- they exist.
+-- Other hosts (host.*, <host>: prefixes) publish here too once they exist.
 local store = require("isovim.store")
 
 local M = {}
@@ -49,6 +52,8 @@ M.topics = {
   { "surface.*.*.removed", "a surface went" },
   { "surface.*.*.answered", "a question surface was answered" },
   { "surface.*.*.consumed", "the user opened a chat or consumable surface" },
+  { "root.*.raised", "a root gave a question to the user" },
+  { "root.*.decided", "a root answered a question itself" },
   { "**", "everything" },
 }
 

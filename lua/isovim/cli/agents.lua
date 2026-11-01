@@ -234,7 +234,7 @@ local function fork_acp(ws, agent, name, prompt, at, caller)
     local cut = acp_sessions.cut(require("isovim.acp.journal").read(ws.id, agent.id), seq, "at")
     fields.fork_seq, fields.fork_at = cut.upto, cut.messageId
   end
-  local fork, err = store.add_agent(ws.id, { kind = "claude", name = name, prompt = prompt, acp = true,
+  local fork, err = store.add_agent(ws.id, { kind = agent.kind, name = name, prompt = prompt, acp = true,
     parent = caller or from, read_only = agent.read_only or nil })
   if not fork then
     fail(err)

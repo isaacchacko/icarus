@@ -247,6 +247,9 @@ try:
     res = inside(HR, "root answer acme/app/q2 no")
     check(res[0][0] == 0, "the host root answers it", res[0])
     check(q2()[:2] == (0, "no"), "and the router's call returns its answer", q2())
+    host_decided = [json.loads(l) for l in (HOME / "events" / "events.jsonl").read_text().splitlines()
+                    if '"topic":"root.host.decided"' in l and "acme/app/q2" in l]
+    check(host_decided and host_decided[0]["root"] == HR, "the host root's answer is published as root.host.decided", host_decided)
     qr = ask(HR, "qr", "Spend money?", repo="root")
     entry = surface("root", "qr")
     check(entry["needs_you"] and not entry.get("routed"), "the host root's own question is yours, never routed to itself", entry)
@@ -284,6 +287,13 @@ try:
     check(res[0][0] == 0 and q4()[:2] == (0, "yes"), "iso repo-root answer unblocks the router", (res[0], q4()))
     answered = [json.loads(l) for l in (HOME / "events" / "events.jsonl").read_text().splitlines() if ".q4.answered" in l]
     check(answered and answered[0]["answer"]["by"] == RR, "the answer says the repo root gave it", answered)
+    roots = [json.loads(l) for l in (HOME / "events" / "events.jsonl").read_text().splitlines() if '"topic":"root.' in l]
+    raised = [e for e in roots if e["topic"] == "root.acme/app.raised" and e["question"] == "acme/app/q3"]
+    decided = [e for e in roots if e["topic"] == "root.acme/app.decided" and e["question"] == "acme/app/q4"]
+    check(raised and raised[0]["root"] == RR and raised[0]["scope"] == "acme/app",
+          "the raise is published as root.<scope>.raised", roots)
+    check(decided and decided[0]["root"] == RR and decided[0]["answer"]["labels"] == ["yes"],
+          "the root's answer as root.<scope>.decided", roots)
 
     print("\n# root mode off hands the questions on")
     q5 = ask(RA, "q5")
