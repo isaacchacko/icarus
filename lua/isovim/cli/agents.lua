@@ -20,8 +20,10 @@ local flag = c.flag
 
 local commands = {}
 
+-- An ACP agent's chat in a minimal nvim (isovim.acp.attach); any other agent's tmux pane.
 local function attach(ws, agent)
-  local cmd = table.concat(vim.tbl_map(vim.fn.shellescape, panes.attach_cmd(ws.id, agent.id)), " ")
+  local argv = agent.acp and require("isovim.acp.attach").cmd(ws.id, agent.id) or panes.attach_cmd(ws.id, agent.id)
+  local cmd = table.concat(vim.tbl_map(vim.fn.shellescape, argv), " ")
   os.execute(cmd)
   status.mark_seen(ws.id, agent.id)
 end
@@ -30,6 +32,33 @@ function commands.attach(args)
   local ws, agent = resolve_agent(args[1])
   ensure_running(ws, agent)
   attach(ws, agent)
+end
+
+-- iso handover: the ACP session closes and your claude runs on it in the agent's pane (claude
+-- --resume), attached to this terminal; the session reopens when Claude exits, which detaches you.
+function commands.handover(args)
+  local stay = flag(args, "--no-attach")
+  local ws, agent = resolve_agent(args[1])
+  if not agent.acp then
+    fail(agent.name .. " isn't an ACP agent: attach to it (iso attach) to use Claude's screen")
+  end
+  ensure_running(ws, agent)
+  local acp = require("isovim.acp")
+  -- One just started opens its session first.
+  vim.wait(30000, function()
+    local up, state = acp.call(ws.id, agent.id, "status")
+    return up and (state.ready or state.handover)
+  end, 200)
+  local ok, result = acp.call(ws.id, agent.id, "handover")
+  if not ok then
+    fail(("could not hand %s over: %s"):format(agent.name, tostring(result):gsub("^.-: ", "")))
+  elseif not result.started then
+    fail("could not run claude in " .. agent.name .. "'s pane (its chat says why)")
+  end
+  out(("%s: claude --resume %s runs in its pane; the ACP session comes back when it exits"):format(agent.name, result.session))
+  if not stay and vim.uv.guess_handle(1) == "tty" then
+    os.execute(table.concat(vim.tbl_map(vim.fn.shellescape, panes.attach_cmd(ws.id, agent.id)), " "))
+  end
 end
 
 local PHONE_ORDER = { attention = 1, unread = 2, working = 3, idle = 4, stopped = 5 }
@@ -77,7 +106,7 @@ function commands.phone()
     for i, row in ipairs(rows) do
       io.write(("%2d %s %s\n"):format(i, PHONE_MARK[row.state], row.label))
     end
-    io.write("\n# attach · ⏎ refresh · q quit\n(C-b d detaches back here)\n> ")
+    io.write("\n# attach · ⏎ refresh · q quit\n(C-b d, or :qa in a chat, comes back here)\n> ")
     io.flush()
     local line = io.read("*l")
     if not line or line == "q" then

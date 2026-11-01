@@ -6,7 +6,10 @@ It answers initialize, session/new, session/resume, session/load and session/set
 streams a tool call (pending, then completed) and "reply to: <text>" in two chunks after
 $FAKE_AGENT_DELAY seconds, then ends the turn. "run <cmd>" runs a shell command as a tool would,
 a child of this process; "slow <n>" works for n seconds; "perm" asks for a permission and replies
-with the outcome. session/cancel ends the running turn as cancelled.
+with the outcome. "diff" edits src/app.lua (a diff tool call), "term <cmd>" runs a command whose
+output streams as terminal output deltas (claude-agent-acp's _meta extension) and ends with its
+exit code, "stream <n>" streams n words one chunk at a time ($FAKE_STREAM_GAP seconds apart),
+"think" thinks before it answers, and "plan" sends a plan. session/cancel ends the running turn as cancelled.
 
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
@@ -22,6 +25,7 @@ import uuid
 
 LOG = os.environ.get("FAKE_ACP_LOG")
 DELAY = float(os.environ.get("FAKE_AGENT_DELAY", "1"))
+GAP = float(os.environ.get("FAKE_STREAM_GAP", "0.2"))
 write_lock = threading.Lock()
 pending = {}
 next_id = [1000]
@@ -90,7 +94,7 @@ def prompt(rid, params):
     with state_lock:
         if running["prompt"] is not None:
             log({"overlap": True, "text": text, "running": running["prompt"]})
-        running["prompt"], running["cancelled"] = text, False
+        running["prompt"] = text
     call_id = "tool-" + uuid.uuid4().hex[:8]
     stop = "end_turn"
     if text.startswith("run "):
@@ -111,6 +115,45 @@ def prompt(rid, params):
         chosen = outcome.get("optionId") or outcome.get("outcome")
         tool(session, call_id, None, None, "failed" if chosen == "reject" else "completed")
         chunk(session, "permission: " + str(chosen))
+    elif text == "diff":
+        path = os.path.join(os.getcwd(), "src", "app.lua")
+        old = "local a = 1\nlocal b = 2\nlocal c = 3\nreturn a\n"
+        new = "local a = 1\nlocal b = 20\nlocal c = 3\nlocal d = 4\nreturn a\n"
+        update(session, {"sessionUpdate": "tool_call", "toolCallId": call_id, "title": "Edit src/app.lua", "kind": "edit",
+                         "status": "pending", "locations": [{"path": path}]})
+        update(session, {"sessionUpdate": "tool_call_update", "toolCallId": call_id, "status": "completed",
+                         "content": [{"type": "diff", "path": path, "oldText": old, "newText": new}]})
+        chunk(session, "edited src/app.lua")
+    elif text.startswith("term "):
+        command = text[5:]
+        update(session, {"sessionUpdate": "tool_call", "toolCallId": call_id, "title": "`" + command + "`", "kind": "execute",
+                         "status": "in_progress", "content": [{"type": "terminal", "terminalId": call_id}],
+                         "_meta": {"terminal_info": {"terminal_id": call_id}}})
+        proc = subprocess.Popen(["bash", "-c", command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            update(session, {"sessionUpdate": "tool_call_update", "toolCallId": call_id,
+                             "_meta": {"terminal_output_delta": {"terminal_id": call_id, "data": line}}})
+        code = proc.wait()
+        update(session, {"sessionUpdate": "tool_call_update", "toolCallId": call_id,
+                         "status": "completed" if code == 0 else "failed",
+                         "_meta": {"terminal_exit": {"terminal_id": call_id, "exit_code": code, "signal": None}}})
+        chunk(session, "ran it")
+    elif text.startswith("stream "):
+        for i in range(int(text.split()[1])):
+            if running["cancelled"]:
+                stop = "cancelled"
+                break
+            chunk(session, f"w{i + 1} ")
+            time.sleep(GAP)
+    elif text == "think":
+        update(session, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "pondering the question"}})
+        chunk(session, "thought about it")
+    elif text == "plan":
+        update(session, {"sessionUpdate": "plan", "entries": [
+            {"content": "read the code", "status": "completed", "priority": "high"},
+            {"content": "write the fix", "status": "in_progress", "priority": "high"},
+            {"content": "test it", "status": "pending", "priority": "medium"}]})
+        chunk(session, "planned")
     else:
         seconds = float(text.split()[1]) if text.startswith("slow ") else DELAY
         tool(session, call_id, "Read notes.md", "read", "pending")
@@ -149,6 +192,8 @@ def handle(frame):
         update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/prompt":
+        # Here, not in its thread: a cancel that comes right after must not be undone by it.
+        running["cancelled"] = False
         threading.Thread(target=prompt, args=(rid, params), daemon=True).start()
     elif method == "session/cancel":
         running["cancelled"] = True

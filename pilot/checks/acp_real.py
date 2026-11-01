@@ -63,6 +63,8 @@ try:
     modes = [e["modeId"] for e in journal() if e["kind"] == "mode"]
     check(modes == ["bypassPermissions"], "the supervisor set bypassPermissions", modes)
     sid = next(e["sessionId"] for e in journal() if e["kind"] == "session")
+    # What your own CLAUDE.md files @import, appended to the session prompt by the supervisor.
+    print("     imports:", next(e for e in journal() if e["kind"] == "session").get("imports"))
     transcript = iso.tmp / "work" / "_" / "iso" / "transcripts" / "a0.txt"
     iso.wait(lambda: transcript.exists(), "the hooks' transcript", 30)
     check(transcript.exists(), "isovim's hooks fire from _meta's settings (the prompt hook wrote the transcript)")

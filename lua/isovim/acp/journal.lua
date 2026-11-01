@@ -3,14 +3,21 @@
 -- it from the start and then follows it. It lives in the repo's iso/, as iso/journal/aN.jsonl.
 --
 -- Each line is {seq, ts, kind, ...}: seq counts up from 1 within the file, ts is epoch seconds.
---   session   {how: new|resume|load, sessionId}   the session the supervisor holds
+--   session   {how: new|resume|load, sessionId, imports?}  the session the supervisor holds, and
+--                                                 the files its CLAUDE.md files @import
 --   mode      {modeId}                            the permission mode it set (bypassPermissions)
 --   prompt    {id, text, via, from?, message?, stamp?}  a prompt sent to the agent: via is iso
---                                                 (iso send/msg), composer (the TUI) or spawn;
+--                                                 (iso send/msg), composer (the TUI), spawn, or
+--                                                 claude (typed on Claude's screen, iso handover);
 --                                                 from is the sender's address and message the
 --                                                 message's kind, for iso send/msg; nil for you
 --   queued    {id, text, via, from?, position}    a prompt held until the running turn ends
---   update    {update}                            a raw ACP session/update, as the agent sent it
+--   queue     {items: {id, text, via, from?}[]}   the whole queue after an edit, reorder, clear or
+--                                                 send-now (a push is a queued entry)
+--   update    {update, handover?}                 a raw ACP session/update, as the agent sent it
+--                                                 (or made from Claude's transcript after a handover)
+--   handover  {state: start|end, sessionId?, code?} the session was handed to Claude's own screen,
+--                                                 or came back (code: claude's exit code)
 --   turn      {state: start|end, stopReason?, id} a turn began or ended (stopReason from the agent)
 --   permission {tool, toolCallId?, decision}      a permission the agent asked for and was answered
 --   notice    {text}                              the supervisor's own words: errors, restarts
@@ -93,12 +100,12 @@ function M.read(ws, agent)
 end
 
 -- Calls on_entry for every entry from the start, then for each one appended, until the returned
--- stop() is called. A journal that's replaced (another inode) or cut short starts over, after
--- on_reset. It watches the journal's folder (FSEvents/kqueue or inotify, through libuv), as
+-- stop() is called; drain() reads what's been added at once. A journal that's replaced (another
+-- inode) or cut short starts over, after on_reset. It watches the journal's folder (FSEvents/kqueue or inotify, through libuv), as
 -- isovim.events does, and reads only what was added; on_entry runs on the main loop.
 ---@param on_entry fun(entry: table)
 ---@param on_reset? fun()
----@return fun() stop
+---@return fun() stop, fun() drain
 function M.follow(ws, agent, on_entry, on_reset)
   local path = M.path(ws, agent)
   vim.fn.mkdir(M.dir(ws), "p")
@@ -157,7 +164,7 @@ function M.follow(ws, agent, on_entry, on_reset)
       watcher:stop()
       watcher:close()
     end
-  end
+  end, drain
 end
 
 return M

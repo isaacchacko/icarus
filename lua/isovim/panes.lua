@@ -245,6 +245,13 @@ function M.agent_cmd(ws, agent, dir)
   return { vim.env.SHELL or vim.o.shell }
 end
 
+-- What iso handover runs in an ACP agent's pane (isovim.acp.host): your own claude on the agent's
+-- session, with the hooks and the instructions (append) a TUI agent starts with.
+function M.handover_cmd(id, append)
+  return { M.exe("claude"), "--permission-mode", "bypassPermissions", "--settings", HOOKS,
+    "--append-system-prompt", append, "--resume", id }
+end
+
 M.claude_json = vim.env.ISOVIM_CLAUDE_JSON or vim.fs.normalize("~/.claude.json")
 
 -- Every running Claude rewrites this file, so edit one key with jq and swap it in atomically.

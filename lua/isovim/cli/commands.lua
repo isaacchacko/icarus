@@ -222,7 +222,17 @@ M.list = {
     audience = "user",
     args = { "<agent>" },
     help = [=[
-       iso attach <agent>            start it and attach this terminal to it (detach: C-b d)]=],
+       iso attach <agent>            start it and attach this terminal to it (detach: C-b d); an
+                                     ACP agent's chat and composer open in a minimal nvim (:qa)]=],
+  },
+  { name = "handover", module = "agents",
+    audience = "user",
+    args = { "<agent>" },
+    flags = { ["--no-attach"] = false },
+    help = [=[
+       iso handover <agent>          hand an ACP agent's session to Claude's own screen: claude
+                                     --resume in its pane, attached here; quitting Claude gives
+                                     it back to the chat (--no-attach: leave the pane alone)]=],
   },
   { name = "phone", module = "agents",
     audience = "user",

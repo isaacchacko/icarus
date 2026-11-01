@@ -110,8 +110,7 @@ try:
     iso.wait(lambda: has("a0", "reply to: hello alpha"), "a0's chat drawn from its journal")
     lines = chat("a0")
     check("❯ hello alpha" in lines, "the prompt shows", lines)
-    check("• Read notes.md · completed" in lines and not any(line.endswith("· pending") for line in lines),
-          "the tool call is one line, updated in place to completed", lines)
+    check(lines.count("⏺ Read notes.md") == 1, "the tool call is one line, updated in place", lines)
     check(on_screen("a0") and in_composer("a0") and iso.mode() == "i", "the composer is below it, in insert mode",
           (on_screen("a0"), in_composer("a0"), iso.mode()))
     iso.type("first from the composer")
@@ -191,36 +190,34 @@ try:
     iso.keys("[", "m")
     check(iso.lua("return vim.api.nvim_get_current_line()") == "⏺ reply to: first from the composer", "[m goes back")
 
-    # A tool call with output is folded under its line.
+    # A tool call's output is collapsed to its first line under it until za opens it.
     (iso.tmp / "work" / "acme" / "app" / "a0" / "notes.txt").write_text("the notes\n")
-    run("send", a0, "run echo notes.txt")
-    iso.wait(lambda: has("a0", "⏺ ran: echo notes.txt"), "the run's tool call")
-    row = iso.lua("for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do if l == '• run echo notes.txt · completed' then return i end end")
-    check(row and chat("a0")[row] == "  ⎿ notes.txt", "its output is under its line, folded with it", chat("a0")[row - 1:row + 1] if row else chat("a0")[-6:])
+    run("send", a0, "run echo notes.txt; echo more")
+    iso.wait(lambda: has("a0", "⏺ ran: echo notes.txt; echo more"), "the run's tool call")
+    row = iso.lua("for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do if l == '⏺ run echo notes.txt; echo more' then return i end end")
+    check(row and chat("a0")[row] == "  ⎿  notes.txt", "its output is under its line", chat("a0")[row - 1:row + 2] if row else chat("a0")[-6:])
     iso.lua("vim.api.nvim_win_set_cursor(0, { ..., 0 })", row)
-    folded = lambda: iso.lua("return vim.fn.foldclosed(...)", row)  # noqa: E731
-    check(folded() == row, "folded at first", (folded(), iso.lua("return vim.wo.foldmethod")))
+    folded = lambda: chat("a0")[row + 1] != "     more"  # noqa: E731
+    check(folded() and chat("a0")[row + 1] == "", "collapsed at first", chat("a0")[row - 1:row + 3])
     iso.keys("z", "o")
-    check(soon(lambda: folded() == -1), "zo opens it",
-          (folded(), iso.nvim.api.get_mode(), iso.lua("return {vim.api.nvim_win_get_cursor(0), vim.bo.filetype, vim.wo.foldmethod}")))
-    iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 1, 0 })", row)
+    check(soon(lambda: not folded()), "zo opens it", chat("a0")[row - 1:row + 3])
+    iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 2, 0 })", row)
     iso.keys("z", "c")
-    check(soon(lambda: folded() == row), "zc on its output closes it, from its line",
-          (folded(), iso.lua("return vim.api.nvim_win_get_cursor(0)[1]")))
+    check(soon(lambda: folded()), "zc on its output closes it", chat("a0")[row - 1:row + 3])
+    check(iso.lua("return vim.api.nvim_win_get_cursor(0)[1]") == row + 1, "leaving the cursor on what's left of it")
     iso.keys("z", "a")
-    check(soon(lambda: folded() == -1), "za toggles it")
-    iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 1, 0 })", row)
+    check(soon(lambda: not folded()), "za toggles it")
+    iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 2, 0 })", row)
     iso.keys("z", "a")
-    check(soon(lambda: folded() == row), "za on its output folds it again")
-    iso.keys("z", "o")
-    soon(lambda: folded() == -1)
+    check(soon(lambda: folded()), "za on its output closes it again")
     bare = iso.lua("for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do"
-                   " if l == '• Read notes.md · completed' then return i end end")
+                   " if l == '⏺ Read notes.md' then return i end end")
     iso.lua("vim.api.nvim_win_set_cursor(0, { ..., 0 })", bare)
     iso.lua("vim.v.errmsg = ''")
+    before = chat("a0")
     iso.keys("z", "a")
     check(soon(lambda: iso.lua("return vim.fn.mode()") == "n") and iso.lua("return vim.v.errmsg") == ""
-          and iso.lua("return vim.api.nvim_win_get_cursor(0)[1]") == bare,
+          and iso.lua("return vim.api.nvim_win_get_cursor(0)[1]") == bare and chat("a0") == before,
           "za on a tool call without output does nothing", iso.lua("return vim.v.errmsg"))
     iso.lua("vim.api.nvim_win_set_cursor(0, { ... + 1, 8 })", row)
     iso.keys("g", "f")

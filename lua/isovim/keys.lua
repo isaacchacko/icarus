@@ -301,6 +301,22 @@ function M.previous_agent()
   toast("No other agent yet")
 end
 
+-- The prompt queue of the ACP agent whose chat (or composer) you're in, else the one on screen.
+function M.prompt_queue()
+  local chat_mod = require("isovim.acp.chat")
+  local chat = chat_mod.of_buf()
+  if not chat then
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      chat = chat or chat_mod.of_buf(vim.api.nvim_win_get_buf(win))
+    end
+  end
+  if not chat then
+    return toast("The prompt queue: open an ACP agent's chat first")
+  end
+  local win = vim.fn.bufwinid(chat.composer)
+  require("isovim.acp.queue").open(chat.ws, chat.agent, win ~= -1 and win or nil)
+end
+
 local function open_role(role, missing)
   return function()
     local agent = in_repo(role)
@@ -386,7 +402,7 @@ M.GROUP = {
   { "j", function()
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },
-  { "q", not_yet("The prompt queue"), "the prompt queue (not yet)" },
+  { "q", M.prompt_queue, "the prompt queue of the agent on screen" },
   { "u", not_yet("Rewind"), "rewind at the prompt under the cursor (not yet)" },
   { "f", not_yet("Fork at a message"), "fork at the message under the cursor (not yet)" },
 }
