@@ -186,7 +186,9 @@ try:
     check("refused x/y" in said, "a repo whose records dir is missing is refused", said)
     check((r / "a7" / "notes.txt").exists() and (r / "a9").is_symlink() and (r / "a8").exists() and (work / "x" / "y" / "a0").exists(),
           "the dry run touches nothing")
-    check(reaper_log.read_text().count(" done: ") == before + 1 and said in reaper_log.read_text(), "the pass is in ~/.isovim/reaper.log")
+    # The TUI's own timer (every second here) logs passes of its own meanwhile.
+    check(reaper_log.read_text().count(" done: ") >= before + 1 and said in reaper_log.read_text(), "the pass is in ~/.isovim/reaper.log",
+          reaper_log.read_text()[-2000:])
     iso.wait(lambda: reaper_log.read_text().count(" done: ") >= before + 3, "the TUI's reaper timer")
     check(True, "the TUI runs the reaper on a timer")
     health = subprocess.run([str(REPO / "bin" / "iso"), "checkhealth"], env=iso.env, capture_output=True, text=True).stdout
@@ -224,16 +226,15 @@ try:
     iso.cli("repo", "import", str(src3))
     iso.wait(lambda: (down_home / "repos" / "o" / "r2" / "config.json").exists(), "the host that was down catches up")
     check(json.loads((down_home / "config.json").read_text())["self"] == "down", "the next write catches it up (its self is its own name)")
-    # A write's own background sync may be going round (or start any moment); iso sync then only
-    # queues behind it, so it's run until it runs itself.
+    # A write's own background sync may be going round (or start any moment); iso sync waits for it
+    # to end and runs its own.
     def own_sync():
-        r = subprocess.run([str(REPO / "bin" / "iso"), "sync"], env=iso.env, capture_output=True, text=True)
-        return None if "running already" in r.stdout else r
-    result = iso.wait(own_sync, "an iso sync of its own", 30)
+        return subprocess.run([str(REPO / "bin" / "iso"), "sync"], env=iso.env, capture_output=True, text=True)
+    result = own_sync()
     check(result.returncode == 0 and result.stdout.split("\n")[:2] == ["synced to down", "synced to peer"], "iso sync reports each host",
           (result.returncode, result.stdout, result.stderr))
     (tmp / "down").write_text("")
-    result = iso.wait(own_sync, "an iso sync of its own", 30)
+    result = own_sync()
     check(result.returncode == 1 and "FAILED down" in result.stdout, "iso sync fails on a down host", result.stdout)
 
     # iso jump.

@@ -209,19 +209,25 @@ local function push_all()
 end
 
 -- A sync, unless one is running, which is then told to go round again. Returns each peer's result,
--- or nil when it left the work to the running one.
+-- or nil when it left the work to the running one. With wait (iso sync), it waits for the running
+-- one to end, up to wait seconds, and then runs its own: asking that one to go round again instead
+-- would keep it going for as long as the asking went on.
+---@param opts? {wait?: number}
 ---@return table<string, true|string>?
-function M.run()
+function M.run(opts)
   vim.fn.mkdir(store.run, "p")
   local lock, again = store.run .. "/sync.lock", store.run .. "/sync.again"
-  if not vim.uv.fs_mkdir(lock, 448) then
+  local deadline = os.time() + (opts and opts.wait or 0)
+  while not vim.uv.fs_mkdir(lock, 448) do
     local stat = vim.uv.fs_stat(lock)
     if stat and os.time() - stat.mtime.sec > 600 then
       vim.uv.fs_rmdir(lock)
-      return M.run()
+    elseif os.time() < deadline then
+      vim.uv.sleep(100)
+    else
+      vim.fn.writefile({}, again)
+      return nil
     end
-    vim.fn.writefile({}, again)
-    return nil
   end
   local ok, results = pcall(function()
     local results

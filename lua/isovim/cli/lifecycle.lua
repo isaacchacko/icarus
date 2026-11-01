@@ -105,11 +105,11 @@ function commands.reap(args)
   end
 end
 
--- iso sync: your config to every other host now.
+-- iso sync: your config to every other host now, after the sync that's running (if one is) ends.
 function commands.sync()
-  local results = require("isovim.sync").run()
+  local results = require("isovim.sync").run({ wait = 120 })
   if not results then
-    return out("a sync is running already; it goes round once more for this")
+    return out("a sync is still running after two minutes; it goes round once more for this")
   end
   local failed = false
   local names = vim.tbl_keys(results)
