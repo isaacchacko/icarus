@@ -2150,8 +2150,11 @@ local function setup_buffer(ws, agent, name, buf)
   vim.b[buf].isovim_agent_name, vim.b[buf].isovim_agent_kind, vim.b[buf].isovim_acp = name, "claude", true
   vim.bo[buf].buflisted = true
   -- No smooth scrolling: its animation moves the cursor after a jump (so a key right after one acts
-  -- on a line it passes through), and it lags a chat that follows its end. No indent guides.
+  -- on a line it passes through), and it lags a chat that follows its end; the same for
+  -- mini.animate (LazyVim's mini-animate extra), which animates scrolls and cursor moves. No indent
+  -- guides.
   vim.b[buf].snacks_scroll, vim.b[buf].snacks_indent = false, false
+  vim.b[buf].minianimate_disable = true
   -- No completion menu, whose keys would take <Up>, <Down> and <CR> (blink.cmp reads this).
   vim.b[buf].completion = false
   -- No undo of nvim's: the composer keeps its own (see the top).
