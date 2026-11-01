@@ -77,6 +77,18 @@ function M.here(query)
       end
       candidates[#candidates + 1] = { ws = ws, agent = agent, hits = hits, file = file }
     end
+    -- An agent iso <role> rm removed keeps its transcript, headed "# <name> (removed ...)".
+    local dir = vim.fs.dirname(require("isovim.transcript").path(ws.id, "a0"))
+    for name, kind in vim.fn.isdirectory(dir) == 1 and vim.fs.dir(dir) or function() end do
+      local id = kind == "file" and name:match("^(a%d+)%.txt$")
+      local file = id and not store.agent(ws.id, id) and dir .. "/" .. name
+      local head = file and (vim.fn.readfile(file, "", 1)[1] or ""):match("^# (.+ %(removed .*%))$")
+      if head then
+        local hits = contains(head, query) and { { where = "name", text = ws.name .. " · " .. head } } or {}
+        files[#files + 1] = file
+        candidates[#candidates + 1] = { ws = ws, agent = { id = id, name = head, kind = "claude" }, hits = hits, file = file }
+      end
+    end
   end
   local in_transcripts = search(files, query)
   local rows = {}

@@ -39,9 +39,9 @@ M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "brows
   "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run" },
-  router = { "surface", "pr", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer", "raise" },
-  root = { "answer", "raise" },
+  router = { "surface", "pr", "rm", "wt", "setup", "teardown", "run" },
+  ["repo-root"] = { "answer", "raise", "rm" },
+  root = { "answer", "raise", "rm" },
 }
 
 M.header = [=[
@@ -740,6 +740,23 @@ M.role_actions = {
                                      any agent in its repo; the root any on this host.
                                      Supervisors also restart themselves onto isovim's new
                                      code when it changes on disk, when idle]=],
+  },
+  rm = { name = "rm", module = "roles",
+    args = { "<agent>" },
+    flags = { ["--keep-branch"] = false, ["--force"] = false },
+    summary = "remove an agent you manage once its work is done",
+    help = [=[
+       iso rm <agent> [--keep-branch] [--force]
+                                     remove an agent you may restart once its work is done:
+                                     not mid-turn or with a question in the Inbox. Its
+                                     supervisor stops and its record and aN/ go, as d in the
+                                     sidebar does; its children go to its parent. Its journal
+                                     and transcript stay in iso/ (iso find still sees it),
+                                     its pushed branches and PRs stay, and its local branch
+                                     goes once origin has all of it (--keep-branch keeps it).
+                                     A worktree with uncommitted or unpushed work refuses,
+                                     saying what's there; --force drops the uncommitted files
+                                     and keeps unpushed commits on its branch]=],
   },
   wt = { name = "wt", module = "work",
     flags = { ["--from"] = "<text>" },

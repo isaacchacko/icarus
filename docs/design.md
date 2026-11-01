@@ -386,6 +386,8 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 **Router only:** `surface question|file|folder|chat`, `pr`.
 
+**Router, repo-root and root:** `rm <agent> [--keep-branch] [--force]`.
+
 **Roots:** `answer`, `raise`.
 
 **Yours:** `iso` opens the TUI. The bare commands are:
@@ -409,6 +411,21 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   repos isovim doesn't know, like `~/.clu/discs` and dotfiles, stay editable. For v0 it reads Bash
   only for git commands, so a shell write (`sed -i`, `cp`, `>>`) or git behind a variable gets
   through: agents aren't dumb, and the guard is there for mistakes, not for an agent working round it.
+- **A router owns its workers' life, as CRUD.** Create: `iso router spawn` (hidden until `H`). Read:
+  `ls`, `status`, `peek`, `wait`, `transcript`. Update: `msg`, `restart`. Delete: `iso router rm
+  <agent>` once a worker's work has landed and nothing more is expected of it, unless the router keeps
+  it as the standing owner of an area it keeps sending follow-ups to, which its Task Board line says.
+  Cleaning up finished workers is the router's job, not the reaper's.
+- **`iso <role> rm <agent> [--keep-branch] [--force]`** is a router's, repo-root's or root's, on the
+  agents it may restart: its own descendants; for a router or repo-root any agent in its repo; for the
+  root any on the host. It refuses an agent mid-turn or with a question or permission waiting in the
+  Inbox, and a worktree with uncommitted files or commits no origin branch has (it lists them) unless
+  `--force`, which drops the uncommitted files and keeps unpushed commits on the local branch. The
+  removal is `iso rm`'s, `d` in the sidebar: the supervisor stops, the record and `aN/` go (teardown,
+  below), and the children go to its parent. The journal and the transcript stay in `iso/`, the
+  transcript headed `# <name> (removed <date> by <who>)`, so `iso find` and grep still find the agent.
+  Pushed branches and PRs are left alone; the local branch is deleted once origin has all of it,
+  unless `--keep-branch`.
 - **Teardown:** when an agent is removed, isovim runs the repo's teardown and deletes `aN/`. Unsaved
   work is discarded.
 - **The reaper** runs every 10 minutes and tears down any `aN/` with no record. It runs as a dry run,

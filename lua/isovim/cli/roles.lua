@@ -534,10 +534,20 @@ local function descends(address, by)
   return false
 end
 
+-- Fails unless the agent by (a role, in by_ws) may restart or remove the agent at address in ws:
+-- itself and the agents below it; for a router or repo-root, any agent in its repo; for the root,
+-- any agent on this host.
+local function check_manages(by, role, by_ws, ws, address, verb)
+  local in_repo = (role == "router" or role == "repo-root") and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
+  if not (descends(address, by) or in_repo or role == "root") then
+    fail(("a %s %s itself and the agents below it%s, and %s is neither"):format(role, verb,
+      (role == "router" or role == "repo-root") and ", or any in its repo" or "", address))
+  end
+end
+
 -- iso <role> restart [<agent>] ["note"]: an ACP agent (default: you) restarts on its session at the
 -- same address once its running turn ends, keeping its queue, and its first message then says who
--- restarted it and the note (isovim.acp.host). An agent restarts itself and the agents below it; a
--- router or repo-root, any agent in its repo; the root, any agent on this host.
+-- restarted it and the note (isovim.acp.host).
 function M.restart(args)
   local by, role, by_ws, by_id = caller()
   if not by then
@@ -547,11 +557,8 @@ function M.restart(args)
   local note = vim.trim(table.concat(args, " "))
   local ws, agent = c.resolve_agent(target, true)
   local address = ws.id .. "/" .. agent.id
-  local in_repo = (role == "router" or role == "repo-root") and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
-  if not (descends(address, by) or in_repo or role == "root") then
-    fail(("a %s restarts itself and the agents below it%s, and %s is neither"):format(role,
-      (role == "router" or role == "repo-root") and ", or any in its repo" or "", address))
-  elseif not agent.acp then
+  check_manages(by, role, by_ws, ws, address, "restarts")
+  if not agent.acp then
     fail(("%s runs in claude's own screen, not over ACP: iso restart %s is the user's"):format(address, address))
   end
   local self = address == by
@@ -579,6 +586,92 @@ function M.restart(args)
   else
     out(("%s is restarting on its session, its queue kept; then it's told you restarted it"):format(address))
   end
+end
+
+local function git_lines(dir, args)
+  local result = vim.system(vim.list_extend({ "git", "-C", dir }, args), { text = true }):wait()
+  return result.code == 0 and vim.split(vim.trim(result.stdout), "\n", { trimempty = true }) or nil
+end
+
+-- What would be lost with the agent's worktree: its uncommitted files and the commits no origin
+-- branch has, a line each, ten at most of each.
+---@return string[] lost, integer unpushed
+local function at_risk(worktree)
+  local lost = {}
+  local changed = git_lines(worktree, { "status", "--porcelain" }) or { "?? (git status fails in it)" }
+  local commits = git_lines(worktree, { "log", "--oneline", "HEAD", "--not", "--remotes=origin" }) or {}
+  for i, line in ipairs(changed) do
+    lost[#lost + 1] = i <= 10 and ("  uncommitted: " .. line) or nil
+  end
+  for i, line in ipairs(commits) do
+    lost[#lost + 1] = i <= 10 and ("  unpushed: " .. line) or nil
+  end
+  if #changed + #commits > #lost then
+    lost[#lost + 1] = ("  (%d uncommitted, %d unpushed in all)"):format(#changed, #commits)
+  end
+  return lost, #commits
+end
+
+-- iso <role> rm <agent> [--keep-branch] [--force]: a router, repo-root or root removes an agent it
+-- manages (check_manages) once it's done, as d in the sidebar does (iso rm): its supervisor stops,
+-- its record and aN/ go, and its children go to its parent. Never mid-turn or while a question or
+-- permission it asked waits in the Inbox, and not while its worktree has uncommitted or unpushed
+-- work unless --force (unpushed commits then stay on its local branch). Its journal and transcript
+-- stay in iso/, the transcript headed with its name, so iso find and grep still see it; its pushed
+-- branches and PRs are left alone, and its local branch goes once origin has all of it, unless
+-- --keep-branch.
+function M.rm(args)
+  local force, keep_branch = flag(args, "--force"), flag(args, "--keep-branch")
+  local by, role, by_ws = caller()
+  if not by then
+    fail("only agents run iso <role> rm; from a shell, iso rm <agent>")
+  end
+  local ws, agent = c.resolve_agent(args[1] or fail("usage: iso <role> rm <agent> [--keep-branch] [--force]"), true)
+  local address = ws.id .. "/" .. agent.id
+  if address == by then
+    fail("an agent doesn't remove itself: its parent or its repo's router does")
+  end
+  check_manages(by, role, by_ws, ws, address, "removes")
+  local state = require("isovim.status").state(ws.id, agent.id)
+  if ({ working = true, checking = true, waiting = true, attention = true })[state or ""] then
+    fail(("%s is mid-turn (%s); remove it once it's done (iso %s wait %s)"):format(address, state, role, address))
+  end
+  local surfaces = require("isovim.surfaces")
+  local inbox = surfaces.dir(surfaces.key(ws.id) or "general")
+  for name, kind in vim.fn.isdirectory(inbox) == 1 and vim.fs.dir(inbox) or function() end do
+    local stem = kind == "file" and name:match("^(.+)%.surface$")
+    if stem and (vim.startswith(stem, agent.id .. "-ask-") or vim.startswith(stem, agent.id .. "-perm-")) then
+      fail(("%s has a question waiting in the Inbox (%s); it's removed once that's answered"):format(address, stem))
+    end
+  end
+  local plan = store.v2(ws.id) and require("isovim.lifecycle").plan(ws.id, agent.id, agent) or nil
+  local worktree, branch, unpushed = plan and plan.worktree, nil, 0
+  if worktree then
+    local lost
+    lost, unpushed = at_risk(worktree)
+    if #lost > 0 and not force then
+      fail(("%s's worktree %s has work that isn't pushed:\n%s\npush it, or iso %s rm %s --force to drop the uncommitted files (unpushed commits stay on its branch)")
+        :format(address, worktree, table.concat(lost, "\n"), role, address))
+    end
+    branch = (git_lines(worktree, { "branch", "--show-current" }) or {})[1]
+  end
+  local transcript = require("isovim.transcript")
+  pcall(transcript.write, ws.id, agent.id)
+  require("isovim.cli.agents").rm({ address })
+  -- Headed with who it was, as nothing else names it once its record is gone (isovim.find).
+  local file = transcript.path(ws.id, agent.id)
+  local ok, lines = pcall(vim.fn.readfile, file)
+  vim.fn.mkdir(vim.fs.dirname(file), "p")
+  vim.fn.writefile(vim.list_extend({ ("# %s (removed %s by %s)"):format(agent.name, os.date("%F"), by), "" }, ok and lines or {}), file)
+  local kept = ""
+  if branch and plan.common then
+    if keep_branch or unpushed > 0 then
+      kept = (", its branch %s kept%s"):format(branch, unpushed > 0 and (" with %d unpushed commit(s)"):format(unpushed) or "")
+    elseif git_lines(plan.common, { "branch", "-D", branch }) then
+      kept = (", its local branch %s deleted (origin has all of it)"):format(branch)
+    end
+  end
+  out(("removed %s%s; its journal and transcript stay in iso/"):format(address, kept))
 end
 
 -- Runs from the tmux server: waits until the agent isn't busy, restarts it so it starts on its
