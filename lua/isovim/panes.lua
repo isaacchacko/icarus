@@ -158,7 +158,7 @@ local LEGACY = "You are running inside isovim, as a %s agent in workspace $ISOVI
 -- prompts) says what the role is for; these say how.
 local V0 = {
   intro = "You are running inside isovim, as a {role} agent. Your address is $ISOVIM_ADDR: "
-    .. "<owner>/<repo>/aN, or _/aN outside any repo. Run isovim's commands under your role, as "
+    .. "<owner>/<repo>/aN, general/aN outside any repo, or root/aN for the host root. Run isovim's commands under your role, as "
     .. "`iso {role} <action>` (`iso {role} help` lists yours); bare `iso <command>` is the user's, not yours.",
   work = "You start in your agent dir, aN/. In a repo, your first edit is refused once while isovim makes "
     .. "your worktree, aN/w, on a new branch $USER/<your name> off origin's default branch: `cd w` and "
