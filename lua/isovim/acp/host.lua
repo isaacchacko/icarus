@@ -1387,6 +1387,8 @@ function M.run(addr)
   log.file = store.run_dir(ws) .. "/" .. agent .. ".acp.log"
   S.writer = journal.writer(ws, agent)
   S.asks = asks_mod.new(ws, agent, journal_ask)
+  -- Every supervisor subscribes to the bug queue; whichever claims a report first spawns its worker.
+  pcall(require("isovim.bugs").watch)
   local entries = journal.read(ws, agent)
   S.prompted = vim.iter(entries):any(function(entry)
     return entry.kind == "prompt"

@@ -110,7 +110,7 @@ function M.why(args, agent)
   elseif first == "agent" and has(args, "--hidden") then
     return "hidden agents were retired: every agent shows under its repo", shown .. " --hidden"
   end
-  if agent and entry.audience ~= "plumbing" then
+  if agent and entry.audience ~= "plumbing" and entry.audience ~= "anyone" then
     local form = entry.role_form or entry.name
     local has_form = vim.iter(commands.roles):any(function(r)
       return commands.action(r, form) ~= nil

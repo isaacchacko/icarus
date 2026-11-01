@@ -15,7 +15,8 @@
 --             help doesn't give one
 --   hidden    not offered by completion
 --   shared    an action every role has too (iso <role> <name>), as are those M.shared lists
---   audience  who runs it: "user" is the user's own (bare) commands, which an agent is warned off
+--   audience  who runs it: "anyone" is the user and agents alike, bare or under a role (iso bug);
+--             "user" is the user's own (bare) commands, which an agent is warned off
 --             (and later refused); nil is a command agents still run until what replaces it
 --             lands (task, pin, ask, pr, ...), left alone; "plumbing" is isovim's own hooks,
 --             hosts and shell completion, which any refusal of agents or users lets through
@@ -35,7 +36,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "update", "pilot", "fork", "spawn", "promote", "restart" }
+  "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run" },
   router = { "surface", "pr", "wt", "setup", "teardown", "run" },
@@ -285,6 +286,20 @@ M.list = {
        iso msg <parent|children|agent> [--image <file>]... <text...>
                                      iso send to the agent that started this one, to each agent
                                      it started, or to any agent]=],
+  },
+  { name = "bug", module = "bugs",
+    audience = "anyone",
+    args = { "<text>..." },
+    flags = { ["--image"] = "<path>" },
+    summary = "file a bug, complaint or request about isovim itself",
+    help = [=[
+       iso bug [--image <file>]... <text...|->
+                                     file a bug, complaint or request about isovim itself
+                                     (- reads it from stdin): it's queued in ~/.isovim/bugs/
+                                     and the id printed at once; a worker picks it up and
+                                     opens a GitHub issue in isaacchacko/isovim about it,
+                                     keeping out anything private. Bare or under a role,
+                                     from any agent or a shell]=],
   },
   { name = "fork", module = "agents",
     args = { "<agent>" },
@@ -618,6 +633,18 @@ M.list = {
   -- A repo's surfaces, scanned, as JSON (isovim.surfaces): for scripts, checks and other hosts.
   { name = "__surfaces", module = "surfaces",
     args = { "<repo>..." },
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- Spawns the worker for a report a supervisor claimed from the bug queue (isovim.bugs).
+  { name = "__bug-take", module = "bugs",
+    args = { "<id>" },
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- A bug worker records the issue it opened or commented on.
+  { name = "__bug-done", module = "bugs",
+    args = { "<id>", "<url>" },
     hidden = true,
     audience = "plumbing",
   },

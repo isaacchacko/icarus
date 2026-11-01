@@ -303,9 +303,32 @@ Every change is appended as a JSON line to `~/.isovim/events/events.jsonl`. Topi
 - `surface.<repo>.<name>.created|changed|removed|answered|consumed`
 - `pr.<repo>.<n>.state|ci|review`
 - `root.<scope>.raised|decided`
+- `bug.<id>.filed|taken|issued`
 
 Segment values encode `%` and `.` as `%25` and `%2E`. `iso <role> listen <pattern>… [--once]`
 streams the matching events, with `*` matching one part and `**` any number.
+
+## The bug queue
+
+`iso bug [--image <file>]... <text...|->` files a bug, complaint or request about isovim itself,
+from any agent (bare `iso bug` or `iso <role> bug`) or your shell. It writes one report to
+`~/.isovim/bugs/queue/<id>.json` (its text, the reporter's address or `user`, its repo, cwd,
+time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publishes
+`bug.<id>.filed`, prints the id and returns. Nothing in it blocks or fails its caller.
+
+- **Pick-up:** every ACP supervisor subscribes to the queue: it watches `queue/`, and a second after
+  it changes, or a few seconds after it starts (for what was filed while none ran), claims each
+  report by renaming it to `~/.isovim/bugs/<id>.json`. Only one rename wins, so each report is
+  taken once, with or without the TUI. The winner runs `iso __bug-take <id>` on the tmux server.
+- **The worker:** `__bug-take` spawns a hidden worker in isaacchacko/isovim, `bug-<id>`, whose parent
+  is isovim's router on this host, with `prompts/bug.md` filled in as its first message. It gathers
+  context (errors.log and the TUI's messages near the report's time, the reporter's recent turns
+  about isovim, code pointers), labels it bug, complaint or request, comments on an open duplicate
+  or opens an issue with `gh`, records the URL with `iso __bug-done <id> <url>` (`bug.<id>.issued`),
+  tells its parent and stops.
+- **Privacy:** isaacchacko/isovim is public and reporters often work in private repos, so the
+  worker's brief says to write only what's about isovim itself, paraphrasing the rest ("an agent in
+  a private repo"). The raw report and its images stay in `~/.isovim/bugs/`.
 
 ## The CLI
 
@@ -330,6 +353,8 @@ streams the matching events, with `*` matching one part and `**` any number.
 - `attach`, `phone`, `handover`
 - `move`, `rm`, `restart`, `rename`, `rootmode`, `answer`
 - `listen`, `verify`, `checkhealth`
+
+**Anyone** (you or an agent, bare or under a role): `bug`.
 
 **Retired:** `pin`, `ask`, `task`, `doctor` (a hidden alias until 2026-12-01), the workspace commands.
 

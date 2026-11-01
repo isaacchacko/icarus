@@ -72,7 +72,7 @@ function M.warn_bare(entry)
   local has_form = vim.iter(commands.roles):any(function(role)
     return commands.action(role, form) ~= nil
   end)
-  if entry.audience == "plumbing" or not (has_form or entry.audience == "user") then
+  if entry.audience == "plumbing" or entry.audience == "anyone" or not (has_form or entry.audience == "user") then
     return
   end
   local address, role = caller()

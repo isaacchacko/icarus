@@ -82,6 +82,7 @@ Agents run `iso <worker|router|repo-root|root> <action>`, checked against their 
 - **Workers and routers**: `wt [--from <branch|PR>]` makes the worktree up front; `setup`, `teardown` and `run [<action>]` run the repo's scripts in it, each in a pane of its own under Terminals. Setup runs only when asked.
 - **Routers**: `surface question|file|folder|chat`, and `pr <owner/repo> <url>` to register a PR.
 - **Roots**: `answer <repo>/<question> <answer...>`, or `--raise` to give it to you.
+- **Anyone**: `iso bug [--image <file>]... <what happened>` files a bug, complaint or request about isovim itself, bare or under a role, from an agent or your shell. It returns at once with an id; the report waits in `~/.isovim/bugs/` until an agent's supervisor claims it and spawns a hidden worker under isovim's router, which opens (or comments on) a GitHub issue in isaacchacko/isovim, keeping out anything private.
 - **Yours**: `iso` opens the TUI. `spawn [--repo owner/repo|dir]` (with no parent), `jump` (fzf, one level at a time, `.` and `..`), `attach`, `phone`, `handover`, `move`, `rm`, `restart`, `rename`, `rootmode`, `answer`, `listen`, `verify`, `sync`, `checkhealth`.
 - **Retired**: `task`, `pin` and `ask` still work for workspace agents until cutover; v0's replacements are the router's `tasks.md`, `surface file|folder` and `surface question`. `doctor` is a hidden alias of `checkhealth` until 2026-12-01.
 
