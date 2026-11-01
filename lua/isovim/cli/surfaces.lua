@@ -169,13 +169,17 @@ function M.surface(args)
     chat(args)
   elseif sub == "link" then
     local name = option(args, "--name")
+    local note = option(args, "--note")
+    local title = option(args, "--title")
     local repo = my_repo(option(args, "--repo"))
-    local address = table.remove(args, 1) or fail("usage: iso router surface link <address> [label] [--name n]")
+    local address = table.remove(args, 1)
+      or fail('usage: iso router surface link <url|iso:...|thing> [label] [--note "one line"] [--name n]')
     if not address:match("^iso:") then
-      address = require("isovim.links").address(address, repo) or fail(address .. " isn't an iso: address (iso <role> link <thing> prints one)")
+      local made, why = require("isovim.links").address(address, repo)
+      address = made or fail(why)
     end
-    local label = vim.trim(table.concat(args, " "))
-    local entry, err = surfaces.link(repo, address, label ~= "" and label or nil, name)
+    local label = title or vim.trim(table.concat(args, " "))
+    local entry, err = surfaces.link(repo, address, label ~= "" and label or nil, name, note)
     if not entry then
       fail(err)
     end

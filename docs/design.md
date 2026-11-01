@@ -257,6 +257,7 @@ words point at what they mention and you go there with a key (isovim.links):
 | `iso:surface/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
 | `iso:page/<repo>/<name>[#c4]` | the page, at the comment |
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
+| `http(s)://...` (`localhost`, `127.0.0.1:<port>` too) | the web page in isovim's Chrome (`iso browser open`: a background window, your focus kept), or the system's browser when that isn't running; a GitHub PR's URL is the PR |
 
 In a chat, a thread, a page and a PR's view each address is drawn as a chip in its place: the
 target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread open
@@ -270,8 +271,11 @@ and find their lines by the page's own text, addresses and all. `<Tab>` in norma
 cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` is vim's own (`<C-i>`, the
 jump forward). `iso <role> link <thing>` prints the address of an agent
 (`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or
-surface (its name) or a path; `iso router surface link <address|thing> [label]` lists a link under
-the repo's Files, `<CR>` opening it. The router's role prompt tells it to link what it mentions.
+surface (its name) or a path; `iso router surface link <url|address|thing> [label] [--note "one
+line"]` puts a link in the repo's Inbox, its label and note dim, until you open it (`<CR>`; it's
+consumed as consumable markdown is), then under its Files. A web page's chip is the globe, its host
+and its path when short; a localhost one says `down`, dim, while nothing listens on its port (a
+connect in the background, at most every 30s, the chips drawn again when that changes). The router's role prompt tells it to link what it mentions.
 
 ## Roles and root mode
 
@@ -340,6 +344,7 @@ one tab, isovim, in every scope.
 | question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
 | file / folder | `iso router surface file\|folder <path>` | the file as a tab in the main window; the folder as the explorer's root |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
+| link | `iso router surface link <url\|iso:...> [label] [--note "one line"]` | its label and note dim; in the Inbox until you open it (`<CR>`: a web page in isovim's Chrome, anything else where isovim keeps it), then under Files (see Links) |
 | Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed, alone in its window with no input box; one that doesn't parse shown as it is and marked broken |
 | PRs | isovim, for a repo (or the root) with PRs registered by `iso <role> pr` (which keeps who registered each and when) | drawn by isovim (`isovim_prs`) from the PRs' cache, never waiting on gh: grouped Open, Draft, Merged today, Closed, a merged or closed one gone a day after; a line each with its CI glyph, `#n` and title, its review (approved, changes requested, review required), the agent that registered it and its age. `<CR>` opens the PR in the browser, `y` copies its URL, `c` opens its Files changed, `a` the agent's chat. A plain row after the Task Board with how many it lists; in the Inbox, with how many, while a PR waits on you (open, not a draft, CI green, no changes requested) |
 

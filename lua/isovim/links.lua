@@ -6,14 +6,19 @@
 --   iso:surface/<repo>/<name>             a surface (the Task Board is tasks, the PRs PRs)
 --   iso:page/<repo>/<name>[#c4]           a page, at a comment
 --   iso:file/<path>                       a file or folder (absolute; ~ is home)
+--   http(s)://...                         a web page: a dev server on localhost or 127.0.0.1:<port>,
+--                                         a preview deploy, a dashboard (a GitHub PR's URL is a PR)
 -- In a chat, a thread, a page or a PR's view each address is drawn as a chip in its place: the
 -- target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread
 -- open or resolved, a file missing), the line exactly as long as the chip, and a side table (an
 -- extmark per chip) keeps which address each one is, for <Tab>, gf and a yank, which gives the
 -- address. A chip whose target changed (an agent now idle) is drawn again as you come back to its
 -- buffer. <Tab> in normal mode with the cursor on one opens its target as a tab, gf too; elsewhere
--- <Tab> is vim's own (<C-i>, the jump forward). A router surfaces one with iso router surface link, a row
--- under Files, and prints one with iso <role> link <thing>.
+-- <Tab> is vim's own (<C-i>, the jump forward). A web page opens in isovim's Chrome (iso browser
+-- open: a background window, so it never takes your focus), or the system's browser when that isn't
+-- running; a localhost one's chip says down, dim, while nothing listens on its port (a connect,
+-- in the background, at most every 30s). A router surfaces one with iso router surface link (in
+-- the Inbox until you open it, then under Files) and prints one with iso <role> link <thing>.
 local store = require("isovim.store")
 
 local M = {}
@@ -25,18 +30,37 @@ local PATTERN = "()(iso:%a+/[^%s%)%]>\"'`]+)"
 local NBSP = "\194\160"
 M.NBSP = NBSP
 
--- The addresses written in a line: {from, to, address} (byte columns, to exclusive).
+local URL = "()(https?://[^%s%)%]>\"'`]+)"
+
+-- The addresses written in a line, iso: ones and web pages (not one inside `code`): {from, to,
+-- address} (byte columns, to exclusive), in order.
 function M.find(line)
   local found = {}
-  for from, raw in line:gmatch(PATTERN) do
-    raw = raw:gsub("[%.,;:!?]+$", "")
-    found[#found + 1] = { from - 1, from - 1 + #raw, raw }
+  for _, pattern in ipairs({ PATTERN, URL }) do
+    for from, raw in line:gmatch(pattern) do
+      raw = raw:gsub("[%.,;:!?]+$", "")
+      local _, ticks = line:sub(1, from - 1):gsub("`", "")
+      if ticks % 2 == 0 then
+        found[#found + 1] = { from - 1, from - 1 + #raw, raw }
+      end
+    end
   end
+  table.sort(found, function(a, b)
+    return a[1] < b[1]
+  end)
   return found
 end
 
 -- An address's parts: kind and the rest, as {kind, repo?, id?, path?, fragment?}; nil if it isn't one.
 function M.parse(addr)
+  local scheme, host, path = (addr or ""):match("^(https?)://([^/?#]+)(.*)$")
+  if scheme then
+    local pr_repo, pr_n = addr:match("^https?://github%.com/([^/]+/[^/]+)/pull/(%d+)")
+    if pr_repo then
+      return { kind = "pr", repo = pr_repo:lower(), id = pr_n }
+    end
+    return { kind = "url", url = addr, host = host, path = path }
+  end
   local kind, rest = (addr or ""):match("^iso:(%a+)/(.+)$")
   if not kind then
     return nil
@@ -134,6 +158,15 @@ function M.resolve(addr)
           end)
         end
       end }
+  elseif p.kind == "url" then
+    local path = p.path:gsub("[?#].*$", ""):gsub("/$", "")
+    local local_host = p.host:match("^localhost") or p.host:match("^127%.0%.0%.1") or p.host:match("^0%.0%.0%.0")
+    local up = local_host and M.reachable(p.host)
+    return { glyph = "\u{f0ac}", hl = "Special", label = p.host .. (#path > 0 and #path <= 20 and path or ""),
+      status = up == false and "down" or nil, status_hl = "Comment",
+      open = function()
+        M.open_url(p.url)
+      end }
   elseif p.kind == "file" then
     local path = vim.fn.expand(p.path)
     local stat = vim.uv.fs_stat(path)
@@ -151,6 +184,61 @@ function M.resolve(addr)
       end }
   end
   return nil, "isovim doesn't know links to " .. p.kind
+end
+
+-- Opens a web page in isovim's Chrome (iso browser open: a background window, so your focus stays
+-- where it is), or the system's browser when that fails (isovim's Chrome isn't running).
+function M.open_url(url)
+  vim.system({ require("isovim.panes").bin, "browser", "open", url }, { text = true }, vim.schedule_wrap(function(result)
+    if result.code ~= 0 then
+      vim.ui.open(url)
+    end
+  end))
+end
+
+-- Whether something listens on a local host:port, as last seen: true, false, or nil not known yet.
+-- A connect (in the background, a second at most) runs when what's known is over 30s old; when it
+-- says otherwise than before, the chips drawn are drawn again.
+_G.isovim_link_reach = _G.isovim_link_reach or {}
+local reach = _G.isovim_link_reach
+
+function M.reachable(host)
+  local name, port = host:match("^([^:]+):(%d+)$")
+  name, port = name or host, tonumber(port) or 80
+  local key = name .. ":" .. port
+  local known = reach[key]
+  if not known or vim.uv.now() - known.at > 30000 then
+    reach[key] = { at = vim.uv.now(), up = known and known.up }
+    local tcp = vim.uv.new_tcp()
+    local timer = vim.uv.new_timer()
+    local function done(up)
+      if timer:is_closing() then
+        return
+      end
+      timer:close()
+      if not tcp:is_closing() then
+        tcp:close()
+      end
+      local was = reach[key].up
+      reach[key].up = up
+      if was ~= up then
+        vim.schedule(function()
+          M.refresh_all()
+        end)
+      end
+    end
+    timer:start(1000, 0, function()
+      done(false)
+    end)
+    local ip = name == "localhost" and "127.0.0.1" or name == "0.0.0.0" and "127.0.0.1" or name
+    local ok = pcall(tcp.connect, tcp, ip, port, function(err)
+      done(err == nil)
+    end)
+    if not ok then
+      done(false)
+    end
+  end
+  return reach[key] and reach[key].up
 end
 
 -- A chip's parts, {text, hl}: the target's glyph, its label, how it is; an address that leads
@@ -272,8 +360,18 @@ function M.refresh(buf, write)
             drawn[buf][other[1]] = nil
           end
         end
+        local grow = vim.fn.strdisplaywidth(text) - vim.fn.strdisplaywidth(now)
         write(function()
           vim.api.nvim_buf_set_text(buf, row, col, row, end_col, { text })
+          -- In a box (a thread's post, a PR's description) the padding before its right edge takes
+          -- the difference, so the edge stays put while there's room.
+          local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+          local pad_from, pad_to = line:find(" +│$")
+          if pad_from and pad_from > col + #text and grow ~= 0 then
+            local spaces = pad_to - pad_from + 1 - #"│"
+            local keep = math.max(1, spaces - grow)
+            vim.api.nvim_buf_set_text(buf, row, pad_from - 1, row, pad_from - 1 + spaces, { (" "):rep(keep) })
+          end
         end)
         M.register(buf, row, col, col + #text, addr, parts)
       end
@@ -342,7 +440,20 @@ end
 -- <Tab> on a link opens it, else it's vim's own (the jump forward); gf too, unless the buffer maps
 -- gf itself (the chat's gf asks M.at_cursor first). Its chips are drawn again on coming back to it,
 -- and a yank of them gives their addresses. write as M.substitute takes it.
+_G.isovim_link_writers = _G.isovim_link_writers or {}
+local writers = _G.isovim_link_writers
+
+-- Every buffer's chips drawn again where what they say changed (a dev server came up or went).
+function M.refresh_all()
+  for buf in pairs(drawn) do
+    if vim.api.nvim_buf_is_loaded(buf) then
+      require("isovim.safe").wrap("a buffer's links", M.refresh)(buf, writers[buf])
+    end
+  end
+end
+
 function M.attach(buf, write)
+  writers[buf] = write
   vim.keymap.set("n", "<Tab>", function()
     local addr = M.at_cursor()
     if addr then
@@ -388,6 +499,13 @@ end
 ---@return string? address, string? err
 function M.address(thing, repo)
   thing = vim.trim(thing or "")
+  -- A web page: itself (a PR's URL becomes the PR below); localhost:3000 gets its http://.
+  if thing:match("^localhost[:/]") or thing:match("^localhost$") or thing:match("^127%.0%.0%.1[:/]") then
+    thing = "http://" .. thing
+  end
+  if thing:match("^https?://[^/]") and not thing:match("github%.com/[^/]+/[^/]+/pull/%d+") then
+    return thing
+  end
   local url_repo, url_n = thing:match("github%.com/([^/]+/[^/]+)/pull/(%d+)")
   if url_repo then
     return ("iso:pr/%s#%s"):format(url_repo:lower(), url_n)

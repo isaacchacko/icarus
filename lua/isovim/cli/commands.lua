@@ -697,7 +697,7 @@ M.role_actions = {
       file = { args = { "<path>" }, flags = SURFACE_FLAGS },
       folder = { args = { "<dir>" }, flags = SURFACE_FLAGS },
       chat = { args = { "<agent>" }, flags = SURFACE_FLAGS },
-      link = { args = { "<text>", "<text>..." }, flags = SURFACE_FLAGS },
+      link = { args = { "<text>", "<text>..." }, flags = vim.tbl_extend("force", SURFACE_FLAGS, { ["--note"] = "<text>", ["--title"] = "<text>" }) },
     },
     summary = "put a question, a file or folder, or a chat in your repo's Inbox",
     help = [=[
@@ -717,10 +717,13 @@ M.role_actions = {
        iso surface chat <agent> [--name n]
                                      point the user at an agent's chat; it leaves the
                                      Inbox once they open it
-       iso surface link <address|thing> [label] [--name n]
-                                     a link under Files to anything in isovim (an
-                                     iso: address, or what iso link takes); <CR>
-                                     opens it
+       iso surface link <url|address|thing> [label] [--note "one line"] [--name n]
+                                     a link to a web page (a localhost dev server, a
+                                     preview deploy, a dashboard) or anything in
+                                     isovim (an iso: address, or what iso link
+                                     takes), its label and note shown: in the Inbox
+                                     until the user opens it (<CR>; a web page in
+                                     isovim's Chrome), then under Files
                                      These go in ~/.iso/<owner>/<repo>/iso/, where you
                                      also write <name>.md surfaces yourself (optional
                                      frontmatter: name, icon (a glyph, or a word:
@@ -759,7 +762,8 @@ M.role_actions = {
     help = [=[
        iso link <thing>              print the iso: address of an agent (owner/repo/aN or aN),
                                      a PR (#12, owner/repo#12 or its URL), a thread (t3), a
-                                     page or surface (its name) or a path. Written in a post,
+                                     page or surface (its name) or a path; a web page's URL
+                                     (localhost:3000 too) is its own address. Written in a post,
                                      a thread, a page or a PR comment, isovim draws it as a
                                      chip (glyph, label, state) that <Tab> or gf opens:
                                      iso:agent/<owner>/<repo>/aN, iso:thread/<repo>#t3,

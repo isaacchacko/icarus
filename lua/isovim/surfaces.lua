@@ -17,8 +17,9 @@
 --                             root, isovim.rootmode), then removed when its asker collects it
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
---                   link      {address, label?}: a link to anything in isovim (isovim.links), opened
---                             by <CR>; listed with the files
+--                   link      {address, label?, note?}: a link to anything in isovim or a web page
+--                             (isovim.links), opened by <CR>: in the Inbox until you open it
+--                             (consumed, as consumable markdown is), then with the files
 --   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
 --                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
 --   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
@@ -54,7 +55,8 @@ end
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
 ---@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
----@field address? string link: what it points at, an iso: address
+---@field address? string link: what it points at, an iso: address or a web page's URL
+---@field note? string link: the router's one line about it
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -396,10 +398,11 @@ local function parse_surface(entry, text)
     end
   elseif data.type == "link" then
     if type(data.address) ~= "string" or not require("isovim.links").parse(data.address) then
-      return "address is an iso: address (iso:agent/..., iso:thread/..., iso:pr/..., iso:page/..., iso:file/...)"
+      return "address is an iso: address (iso:agent/..., iso:thread/..., iso:pr/..., iso:page/..., iso:file/...) or an http(s) URL"
     end
     entry.address = data.address
     entry.title = type(data.label) == "string" and data.label ~= "" and data.label or data.address:gsub("^iso:", "")
+    entry.note = type(data.note) == "string" and data.note ~= "" and data.note or nil
   elseif data.type == "chat" then
     if type(data.agent) ~= "string" then
       return "agent is the agent's address, a string"
@@ -480,8 +483,8 @@ local function parse(repo, base, state, taken)
   end
   entry.sig = vim.fn.sha256(text .. "\0" .. (err or ""))
   local seen = state[base] or {}
-  -- A file or folder an agent surfaced is unread until you open it, as consumable markdown is.
-  local pointer = entry.type == "file" or entry.type == "folder"
+  -- A file, folder or link an agent surfaced is unread until you open it, as consumable markdown is.
+  local pointer = entry.type == "file" or entry.type == "folder" or entry.type == "link"
   entry.consumed = (entry.consumable or pointer) and seen.consumed == entry.sig or nil
   if (entry.type == "markdown" and entry.consumable or pointer) and not entry.consumed and not err then
     entry.needs_you = true
@@ -874,17 +877,17 @@ end
 -- Puts a link to address (an iso: address, isovim.links) in the repo, labelled label; its name
 -- defaults to the label's words or the address's last part.
 ---@return isovim.Surface? entry, string? err
-function M.link(repo, address, label, name)
+function M.link(repo, address, label, name, note)
   repo = canon(repo)
   if not require("isovim.links").parse(address) then
-    return nil, address .. " isn't an iso: address (iso <role> link <thing> prints one)"
+    return nil, address .. " isn't an iso: address or an http(s) URL (iso <role> link <thing> prints one)"
   end
   name = name or free_name(repo, label or address:match("([^/#]+)[^/]*$") or "link")
   local current = M.get(repo, name)
   if current and current.type ~= "link" then
     return nil, ("%s/%s is already a %s surface"):format(repo, name, current.type)
   end
-  local ok, err = put(repo, name, { type = "link", address = address, label = label, created = os.time() })
+  local ok, err = put(repo, name, { type = "link", address = address, label = label, note = note, created = os.time() })
   if not ok then
     return nil, err
   end
@@ -1038,7 +1041,8 @@ function M.consume(entry)
     publish(entry, "consumed", { agent = entry.agent })
     M.scan(entry.repo)
     return true
-  elseif (entry.type == "markdown" and entry.consumable or entry.type == "file" or entry.type == "folder") and not entry.consumed then
+  elseif (entry.type == "markdown" and entry.consumable or entry.type == "file" or entry.type == "folder" or entry.type == "link")
+    and not entry.consumed then
     locked(entry.repo, function()
       local state = read_state(entry.repo)
       state[entry.base] = vim.tbl_extend("force", state[entry.base] or { first = entry.created }, { consumed = entry.sig })
@@ -1252,6 +1256,7 @@ function M.open(entry)
     end
   elseif entry.type == "link" then
     require("isovim.links").open(entry.address)
+    M.consume(entry)
   elseif entry.type == "question" and entry.thread then
     -- Asked in a thread: the thread, at the question, answered there.
     require("isovim.acp.chat").open_thread(entry.repo, entry.thread.id, entry.thread.qid)

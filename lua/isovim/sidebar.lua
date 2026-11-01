@@ -440,6 +440,15 @@ function M.surface_chunks(entry)
     else
       row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
     end
+  elseif kind == "link" then
+    -- Its note, dim; a web page's chip says whether a local one is up.
+    if entry.note then
+      row[#row + 1] = { "  " .. entry.note, "Comment" }
+    end
+    local target = require("isovim.links").resolve(entry.address)
+    if target and target.status then
+      row[#row + 1] = { "  " .. target.status, target.status_hl or "Comment" }
+    end
   elseif kind == "thread" then
     -- How many posts, the router's turn on it, a reply of the router's you haven't read.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }

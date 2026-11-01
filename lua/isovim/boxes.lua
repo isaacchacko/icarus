@@ -114,7 +114,7 @@ function M.markdown(text, width)
   -- wrapping keeps each whole; found again in the lines below to mark them with their address.
   local links = require("isovim.links")
   local chips = {}
-  text = (text or ""):gsub("iso:%a+/[^%s%)%]>\"'`]+", function(raw)
+  local function chipped(raw)
     local addr = raw:gsub("[%.,;:!?]+$", "")
     local parts = links.parts(addr, links.NBSP)
     local chip = table.concat(vim.tbl_map(function(part)
@@ -122,7 +122,8 @@ function M.markdown(text, width)
     end, parts))
     chips[#chips + 1] = { chip = chip, addr = addr, parts = parts }
     return chip .. raw:sub(#addr + 1)
-  end)
+  end
+  text = (text or ""):gsub("iso:%a+/[^%s%)%]>\"'`]+", chipped):gsub("https?://[^%s%)%]>\"'`]+", chipped)
   local body = vim.split(vim.trim(text:gsub("\r", "")), "\n", { plain = true })
   local out, fenced, i = {}, false, 1
   local function wrapped(line, base)
