@@ -136,7 +136,7 @@ try:
     iso.wait(lambda: f"o/r/{pane}" in agents() and agents()[f"o/r/{pane}"]["status"] != "stopped", "the run script's pane")
     iso.cli("rm", "o/r/a0")
     gone = iso.wait(lambda: not (work / "o" / "r" / "a0").exists() and "removed", "a0/ deleted")
-    check(gone and mark.read_text().strip() == str(w), "removing an agent runs its teardown in its worktree, then deletes aN/",
+    check(gone and Path(mark.read_text().strip()) == w.parent.resolve() / "w", "removing an agent runs its teardown in its worktree, then deletes aN/",
           mark.read_text() if mark.exists() else "no mark")
     check(str(w) not in git("-C", str(base), "worktree", "list"), "its worktree is gone from the base clone, unsaved work and all",
           git("-C", str(base), "worktree", "list"))
@@ -189,7 +189,7 @@ try:
     print(live)
     check(not (r / "a7").exists() and (base / ".git").is_dir() and (base / "README.md").exists(),
           "--live tears an orphan down without following its symlink into the base clone")
-    check(mark.read_text().strip() == str(r / "a7"), "an orphan's teardown runs in its dir", mark.read_text())
+    check(Path(mark.read_text().strip()) == r.resolve() / "a7", "an orphan's teardown runs in its dir", mark.read_text())
     check(not (r / "a9").is_symlink() and (outside / "keep.txt").exists(), "a symlinked orphan is only unlinked")
     check((r / "a8").exists() and (work / "x" / "y" / "a0").exists() and (r / "a1").exists()
           and (r / "iso" / "agents" / "a1.json").exists(), "--live keeps the young, the refused and the recorded")
