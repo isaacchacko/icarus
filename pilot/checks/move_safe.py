@@ -6,13 +6,22 @@ the sender's list (sizes and hashes) before it says the agent is there, and only
 here. A general/ agent's aN/, its only dir, goes the same way. Any failure leaves the agent here as
 it was, still running, and nothing of it on the other host: a file here that can't be read, a copy
 there that fails, a file that arrives different, an agent that won't start there.
+Everything else that moves is checked the same way (the second review's B2): its journal, queue
+file, kept sessions and transcripts. A journal that can't be copied in there, or arrives different,
+fails the move; one that can't be read here, or is too large to stage, fails it before the agent is
+stopped. A large file goes without isovim reading it whole into memory. And it's removed here only
+once its supervisor there answers: one that exits at once, or never answers, fails the move.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/move_safe.py"""
 
 import json
 import os
+import resource
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -72,6 +81,9 @@ if [ "${{MOVE_FAULT:-}}" = corrupt ] && [ "$1" = -xf ]; then
   # bin/iso receive runs tar -xf - -C <incoming>.
   for f in "$4"/*/notes.md; do [ -f "$f" ] && echo changed in transit >> "$f"; done
 fi
+if [ "${{MOVE_FAULT:-}}" = corrupt-journal ] && [ "$1" = -xf ]; then
+  for f in "$4"/journal/*.jsonl; do [ -f "$f" ] && echo '{{"changed":"in transit"}}' >> "$f"; done
+fi
 exit 0
 """)
 (faults / "tar").chmod(0o755)
@@ -79,7 +91,7 @@ exit 0
 
 def peer_faults(**extra):
     env = {**peer_env, **extra}
-    ssh_env.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    ssh_env.write_text("".join(f"{k}={shlex.quote(v)}\n" for k, v in env.items()))
 
 
 peer_faults()
@@ -146,6 +158,43 @@ def snapshot(root):
         elif path.is_file():
             out[rel] = path.read_bytes()
     return out
+
+
+def pane_pid(address):
+    key, agent = address.rsplit("/", 1)
+    r = subprocess.run(["tmux", "-L", iso.env["ISOVIM_TMUX_SOCKET"], "display-message", "-p", "-t",
+                        "=iso2-" + key.replace("/", "+") + "+" + agent + ":", "#{pane_pid}"], capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def journal_file(address, root=work):
+    key, agent = address.rsplit("/", 1)
+    return root / key / "iso" / "journal" / f"{agent}.jsonl"
+
+
+def run_measured(*args, env=None, timeout=300):
+    """run, in a process group of its own (all of it killed on a timeout), with the peak memory of
+    the move's processes (both ends: fake-ssh runs the other one under it), in MB."""
+    probe = ("import resource, subprocess, sys\n"
+             "r = subprocess.run(sys.argv[1:])\n"
+             "print('maxrss', resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, file=sys.stderr)\n"
+             "sys.exit(r.returncode)")
+    # No file it writes grows past 1 GB, so a move that tries to copy a huge sparse file can't fill
+    # the disk (or /tmp's RAM).
+    def limit():
+        resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 30, 1 << 30))
+    p = subprocess.Popen([sys.executable, "-c", probe, BIN, *args], env={**iso.env, **(env or {})}, preexec_fn=limit,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, 9)
+        out, err = p.communicate()
+        return -9, out.strip(), "timed out: " + err.strip(), None
+    lines = err.strip().splitlines()
+    rss = int(lines.pop().split()[1]) if lines and lines[-1].startswith("maxrss ") else None
+    mb = rss and rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
+    return p.returncode, out.strip(), "\n".join(lines), mb
 
 
 def peer_agents(key):
@@ -275,6 +324,109 @@ try:
 
     rc, out, err = run("move", b, "peerhost")
     check(rc == 0, "with the faults gone, it moves", (rc, out, err))
+
+    print("\n# its journal is checked like its files")
+    # One the other host can't put down (its journal dir there not writable), or that arrives
+    # different: the move fails, and its journal here is as it was.
+    peer_journal = peer / "work" / "acme" / "web" / "iso" / "journal"
+    peer_journal.mkdir(parents=True, exist_ok=True)
+    for n, (what, env, why) in enumerate((
+            ("its journal can't be copied in there", {}, "journal"),
+            ("its journal arrives different", dict(PATH=with_faults, MOVE_FAULT="corrupt-journal"), "arrived different"))):
+        b, bdir = repo_agent(src, f"journaled{n}", untracked=False)
+        jbefore = journal_file(b).read_bytes()
+        journals_there = sorted(p.name for p in peer_journal.iterdir())
+        before = snapshot(bdir)
+        peers_before = (peer_agents("acme/web"), peer_dirs("acme/web"))
+        if not env:
+            peer_journal.chmod(0o500)
+        peer_faults(**env)
+        rc, out, err = run("move", b, "peerhost")
+        peer_journal.chmod(0o755)
+        peer_faults()
+        refused_intact(b, bdir, before, what, rc, out, err, peers_before)
+        check(why in err, f"{what}: and the error says why: {err.splitlines()[-1][-200:] if err else None}", err)
+        jnow = journal_file(b).read_bytes() if journal_file(b).exists() else b""
+        check(jnow.startswith(jbefore), f"{what}: its journal here is kept whole", (len(jbefore), len(jnow)))
+        check(sorted(p.name for p in peer_journal.iterdir()) == journals_there,
+              f"{what}: and no journal of it is left there", sorted(p.name for p in peer_journal.iterdir()))
+
+    print("\n# what can't go fails before the agent stops")
+    c, cdir = repo_agent(src, "preflight", untracked=False)
+    pid = pane_pid(c)
+    jpath = journal_file(c)
+    jbefore = jpath.read_bytes()
+    peers_before = (peer_agents("acme/web"), peer_dirs("acme/web"))
+    jpath.chmod(0)
+    rc, out, err = run("move", c, "peerhost")
+    jpath.chmod(0o644) if jpath.exists() else None
+    check(rc != 0 and "can't read" in err, "an unreadable journal fails the move, saying so", (rc, out, err))
+    check(pid is not None and pane_pid(c) == pid, "before the agent is stopped (its supervisor is the same process)", (pid, pane_pid(c)))
+    check(jpath.exists() and jpath.read_bytes().startswith(jbefore), "and its journal is still here")
+    check((peer_agents("acme/web"), peer_dirs("acme/web")) == peers_before and incoming() == [],
+          "and nothing of it went to the other host")
+    if record(c) is not None:
+        # A journal bigger than the space there is to stage it in (sparse: it takes no space here).
+        stat = os.statvfs(tempfile.gettempdir())
+        length = len(jpath.read_bytes())
+        with open(jpath, "r+b") as f:
+            f.truncate(stat.f_bavail * stat.f_frsize * 2 + (1 << 30))
+        rc, out, err, _ = run_measured("move", c, "peerhost", timeout=60)
+        if jpath.exists():
+            with open(jpath, "r+b") as f:
+                f.truncate(length)
+        check(rc != 0 and "too large" in err, "a journal too large to stage fails the move, saying so", (rc, out, err[-300:]))
+        check(pane_pid(c) == pid, "before the agent is stopped", (pid, pane_pid(c)))
+        check(record(c) is not None and (peer_agents("acme/web"), peer_dirs("acme/web")) == peers_before,
+              "and it's still here, and not there")
+        iso.wait(lambda: running_here(c), f"{c} running", 30)
+
+    print("\n# a large file goes without being read into memory")
+    if record(c) is None:
+        c, cdir = repo_agent(src, "large", untracked=False)
+    big = cdir / "big.sparse"
+    size = 300 * 1024 * 1024
+    with open(big, "wb") as f:
+        f.truncate(size)
+        f.seek(size // 2)
+        f.write(b"middle")
+    t0 = time.time()
+    rc, out, err, mb = run_measured("move", c, "peerhost", timeout=300)
+    took = time.time() - t0
+    there = peer / "work" / (out.rsplit(" as ", 1)[-1] if " as " in out else c)
+    check(rc == 0, "an agent with a 300 MB file moves", (rc, out, err[-500:]))
+    got = there / "big.sparse"
+    ok = got.exists() and got.stat().st_size == size
+    if ok:
+        with open(got, "rb") as f:
+            f.seek(size // 2)
+            ok = f.read(6) == b"middle"
+    check(ok, "the file arrived as it was")
+    check(mb is not None and mb < 200, f"without isovim holding it in memory (peak {mb and round(mb)} MB, {took:.0f}s)", mb)
+    got.unlink(missing_ok=True)
+    big.unlink(missing_ok=True)
+
+    print("\n# it's removed here only once its supervisor there answers")
+    for n, (what, env, why) in enumerate((
+            ("its supervisor there exits at once", dict(ISOVIM_ACP_CMD="/usr/bin/false"), "supervisor"),
+            ("its supervisor there never answers", dict(ISOVIM_ACP_CMD="sleep 600", ISOVIM_MOVE_START_TIMEOUT="4"), "answer"))):
+        b, bdir = repo_agent(src, f"unanswered{n}", untracked=False)
+        jbefore = journal_file(b).read_bytes()
+        before = snapshot(bdir)
+        peers_before = (peer_agents("acme/web"), peer_dirs("acme/web"))
+        # The peer's tmux server starts its sessions with the env it started with: a new one, with
+        # this fault's.
+        subprocess.run(["tmux", "-L", peer_env["ISOVIM_TMUX_SOCKET"], "kill-server"], capture_output=True)
+        peer_faults(**env)
+        rc, out, err = run("move", b, "peerhost")
+        peer_faults()
+        refused_intact(b, bdir, before, what, rc, out, err, peers_before)
+        check(why in err, f"{what}: and the error says why: {err.splitlines()[-1][-200:] if err else None}", err)
+        check(journal_file(b).exists() and journal_file(b).read_bytes().startswith(jbefore), f"{what}: its journal is kept here")
+        check(not tmux_has(peer_env["ISOVIM_TMUX_SOCKET"], "iso2-acme+web+" + b.rsplit("/", 1)[1]), f"{what}: nor running there")
+        if record(b) is not None and rc != 0:
+            reply(b, "still here?", "reply to:")
+            check(True, f"{what}: and it still answers here")
 finally:
     subprocess.run(["tmux", "-L", peer_env["ISOVIM_TMUX_SOCKET"], "kill-server"], capture_output=True)
     (Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}" / peer_env["ISOVIM_TMUX_SOCKET"]).unlink(missing_ok=True)
