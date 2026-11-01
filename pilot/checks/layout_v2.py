@@ -193,6 +193,7 @@ try:
     for meta, ws, expected in ((records / "a3.json", "acme/app", "acme/app · a3 needs you"),
                                (iso.tmp / "home" / "workspaces" / legacy / ".isovim.json", legacy, "legacy · main needs you")):
         hook_env = {**iso.env, "ISOVIM_META": str(meta), "ISOVIM_WS": ws, "ISOVIM_SOCK": str(iso.tmp / "none"),
+                    "ISOVIM_AGENT": "a3" if ws == "acme/app" else "main",
                     "ISOVIM_STATE": str(iso.tmp / ("a3.state" if ws == "acme/app" else "main.state"))}
         subprocess.run([str(REPO / "bin" / "iso-hook"), "ask"], env=hook_env, check=True)
         assert expected in iso.desktop_notifications(), (expected, iso.desktop_notifications())

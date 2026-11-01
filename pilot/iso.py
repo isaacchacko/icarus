@@ -31,8 +31,10 @@ class Iso:
         # Short and outside the scratch tree: unix socket paths cap near 104 bytes.
         self.tmp = Path(tempfile.mkdtemp(prefix="iso-"))
         self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
+        # Never the caller's isovim identity: a pilot run from inside an agent would act as that agent.
+        inherited = {k: v for k, v in os.environ.items() if not k.startswith("ISOVIM_")}
         self.env = {
-            **os.environ,
+            **inherited,
             "ISOVIM_HOME": str(self.tmp / "home"),
             # Never the real ~/iso: a pilot that cleans up work must only see its own.
             "ISOVIM_WORK": str(self.tmp / "work"),
