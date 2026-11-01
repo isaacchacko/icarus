@@ -40,19 +40,33 @@ end
 
 -- The agent this process runs inside, proven by ancestry: the agent whose pane process is one of
 -- this process's ancestors. Environment variables only say who a process claims to be.
+-- A process's ancestry doesn't change, so it's looked up once (iso's role checks and the command
+-- both ask), with one ps for the whole process table.
 ---@return string? ws, string? agent
 function M.caller()
-  local owners = panes.pane_pids()
-  local pid = vim.uv.os_getpid()
-  for _ = 1, 40 do
-    if owners[pid] then
-      return owners[pid].ws, owners[pid].agent
+  if M.called == nil then
+    M.called = false
+    local owners = panes.pane_pids()
+    local parents = {}
+    if next(owners) then
+      local listing = vim.system({ "ps", "-A", "-o", "pid=,ppid=" }, { text = true }):wait().stdout or ""
+      for pid, ppid in listing:gmatch("(%d+)%s+(%d+)") do
+        parents[tonumber(pid)] = tonumber(ppid)
+      end
     end
-    local parent = tonumber(vim.trim(vim.system({ "ps", "-o", "ppid=", "-p", tostring(pid) }, { text = true }):wait().stdout or ""))
-    if not parent or parent <= 1 then
-      return nil
+    local pid = vim.uv.os_getpid()
+    for _ = 1, 40 do
+      if not pid or pid <= 1 then
+        break
+      elseif owners[pid] then
+        M.called = owners[pid]
+        break
+      end
+      pid = parents[pid]
     end
-    pid = parent
+  end
+  if M.called then
+    return M.called.ws, M.called.agent
   end
 end
 
