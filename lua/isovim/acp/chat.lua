@@ -1437,7 +1437,8 @@ function M.bar_parts(chat)
       chat.router = chat.router or store.router(chat.ws) or "the router"
       add(("%s is working on it… (%s)"):format(chat.router, look.duration(secs)), "IsovimAcpSpinnerNote")
     elseif chat.resolved then
-      add("✓ resolved" .. (chat.resolved.outcome and (": " .. chat.resolved.outcome) or ""), "IsovimAcpIdle")
+      -- Its outcome is in the box above; the bar only says how to open it again.
+      add("✓ resolved · r on the thread opens it again", "IsovimAcpIdle")
     else
       add(THREAD_GLYPH .. " " .. (chat.title or chat.thread), "IsovimAcpIdle")
     end
