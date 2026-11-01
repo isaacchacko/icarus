@@ -718,7 +718,7 @@ function M.setup(opts)
       end
     end,
   })
-  -- A chat scrolls no further down than its last line and never sideways. The window would scroll
+  -- A chat scrolls no further down than its end and never sideways. The window would scroll
   -- past the end, the terminal snap it back on its next refresh, and a trackpad's momentum would
   -- scroll it past again, over and over. The wheel over a chat at its end does nothing at all;
   -- the clamp below catches the keys that scroll.
@@ -736,7 +736,7 @@ function M.setup(opts)
     if not win then
       return "<ScrollWheelDown>"
     end
-    local below = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) - vim.fn.line("w$", win)
+    local below = require("isovim.acp.chat").rows_to_end(win) - vim.api.nvim_win_get_height(win)
     local step = math.min(below, tonumber(vim.o.mousescroll:match("ver:(%d+)")) or 3)
     return step > 0 and ("<Cmd>lua vim.api.nvim_win_call(%d, function() vim.cmd('normal! %d\\5') end)<CR>"):format(win, step)
       or ""
@@ -747,11 +747,14 @@ function M.setup(opts)
       for id in pairs(vim.v.event) do
         local win = tonumber(id)
         if win and vim.api.nvim_win_is_valid(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_agent_kind then
+          local past = require("isovim.acp.chat").rows_to_end(win) < vim.api.nvim_win_get_height(win)
           vim.api.nvim_win_call(win, function()
             local view = vim.fn.winsaveview()
-            local last = math.max(1, vim.api.nvim_buf_line_count(0) - vim.api.nvim_win_get_height(0) + 1)
-            if view.topline > last or view.leftcol > 0 then
-              vim.fn.winrestview({ topline = math.min(view.topline, last), leftcol = 0 })
+            if past and (view.topline > 1 or view.skipcol > 0) then
+              vim.fn.winrestview(require("isovim.acp.chat").end_view(win))
+            end
+            if view.leftcol > 0 then
+              vim.fn.winrestview({ leftcol = 0 })
             end
           end)
         end

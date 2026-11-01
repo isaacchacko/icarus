@@ -2,11 +2,14 @@
 the ⏺ ❯ ⎿ marks and their colors, tool output folded at first, a diff drawn with line numbers and
 colored inline, Bash output streamed from terminal deltas with its exit code, thinking and a plan;
 the agent's text streaming chunk by chunk through the supervisor's pushes (with the journal watch
-off); the spinner above the composer while it works; the view following the bottom only when
-you're there; the queue in its window between the chat and the composer, edited, reordered, cleared
-and one prompt sent now (cancelling the turn), q hiding it;
-@imports from the CLAUDE.md files in the session prompt; iso attach from a second nvim showing the
-same chat and sending from it; and iso handover running claude --resume in the pane (a fake
+off); the spinner above the composer while it works; the view following the chat's end only while
+it's on screen (from the composer wherever the chat's cursor is, a long reply's last wrapped row,
+tool calls rewritten and opened, a prompt queued), not once you've scrolled or moved the chat's
+cursor up, and again once you're back or you send a prompt, a queued one or an answer; the queue in
+its window between the chat and the composer, edited, reordered, cleared and one prompt sent now
+(cancelling the turn), q hiding it; @imports from the CLAUDE.md files in the session prompt; iso
+attach from a second nvim showing the same chat, sending from it and following a long reply; and
+iso handover running claude --resume in the pane (a fake
 claude), with what happened there put into the chat and the session reopened after.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/acp_chat_look.py"""
 
@@ -278,17 +281,159 @@ try:
 
     print("\n# follow the bottom only when you're there")
     win = chat_win()
-    iso.lua("vim.api.nvim_win_set_cursor(..., { 1, 0 })", win)
+
+    def view():
+        """The chat window's rows from its top to the chat's end (its height while that end is on its
+        bottom row), its cursor and whether it's the current window."""
+        return iso.lua("""
+          local c, w = require('isovim.acp.chat').get('acme/app', 'a0'), ...
+          local view = vim.api.nvim_win_call(w, vim.fn.winsaveview)
+          local rows = vim.api.nvim_win_text_height(w, { start_row = view.topline - 1, start_vcol = view.skipcol }).all
+          return { rows = view.topfill + rows, height = vim.api.nvim_win_get_height(w), top = view.topline,
+            cursor = vim.api.nvim_win_get_cursor(w)[1],
+            last = vim.api.nvim_buf_line_count(c.buf), current = vim.api.nvim_get_current_win() == w }""", win)
+
+    def at_end(v):
+        return v["rows"] == v["height"]
+
+    def stream(n):
+        """Streams n words as one long line that wraps over many rows, sampling the view as it grows."""
+        text = f"stream {n} 0.02"
+        run("send", a0, text)
+        seen = []
+        while not turn_done("a0", text):
+            seen.append(view())
+            time.sleep(0.05)
+        time.sleep(0.3)
+        return seen
+
+    def focus_composer():
+        iso.lua("require('isovim.acp.chat').focus_composer('acme/app', 'a0')")
+
+    def focus_chat():
+        iso.lua("vim.api.nvim_set_current_win(...) vim.cmd('stopinsert')", win)
+        time.sleep(0.2)
+
+    focus_composer()
+    iso.lua("vim.api.nvim_win_call(..., function() vim.cmd('normal! G') end)", win)
+    seen = stream(160)
+    check(len(seen) >= 5 and all(at_end(v) for v in seen), "typing in the composer, a long reply's end stays on the chat's"
+          " bottom row as it wraps", [v for v in seen if not at_end(v)][:3])
+    check("w160" in iso.screen() and "↓ more below" not in bar(), "its last word on screen, nothing below", bar())
+    iso.screenshot("follow-composer")
+    v = view()
+    iso.lua("vim.api.nvim_win_set_cursor(..., { select(2, ...) - 2, 0 })", win, v["last"])
+    check(view()["rows"] <= v["height"], "the chat's cursor moved up, its end still on screen")
+    seen = stream(20)
+    v = view()
+    check(all(at_end(v) for v in seen) and at_end(v) and v["cursor"] == v["last"],
+          "it still follows: where the cursor is doesn't matter in a window you're not in", (seen[-1:], v))
+    check("↓ more below" not in bar(), "and the bar doesn't say there's more below", bar())
+    text = "term for i in $(seq 1 12); do echo line $i; sleep 0.05; done"
+    run("send", a0, text)
+    seen = []
+    while not turn_done("a0", text):
+        seen.append(view())
+        time.sleep(0.05)
+    time.sleep(0.3)
+    check(all(at_end(v) for v in seen) and at_end(view()), "a tool call rewritten as its output and status change, still"
+          " at the end", [v for v in seen if not at_end(v)][:3])
+    r = row_of(f"{DOT} Bash(for i in $(seq 1 12); do echo line $i; sleep 0.05; done)")
+    iso.lua("require('isovim.acp.chat').set_open('acme/app', 'a0', ..., true)", r)
+    check(at_end(view()) and "line 12" in iso.screen(), "its output opened (za) above the end, still at the end", view())
+    iso.lua("require('isovim.acp.chat').set_open('acme/app', 'a0', ..., false)", r)
+    check(at_end(view()), "and closed again", view())
+    run("send", a0, "slow 1")
+    iso.wait(lambda: state("a0") == "working", "a0 working")
+    run("send", a0, "stream 30 0.02")
+    iso.wait(lambda: call("queue")[1]["items"], "a prompt queued")
+    time.sleep(0.2)
+    check(at_end(view()), "a prompt queued: the end still on the bottom row", view())
+    iso.wait(lambda: turn_done("a0", "stream 30 0.02"), "the queued prompt answered", 20)
+    time.sleep(0.3)
+    check(at_end(view()) and "w30" in iso.screen(), "and once it's answered", view())
+
+    focus_chat()
+    iso.keys("G")
+    seen = stream(161)
+    v = view()
+    check(v["current"] and all(at_end(v) for v in seen) and v["cursor"] == v["last"], "in the chat at its end, it follows",
+          [v for v in seen if not at_end(v)][:3])
+    iso.keys("k")
+    before = view()
+    stream(162)
+    v = view()
+    check(v["cursor"] == before["cursor"] and v["top"] == before["top"] and not at_end(v),
+          "in the chat with the cursor moved up, it stays put", (before, v))
+    check("↓ more below" in bar(), "and the bar says there's more below", bar())
+    iso.keys("g", "g")
+    stream(25)
+    v = view()
+    check(v["cursor"] == 1 and v["top"] == 1, "scrolled up to the top, the view stays put", v)
+    check("↓ more below" in bar(), "and the bar says there's more below", bar())
+    iso.screenshot("follow-scrolled-up")
+
+    focus_composer()
+    stream(26)
+    check(view()["top"] == 1 and "↓ more below" in bar(), "the chat scrolled up, typing in the composer, it stays put too",
+          (view(), bar()))
+    iso.lua("vim.api.nvim_win_call(..., function() vim.cmd('normal! 500\\5') end)", win)
+    check(soon(lambda: at_end(view())), "scrolled down past its end, it stops with the end on its bottom row", view())
+    check(soon(lambda: "↓ more below" not in bar()), "scrolled back down, the bar's note is gone", bar())
+    seen = stream(163)
+    check(all(at_end(v) for v in seen) and "w163" in iso.screen(), "and it follows again", [v for v in seen if not at_end(v)][:3])
+    iso.screenshot("follow-again")
+
+    def scroll_up():
+        iso.lua("vim.api.nvim_win_call(..., function() vim.cmd('normal! gg') end)", win)
+        iso.wait(lambda: view()["top"] == 1, "the chat scrolled up")
+
+    def compose(text):
+        focus_composer()
+        iso.type(text)
+        iso.keys("Enter")
+
+    scroll_up()
+    compose("stream 164 0.02")
+    check(soon(lambda: at_end(view()) and "↓ more below" not in bar()), "scrolled up, a prompt sent from the composer takes"
+          " the chat to its end", (view(), bar()))
+    seen = []
+    while not turn_done("a0", "stream 164 0.02"):
+        seen.append(view())
+        time.sleep(0.05)
+    time.sleep(0.3)
+    check(all(at_end(v) for v in seen) and "w164" in iso.screen(), "and it follows the reply",
+          [v for v in seen if not at_end(v)][:3])
+    iso.screenshot("follow-sent")
+    run("send", a0, "slow 2")
+    iso.wait(lambda: state("a0") == "working", "a0 working")
+    scroll_up()
+    compose("stream 32 0.02")
+    check(soon(lambda: at_end(view()) and "↓ more below" not in bar()), "a prompt queued from the composer too", view())
+    iso.wait(lambda: turn_done("a0", "stream 32 0.02"), "the queued prompt answered", 20)
+    time.sleep(0.3)
+    check(at_end(view()) and "w32" in iso.screen(), "and it follows that reply", view())
+    run("send", a0, "perm")
+    iso.wait(lambda: "waiting for your permission" in bar(), "the permission box")
+    scroll_up()
+    compose("1")
+    check(soon(lambda: at_end(view()) and "↓ more below" not in bar()), "an answer to a box from the composer too",
+          (view(), bar()))
+    iso.wait(lambda: turn_done("a0", "perm"), "the permission's turn", 20)
+    time.sleep(0.3)
+    check(at_end(view()) and has(f"{DOT} permission: allow"), "and it follows what comes after", chat()[-4:])
+    focus_chat()
+    iso.keys("g", "g")
     run("send", a0, "stream 3")
     iso.wait(lambda: has(f"{DOT} w1 w2 w3"), "streamed while scrolled up")
-    check(iso.lua("return vim.api.nvim_win_get_cursor(...)[1]", win) == 1, "scrolled up, the view stays put")
-    check("↓ more below" in bar(), "and the bar says there's more below", bar())
-    iso.lua("vim.api.nvim_win_call(..., function() vim.cmd('normal! G') end)", win)
-    check(soon(lambda: "↓ more below" not in bar()), "back at the bottom it's gone", bar())
+    check(view()["cursor"] == 1, "scrolled up, the view stays put")
+    iso.keys("G")
+    check(soon(lambda: "↓ more below" not in bar()), "back at the bottom (G) it's gone", bar())
     run("send", a0, "stream 2")
     iso.wait(lambda: turn_done("a0", "stream 2"), "streamed at the bottom")
-    check(iso.lua("local w = ... return vim.api.nvim_win_get_cursor(w)[1] == vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(w))", win),
-          "at the bottom, it follows")
+    v = view()
+    check(v["cursor"] == v["last"] and at_end(v), "at the bottom, it follows", v)
+    focus_composer()
     # The journal watch back on, for what follows.
     iso.lua("require('isovim.acp.chat').close('acme/app', 'a0')")
     iso.cli("open", a0)
@@ -367,6 +512,10 @@ try:
     iso.wait(lambda: turn_done("a0", "from the attached nvim"), "its prompt answered")
     check(soon(lambda: "reply to: from the attached nvim" in att_screen()), "it sends, and the reply streams in", att_screen()[-400:])
     check(soon(lambda: has("❯ from the attached nvim") and has(f"{DOT} reply to: from the attached nvim")), "and the TUI's chat shows it too")
+    run("send", a0, "stream 120 0.02")
+    iso.wait(lambda: turn_done("a0", "stream 120 0.02"), "a long reply to the attached nvim", 20)
+    check(soon(lambda: "w120" in att_screen() and "more below" not in att_screen()), "a long reply's end on its screen too",
+          att_screen()[-600:])
     ansi = subprocess.run(["tmux", "-L", iso.ui, "capture-pane", "-p", "-e", "-t", f"={att}:"], capture_output=True, text=True).stdout
     screenshot.render(ansi, OUT / "acp_chat_look-attach.png", 110, 36)
     subprocess.run(["tmux", "-L", iso.ui, "send-keys", "-t", f"={att}:", "Escape", ":qa", "Enter"])

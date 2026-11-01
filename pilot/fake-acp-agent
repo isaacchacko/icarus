@@ -9,7 +9,7 @@ $FAKE_AGENT_DELAY seconds, then ends the turn. "run <cmd>" runs a shell command 
 a child of this process; "slow <n>" works for n seconds; "perm" asks for a permission and replies
 with the outcome. "diff" edits src/app.lua (a diff tool call), "term <cmd>" runs a command whose
 output streams as terminal output deltas (claude-agent-acp's _meta extension) and ends with its
-exit code, "stream <n>" streams n words one chunk at a time ($FAKE_STREAM_GAP seconds apart),
+exit code, "stream <n> [<gap>]" streams n words one chunk at a time (gap or $FAKE_STREAM_GAP seconds apart),
 "think" thinks (two chunks) before it answers, "markdown" answers with `code`, **bold** and a heading, and
 "plan" sends a plan. session/cancel ends the running turn as cancelled. Tool calls carry the tool's name in
 _meta.claudeCode.toolName and its input in rawInput, as claude-agent-acp's do.
@@ -334,12 +334,14 @@ def prompt(rid, params):
                          "_meta": {"terminal_exit": {"terminal_id": call_id, "exit_code": code, "signal": None}}})
         chunk(session, "ran it")
     elif text.startswith("stream "):
-        for i in range(int(text.split()[1])):
+        args = text.split()[1:]
+        gap = float(args[1]) if len(args) > 1 else GAP
+        for i in range(int(args[0])):
             if running["cancelled"]:
                 stop = "cancelled"
                 break
             chunk(session, f"w{i + 1} ")
-            time.sleep(GAP)
+            time.sleep(gap)
     elif text == "think":
         update(session, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "pondering the question"}})
         update(session, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "\nand then some more"}})

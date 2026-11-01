@@ -111,7 +111,8 @@ side by side):
 - a permission or a question as Claude's numbered box, answered by its number in the input box or
   `<CR>` on an option (or from its question surface in the Inbox), then put away;
 - Claude's colors, for dark and light backgrounds;
-- streamed token by token, following the bottom only when you're there;
+- streamed token by token, following the bottom only when you're there: while its end is on screen
+  (a long line's last wrapped row too), and in the chat while your cursor is on its last line;
 - long lines wrap; there's no sideways scrolling.
 Everything drawn is a pure function of the journal, so a replay draws what live drew.
 

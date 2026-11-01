@@ -26,13 +26,17 @@
 -- call places and the message marks are extmarks. Long lines wrap under their text (breakindent),
 -- never sideways. Collapsing is the chat's own (a call's output is left out of the buffer until
 -- opened), not nvim's folds, which nvim doesn't update while you type in the composer; so it holds
--- in every window and in iso attach, and needs no window state. The view follows new output only in
--- a window whose cursor is on the last line; one scrolled up stays where it is, and the composer's
--- bar says there's more below. The composer is Claude's prompt: its bar is Claude's spinner line
--- while the agent works (glyph, verb, time, tokens, <C-c> to interrupt) and says how many prompts
--- wait; a rule above and below it, ❯ before it and a hint under it. While prompts wait, the queue
--- shows in a window of its own between the chat and the composer (isovim.acp.queue), where you can
--- edit it. The column stays chat, queue, composer, the composer a fixed height (M.settle).
+-- in every window and in iso attach, and needs no window state. The view follows new output in a
+-- window that shows the chat's end (the last row of its last line, however many rows it wraps
+-- over), its end kept on the window's bottom row; wherever its cursor is while you're in the
+-- composer, on the last line while you're in the chat. One scrolled up, or whose cursor you moved
+-- up, stays where it is, and the composer's bar says there's more below until a window shows the
+-- end again; sending a prompt or an answer takes every window to the end. The composer is Claude's
+-- prompt: its bar is Claude's spinner line while the agent works (glyph, verb, time, tokens, <C-c>
+-- to interrupt) and says how many prompts wait; a rule above and below it, ❯ before it and a hint
+-- under it. While prompts wait, the queue shows in a window of its own between the chat and the
+-- composer (isovim.acp.queue), where you can edit it. The column stays chat, queue, composer, the
+-- composer a fixed height (M.settle).
 --
 -- Chat keys: ]] [[ your own prompts, ]m [m any message, za zo zc the output of the tool call under
 -- the cursor, i a o the composer, <CR> too (or, on a box's option, that answer), <C-c> cancels the
@@ -165,29 +169,121 @@ end
 
 local update_bar
 
--- Windows showing the chat with their cursor on its last line, which keep following it.
+-- The rows from win's top to its buffer's end, filler lines in; more than its height while the end
+-- is below it. Lines alone don't say: a long line wraps over many rows, and its last ones can be
+-- below the window while its start is on screen.
+function M.rows_to_end(win)
+  local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+  local ok, rows = pcall(vim.api.nvim_win_text_height, win, { start_row = view.topline - 1, start_vcol = view.skipcol })
+  return ok and view.topfill + rows.all or 0
+end
+
+local function shows_end(win)
+  return M.rows_to_end(win) <= vim.api.nvim_win_get_height(win)
+end
+
+-- The view of win with its buffer's last row on its bottom row: up from the end, whole lines while
+-- they fit, then the rows of the next that do (smoothscroll's skipcol) or of the filler above it.
+function M.end_view(win)
+  local left = vim.api.nvim_win_get_height(win)
+  local row = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) - 1
+  local fill = 0
+  while row >= 0 do
+    local text = vim.api.nvim_win_text_height(win, { start_row = row, end_row = row, start_vcol = 0 }).all
+    if text >= left then
+      local skip = text - left
+      local skipcol = skip > 0
+          and vim.api.nvim_win_text_height(win, { start_row = row, end_row = row, start_vcol = 0, max_height = skip }).end_vcol
+        or 0
+      return { topline = row + 1, skipcol = skipcol, topfill = 0 }
+    end
+    fill = vim.api.nvim_win_text_height(win, { start_row = row, end_row = row }).all - text
+    if text + fill >= left then
+      return { topline = row + 1, skipcol = 0, topfill = left - text }
+    end
+    left = left - text - fill
+    row = row - 1
+  end
+  return { topline = 1, skipcol = 0, topfill = fill }
+end
+
+-- Windows that keep following the chat's end: those that show it, wherever their cursor is (yours
+-- is in the composer), except the one you're in once you've moved its cursor off the last line.
 local function followers(buf)
+  local last, current = vim.api.nvim_buf_line_count(buf), vim.api.nvim_get_current_win()
   return vim.tbl_filter(function(win)
-    return vim.api.nvim_win_get_cursor(win)[1] >= vim.api.nvim_buf_line_count(buf)
+    return shows_end(win) and (win ~= current or vim.api.nvim_win_get_cursor(win)[1] == last)
   end, vim.fn.win_findbuf(buf))
+end
+
+-- Puts the end of the chat on win's bottom row, the cursor on it. Set here: nvim keeps only the
+-- cursor's row on screen, and in a window that isn't current may not move its view at all.
+local function to_end(win)
+  local buf = vim.api.nvim_win_get_buf(win)
+  local view = M.end_view(win)
+  view.lnum = vim.api.nvim_buf_line_count(buf)
+  view.col = #vim.api.nvim_buf_get_lines(buf, view.lnum - 1, view.lnum, false)[1]
+  vim.api.nvim_win_call(win, function()
+    vim.fn.winrestview(view)
+  end)
+  vim.w[win].isovim_follows = true
+end
+
+-- A window that follows keeps the end on its bottom row when it changes size: the queue's window
+-- opening above the composer takes the chat's rows.
+vim.api.nvim_create_autocmd("WinResized", {
+  group = vim.api.nvim_create_augroup("isovim_acp_chat_follow", { clear = true }),
+  callback = function()
+    for _, win in ipairs(vim.v.event.windows or {}) do
+      local chat = vim.api.nvim_win_is_valid(win) and vim.w[win].isovim_follows and by_buf(vim.api.nvim_win_get_buf(win))
+      if chat and chat.buf == vim.api.nvim_win_get_buf(win) then
+        pcall(to_end, win)
+      end
+    end
+  end,
+})
+
+-- Records which windows follow (for a resize), as you move or scroll them.
+local function note_followers(buf)
+  local follow = followers(buf)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    vim.w[win].isovim_follows = vim.tbl_contains(follow, win)
+  end
+end
+
+-- Whether output sits below what every window showing the chat shows; the composer's bar says so.
+local function set_unseen(chat)
+  local wins = vim.fn.win_findbuf(chat.buf)
+  local unseen = #wins > 0 and #vim.tbl_filter(shows_end, wins) == 0
+  if unseen ~= chat.unseen then
+    chat.unseen = unseen
+    update_bar(chat)
+  end
+end
+
+-- You sent something: every window showing the chat goes to its end and follows it again.
+local function to_bottom(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
+    pcall(to_end, win)
+  end
+  set_unseen(chat)
 end
 
 -- Changes the buffer with fn. Windows at the bottom stay there.
 local function edit(chat, fn)
   local buf = chat.buf
-  local wins = vim.fn.win_findbuf(buf)
   local follow = followers(buf)
   vim.bo[buf].modifiable = true
   fn(buf)
   vim.bo[buf].modifiable = false
-  local last = vim.api.nvim_buf_line_count(buf)
-  for _, win in ipairs(follow) do
-    pcall(vim.api.nvim_win_set_cursor, win, { last, 0 })
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if vim.tbl_contains(follow, win) then
+      pcall(to_end, win)
+    else
+      vim.w[win].isovim_follows = false
+    end
   end
-  if #wins > 0 and #follow == 0 and not chat.unseen then
-    chat.unseen = true
-    update_bar(chat)
-  end
+  set_unseen(chat)
 end
 
 -- The row after the last line of the conversation.
@@ -1323,6 +1419,7 @@ function M.answer(chat, text, box)
   if not answer then
     return true, err
   end
+  to_bottom(chat)
   return true
 end
 
@@ -1343,7 +1440,7 @@ function M.submit(composer)
     chat.rewind = nil
     vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
     update_bar(chat)
-    return
+    return to_bottom(chat)
   end
   local command, rest = text:match("^/(%a+)%s*(.-)$")
   if not command and #chat.boxes > 0 then
@@ -1372,6 +1469,7 @@ function M.submit(composer)
   end
   chat.recall = nil
   vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+  to_bottom(chat)
 end
 
 -- <Up>/<Down> in an empty composer (or one showing an earlier prompt) walk your earlier prompts.
@@ -1535,6 +1633,8 @@ local function chat_window(win)
   wo.wrap, wo.linebreak, wo.breakindent, wo.breakindentopt = true, true, true, "list:-1"
   wo.number, wo.relativenumber, wo.signcolumn, wo.statuscolumn, wo.foldcolumn = false, false, "no", "", "0"
   wo.list, wo.spell, wo.colorcolumn, wo.foldenable = false, false, "", false
+  -- Scrolled by screen rows, so a line longer than the window still shows its end.
+  wo.smoothscroll = true
   wo.fillchars = "eob: "
   -- Markdown's marks (`code`, **bold**) hidden, as Claude draws them, on the cursor's line too.
   wo.conceallevel, wo.concealcursor = 2, "nc"
@@ -1650,14 +1750,14 @@ local function make(ws, agent, old)
       chat_window(vim.api.nvim_get_current_win())
     end,
   })
-  -- Back at the bottom: nothing unseen.
+  -- Scrolled or moved: whether it follows; back at the bottom, nothing unseen.
   vim.api.nvim_create_autocmd({ "CursorMoved", "WinScrolled" }, {
     group = GROUP,
     buffer = buf,
     callback = function()
-      if chat.unseen and #followers(buf) > 0 then
-        chat.unseen = false
-        update_bar(chat)
+      note_followers(buf)
+      if chat.unseen then
+        set_unseen(chat)
       end
     end,
   })
@@ -1900,13 +2000,15 @@ function M.open(ws, agent, win)
   local replaced = shown and shown ~= chat and shown.buf == vim.api.nvim_win_get_buf(win) and #vim.fn.win_findbuf(shown.buf) == 1
   local old_composer = replaced and vim.fn.bufwinid(shown.composer) or -1
   vim.api.nvim_win_set_buf(win, chat.buf)
-  pcall(vim.api.nvim_win_set_cursor, win, { vim.api.nvim_buf_line_count(chat.buf), 0 })
   -- Another workspace's chat entering the window selects it, which closes the old composer's.
   if old_composer ~= -1 and vim.api.nvim_win_is_valid(old_composer) and vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_win_set_buf(old_composer, chat.composer)
   elseif vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = COMPOSER_HEIGHT })
   end
+  -- At the end, once the composer has taken its rows.
+  pcall(to_end, win)
+  set_unseen(chat)
   update_bar(chat)
   M.settle(chat)
   return chat
