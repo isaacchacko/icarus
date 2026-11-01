@@ -2035,6 +2035,10 @@ local function map_keys(chat)
     if mine() then
       return M.submit(buf)
     end
+    -- On an [Image #n] chip in the conversation: that image, as a tab (isovim.image).
+    if require("isovim.image").open_chip(chat) then
+      return
+    end
     -- On an option of a box waiting on you: that's the answer.
     local row = vim.api.nvim_win_get_cursor(0)[1] - 1
     local mark = vim.api.nvim_buf_get_extmarks(buf, OPTIONS, { row, 0 }, { row, -1 }, {})[1]
@@ -2055,7 +2059,7 @@ local function map_keys(chat)
       return
     end
     M.focus_composer(chat.ws, chat.agent)
-  end, "send the draft; on the conversation, answer with the option under the cursor, else type to the agent")
+  end, "send the draft; on the conversation, answer with the option under the cursor or open the [Image #n] under it, else type to the agent")
   map("i", "<CR>", function()
     M.submit(buf)
   end, "send to the agent")

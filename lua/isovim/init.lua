@@ -651,6 +651,10 @@ function M.setup(opts)
     vim.o.messagesopt = "wait:0,history:500"
   end)
   vim.o.more = false
+  -- An image buffer where the terminal can't draw one is a line, not Snacks' notes (isovim.image).
+  pcall(function()
+    require("isovim.image").setup()
+  end)
   -- The migrate timer's closure is the old code's: M.migrate starts it again if it's still needed.
   if reloading and _G.isovim_migrate_timer then
     _G.isovim_migrate_timer:close()

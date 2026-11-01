@@ -374,6 +374,22 @@ buffer's end, so it goes with it. A markdown surface's input box stays under its
 tab. Splits are yours to make (`:vsplit`, `<C-w>v`); the terminal toggle is the one isovim key that
 opens one.
 
+## Images
+
+Images are drawn by Snacks.image (the kitty graphics protocol, as Ghostty, kitty and WezTerm speak
+it), which the starter enables. The TUI's code runs in an `nvim --embed` server, but Snacks writes its
+escapes through `nvim_ui_send`, which hands them to the TUI client and so to the terminal, and it
+finds the terminal by its XTVERSION answer, which the client passes back as a TermResponse; the
+server shares the terminal, so the cell size comes from its ioctl. So an image file opened wherever
+isovim opens files (isovim.show: `gf` from a chat, a file surface, a pinned path, a pick) is an image
+buffer and a tab, the jump's preview of one draws it, and a markdown surface or page draws its images
+inline, a relative path resolving against the repo's `iso/` (or `iso/pages/`). isovim.image adds:
+`<CR>` on an `[Image #n]` chip in a chat's conversation opens that prompt's image as a tab; a PR's
+images (`![…](…)`, `<img>`) show in its view as `image: name · <CR> opens`, fetched under
+`run/<repo>/images/` (with gh's token for GitHub's) and opened as a tab, else in the browser; and where
+the terminal doesn't answer as one that draws images (`iso attach` over ssh, a plain terminal), an
+image buffer is one line saying so instead of Snacks' notes.
+
 ## Events
 
 Every change is appended as a JSON line to `~/.isovim/events/events.jsonl`. Topics:

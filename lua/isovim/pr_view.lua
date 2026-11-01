@@ -252,6 +252,19 @@ local function markdown(text, width)
           end
         end
       end
+    elseif #require("isovim.image").in_markdown(line) > 0 then
+      -- An image: a line naming it, <CR> opening it (isovim.image), and what else the line says.
+      for _, image in ipairs(require("isovim.image").in_markdown(line)) do
+        local name = image.alt ~= "" and image.alt or vim.fn.fnamemodify((image.src:gsub("[?#].*$", "")), ":t")
+        local item = cat(seg("\u{f03e} ", "IsovimPrLink"), seg("image: " .. name, "IsovimPrLink"), seg("  <CR> opens", "IsovimPrDim"))
+        item.image = image.src
+        out[#out + 1] = item
+      end
+      local rest = vim.trim((line:gsub("!%[[^%]]*%]%([^%)]*%)", ""):gsub("<img[^>]*>", "")))
+      if rest ~= "" then
+        wrapped(rest)
+      end
+      i = i + 1
     else
       local heading = line:match("^#+%s+(.*)$")
       if line == "" then
@@ -295,7 +308,7 @@ local function render(view, data, width)
     add(seg(""), "0")
     add(top(width, cat(seg(glyph .. " " .. title, "IsovimPrTitle"), seg(counts and ("  " .. counts) or "", "IsovimPrDim"))), ">1")
     for _, line in ipairs(body) do
-      add(side(width, line.line or line), line.level or "1", line.row)
+      add(side(width, line.line or line), line.level or "1", line.row or (line.image and { image = line.image }))
     end
     add(bottom(width, note), "1")
   end
@@ -387,7 +400,7 @@ local function render(view, data, width)
   local function small(title, text, level)
     body[#body + 1] = { line = top(box, title), level = level }
     for _, line in ipairs(text and vim.trim(text) ~= "" and markdown(text, box - 4) or {}) do
-      body[#body + 1] = { line = side(box, line), level = level }
+      body[#body + 1] = { line = side(box, line), level = level, row = line.image and { image = line.image } }
     end
     body[#body + 1] = { line = bottom(box), level = level }
   end
@@ -425,7 +438,7 @@ local function render(view, data, width)
       end
       body[#body + 1] = { line = side(box, head), level = level }
       for _, line in ipairs(markdown(comment.body, box - 8)) do
-        body[#body + 1] = { line = side(box, cat(seg("│ ", "IsovimPrBorder"), line)), level = level }
+        body[#body + 1] = { line = side(box, cat(seg("│ ", "IsovimPrBorder"), line)), level = level, row = line.image and { image = line.image } }
       end
       if n < #nodes then
         body[#body + 1] = { line = side(box, seg("")), level = level }
@@ -620,9 +633,11 @@ end
 
 -- The view's keys, for its buffer and ? help: {lhs, what, fn(view, line)}.
 M.keys = {
-  { "<CR>", "on a failed check, its log; on a file, its diff", function(view, line)
+  { "<CR>", "on a failed check, its log; on a file, its diff; on an image, the image", function(view, line)
     local row = view.rows and view.rows[line]
-    if row and row.check and select(3, check_mark(row.check)) then
+    if row and row.image then
+      require("isovim.image").open(row.image, view.repo)
+    elseif row and row.check and select(3, check_mark(row.check)) then
       open_log(view, row.check)
     elseif row and row.file then
       open_diff(view, row.file)

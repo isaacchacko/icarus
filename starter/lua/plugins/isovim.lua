@@ -7,8 +7,17 @@ return {
       { "<leader>fe", false },
       { "<leader>fE", false },
     },
-    -- isovim's landing (isovim.landing) opens in the editing area on start in its place.
-    opts = { dashboard = { enabled = false } },
+    -- isovim's landing (isovim.landing) opens in the editing area on start in its place. Images
+    -- render (kitty graphics, as Ghostty and kitty draw them; isovim.image says where).
+    opts = {
+      dashboard = { enabled = false },
+      image = {
+        enabled = true,
+        resolve = function(file, src)
+          return require("isovim.image").resolve(file, src)
+        end,
+      },
+    },
   },
   {
     "lewis6991/gitsigns.nvim",
