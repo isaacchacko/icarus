@@ -428,6 +428,17 @@ function M.plan()
   plan.backup, plan.resumed = backup_dir(vim.tbl_map(function(m)
     return m.rel
   end, plan.moves))
+  -- Earlier runs of this cutover that stopped partway (no plan in them) and that this run doesn't
+  -- go on into: what they moved is there, and the README here puts it back too.
+  plan.earlier = {}
+  for _, path in ipairs(backups()) do
+    local holds = vim.iter(vim.fs.dir(path)):any(function(name)
+      return name ~= M.readme
+    end)
+    if path ~= plan.backup and holds and not vim.uv.fs_stat(path .. "/cutover-plan.txt") then
+      plan.earlier[#plan.earlier + 1] = path
+    end
+  end
   for _, m in ipairs(plan.moves) do
     m.to = plan.backup .. "/" .. m.rel
   end
@@ -446,8 +457,34 @@ function M.plan()
     end
   end
 
-  -- Who keeps running: the host's root, when it's a new-layout agent.
+  -- The agents still in the old _/, while its move to general/ and root/ waits (isovim.migrate
+  -- defers it while one is mid-turn, or while a running one's kind isn't logged in): new-layout
+  -- agents too, which keep running and move once it can.
+  plan.pending = {}
+  local migrate = require("isovim.migrate")
+  if migrate.pending() then
+    local old = store.work .. "/_/iso/agents"
+    for name, kind in vim.fs.dir(old) do
+      local id = kind == "file" and name:match("^(a%d+)%.json$")
+      if id then
+        local ok, lines = pcall(vim.fn.readfile, old .. "/" .. name)
+        local decoded, record = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+        record = decoded and type(record) == "table" and record or {}
+        plan.pending[#plan.pending + 1] = { address = "_/" .. id, root = record.role == "root" }
+      end
+    end
+    table.sort(plan.pending, function(a, b)
+      return tonumber(a.address:match("%d+")) < tonumber(b.address:match("%d+"))
+    end)
+  end
+
+  -- Who keeps running: the host's root, when it's a new-layout agent (one in _/ too).
   local holder = require("isovim.root").holder()
+  for _, agent in ipairs(plan.pending) do
+    if not holder and agent.root then
+      holder = agent.address
+    end
+  end
   plan.root_holder = holder
   plan.root_kept = holder and store.v2(holder:match("^(.*)/[^/]+$")) or nil
 
@@ -463,7 +500,7 @@ function M.plan()
       v2 = v2 + #store.agents(ws.id)
     end
   end
-  plan.v2_agents = v2
+  plan.v2_agents = v2 + #plan.pending
   local moving = { workspaces = true, archive = true, worktrees = true, root = true, ["session.json"] = true,
     ["cutover-plan.txt"] = true, ["cutover.log"] = true, run = true, repos = true, events = true, ["config.json"] = true }
   plan.rest = {}
@@ -513,7 +550,8 @@ function M.render(plan)
   end
   add("iso cutover plan for %s (isovim home %s, work %s)", plan.host, short(store.root), short(store.work))
   add("Nothing has changed yet. iso cutover --yes does exactly this, and only while this file")
-  add("matches a fresh dry run; it stops at the first failure, before anything is moved.")
+  add("matches a fresh dry run. It stops at the first failure: one in steps 1-3 moves nothing, and")
+  add("one in step 4 leaves what it moved in the backup, whose README.md says how to put it back.")
   if #plan.blocked > 0 then
     add("")
     add("BLOCKED: iso cutover --yes refuses until these are fixed:")
@@ -593,7 +631,9 @@ function M.render(plan)
     add("  (no worktrees)")
   end
   add("  Uncommitted work goes as one snapshot commit on top of HEAD; the checkout itself is left")
-  add("  alone. Ignored files (.env, node_modules) aren't pushed; they stay in the backup.")
+  add("  alone. Untracked files that aren't gitignored go in the snapshot too, so a .env that isn't")
+  add("  gitignored is pushed to the wip branch: gitignore or move any secret first. Gitignored files")
+  add("  (node_modules, a gitignored .env) aren't pushed; they stay in the backup.")
 
   add("")
   add("2. Stop the legacy agents (%d running); new-layout agents keep running", #plan.stops)
@@ -638,13 +678,23 @@ function M.render(plan)
   for _, path in ipairs(plan.lost) do
     add("  %s: git no longer knows it (pruned): its files are there, but it can't be repaired", short(path))
   end
-  add("  %s/README.md then says how to undo all of it", short(plan.backup))
+  for _, path in ipairs(plan.earlier) do
+    add("  %s/ holds what an earlier run that stopped partway moved: it's left there", short(path))
+  end
+  add("  %s/README.md then says how to undo all of it%s", short(plan.backup),
+    #plan.earlier > 0 and (", from every backup above") or "")
 
   add("")
   add("Kept")
   add("  %s: the old conversations, untouched", short(plan.claude_projects))
   add("  %s/repos, %s/events, %s/config.json", short(store.root), short(store.root), short(store.root))
   add("  new-layout agents: %d under %s, and their run state", plan.v2_agents, short(store.work))
+  if #plan.pending > 0 then
+    add("    %d of them still in %s/_/: %s", #plan.pending, short(store.work), table.concat(vim.tbl_map(function(agent)
+      return agent.address .. (agent.root and " (this host's root)" or "")
+    end, plan.pending), ", "))
+    add("    _/ moves to general/ and root/ once none there is mid-turn and the running ones are logged in")
+  end
   if #plan.rest > 0 then
     add("  also left as they are in %s: %s", short(store.root), table.concat(plan.rest, ", "))
   end
@@ -791,12 +841,13 @@ end
 -- that stopped partway too.
 local function write_readme(plan)
   local b = plan.backup
+  local parts = vim.list_extend(vim.deepcopy(plan.earlier or {}), { b })
   local lines = {
     ("# The isovim cutover of %s: how to undo it"):format(plan.host),
     "",
     ("iso cutover moved the legacy layout here, out of %s, and turned enforcement on. Nothing"):format(store.root),
     "was deleted. If the cutover stopped partway, what it hadn't moved yet is still where it was,",
-    "and this lists only what's here.",
+    "and this lists only what's in its backups.",
     "",
     "With the isovim TUI closed, in a plain shell:",
     "",
@@ -808,37 +859,66 @@ local function write_readme(plan)
     "# Empty dirs made since (the TUI makes workspaces/ and archive/ on start) would take the moves inside.",
     ("rmdir %s %s %s 2>/dev/null || true"):format(shell(store.workspaces), shell(store.archive), shell(store.root .. "/worktrees")),
   }
-  local function mv(rel)
-    if vim.uv.fs_lstat(b .. "/" .. rel) then
-      lines[#lines + 1] = ("mv %s %s"):format(shell(b .. "/" .. rel), shell(store.root .. "/" .. rel))
+  if #parts > 1 then
+    lines[#lines + 1] = ("# This cutover's runs moved it into %d backups: %s."):format(#parts,
+      table.concat(vim.tbl_map(short, parts), ", "))
+  end
+  -- What a part holds goes back from the oldest backup holding it; a later backup's copy of the same
+  -- thing is an empty dir the TUI made in between (or there's nothing to put back), left alone.
+  local back = {}
+  local function empty_dir(path)
+    local stat = vim.uv.fs_lstat(path)
+    return stat and stat.type == "directory" and vim.fs.dir(path)() == nil
+  end
+  local function mv(part, rel)
+    local from = part .. "/" .. rel
+    if not vim.uv.fs_lstat(from) or (back[rel] and empty_dir(from)) then
+      return
     end
+    if back[rel] then
+      lines[#lines + 1] = ("# %s and %s both hold %s: put this one's contents back by hand"):format(short(back[rel]),
+        short(part), rel)
+      return
+    end
+    back[rel] = part
+    lines[#lines + 1] = ("mv %s %s"):format(shell(from), shell(store.root .. "/" .. rel))
   end
-  for _, rel in ipairs({ "workspaces", "archive", "worktrees", "root", "session.json" }) do
-    mv(rel)
-  end
-  local runs = {}
-  for name, kind in vim.fs.dir(b .. "/run") do
-    if kind == "directory" then
-      runs[#runs + 1] = name
+  local runs, trees = {}, {}
+  for _, part in ipairs(parts) do
+    for name, kind in vim.fs.dir(part .. "/run") do
+      if kind == "directory" and not vim.tbl_contains(runs, name) then
+        runs[#runs + 1] = name
+      end
+    end
+    for _, path in ipairs(checkouts(part .. "/worktrees")) do
+      trees[#trees + 1] = { part = part, path = path }
     end
   end
   table.sort(runs)
+  for _, part in ipairs(parts) do
+    for _, rel in ipairs({ "workspaces", "archive", "worktrees", "root", "session.json" }) do
+      mv(part, rel)
+    end
+  end
   if #runs > 0 then
     lines[#lines + 1] = ("mkdir -p %s"):format(shell(store.run))
   end
-  for _, name in ipairs(runs) do
-    mv("run/" .. name)
+  for _, part in ipairs(parts) do
+    for _, name in ipairs(runs) do
+      mv(part, "run/" .. name)
+    end
   end
-  local trees = checkouts(b .. "/worktrees")
   if #trees > 0 then
     lines[#lines + 1] = "# Tell git where each worktree is again, and unlock it."
   end
-  for _, path in ipairs(trees) do
-    local back = store.root .. "/worktrees/" .. path:sub(#(b .. "/worktrees/") + 1)
-    local state = linked_state(path)
-    lines[#lines + 1] = ("git -C %s worktree repair"):format(shell(back))
-    if state and state.locked then
-      lines[#lines + 1] = ("git -C %s worktree unlock %s"):format(shell(back), shell(back))
+  for _, tree in ipairs(trees) do
+    if back.worktrees == tree.part then
+      local to = store.root .. "/worktrees/" .. tree.path:sub(#(tree.part .. "/worktrees/") + 1)
+      local state = linked_state(tree.path)
+      lines[#lines + 1] = ("git -C %s worktree repair"):format(shell(to))
+      if state and state.locked then
+        lines[#lines + 1] = ("git -C %s worktree unlock %s"):format(shell(to), shell(to))
+      end
     end
   end
   vim.list_extend(lines, {
@@ -851,7 +931,18 @@ local function write_readme(plan)
     ("conversations in ~/.claude/projects. %s, the approved plan, is kept here."):format("cutover-plan.txt"),
   })
   vim.fn.writefile(lines, b .. "/" .. M.readme)
+  -- An earlier part's own README covers only itself: it points here.
+  for _, part in ipairs(plan.earlier or {}) do
+    local path = part .. "/" .. M.readme
+    local ok, old = pcall(vim.fn.readfile, path)
+    if ok and not vim.tbl_contains(old, M.later_note) then
+      local pointer = ("A later run of the same cutover went on into %s: follow %s/%s instead, which puts back"):format(b, b, M.readme)
+      vim.fn.writefile(vim.list_extend({ M.later_note, pointer, "what's here too.", "" }, old), path)
+    end
+  end
 end
+
+M.later_note = "NOTE: this backup is part of a cutover split across backups."
 
 local function wipe(plan)
   for _, move in ipairs(plan.moves) do

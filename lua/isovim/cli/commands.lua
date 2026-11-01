@@ -474,7 +474,8 @@ M.list = {
     audience = "plumbing",
   },
   -- iso-hook's PreToolUse for edit tools and Bash: a new-layout agent's first edit makes its
-  -- worktree; a read-only agent's edits are refused (isovim.cli.work).
+  -- worktree; a read-only agent's edits, and any agent's in a clone of a repo isovim knows outside
+  -- its own worktree, are refused (isovim.cli.work).
   { name = "__pretool", module = "work",
     args = { "edit|bash" },
     hidden = true,

@@ -163,6 +163,12 @@ function M.receive(stage)
     end
     return M.receive_agent(stage, manifest)
   end
+  -- A legacy workspace never lands on a host that's cut over: its agents would be told commands
+  -- retired here. The sender keeps it.
+  if require("isovim.config").enforced() then
+    return false, ("workspaces were retired at the cutover on %s, so workspace %s can't move here; it stays where it is")
+      :format(require("isovim.remote").self(), manifest.id or "?")
+  end
   local id = manifest.id
   local dir = store.path(id)
   if vim.uv.fs_stat(dir) then

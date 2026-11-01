@@ -6,7 +6,8 @@ resuming that session without a model call. Then the sessions (L2), on a few mor
 a fork at the first answer doesn't know what came after it and a whole fork does (each resumed in its
 own dir), AskUserQuestion comes as a question surface whose answer reaches the agent, and a host root
 kept the old way at _/a0 is moved to root/a0 and resumes its session from there, remembering it
-(ISOVIM_ACP_REAL_SESSIONS=0 skips these). It spends a little of your Claude usage, so it only runs
+(ISOVIM_ACP_REAL_SESSIONS=0 skips these). Last, a general/ agent's Write in a known repo's clone is refused, with word
+to spawn into that repo. It spends a little of your Claude usage, so it only runs
 with ISOVIM_ACP_REAL=1; otherwise it says it skipped.
 Run from pilot/: ISOVIM_ACP_REAL=1 uv run --with pynvim --with pillow --with fonttools python checks/acp_real.py"""
 
@@ -287,6 +288,25 @@ try:
         answer = "".join(e["update"]["content"].get("text", "") for e in moved_journal()
                          if e["seq"] > seq and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
         check("kiwi" in answer.lower(), "and remembers what it was told before the move", answer)
+
+    print("\n# a general/ agent can't edit a known repo's clone")
+    # acme/app is known here (its ~/.isovim/repos/acme/app came with the spawns above).
+    rc, gen, err = run("spawn", "--repo", "general", "--name", "gen",
+                       f"Use the Write tool to create the file {app / 'from-general.txt'} containing the word hi. If the tool "
+                       "call is refused, don't try again in any way; reply with the word refused.", cwd=iso.tmp)
+    check(rc == 0 and gen.startswith("general/a"), "a general/ agent", (rc, gen, err))
+    gen_journal = iso.tmp / "work" / "general" / "iso" / "journal" / f"{gen.rsplit('/', 1)[-1]}.jsonl"
+
+    def gen_ended():
+        lines = gen_journal.read_text().splitlines() if gen_journal.exists() else []
+        return any(e["kind"] == "turn" and e["state"] == "end" for e in map(json.loads, lines))
+
+    iso.wait(gen_ended, "the general/ agent's turn", 240)
+    text = gen_journal.read_text()
+    check(not (app / "from-general.txt").exists(), "real adapter: its Write in acme/app's clone is refused",
+          subprocess.run(["git", "status", "--short"], cwd=app, capture_output=True, text=True).stdout)
+    check("isovim refused" in text and "spawn --repo acme/app" in text, "real adapter: the refusal says to spawn into acme/app",
+          text[-800:])
 finally:
     iso.stop()
 

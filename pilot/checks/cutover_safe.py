@@ -81,12 +81,17 @@ def meta(ws):
     return json.loads((HOME / "workspaces" / ws / ".isovim.json").read_text())
 
 
+def real(path):
+    """path with symlinks resolved, as git prints it (on macOS the temp dir's /var is /private/var)."""
+    return os.path.realpath(path)
+
+
 def worktrees(main):
-    """git worktree list --porcelain of main: {path: {"locked": bool, "prunable": bool}}."""
+    """git worktree list --porcelain of main: {resolved path: {"locked": bool, "prunable": bool}}."""
     found, path = {}, None
     for line in git("worktree", "list", "--porcelain", cwd=main).splitlines():
         if line.startswith("worktree "):
-            path = line[9:]
+            path = real(line[9:])
             found[path] = {"locked": False, "prunable": False}
         elif line.startswith("locked") and path:
             found[path]["locked"] = True
@@ -304,13 +309,13 @@ try:
     moved = BACKUP / "worktrees" / tree.relative_to(HOME / "worktrees")
     check(rc == 1 and "step 4 (wipe) failed" in (HOME / "cutover.log").read_text() and moved.is_dir() and not tree.exists(),
           "step 4 fails after moving the worktrees", (rc, out, err))
-    check(str(moved) in worktrees(app) and not worktrees(app)[str(moved)]["prunable"], "the worktrees it moved are repaired anyway",
+    check(real(moved) in worktrees(app) and not worktrees(app)[real(moved)]["prunable"], "the worktrees it moved are repaired anyway",
           worktrees(app))
-    check(worktrees(app).get(str(moved), {}).get("locked"), "and locked", worktrees(app))
+    check(worktrees(app).get(real(moved), {}).get("locked"), "and locked", worktrees(app))
     readme = BACKUP / "README.md"
     check(readme.exists() and str(readme) in out + err, "the backup's README is written, and its path printed", (out, err))
     git("-c", "gc.worktreePruneExpire=now", "worktree", "prune", "--expire", "now", cwd=app)
-    check(is_repo(moved) and str(moved) in worktrees(app), "git worktree prune leaves the backup's worktree working", worktrees(app))
+    check(is_repo(moved) and real(moved) in worktrees(app), "git worktree prune leaves the backup's worktree working", worktrees(app))
     check(f"isovim-{own}-main" not in tmux_sessions() and root_session in tmux_sessions(),
           "the legacy agents were stopped, root/a0 wasn't", tmux_sessions())
 
@@ -319,18 +324,18 @@ try:
     admin = Path(git("rev-parse", "--path-format=absolute", "--git-dir", cwd=moved))
     git("worktree", "unlock", str(moved), cwd=app)
     (admin / "gitdir").write_text(str(tree / ".git") + "\n")
-    check(str(moved) not in worktrees(app), "(an unrepaired worktree from an earlier run)", worktrees(app))
+    check(real(moved) not in worktrees(app), "(an unrepaired worktree from an earlier run)", worktrees(app))
     rc, plan, err = run("cutover", "--dry-run")
     step4 = section(plan, "4. Move", "\n\n")
     check(f"legacy-backup-{TODAY}/" in step4 and f"legacy-backup-{TODAY}-2" not in plan, "the rerun goes on into the same backup", step4)
     check("repair" in step4 and str(moved.relative_to(HOME)) in step4, "and plans to repair the worktree the earlier run moved", step4)
     rc, out, err = run("cutover", "--yes", timeout=300)
     check(rc == 0 and "cut over" in out, "the rerun runs", (rc, out, err))
-    check(str(moved) in worktrees(app) and worktrees(app)[str(moved)]["locked"] and is_repo(moved),
+    check(real(moved) in worktrees(app) and worktrees(app)[real(moved)]["locked"] and is_repo(moved),
           "it repairs and locks the earlier run's worktree", worktrees(app))
     check(str(readme) in out, "the README's path is printed", out)
     git("-c", "gc.worktreePruneExpire=now", "worktree", "prune", "--expire", "now", cwd=app)
-    check(is_repo(moved) and str(moved) in worktrees(app), "prune leaves it alone", worktrees(app))
+    check(is_repo(moved) and real(moved) in worktrees(app), "prune leaves it alone", worktrees(app))
     for rel in ("workspaces", "archive", "worktrees", f"run/{own}", f"run/{tws}"):
         check((BACKUP / rel).exists() and not (HOME / rel).exists(), f"{rel} is in the one backup")
     check(not Path(f"{BACKUP}-2").exists(), "there's no second backup")
@@ -364,7 +369,7 @@ try:
     check(undo.returncode == 0, "the undo runs", (undo.stdout, undo.stderr))
     check((HOME / "workspaces" / own / ".isovim.json").exists() and (HOME / "archive" / old).is_dir() and (HOME / "run" / own).is_dir(),
           "the workspaces, the archive and their run state are back", sorted(p.name for p in HOME.iterdir()))
-    check(tree.is_dir() and is_repo(tree) and str(tree) in worktrees(app) and not worktrees(app)[str(tree)]["locked"],
+    check(tree.is_dir() and is_repo(tree) and real(tree) in worktrees(app) and not worktrees(app)[real(tree)]["locked"],
           "the worktree is back where it was, known to its repo and unlocked", worktrees(app))
     rc, out, err = run("ls", "--json")
     check(rc == 0 and f"{own}/main" in out, "iso ls lists the legacy agents again", (rc, out, err))

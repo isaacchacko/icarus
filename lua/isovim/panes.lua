@@ -85,7 +85,8 @@ local EVENTS = {
     { "ask", "AskUserQuestion|ExitPlanMode" },
     -- A new-layout agent's first edit makes its worktree (which can run the repo's worktree_setup),
     -- a read-only agent's edits and mutating git commands are refused, and so are any agent's
-    -- edits and mutating git commands in a clone of its repo outside its own w/ (iso __pretool).
+    -- edits and mutating git commands in a clone of its repo, or of any repo isovim knows, outside
+    -- its own w/ (iso __pretool).
     { "edit", M.edit_tools, 600 },
     { "bash", "Bash" },
   },

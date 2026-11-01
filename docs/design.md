@@ -200,6 +200,11 @@ streams the matching events, with `*` matching one part and `**` any number.
   are refused.
 - **Worktrees:** an agent gets one with `wt`, or automatically on its first edit. `setup` runs the
   repo's setup script only when asked.
+- **The edit guard:** every agent's edit in a clone of a repo isovim knows (one under
+  `~/.isovim/repos/`), outside its own `aN/w`, is refused, with word to spawn an agent into that repo;
+  repos isovim doesn't know, like `~/.clu/discs` and dotfiles, stay editable. For v0 it reads Bash
+  only for git commands, so a shell write (`sed -i`, `cp`, `>>`) or git behind a variable gets
+  through: agents aren't dumb, and the guard is there for mistakes, not for an agent working round it.
 - **Teardown:** when an agent is removed, isovim runs the repo's teardown and deletes `aN/`. Unsaved
   work is discarded.
 - **The reaper** runs every 10 minutes and tears down any `aN/` with no record. It runs as a dry run,

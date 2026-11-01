@@ -189,10 +189,31 @@ local function clone_of(path, repo)
   end
 end
 
+-- The clone of a repo isovim knows (its key has a dir under ~/.isovim/repos) that path is in, other
+-- than repo: the nearest enclosing dir holding a .git whose origin is such a repo, its key, and path
+-- relative to it; nil when none is. Repos isovim doesn't know (~/.clu/discs, dotfiles) are never one.
+---@return string? top, string? key, string? rel
+local function known_clone(path, repo)
+  local repos = require("isovim.repos")
+  local dir = path
+  while dir and dir ~= "" do
+    if vim.uv.fs_stat(dir .. "/.git") then
+      local key = repos.of(dir)
+      if key and key ~= repo and vim.fn.isdirectory(repos.dir(key)) == 1 then
+        return dir, key, under(path, dir)
+      end
+    end
+    local parent = vim.fs.dirname(dir)
+    dir = parent ~= dir and parent or nil
+  end
+end
+
 -- Whether path is somewhere the agent (aN in ws) never edits: the base clone, its record's checkout,
--- or any other clone or worktree of its repo outside its own aN/w (yours anywhere, or another
--- agent's), whatever its record says. Returns path relative to that clone and why; nil when it's none.
----@return string? rel, string? why
+-- any other clone or worktree of its repo outside its own aN/w (yours anywhere, or another agent's),
+-- whatever its record says, or a clone of any other repo isovim knows, for every agent (general/ and
+-- root/ ones too). Returns path relative to that clone, why, and the other repo's key when it's that;
+-- nil when it's none.
+---@return string? rel, string? why, string? other
 local function forbidden(path, ws, agent)
   if under(path, store.dir(ws) .. "/" .. agent.id .. "/w") then
     return nil
@@ -215,6 +236,18 @@ local function forbidden(path, ws, agent)
     return rel, ("%s is a clone of %s outside your worktree (your user's, or another agent's), which agents never edit")
       :format(top, agent.repo)
   end
+  local key
+  top, key, rel = known_clone(path, agent.repo)
+  if top then
+    return rel, ("%s is a clone of %s, a repo isovim knows, and agents never edit a clone of one (your user's, or another agent's), only their own worktree of it")
+      :format(top, key), key
+  end
+end
+
+-- What to do instead of changing a clone of other, a known repo that isn't the agent's.
+local function spawn_into(agent, other)
+  return ("To change %s, spawn an agent into it: iso %s spawn --repo %s <task> (or --repo <that clone's dir>, when no workspace here works in %s yet).")
+    :format(other, store.role(agent), other, other)
 end
 
 -- git's subcommands that change a checkout or its refs, which a read-only agent may not run in the
@@ -269,7 +302,9 @@ end
 -- makes its worktree, aN/w, and is refused with where to make it instead: the edit would otherwise
 -- land outside it, so the agent makes it again under w/. An edit in a clone of its repo outside its
 -- own w/ is always refused, worktree or not and whatever its record says, and so is a mutating git
--- command there; anything else goes through, as edits outside the repo always do.
+-- command there. So is any agent's (general/ and root/ ones too) in a clone of another repo isovim
+-- knows, with word to spawn an agent into that repo; anything else goes through, as edits in repos
+-- isovim doesn't know (~/.clu/discs, dotfiles) and outside any repo always do.
 M.__pretool = function(args)
   local which = args[1]
   local ws, id = require("isovim.root").caller()
@@ -290,9 +325,9 @@ M.__pretool = function(args)
         :format(agent.repo or "your repo", calls[1].sub))
     end
     for _, git_call in ipairs(calls) do
-      local _, why = forbidden(git_call.dir, ws, agent)
+      local _, why, other = forbidden(git_call.dir, ws, agent)
       if why then
-        local there = vim.fn.isdirectory(w) == 1 and ("Your worktree is %s: run it there."):format(w)
+        local there = other and spawn_into(agent, other) or vim.fn.isdirectory(w) == 1 and ("Your worktree is %s: run it there."):format(w)
           or ("Make your worktree with iso %s wt (it prints its path) and run it there."):format(store.role(agent))
         refuse(("isovim refused this command: `%s` would change %s, and %s. %s"):format(git_call.sub, git_call.dir, why, there))
       end
@@ -309,7 +344,10 @@ M.__pretool = function(args)
     return
   end
   file = real(vim.fs.normalize(file:sub(1, 1) == "/" and file or vim.fs.joinpath(cwd, file)))
-  local in_clone, where = forbidden(file, ws, agent)
+  local in_clone, where, other = forbidden(file, ws, agent)
+  if other then
+    refuse(("isovim refused %s: %s. %s"):format(tool, where, spawn_into(agent, other)))
+  end
   if vim.fn.isdirectory(w) == 1 then
     if in_clone then
       refuse(("isovim refused %s: %s. Your worktree is %s: make the edit to %s."):format(tool, where, w, vim.fs.joinpath(w, in_clone)))

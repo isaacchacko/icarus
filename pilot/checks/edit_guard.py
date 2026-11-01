@@ -6,9 +6,14 @@ whose checkout is null. The first such edit makes the agent's worktree, and the 
 under w/ goes through. A mutating git command whose target is such a clone (its cwd after a cd, or
 -C) is refused too, while git in its own w/ runs. pilot/fake-acp-agent runs the session's
 PreToolUse hooks from _meta as Claude Code does.
+The second review's decision: any agent's edit or mutating git in a clone of a repo isovim knows (it
+has ~/.isovim/repos/<key>) is refused outside its own w/, for a user's general/ agent, a
+root-spawned worker (in general/) and an acme/app worker in acme/lib's clone alike, with word to
+spawn into that repo; a repo isovim doesn't know (as ~/.clu/discs and dotfiles are) stays editable.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/edit_guard.py"""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -154,6 +159,64 @@ try:
     print("\n# a fork keeps the checkout")
     fork = spawned(kid, f"worker fork {kid} --name forked", "fork")
     check(fork.startswith("acme/app/a") and record(fork).get("checkout") == str(app.resolve()), "iso worker fork records the clone", (fork, record(fork)))
+
+    print("\n# known repos, for every agent (the second review's decision)")
+    # A second repo isovim knows (it has ~/.isovim/repos/acme/lib), and one it doesn't, as
+    # ~/.clu/discs and dotfiles are.
+    lib_remote = iso.tmp / "remotes" / "acme" / "lib.git"
+    git("init", "-q", "--bare", "-b", "main", str(lib_remote))
+    lib = iso.tmp / "src" / "lib"
+    git("clone", "-q", str(lib_remote), str(lib))
+    git("checkout", "-qb", "main", cwd=lib)
+    (lib / "README").write_text("lib\n")
+    git("add", "-A", cwd=lib)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first", cwd=lib)
+    git("push", "-q", "-u", "origin", "main", cwd=lib)
+    iso.cli("repo", "base", "acme/lib", "--from", str(lib))
+    lib_head = git("rev-parse", "HEAD", cwd=lib)
+    dots = iso.tmp / "dots"
+    dots.mkdir()
+    git("init", "-q", "-b", "main", str(dots))
+    git("remote", "add", "origin", str(iso.tmp / "remotes" / "mine" / "dots.git"), cwd=dots)
+    plain_dir = iso.tmp / "loose"
+    plain_dir.mkdir()
+
+    rc, gen, err = run("spawn", "--repo", "general", "--name", "gen")
+    check(rc == 0 and gen.startswith("general/a"), "a user's general/ agent", (rc, gen, err))
+    g = reply(gen, f"write {app / 'from-general.txt'} x", ("blocked:", "write:"))
+    check(g.startswith("blocked:") and not (app / "from-general.txt").exists(), "a general/ agent's edit in a known repo's clone is refused", g)
+    check("spawn --repo acme/app" in g, "and the refusal says to spawn into that repo", g)
+    g2 = reply(gen, f"write {lib / 'from-general.txt'} x", ("blocked:", "write:"))
+    check(g2.startswith("blocked:") and not (lib / "from-general.txt").exists() and "spawn --repo acme/lib" in g2,
+          "so is its edit in another known repo", g2)
+    d = reply(gen, f"write {dots / 'rc'} x", ("blocked:", "write:"))
+    check(d.startswith("write:") and (dots / "rc").read_text() == "x", "a repo isovim doesn't know stays editable", d)
+    p = reply(gen, f"write {plain_dir / 'note'} x", ("blocked:", "write:"))
+    check(p.startswith("write:") and (plain_dir / "note").exists(), "and so does a dir in no repo", p)
+    gc = reply(gen, f"bash git -C {lib} commit --allow-empty -qm evil", ("blocked:", "bash:"))
+    check(gc.startswith("blocked:") and git("rev-parse", "HEAD", cwd=lib) == lib_head, "its mutating git in a known clone is refused", gc)
+    dc = reply(gen, f"bash git -C {dots} -c user.name=t -c user.email=t@t commit --allow-empty -qm mine", ("blocked:", "bash:"))
+    check(dc.startswith("bash:") and "(exit 0)" in dc, "and runs in a repo isovim doesn't know", dc)
+
+    rc, hr_out, err = run("rootmode", "on", "host")
+    found = re.search(r"this host: (\S+),", hr_out)
+    check(rc == 0 and found, "the host root", (rc, hr_out, err))
+    HR = found.group(1) if found else None
+    rkid = spawned(HR, "root spawn --name rk rk task", "rk")
+    check(rkid.startswith("general/a"), "a root-spawned worker is in general/", rkid)
+    r = reply(rkid, f"write {app / 'from-root-kid.txt'} x", ("blocked:", "write:"))
+    check(r.startswith("blocked:") and not (app / "from-root-kid.txt").exists() and "spawn --repo acme/app" in r,
+          "its edit in a known repo's clone is refused", r)
+    rc2 = reply(rkid, f"bash cd {app} && git commit --allow-empty -qm evil", ("blocked:", "bash:"))
+    check(rc2.startswith("blocked:") and git("rev-parse", "HEAD", cwd=app) == head, "so is its git commit there", rc2)
+
+    x = reply(kid, f"write {lib / 'from-app-kid.txt'} x", ("blocked:", "write:"))
+    check(x.startswith("blocked:") and not (lib / "from-app-kid.txt").exists() and "spawn --repo acme/lib" in x,
+          "an acme/app worker's edit in acme/lib's clone is refused, saying to spawn into acme/lib", x)
+    xb = reply(kid, f"bash git -C {lib} commit --allow-empty -qm evil", ("blocked:", "bash:"))
+    check(xb.startswith("blocked:") and git("rev-parse", "HEAD", cwd=lib) == lib_head, "and so is its git commit there", xb)
+    xd = reply(kid, f"write {dots / 'rc2'} x", ("blocked:", "write:"))
+    check(xd.startswith("write:") and (dots / "rc2").exists(), "while a repo isovim doesn't know stays editable for it too", xd)
 finally:
     iso.stop()
 

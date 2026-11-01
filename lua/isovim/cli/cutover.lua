@@ -66,11 +66,14 @@ function commands.cutover(args)
     fail("the plan is blocked:\n  " .. table.concat(plan.blocked, "\n  "))
   end
   local done, err = cutover.run(plan)
+  local readme = plan.backup .. "/" .. cutover.readme
+  local earlier = #plan.earlier > 0 and (" (it covers the earlier backups %s too)"):format(table.concat(plan.earlier, ", ")) or ""
   if not done then
-    fail(("cutover stopped: %s (see %s)"):format(err, store.home_relative(cutover.log_file)))
+    local undo = vim.uv.fs_stat(readme) and ("; what it moved is in %s, and %s says how to put it back%s"):format(plan.backup,
+      readme, earlier) or ""
+    fail(("cutover stopped: %s (see %s)%s"):format(err, store.home_relative(cutover.log_file), undo))
   end
-  out(("cut over; the log is %s, and %s/%s says how to undo it"):format(store.home_relative(cutover.log_file),
-    plan.backup, cutover.readme))
+  out(("cut over; the log is %s, and %s says how to undo it%s"):format(store.home_relative(cutover.log_file), readme, earlier))
 end
 
 return commands
