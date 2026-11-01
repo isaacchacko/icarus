@@ -14,14 +14,20 @@ local function layouts()
   return vim.g.isovim_layouts or {}
 end
 
--- winlayout() minus the sidebar and windows that belong to no workspace (the dashboard).
+-- An ACP agent's prompt queue window (isovim.acp.queue), which its chat brings back by itself.
+local function is_queue(node)
+  return node[1] == "leaf" and vim.b[vim.api.nvim_win_get_buf(node[2])].isovim_queue == true
+end
+
+-- winlayout() minus the sidebar, windows that belong to no workspace (the dashboard) and queue
+-- windows, whose rows (and the line between) go to the window above them, the chat they belong to.
 -- Returns false if a window shows another workspace's buffer.
 local function prune(node, ws, is_sidebar)
   if node[1] == "leaf" then
     local win = node[2]
     local buf = vim.api.nvim_win_get_buf(win)
     local owner = vim.b[buf].isovim_ws
-    if is_sidebar(win) or not owner then
+    if is_sidebar(win) or not owner or is_queue(node) then
       return nil
     end
     if owner ~= ws then
@@ -34,6 +40,10 @@ local function prune(node, ws, is_sidebar)
     local kept = prune(child, ws, is_sidebar)
     if kept == false then
       return false
+    end
+    local before = children[#children]
+    if node[1] == "col" and is_queue(child) and before and before[1] == "leaf" then
+      before[2].height = before[2].height + vim.api.nvim_win_get_height(child[2]) + 1
     end
     children[#children + 1] = kept
   end
@@ -129,6 +139,14 @@ local function alive(node)
   return { node[1], children }
 end
 
+-- The queue windows left out come back above their composers, once the layout is rebuilt.
+local function sync_queues()
+  local chat = package.loaded["isovim.acp.chat"]
+  if chat then
+    chat.sync_queues()
+  end
+end
+
 local function first_buf(node)
   return node[1] == "leaf" and node[2].buf or first_buf(node[2][1])
 end
@@ -195,6 +213,7 @@ function M.restore(ws, is_sidebar, want)
   if not is_sidebar(current) then
     vim.api.nvim_set_current_win(want_win or focus_win)
   end
+  sync_queues()
   return true
 end
 
@@ -254,6 +273,7 @@ function M.resume(ws, is_sidebar, open, want)
   if vim.api.nvim_buf_is_valid(placeholder) and vim.fn.bufwinid(placeholder) == -1 then
     vim.api.nvim_buf_delete(placeholder, { force = true })
   end
+  sync_queues()
   return true
 end
 

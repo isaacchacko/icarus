@@ -53,7 +53,10 @@ function M.of_agent(ws, id)
 end
 
 local function scoped(buf)
-  if vim.b[buf].isovim_ws then
+  -- An ACP chat's composer and queue: never listed, and entering one doesn't change the scope.
+  if vim.b[buf].isovim_composer or vim.b[buf].isovim_queue then
+    return false
+  elseif vim.b[buf].isovim_ws then
     return true
   end
   local buftype = vim.bo[buf].buftype

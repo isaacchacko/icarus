@@ -2,11 +2,11 @@
 from its journal (prompts, the agent's streamed text, each tool call one line updated in place), and
 a composer below it whose Enter sends to the agent's supervisor over its socket; two agents side by
 side keep their own chats; a message from another agent while you type in a composer goes in through
-the socket and never touches what you typed; a prompt you send while the agent works shows as queued
-and goes once the turn ends; a permission asked in the Inbox and denied there shows as lines; the chat's keys (]] [[ over
+the socket and never touches what you typed; a prompt you send while the agent works shows in the queue
+window between the chat and the composer and goes once the turn ends; a permission asked in the Inbox and denied there shows as lines; the chat's keys (]] [[ over
 your own prompts, ]m [m over any message, za zo zc a tool call's folded output, gf, i to the
-composer) and the composer's (<C-k> to the chat, <Up> <Down> your earlier prompts, <C-j> a new
-line, <C-c> cancels the turn) work; and closing the TUI leaves the
+composer) and the composer's (<C-k> to the chat, <Up> <Down> your earlier prompts, <M-CR> a new
+line and <C-j> not one, <C-c> cancels the turn) work; and closing the TUI leaves the
 agents running (they keep working with it closed), and reopening it rebuilds each chat as it was.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/acp_chat.py"""
 
@@ -71,6 +71,13 @@ def composer(agent):
 def on_screen(agent):
     return iso.lua("local c = require('isovim.acp.chat').get('acme/app', ...)"
                    " return c ~= nil and vim.fn.bufwinid(c.buf) ~= -1 and vim.fn.bufwinid(c.composer) ~= -1", agent)
+
+
+def queued(agent):
+    """The lines of the agent's queue window, or None while it shows none."""
+    return iso.lua("local c = require('isovim.acp.chat').get('acme/app', ...)"
+                   " local w = c and require('isovim.acp.queue').window(c)"
+                   " return w and vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(w), 0, -1, false) or vim.NIL", agent)
 
 
 def in_composer(agent):
@@ -154,11 +161,11 @@ try:
     iso.wait(lambda: state("a0") == "working", "a0 working")
     iso.type("while busy")
     iso.keys("Enter")
-    iso.wait(lambda: has("a0", "(queued) while busy"), "shown as queued")
+    iso.wait(lambda: queued("a0") == ["#1 while busy"], "shown in the queue window")
     check(not any(e["kind"] == "prompt" and e["text"] == "while busy" for e in journal("a0")), "not sent during the turn")
     iso.wait(lambda: has("a0", "reply to: while busy"), "sent and answered after the turn", 20)
     lines = chat("a0")
-    check(not any("(queued)" in line for line in lines), "the queued line gives way to the prompt", lines[-10:])
+    check(soon(lambda: queued("a0") is None), "the queue window gives way to the prompt", queued("a0"))
     check(lines.index("❯ while busy") > lines.index(f"{DOT} reply to: slow 2"), "after the turn it waited on", lines[-10:])
 
     print("\n# a denied permission")
@@ -248,11 +255,12 @@ try:
     check(composer("a0") == [""], "and past the last, empty again", composer("a0"))
     iso.type("two")
     iso.keys("C-j")
+    iso.keys("M-Enter")
     iso.type("lines")
     blink = iso.lua("local ok, b = pcall(require, 'blink.cmp') if not ok then return vim.NIL end"
                     " return { visible = b.is_visible(), enabled = require('blink.cmp.config').enabled() }")
     check(blink is not None and not blink["visible"] and not blink["enabled"], "no completion menu in the composer", blink)
-    check(composer("a0") == ["two", "lines"], "<C-j> is a new line, not a send", composer("a0"))
+    check(composer("a0") == ["two", "lines"], "<M-CR> is a new line, <C-j> nothing, neither a send", composer("a0"))
     iso.keys("Up")
     check(composer("a0") == ["two", "lines"], "<Up> in text you typed only moves", composer("a0"))
     iso.lua("vim.api.nvim_buf_set_lines(0, 0, -1, false, { '' })")

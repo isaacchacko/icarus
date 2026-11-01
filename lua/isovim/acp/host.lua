@@ -477,8 +477,9 @@ end
 
 -- Replaces the queue with items, in their order: one with the id of a queued prompt keeps its
 -- sender and takes the new text; one without an id is a new prompt of yours. A queued prompt left
--- out is dropped. Ids no longer queued (sent meanwhile) are left out and reported as gone.
----@param payload {items: {id?: string, text: string}[]}
+-- out is dropped, unless known says which prompts the editor showed and it isn't one of them. Ids
+-- no longer queued (sent meanwhile) are left out and reported as gone.
+---@param payload {items: {id?: string, text: string}[], known?: string[]}
 function CALLS.queue_set(payload)
   local by_id = {}
   for _, prompt in ipairs(S.queue) do
@@ -501,6 +502,18 @@ function CALLS.queue_set(payload)
         prompt = { id = next_id(), text = text, via = "composer" }
       end
       queue[#queue + 1] = prompt
+    end
+  end
+  -- What queued after the buffer was drawn (payload.known: the ids it showed) stays, behind it.
+  if payload.known then
+    local known = {}
+    for _, id in ipairs(payload.known) do
+      known[id] = true
+    end
+    for _, prompt in ipairs(S.queue) do
+      if by_id[prompt.id] and not known[prompt.id] and not prompt.reload then
+        queue[#queue + 1] = prompt
+      end
     end
   end
   S.queue = queue

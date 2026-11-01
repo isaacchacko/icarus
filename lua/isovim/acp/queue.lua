@@ -1,17 +1,36 @@
--- An ACP agent's prompt queue as a buffer you edit (<leader>iq): one queued prompt a line, as
--- "#<n> <text>" (a prompt's new lines shown as ⏎). Edit a line's text, reorder lines (dd p),
--- delete them, or add a line of your own (no #n), then :w, and the supervisor's queue becomes what
--- the buffer says (isovim.acp.host's queue_set); all lines deleted and :w clears it. <CR> on a line
--- sends that prompt now (after writing what you changed), which cancels the running turn. q closes.
--- An unmodified buffer follows the queue as prompts go; a prompt that went while you edited is
--- left out when you write, and you're told.
+-- An ACP agent's prompt queue, shown on its own while prompts wait: a window between the chat and
+-- its composer (above every window showing the composer, in the TUI and in iso attach), as tall as
+-- its lines up to a few, titled "queued · N". It opens as the first prompt queues and closes when
+-- the queue empties; q hides it until another prompt queues. <leader>iq goes to it, opening it even
+-- when nothing waits so you can add a line. <C-k> goes up to the chat, <C-j> down to the composer.
+--
+-- It's a buffer you edit: one queued prompt a line, as "#<n> <text>" (a prompt's new lines shown as
+-- ⏎). Edit a line's text, reorder lines (dd p), delete them, or add a line of your own (no #n),
+-- then :w, and the supervisor's queue becomes what the buffer says (isovim.acp.host's queue_set);
+-- all lines deleted and :w clears it. <CR> on a line sends that prompt now (after writing what you
+-- changed), which cancels the running turn. An unmodified buffer follows the queue as prompts go;
+-- a modified one is never redrawn under you, nor closed while it shows. When you write, a prompt
+-- that went while you edited is left out, and you're told; one that queued meanwhile is kept,
+-- after yours.
+--
+-- The window isn't part of a layout (isovim.layout leaves it out): the chat brings it back
+-- wherever its composer shows (M.sync).
 local acp = require("isovim.acp")
 
 local M = {}
 
 local NL = " ⏎ "
+-- The most lines it takes; more scroll.
+local MAX_HEIGHT = 6
 
----@type table<integer, {ws: string, agent: string, ids: table<integer, string>}>
+---@class isovim.acp.Queue
+---@field ws string
+---@field agent string
+---@field ids table<integer, string> which #n is which prompt id
+---@field pinned? boolean opened by <leader>iq while empty: it stays until you leave it
+---@field hidden? integer hidden by q with this many queued: the next prompt brings it back
+
+---@type table<integer, isovim.acp.Queue>
 _G.isovim_acp_queues = _G.isovim_acp_queues or {}
 local queues = _G.isovim_acp_queues
 
@@ -41,7 +60,9 @@ local function fill(buf, items)
   local q = queues[buf]
   local lines
   lines, q.ids = lines_of(items)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  if not vim.deep_equal(lines, vim.api.nvim_buf_get_lines(buf, 0, -1, false)) then
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  end
   vim.bo[buf].modified = false
 end
 
@@ -62,7 +83,7 @@ end
 
 local function write(buf)
   local q = queues[buf]
-  local ok, result = acp.call(q.ws, q.agent, "queue_set", { items = M.parse(buf) })
+  local ok, result = acp.call(q.ws, q.agent, "queue_set", { items = M.parse(buf), known = vim.tbl_values(q.ids) })
   if not ok then
     notify("could not change the queue: " .. tostring(result), vim.log.levels.ERROR)
     return false
@@ -91,63 +112,243 @@ local function send_now(buf)
   end
 end
 
--- Redraws an open, unmodified queue buffer with items (the chat calls this as the queue changes).
-function M.refresh(ws, agent, items)
-  local buf = find(ws, agent)
-  if buf and not vim.bo[buf].modified then
-    fill(buf, items)
+local function chat_of(q)
+  return require("isovim.acp.chat").get(q.ws, q.agent)
+end
+
+M.help = "edit lines and :w · <CR> sends one now · q hides"
+
+local function queue_window(win)
+  local wo = vim.wo[win][0]
+  wo.winfixheight, wo.wrap, wo.linebreak = true, true, true
+  wo.number, wo.relativenumber, wo.signcolumn, wo.statuscolumn, wo.foldcolumn = false, false, "no", "", "0"
+  wo.list, wo.spell, wo.colorcolumn, wo.cursorline = false, false, "", false
+  wo.fillchars = "eob: "
+  -- The #n before each prompt, dim.
+  if not vim.w[win].isovim_queue_match then
+    vim.w[win].isovim_queue_match = vim.fn.matchadd("IsovimAcpHint", [[^#\d\+ ]], 10, -1, { window = win })
   end
 end
 
-M.help = " edit, reorder or delete lines, :w applies · <CR> sends that one now (cancels the turn) · q closes"
+-- The agent's queue buffer, made the first time it's needed. It hides rather than wipes when its
+-- window closes, so what you were editing survives a layout rebuild.
+local function buffer(ws, agent)
+  local buf, q = find(ws, agent)
+  if buf then
+    return buf, q
+  end
+  buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "acwrite"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "isovim_queue"
+  vim.b[buf].completion = false
+  vim.b[buf].snacks_indent = false
+  -- Its workspace's, so it comes and goes with the chat when you switch workspaces.
+  vim.b[buf].isovim_ws = ws
+  vim.b[buf].isovim_queue = true
+  pcall(vim.api.nvim_buf_set_name, buf, ("isovim-acp://%s/%s/queue"):format(ws, agent))
+  q = { ws = ws, agent = agent, ids = {} }
+  queues[buf] = q
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = buf,
+    callback = function()
+      write(buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    callback = function()
+      queues[buf] = nil
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    buffer = buf,
+    callback = function()
+      queue_window(vim.api.nvim_get_current_win())
+    end,
+  })
+  -- Opened empty by <leader>iq and left without adding a line: it goes.
+  vim.api.nvim_create_autocmd("WinLeave", {
+    buffer = buf,
+    callback = function()
+      if q.pinned and not vim.bo[buf].modified then
+        q.pinned = nil
+        vim.schedule(function()
+          local chat = chat_of(q)
+          if chat then
+            M.sync(chat)
+          end
+        end)
+      end
+    end,
+  })
+  local map = function(lhs, fn, desc)
+    vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, desc = "isovim: " .. desc })
+  end
+  map("<CR>", function()
+    send_now(buf)
+  end, "send this prompt now")
+  map("q", function()
+    local chat = chat_of(q)
+    q.pinned, q.hidden = nil, chat and #chat.queue or 0
+    if chat then
+      M.sync(chat)
+    end
+  end, "hide the queue until another prompt queues")
+  map("<C-k>", function()
+    local chat = chat_of(q)
+    local win = chat and vim.fn.bufwinid(chat.buf) or -1
+    if win ~= -1 then
+      vim.api.nvim_set_current_win(win)
+    end
+  end, "up to the chat")
+  map("<C-j>", function()
+    require("isovim.acp.chat").focus_composer(q.ws, q.agent)
+  end, "down to the composer")
+  return buf, q
+end
 
--- Opens the agent's queue in a split under win (default: the current window).
-function M.open(ws, agent, win)
+-- The queue window above the composer window cwin, if it has one.
+local function above(buf, cwin)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if vim.w[win].isovim_queue_above == cwin then
+      return win
+    end
+  end
+end
+
+-- Closing or opening a window takes rows from its neighbours; the composers keep theirs.
+local function keeping_composers(chat, fn)
+  local heights = {}
+  for _, cwin in ipairs(vim.fn.win_findbuf(chat.composer)) do
+    heights[cwin] = vim.api.nvim_win_get_height(cwin)
+  end
+  fn()
+  for cwin, height in pairs(heights) do
+    if vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_height(cwin) ~= height then
+      pcall(vim.api.nvim_win_set_height, cwin, height)
+    end
+  end
+end
+
+local function close(chat, win)
+  if win == vim.api.nvim_get_current_win() then
+    local cwin = vim.w[win].isovim_queue_above
+    if cwin and vim.api.nvim_win_is_valid(cwin) then
+      vim.api.nvim_set_current_win(cwin)
+    end
+  end
+  keeping_composers(chat, function()
+    pcall(vim.api.nvim_win_close, win, false)
+  end)
+end
+
+-- Shows or hides the agent's queue window above each window showing its composer, as the queue
+-- (the chat's, from its journal) says: there while prompts wait, or while you're editing it.
+---@param chat isovim.acp.Chat
+function M.sync(chat)
+  local buf, q = find(chat.ws, chat.agent)
+  local count = #chat.queue
+  if q and q.hidden then
+    q.hidden = math.min(q.hidden, count)
+    if count > q.hidden or count == 0 then
+      q.hidden = nil
+    end
+  end
+  local editing = buf and vim.bo[buf].modified and vim.fn.bufwinid(buf) ~= -1
+  local want = (count > 0 or (q and q.pinned) or editing) and not (q and q.hidden)
+  local composers = vim.api.nvim_buf_is_valid(chat.composer) and vim.fn.win_findbuf(chat.composer) or {}
+  if not want or #composers == 0 then
+    for _, win in ipairs(buf and vim.fn.win_findbuf(buf) or {}) do
+      close(chat, win)
+    end
+    return
+  end
+  if not buf then
+    buf, q = buffer(chat.ws, chat.agent)
+    fill(buf, chat.queue)
+  end
+  -- A narrow window cuts the help, not the count (%<).
+  local bar = ("%%#IsovimAcpSpinnerNote# queued · %d %%<%%#IsovimAcpHint#  %s"):format(count, M.help)
+  for _, cwin in ipairs(composers) do
+    local win = above(buf, cwin)
+    if not win then
+      keeping_composers(chat, function()
+        win = vim.api.nvim_open_win(buf, false, { split = "above", win = cwin, height = 2 })
+      end)
+      vim.w[win].isovim_queue_above = cwin
+    end
+    vim.wo[win][0].winbar = bar
+    -- Its lines as they wrap, and the title (the winbar counts in a window's height).
+    local rows = vim.api.nvim_win_text_height(win, {}).all
+    local height = math.max(1, math.min(MAX_HEIGHT, rows)) + 1
+    if vim.api.nvim_win_get_height(win) ~= height then
+      keeping_composers(chat, function()
+        vim.api.nvim_win_set_height(win, height)
+      end)
+    end
+  end
+  -- One whose composer went elsewhere (another agent's chat took its window, or it closed).
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    local cwin = vim.w[win].isovim_queue_above
+    if not (cwin and vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_buf(cwin) == chat.composer) then
+      close(chat, win)
+    end
+  end
+end
+
+-- The queue changed: an unmodified buffer shows it, and the windows follow (the chat calls this).
+---@param chat isovim.acp.Chat
+function M.refresh(chat)
+  local buf, q = find(chat.ws, chat.agent)
+  if buf and not vim.bo[buf].modified then
+    fill(buf, chat.queue)
+  end
+  if q and #chat.queue > 0 then
+    q.pinned = nil
+  end
+  M.sync(chat)
+end
+
+-- The queue window above the chat's composer, while one shows (for <C-j> and <C-k>).
+---@param chat isovim.acp.Chat
+function M.window(chat)
+  local buf = find(chat.ws, chat.agent)
+  local cwin = vim.fn.bufwinid(chat.composer)
+  return buf and cwin ~= -1 and above(buf, cwin) or nil
+end
+
+-- <leader>iq: goes to the agent's queue, opening it even when nothing waits.
+function M.focus(ws, agent)
+  local chat = require("isovim.acp.chat").get(ws, agent)
+  if not chat then
+    return notify(("%s has no chat open"):format(agent), vim.log.levels.ERROR)
+  end
   local ok, result = acp.call(ws, agent, "queue")
   if not ok then
     return notify(("%s's queue: %s"):format(agent, tostring(result)), vim.log.levels.ERROR)
   end
-  local buf = find(ws, agent)
-  if not buf then
-    buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[buf].buftype = "acwrite"
-    vim.bo[buf].bufhidden = "wipe"
-    vim.bo[buf].swapfile = false
-    vim.bo[buf].filetype = "isovim_queue"
-    vim.b[buf].completion = false
-    pcall(vim.api.nvim_buf_set_name, buf, ("isovim-acp://%s/%s/queue"):format(ws, agent))
-    queues[buf] = { ws = ws, agent = agent, ids = {} }
-    vim.api.nvim_create_autocmd("BufWriteCmd", {
-      buffer = buf,
-      callback = function()
-        write(buf)
-      end,
-    })
-    vim.api.nvim_create_autocmd("BufWipeout", {
-      buffer = buf,
-      callback = function()
-        queues[buf] = nil
-      end,
-    })
-    local map = function(lhs, fn, desc)
-      vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, desc = "isovim: " .. desc })
-    end
-    map("<CR>", function()
-      send_now(buf)
-    end, "send this prompt now")
-    map("q", function()
-      vim.cmd("close")
-    end, "close the queue")
+  local buf, q = buffer(ws, agent)
+  if not vim.bo[buf].modified then
+    fill(buf, result.items or {})
   end
-  fill(buf, result.items or {})
-  local shown = vim.fn.bufwinid(buf)
-  if shown == -1 then
-    shown = vim.api.nvim_open_win(buf, true, { split = "below", win = win or 0, height = math.max(3, math.min(10, #result.items + 1)) })
+  q.pinned, q.hidden = true, nil
+  M.sync(chat)
+  local win = M.window(chat)
+  if win then
+    vim.cmd.stopinsert()
+    vim.api.nvim_set_current_win(win)
   end
-  vim.api.nvim_set_current_win(shown)
-  vim.wo[shown][0].winbar = "%#Comment#" .. M.help
-  vim.wo[shown][0].wrap = true
   return buf
+end
+
+-- The agent went away: its queue buffer goes too.
+function M.close(ws, agent)
+  local buf = find(ws, agent)
+  if buf then
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  end
 end
 
 return M

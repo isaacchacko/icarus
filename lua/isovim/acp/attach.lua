@@ -39,7 +39,7 @@ function M.run(ws, agent)
     end,
   })
   vim.keymap.set("n", "<leader>iq", function()
-    require("isovim.acp.queue").open(ws, agent, vim.fn.bufwinid(chat.composer))
+    require("isovim.acp.queue").focus(ws, agent)
   end, { desc = "isovim: the prompt queue" })
   vim.keymap.set("n", "<leader>iu", function()
     require("isovim.acp.chat").rewind_at_cursor()

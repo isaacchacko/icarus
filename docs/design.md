@@ -66,7 +66,9 @@ lifetimes, so agents outlive the TUI).
 **Prompts and messages.**
 - A prompt sent while the agent is busy is **queued** and delivered when its turn ends. This covers
   yours and other agents' alike, so nothing is ever typed into a shared box.
-- The queue can be edited, reordered, cleared or "sent now" (which cancels the running turn).
+- The queue shows by itself while prompts wait, between the chat and the input box (see The chat).
+  It can be edited, reordered, cleared or "sent now" (which cancels the running turn).
+- A prompt that queues while you edit the queue isn't lost when you write it: it goes after yours.
 - Cancel is a protocol call.
 
 **Permissions.**
@@ -108,6 +110,17 @@ Everything drawn is a pure function of the journal, so a replay draws what live 
 The input box is another buffer under it, with full vim editing: Claude's spinner line above it
 while the agent works (its verb, the time, tokens, how to interrupt), a rule above and below it,
 `❯` before it and a hint under it.
+
+While prompts wait, the queue shows between the two, in a window of its own: one prompt a line, as
+tall as its lines up to six, titled `queued · N`. It opens as the first prompt queues and closes when
+the last one goes; `q` hides it until another queues. It's a buffer you edit: change, reorder or
+delete lines, or add one, and `:w` makes it the queue; `<CR>` on a line sends that prompt now. A
+redraw never touches it while you're editing it, nor closes it. It isn't part of a saved layout: the
+chat brings it back wherever its input box shows, so switching workspaces, opening another agent or
+restarting leaves no stray queue window.
+
+`<C-j>` / `<C-k>` walk down and up the column, chat → queue → input box, as they walk the sidebar's
+windows; with no queue showing they go straight between the chat and the input box.
 
 `iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat and input
 box, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.
@@ -261,7 +274,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `x` | root mode for this repo |
 | `j` | jump |
 | `<` / `>` | switch host |
-| `q` | the prompt queue |
+| `q` | the prompt queue (opened even when empty, to add a line) |
 | `u` / `f` | rewind / fork at the cursor |
 | `l` | the landing |
 
@@ -275,10 +288,17 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 **In the chat**
 - `]]` / `[[` jump between your prompts; `]m` / `[m` between any messages.
 - `za` folds; `i` / `a` / `o` / `<CR>` go to the input box; `<C-c>` cancels; `gf` opens a file.
+- `<C-j>` goes down to the queue while it shows, else to the input box.
+
+**In the queue**
+- Edit lines and `:w`; `<CR>` sends the prompt on the line now; `q` hides it.
+- `<C-k>` goes up to the chat, `<C-j>` down to the input box.
 
 **In the input box**
-- `<CR>` sends; `<S-CR>` adds a newline; `<Up>` / `<Down>` browse history when it's empty.
-- `<Esc>` drops to normal mode; `<C-k>` goes up to the chat.
+- `<CR>` sends; `<S-CR>` (or `<M-CR>`, for a terminal that can't send `<S-CR>`) adds a newline;
+  `<Up>` / `<Down>` browse history when it's empty.
+- `<Esc>` drops to normal mode; `<C-k>` goes up to the queue while it shows, else the chat, in either
+  mode; `<C-j>` does nothing, as nothing is below it.
 
 **In the sidebar**
 

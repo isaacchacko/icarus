@@ -21,7 +21,6 @@
 --      1. Yes              its number and <CR> in the composer, or <CR> on an option, answers it;
 --      2. No               once answered the box gives way to what was decided
 --   ✻ Brewed for 8s        the turn's summary
---   (queued) a prompt      the queue, kept at the bottom until each prompt goes
 -- Everything drawn is a pure function of the journal's entries, so a replay draws what live drew.
 -- The glyphs are text, so wrapping, search and yanks work in any window; colors, the tool
 -- call places and the message marks are extmarks. Long lines wrap under their text (breakindent),
@@ -31,14 +30,18 @@
 -- a window whose cursor is on the last line; one scrolled up stays where it is, and the composer's
 -- bar says there's more below. The composer is Claude's prompt: its bar is Claude's spinner line
 -- while the agent works (glyph, verb, time, tokens, <C-c> to interrupt) and says how many prompts
--- wait; a rule above and below it, ❯ before it and a hint under it.
+-- wait; a rule above and below it, ❯ before it and a hint under it. While prompts wait, the queue
+-- shows in a window of its own between the chat and the composer (isovim.acp.queue), where you can
+-- edit it.
 --
 -- Chat keys: ]] [[ your own prompts, ]m [m any message, za zo zc the output of the tool call under
 -- the cursor, i a o the composer, <CR> too (or, on a box's option, that answer), <C-c> cancels the
 -- turn, gf the file on the line. Composer keys: <CR> sends (queued while the agent works; an answer
--- while a box waits on you), <S-CR> or <C-j> a new line, <C-c> cancels the turn, <Up> <Down> your
--- earlier prompts while it's empty, <Esc> normal mode, <C-k> the chat. <leader>iq edits the queue
--- (isovim.acp.queue).
+-- while a box waits on you), <S-CR> (or <M-CR>) a new line, <C-c> cancels the turn, <Up> <Down>
+-- your earlier prompts while it's empty, <Esc> normal mode. <C-j> and <C-k> walk down and up the
+-- column, chat → queue (while it shows) → composer, in normal mode in the chat and the queue and in
+-- both modes in the composer; <C-j> in the composer does nothing, as nothing is below it.
+-- <leader>iq goes to the queue, opening it even when empty.
 --
 -- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
 -- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
@@ -48,6 +51,7 @@
 local acp = require("isovim.acp")
 local journal = require("isovim.acp.journal")
 local look = require("isovim.acp.look")
+local queue = require("isovim.acp.queue")
 local store = require("isovim.store")
 
 local M = {}
@@ -101,8 +105,7 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@field verb? string the running turn's spinner verb
 ---@field at_start? boolean the streaming block has no text yet
 ---@field tools table<string, isovim.acp.ToolCall>
----@field queue {id: string, text: string}[] prompts waiting, as the tail shows them
----@field tail integer how many lines the tail (the queue) takes at the end
+---@field queue {id: string, text: string}[] prompts waiting, as the queue window shows them
 ---@field history string[] your prompts, oldest first, for <Up>/<Down> in the composer
 ---@field recall? integer which of them the composer shows
 ---@field busy boolean
@@ -183,9 +186,9 @@ local function edit(chat, fn)
   end
 end
 
--- The row after the last line of the conversation, where the tail (the queue) starts.
+-- The row after the last line of the conversation.
 local function body_end(chat)
-  return vim.api.nvim_buf_line_count(chat.buf) - chat.tail
+  return vim.api.nvim_buf_line_count(chat.buf)
 end
 
 local function line_hl(buf, row, count, hl)
@@ -205,7 +208,7 @@ local function eol_hl(buf, row, col, hl)
     priority = 100 })
 end
 
--- Adds whole lines at the end of the conversation (above the tail); returns the first one's row.
+-- Adds whole lines at the end of the conversation; returns the first one's row.
 local function add_lines(chat, lines, hl)
   local row
   edit(chat, function(buf)
@@ -505,28 +508,6 @@ local function prompt_lines(text)
   return lines
 end
 
--- The tail: what's queued, under everything else, until each prompt goes.
-local function draw_tail(chat)
-  local lines = {}
-  if #chat.queue > 0 then
-    lines[1] = ""
-    for _, item in ipairs(chat.queue) do
-      lines[#lines + 1] = ("(queued) %s"):format((item.text or ""):gsub("\n", " ⏎ "))
-    end
-  end
-  edit(chat, function(buf)
-    local from = body_end(chat)
-    vim.api.nvim_buf_clear_namespace(buf, NS, from, -1)
-    vim.api.nvim_buf_set_lines(buf, from, -1, false, lines)
-    line_hl(buf, from, #lines, "IsovimAcpQueued")
-  end)
-  chat.tail = #lines
-  local queue = package.loaded["isovim.acp.queue"]
-  if queue then
-    queue.refresh(chat.ws, chat.agent, chat.queue)
-  end
-end
-
 -- Boxes: a permission or a question waiting on you, drawn as Claude draws them, and replaced by
 -- what you decided once you have.
 
@@ -797,7 +778,7 @@ function RENDER.prompt(chat, entry)
     return item.id ~= entry.id
   end, chat.queue)
   if #chat.queue ~= before then
-    draw_tail(chat)
+    queue.refresh(chat)
   end
   -- Yours: typed in a composer or on Claude's screen, or iso spawn's; not one iso send or msg
   -- delivered.
@@ -817,14 +798,14 @@ end
 
 function RENDER.queued(chat, entry)
   chat.queue[#chat.queue + 1] = { id = entry.id or "", text = entry.text or "" }
-  draw_tail(chat)
+  queue.refresh(chat)
 end
 
 function RENDER.queue(chat, entry)
   chat.queue = vim.tbl_map(function(item)
     return { id = item.id, text = item.text or "" }
   end, entry.items or {})
-  draw_tail(chat)
+  queue.refresh(chat)
 end
 
 function RENDER.update(chat, entry)
@@ -950,7 +931,7 @@ function M.bar_parts(chat)
     add(GLYPH.prompt .. " " .. (spec.name or chat.agent), "IsovimAcpIdle")
   end
   if #chat.queue > 0 then
-    add((" · %d queued (<leader>iq)"):format(#chat.queue), "IsovimAcpSpinnerNote")
+    add((" · %d queued"):format(#chat.queue), "IsovimAcpSpinnerNote")
   end
   if chat.unseen then
     add(" · ↓ more below", "IsovimAcpSpinnerNote")
@@ -1043,7 +1024,7 @@ function M.push(ws, agent, entry)
 end
 
 local function reset(chat)
-  chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.tail, chat.fresh = nil, {}, {}, {}, 0, 0, true
+  chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.fresh = nil, {}, {}, {}, 0, true
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
   chat.busy, chat.handover = false, false
   if vim.api.nvim_buf_is_valid(chat.buf) then
@@ -1054,6 +1035,7 @@ local function reset(chat)
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
     end)
   end
+  queue.refresh(chat)
 end
 
 -- Subscribes to the supervisor's entries, if it's up and the chat isn't already.
@@ -1447,6 +1429,13 @@ local function map_chat(chat)
   map("gf", function()
     open_file(chat)
   end, "open the file on the line beside the chat")
+  map("<C-j>", function()
+    local win = queue.window(chat)
+    if win then
+      return vim.api.nvim_set_current_win(win)
+    end
+    M.focus_composer(chat.ws, chat.agent)
+  end, "down to the queue while it shows, else the composer")
 end
 
 local function map_composer(chat)
@@ -1457,9 +1446,12 @@ local function map_composer(chat)
   map({ "n", "i" }, "<CR>", function()
     M.submit(buf)
   end, "send to the agent")
-  -- A new line without sending: <CR> here is the key's own, not the mapping above.
+  -- A new line without sending: <CR> here is the key's own, not the mapping above. <M-CR> for a
+  -- terminal that sends <S-CR> as <CR>.
   map("i", "<S-CR>", "<CR>", "new line")
-  map("i", "<C-j>", "<CR>", "new line")
+  map("i", "<M-CR>", "<CR>", "new line")
+  -- Nothing is below the composer: <C-j>, which walks down the column, stays.
+  map({ "n", "i" }, "<C-j>", "<Nop>", "nothing below the composer")
   map({ "n", "i" }, "<C-c>", function()
     if chat.rewind then
       chat.rewind = nil
@@ -1477,12 +1469,39 @@ local function map_composer(chat)
   end
   map({ "n", "i" }, "<C-k>", function()
     vim.cmd.stopinsert()
-    local win = vim.fn.bufwinid(chat.buf)
+    local win = queue.window(chat) or vim.fn.bufwinid(chat.buf)
     if win ~= -1 then
       vim.api.nvim_set_current_win(win)
     end
-  end, "go to the chat")
+  end, "up to the queue while it shows, else the chat")
 end
+
+-- The chat's, the queue's and the composer's keys, for the help (`?` in the sidebar).
+M.help_keys = {
+  chat = {
+    { "]] / [[", "your next / previous prompt" },
+    { "]m / [m", "the next / previous message" },
+    { "za zo zc", "fold the tool call's output under the cursor" },
+    { "i a o <CR>", "type to the agent (<CR> on a box's option answers with it)" },
+    { "<C-c>", "cancel the agent's turn" },
+    { "<C-j>", "down to the queue while it shows, else the composer" },
+  },
+  queue = {
+    { "edit, :w", "edit, reorder or delete lines; :w makes it the queue" },
+    { "<CR>", "send the prompt on the line now (cancels the turn)" },
+    { "q", "hide the queue until another prompt queues" },
+    { "<C-k> / <C-j>", "up to the chat / down to the composer" },
+    { "<leader>iq", "go to the queue, opening it even when empty" },
+  },
+  composer = {
+    { "<CR>", "send (queued while the agent works)" },
+    { "<S-CR> / <M-CR>", "a new line" },
+    { "<Up> / <Down>", "your earlier prompts while it's empty" },
+    { "<C-c>", "cancel the turn (or the rewind you're editing)" },
+    { "<C-k>", "up to the queue while it shows, else the chat" },
+    { "<C-j>", "nothing: the composer is the bottom" },
+  },
+}
 
 -- The chat's window options, for any window that shows it.
 local function chat_window(win)
@@ -1515,12 +1534,13 @@ local function show_top_rule(chat)
 end
 
 local function composer_hint(chat)
+  local up = queue.window(chat) and "<C-k> the queue" or "<C-k> the chat"
   if #chat.boxes > 0 then
     return "  type its number and <CR> to answer · or <CR> on an option in the chat · <leader>in the Inbox"
   elseif chat.busy then
-    return "  <CR> queues it · <C-c> interrupts · <leader>iq the queue · <C-k> the chat"
+    return "  <CR> queues it · <C-c> interrupts · " .. (queue.window(chat) and up or "<leader>iq the queue · " .. up)
   end
-  return "  <CR> send · <S-CR> new line · /new /resume /fork · <Up> earlier prompts · <C-k> the chat"
+  return "  <CR> send · <S-CR> new line · /new /resume /fork · <Up> earlier prompts · " .. up
 end
 
 local function decorate_composer(chat)
@@ -1588,7 +1608,7 @@ local function make(ws, agent, old)
   vim.b[composer].completion = false
 
   local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, seq = 0,
-    tail = 0, fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
+    fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
     kind = spec.kind or "claude" }
   if old then
     reset(chat)
@@ -1618,6 +1638,16 @@ local function make(ws, agent, old)
     callback = function()
       composer_window(vim.api.nvim_get_current_win())
       update_bar(chat)
+    end,
+  })
+  -- The queue window follows the composer's: above each window showing it, gone with it. Later,
+  -- as a chat being opened is still placing windows. (Windows placed inside another autocmd, as
+  -- selecting a workspace rebuilds its layout, fire none: isovim.layout calls M.sync_queues.)
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWinLeave", "WinClosed" }, {
+    group = GROUP,
+    buffer = composer,
+    callback = function()
+      M.sync_queues(chat)
     end,
   })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
@@ -1669,14 +1699,29 @@ local function make(ws, agent, old)
     callback = function()
       chat.stop()
       chats[key(ws, agent)] = nil
-      if vim.api.nvim_buf_is_valid(composer) then
-        vim.schedule(function()
+      vim.schedule(function()
+        queue.close(ws, agent)
+        if vim.api.nvim_buf_is_valid(composer) then
           pcall(vim.api.nvim_buf_delete, composer, { force = true })
-        end)
-      end
+        end
+      end)
     end,
   })
   return chat
+end
+
+-- Soon (once whatever is placing windows is done): each chat's queue window (isovim.acp.queue)
+-- where its composer shows, or chat's alone.
+---@param chat? isovim.acp.Chat
+function M.sync_queues(chat)
+  vim.schedule(function()
+    for _, each in pairs(chat and { chat } or chats) do
+      if vim.api.nvim_buf_is_valid(each.composer) then
+        queue.sync(each)
+        update_bar(each)
+      end
+    end
+  end)
 end
 
 ---@return isovim.acp.Chat?
@@ -1721,12 +1766,14 @@ function M.open(ws, agent, win)
   local old_composer = replaced and vim.fn.bufwinid(shown.composer) or -1
   vim.api.nvim_win_set_buf(win, chat.buf)
   pcall(vim.api.nvim_win_set_cursor, win, { vim.api.nvim_buf_line_count(chat.buf), 0 })
-  if old_composer ~= -1 and vim.fn.bufwinid(chat.composer) == -1 then
+  -- Another workspace's chat entering the window selects it, which closes the old composer's.
+  if old_composer ~= -1 and vim.api.nvim_win_is_valid(old_composer) and vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_win_set_buf(old_composer, chat.composer)
   elseif vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = 6 })
   end
   update_bar(chat)
+  M.sync_queues(chat)
   return chat
 end
 
@@ -1873,12 +1920,13 @@ function M.rebind()
   end
 end
 
--- The agent went away: its chat and composer go too.
+-- The agent went away: its chat, composer and queue go too.
 function M.close(ws, agent)
   local chat = chats[key(ws, agent)]
   if chat then
     chat.stop()
     chats[key(ws, agent)] = nil
+    queue.close(ws, agent)
     for _, buf in ipairs({ chat.composer, chat.buf }) do
       if vim.api.nvim_buf_is_valid(buf) then
         pcall(vim.api.nvim_buf_delete, buf, { force = true })

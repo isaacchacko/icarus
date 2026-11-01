@@ -303,7 +303,7 @@ try:
     iso.wait(lambda: any(e["kind"] == "permission" and e["decision"] == "denied" for e in journal()), "the answer")
     check(soon(lambda: not has(" Bash command") and has("  ⎿  Denied by you · Bash: rm -rf build won't run")),
           "2 in the composer denies it, and the box gives way to that", chat()[-8:])
-    check(not has("(queued) 2") and not any(e["kind"] == "prompt" and e["text"] == "2" for e in journal()),
+    check(not any(e["kind"] in ("prompt", "queued") and e["text"] == "2" for e in journal()),
           "the answer isn't sent as a prompt")
 
     print("\n# a question, answered from the composer and the chat")

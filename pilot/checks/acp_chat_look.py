@@ -3,7 +3,8 @@ the ⏺ ❯ ⎿ marks and their colors, tool output folded at first, a diff draw
 colored inline, Bash output streamed from terminal deltas with its exit code, thinking and a plan;
 the agent's text streaming chunk by chunk through the supervisor's pushes (with the journal watch
 off); the spinner above the composer while it works; the view following the bottom only when
-you're there; the queue edited, reordered, cleared and one prompt sent now (cancelling the turn);
+you're there; the queue in its window between the chat and the composer, edited, reordered, cleared
+and one prompt sent now (cancelling the turn), q hiding it;
 @imports from the CLAUDE.md files in the session prompt; iso attach from a second nvim showing the
 same chat and sending from it; and iso handover running claude --resume in the pane (a fake
 claude), with what happened there put into the chat and the session reopened after.
@@ -298,13 +299,16 @@ try:
     iso.wait(lambda: state("a0") == "working", "a0 working")
     for text in ("slow 2 q1", "slow 2 q2", "slow 2 q3"):
         run("send", a0, text)
-    iso.wait(lambda: has("(queued) slow 2 q3"), "three queued")
-    check(chat()[-4:] == ["", "(queued) slow 2 q1", "(queued) slow 2 q2", "(queued) slow 2 q3"], "the queue at the bottom", chat()[-5:])
+    qwin = lambda: iso.lua("return require('isovim.acp.queue').window(require('isovim.acp.chat').get('acme/app', 'a0')) or vim.NIL")  # noqa: E731
+    iso.wait(lambda: qwin() and iso.lua("return vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(...))", qwin()) == 3,
+             "three queued, in the queue window")
+    check(not any("(queued)" in line for line in chat()), "the chat doesn't draw them", chat()[-5:])
     check("3 queued" in bar(), "the bar counts them", bar())
     iso.lua("vim.api.nvim_set_current_win(...)", chat_win())
     iso.keys("Escape")
     iso.keys("Space", "i", "q")
-    iso.wait(lambda: iso.lua("return vim.bo.filetype") == "isovim_queue", "<leader>iq opens the queue")
+    iso.wait(lambda: iso.lua("return vim.bo.filetype") == "isovim_queue", "<leader>iq goes to the queue")
+    check(iso.lua("return vim.api.nvim_get_current_win()") == qwin(), "its window between the chat and the composer")
     qbuf = iso.lua("return vim.api.nvim_get_current_buf()")
     qlines = lambda: iso.lua("return vim.api.nvim_buf_get_lines(..., 0, -1, false)", qbuf)  # noqa: E731
     check(qlines() == ["#1 slow 2 q1", "#2 slow 2 q2", "#3 slow 2 q3"], "one line a prompt", qlines())
@@ -315,8 +319,8 @@ try:
     iso.keys("Enter")
     queue = lambda: [i["text"] for i in call("queue")[1]["items"]]  # noqa: E731
     check(soon(lambda: queue() == ["slow 2 q3", "slow 3 q1 edited", "slow 2 q4 new"]), "edited, reordered, cut and added", queue())
-    check(soon(lambda: chat()[-3:] == ["(queued) slow 2 q3", "(queued) slow 3 q1 edited", "(queued) slow 2 q4 new"]),
-          "the chat's queue follows", chat()[-4:])
+    check(soon(lambda: "3 queued" in bar() and "queued · 3" in iso.lua("return vim.wo[...].winbar", qwin())),
+          "the bar and the window's title follow", bar())
     check(qlines() == ["#1 slow 2 q3", "#2 slow 3 q1 edited", "#3 slow 2 q4 new"] and not iso.lua("return vim.bo.modified"),
           "the buffer shows the queue as written", qlines())
     iso.screenshot("queue")
@@ -332,13 +336,20 @@ try:
     iso.type(":w")
     iso.keys("Enter")
     check(soon(lambda: queue() == []), "deleting every line and :w clears it", queue())
-    check(soon(lambda: not any("(queued)" in line for line in chat())), "the chat's queue is gone")
+    check(soon(lambda: qwin() is None and "queued" not in bar()), "the queue window closes, the bar's count goes")
     iso.wait(lambda: turn_done("a0", "slow 3 q1 edited"), "the sent-now prompt answered", 15)
     time.sleep(1)
     texts = [e["text"] for e in journal("a0") if e["kind"] == "prompt"]
     check(not any(t in texts for t in ("slow 2 q1", "slow 2 q2", "slow 2 q3", "slow 2 q4 new")), "nothing cleared or cut was sent", texts[-4:])
+    # q hides it while prompts wait.
+    run("send", a0, "slow 4")
+    iso.wait(lambda: state("a0") == "working", "a0 working")
+    run("send", a0, "slow 1 q5")
+    iso.wait(lambda: qwin(), "queued again, the window back")
+    iso.lua("vim.api.nvim_set_current_win(...)", qwin())
     iso.keys("q")
-    iso.wait(lambda: iso.lua("return vim.bo.filetype") != "isovim_queue", "q closes it")
+    iso.wait(lambda: qwin() is None and iso.lua("return vim.bo.filetype") != "isovim_queue", "q hides it")
+    iso.wait(lambda: turn_done("a0", "slow 1 q5"), "the queued one answered", 15)
 
     print("\n# iso attach from a second nvim")
     att = f"isot-att-{os.getpid()}"
@@ -348,7 +359,7 @@ try:
     def att_screen():
         return subprocess.run(["tmux", "-L", iso.ui, "capture-pane", "-p", "-t", f"={att}:"], capture_output=True, text=True).stdout
 
-    iso.wait(lambda: f"{DOT} w1 w2" in att_screen() and "alpha" in att_screen(), "the attached chat", 20)
+    iso.wait(lambda: f"{DOT} reply to: slow 1 q5" in att_screen() and "alpha" in att_screen(), "the attached chat", 20)
     check(True, "it shows the same chat, its bar naming the agent")
     subprocess.run(["tmux", "-L", iso.ui, "send-keys", "-t", f"={att}:", "-l", "from the attached nvim"])
     time.sleep(0.2)
@@ -383,7 +394,9 @@ try:
     rc, _, err = run("handover", "--no-attach", a0)
     check(rc != 0 and "already" in err, "a second handover is refused", err)
     run("send", a0, "while handed over")
-    check(soon(lambda: has("(queued) while handed over")), "a prompt meanwhile waits in the queue")
+    check(soon(lambda: [i["text"] for i in call("queue")[1]["items"]] == ["while handed over"]
+               and iso.lua("return require('isovim.acp.queue').window(require('isovim.acp.chat').get('acme/app', 'a0')) ~= nil")),
+          "a prompt meanwhile waits in the queue, its window showing")
     check(not any(e["kind"] == "prompt" and e["text"] == "while handed over" for e in journal("a0")), "and isn't sent")
     subprocess.run(["tmux", "-L", iso.env["ISOVIM_TMUX_SOCKET"], "send-keys", "-t", "=iso2-acme+app+a0:", "bye", "Enter"])
     iso.wait(lambda: has("[back from Claude's screen]"), "Claude exited", 15)
