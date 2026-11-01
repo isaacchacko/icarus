@@ -249,8 +249,8 @@ local function asked(entry)
 end
 
 local HINT = {
-  one = " <CR> or its number picks · j/k moves · q closes",
-  multi = " <Space>, <CR> or its number ticks · s or Submit sends · q closes",
+  one = " <CR> or its number picks · j/k moves · n next · q closes",
+  multi = " <Space>, <CR> or its number ticks · s or Submit sends · n next · q closes",
 }
 
 -- The question view's lines as rows {text, hl?, spans?, rule?, option?, submit?, other?}: who
@@ -314,7 +314,7 @@ function M.question_rows(view)
     return rows
   end
   rows[#rows + 1] = { "" }
-  rows[#rows + 1] = { " q closes", "IsovimAcpHint" }
+  rows[#rows + 1] = { " n next · q closes", "IsovimAcpHint" }
   return rows
 end
 
@@ -461,6 +461,43 @@ local function close(view)
   end
 end
 
+-- n / N: the next or previous question waiting on you after this one, in the Inbox's order
+-- (isovim.waiting_surfaces, needs_you only, so one a root is deciding is skipped), round past the
+-- end; it replaces this view in its window, and q there goes back to what this one replaced.
+local function next_question(view, dir)
+  local isovim = require("isovim")
+  local here = isovim.inbox_place(view.entry)
+  local function before(a, b)
+    for i = 1, 3 do
+      if a[i] ~= b[i] then
+        return a[i] < b[i]
+      end
+    end
+    return false
+  end
+  local others = vim.tbl_filter(function(item)
+    return item.entry.type == "question" and not (item.entry.repo == view.repo and item.entry.name == view.name)
+  end, isovim.waiting_surfaces())
+  if #others == 0 then
+    return Snacks.notify.info("No other questions waiting", { title = "isovim" })
+  end
+  local pick
+  if dir > 0 then
+    pick = vim.iter(others):find(function(item)
+      return before(here, item.at)
+    end) or others[1]
+  else
+    pick = vim.iter(others):rfind(function(item)
+      return before(item.at, here)
+    end) or others[#others]
+  end
+  local prev = view.prev
+  local next_view = M.open(pick.entry)
+  if next_view.prev == view.buf then
+    next_view.prev = prev
+  end
+end
+
 -- The answer surface.<repo>.<name>.answered carried since the view opened: an asker collects an
 -- answer given elsewhere (iso answer, another host) and removes its question at once, often
 -- before a rescan here sees it answered.
@@ -565,6 +602,12 @@ local function bind(view)
     on("q", function()
       close(view)
     end, "close")
+    on("n", function()
+      next_question(view, 1)
+    end, "the next question waiting")
+    on("N", function()
+      next_question(view, -1)
+    end, "the previous question waiting")
   elseif view.kind == "markdown" then
     for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
       vim.keymap.set("n", lhs, function()

@@ -256,7 +256,9 @@ one tab, isovim, in every scope.
 - A question opens as a tab in the main window like a markdown surface, never as a popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
   multi question they tick it (`<Space>` too) and Submit or `s` sends. One that takes your own words
   has the input box under it, whose `<CR>` sends them. The answer goes the way `iso answer`'s does,
-  and the buffer shows it, as it does when the question is answered elsewhere; `q` closes it. An
+  and the buffer shows it, as it does when the question is answered elsewhere; `q` closes it. `n`
+  and `N` replace it with the next or previous question waiting on you in the Inbox's order (round
+  past the end; one a root is deciding isn't waiting on you). An
   agent's permission request (Allow / Deny) is one of these too.
 - PRs appear only when the router registers them (`iso router pr`).
 

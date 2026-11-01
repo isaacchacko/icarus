@@ -1203,15 +1203,21 @@ function M.run_script()
   M.refresh()
 end
 
+local function rank(key)
+  return key == "root" and 0 or key == "general" and 2 or 1
+end
+
+-- Where a surface sits in the Inbox hierarchy's order, {rank, repo, file}, as waiting_surfaces sorts.
+function M.inbox_place(entry)
+  return { rank(entry.repo), entry.repo, entry.base or entry.name }
+end
+
 -- The surfaces waiting on you, in the Inbox hierarchy's order: the host root's, then each repo's by
 -- name, general's last; within one, the Inbox's order (by file name).
 local function waiting_surfaces()
   local ok, surfaces = pcall(require, "isovim.surfaces")
   if not ok then
     return {}
-  end
-  local function rank(key)
-    return key == "root" and 0 or key == "general" and 2 or 1
   end
   local keys = surfaces.repos()
   table.sort(keys, function(a, b)
@@ -1224,12 +1230,14 @@ local function waiting_surfaces()
   for _, key in ipairs(keys) do
     for _, entry in ipairs(surfaces.list(key)) do
       if entry.needs_you then
-        waiting[#waiting + 1] = { entry = entry, at = { rank(key), key, entry.base or entry.name } }
+        waiting[#waiting + 1] = { entry = entry, at = M.inbox_place(entry) }
       end
     end
   end
   return waiting, surfaces
 end
+
+M.waiting_surfaces = waiting_surfaces
 
 local function after(a, b)
   for i = 1, 3 do
