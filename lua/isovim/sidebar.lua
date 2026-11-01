@@ -1359,7 +1359,7 @@ local COLUMN_KEYS = {
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, surface or PR; on a repo, its router; on a busy repo in the host Inbox, its Inbox; a pinned file beside the chat" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo or Inbox (from a row in one, collapse it)" },
-  { "s", "isovim_spawn", "spawn a worker in its repo (a new worktree), or in no repo" },
+  { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "t", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace or agent" },
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
@@ -1723,22 +1723,33 @@ local function new_workspace(name, dir)
   end)
 end
 
--- Spawns a worker in the workspace's repo: a new-layout repo gets another agent; a workspace, a new
--- workspace named as asked, in the repo its worktree came from (or its project dir); a workspace in
--- no project, one in its own dir. With no workspace, a new one anywhere (it asks where).
-function M.spawn(ws)
-  if not ws then
-    return M.actions.isovim_add()
-  elseif store.v2(ws) then
-    return add_agent(ws, { kind = "claude" })
+-- The repo a spawn from target goes to, and the clone it's made from: a repo or Inbox row's repo,
+-- an agent's (a workspace's agent's, the repo its dir is a clone of), else General ("_").
+---@param target? table|string a sidebar row, or a workspace or repo key
+---@return string key, string? checkout
+local function spawn_target(target)
+  local item = type(target) == "table" and target or { ws = target }
+  if item.repo_key and item.repo_key ~= ROOT_KEY then
+    return item.repo_key
   end
-  local scope = require("isovim.scope")
-  local project = store.project(ws)
-  vim.ui.input({ prompt = ("Spawn in %s: "):format(scope.label(scope.of_workspace(ws))) }, function(name)
-    if name and name ~= "" then
-      new_workspace(name, project or "")
-    end
-  end)
+  local ws = item.ws
+  if ws and store.v2(ws) then
+    return ws
+  end
+  local project = ws and store.project(ws)
+  local repo = project and require("isovim.repos").of(project)
+  if repo then
+    return repo, project
+  end
+  return item.repo or GENERAL_KEY
+end
+
+-- Spawns a worker over ACP, the next aN of the repo under the cursor (or of the shown agent; in
+-- General when it's in no repo), and opens its chat, where its first prompt goes. It starts in aN/
+-- and gets its worktree on its first edit.
+function M.spawn(target)
+  local key, checkout = spawn_target(target)
+  return add_agent(key, { kind = "claude", acp = true, checkout = checkout })
 end
 
 M.actions = {
@@ -1822,7 +1833,7 @@ M.actions = {
     if item and item.host then
       return Snacks.notify.info(("That's on %s; spawn there"):format(item.host), { title = "isovim" })
     end
-    M.spawn(item and item.ws or isovim.current)
+    M.spawn(item or isovim.current)
   end,
   isovim_root_mode = function()
     Snacks.notify.info("Root mode: not yet", { title = "isovim" })

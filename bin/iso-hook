@@ -151,6 +151,15 @@ ask)
   set_state attention
   notify "needs you"
   ;;
+edit | bash)
+  # A new-layout agent's first edit makes its worktree, and a read-only agent's edits (and git
+  # commands that would change the base clone) are refused: exit 2 blocks the tool call, with what
+  # iso printed as the reason. Only a read-only agent's Bash calls are looked at.
+  [ -z "$ISOVIM_ADDR" ] && exit 0
+  [ "$1" = bash ] && [ "$ISOVIM_READONLY" != 1 ] && exit 0
+  "$(dirname "$0")/iso" __pretool "$1"
+  exit $?
+  ;;
 interrupt) set_state idle ;;
 tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && set_state working ;;
 notification)

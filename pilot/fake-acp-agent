@@ -11,6 +11,9 @@ with the outcome. "diff" edits src/app.lua (a diff tool call), "term <cmd>" runs
 output streams as terminal output deltas (claude-agent-acp's _meta extension) and ends with its
 exit code, "stream <n>" streams n words one chunk at a time ($FAKE_STREAM_GAP seconds apart),
 "think" thinks before it answers, and "plan" sends a plan. session/cancel ends the running turn as cancelled.
+"write <path> <text>", "read <path>" and "bash <cmd>" are Write, Read and Bash tool calls that first
+run the session's PreToolUse hooks (from _meta.claudeCode.options.settings) as Claude Code does: a
+hook that exits 2 blocks the call, its stderr the reason, which the reply then starts "blocked: ".
 
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
@@ -18,6 +21,7 @@ logged as an overlap: the client is meant to queue them."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -29,6 +33,8 @@ DELAY = float(os.environ.get("FAKE_AGENT_DELAY", "1"))
 GAP = float(os.environ.get("FAKE_STREAM_GAP", "0.2"))
 write_lock = threading.Lock()
 pending = {}
+# Each session's hooks, as the client passed them in _meta.claudeCode.options.settings.
+session_hooks = {}
 next_id = [1000]
 running = {"prompt": None, "cancelled": False}
 state_lock = threading.Lock()
@@ -89,6 +95,42 @@ def tool(session, call_id, title, kind, status, output=None):
     update(session, body)
 
 
+def pre_tool_use(session, name, tool_input):
+    """Runs the session's PreToolUse hooks whose matcher matches the tool, as Claude Code does: the
+    call as JSON on stdin; exit code 2 blocks it, with stderr as the reason. Returns the reason, or
+    None when the call may go ahead."""
+    for entry in session_hooks.get(session, {}).get("PreToolUse", []):
+        matcher = entry.get("matcher") or ""
+        if matcher and not re.fullmatch(f"(?:{matcher})", name):
+            continue
+        for hook in entry.get("hooks", []):
+            payload = {"session_id": session, "hook_event_name": "PreToolUse", "tool_name": name,
+                       "tool_input": tool_input, "cwd": os.getcwd()}
+            result = subprocess.run(["bash", "-c", hook["command"]], input=json.dumps(payload), capture_output=True,
+                                    text=True, timeout=hook.get("timeout") or 60)
+            log({"hook": hook["command"], "tool": name, "code": result.returncode, "stderr": result.stderr})
+            if result.returncode == 2:
+                return result.stderr.strip()
+    return None
+
+
+def guarded(session, call_id, name, kind, title, tool_input, run):
+    """A tool call that its PreToolUse hooks may block; run() does it and returns its output."""
+    tool(session, call_id, title, kind, "pending")
+    reason = pre_tool_use(session, name, tool_input)
+    if reason is not None:
+        tool(session, call_id, None, None, "failed", reason)
+        chunk(session, "blocked: " + reason)
+        return
+    output = run()
+    tool(session, call_id, None, None, "completed", output)
+    chunk(session, f"{name.lower()}: {output}")
+
+
+def absolute(path):
+    return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+
+
 def prompt(rid, params):
     session = params["sessionId"]
     text = text_of(params.get("prompt", []))
@@ -104,6 +146,30 @@ def prompt(rid, params):
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
         tool(session, call_id, None, None, "completed", (result.stdout + result.stderr).strip())
         chunk(session, "ran: " + command)
+    elif text.startswith("write "):
+        path, _, content = text[6:].partition(" ")
+        path = absolute(path)
+
+        def write():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(content)
+            return "wrote " + path
+        guarded(session, call_id, "Write", "edit", "Write " + path, {"file_path": path, "content": content}, write)
+    elif text.startswith("read "):
+        path = absolute(text[5:])
+
+        def read():
+            with open(path) as f:
+                return f.read().strip()
+        guarded(session, call_id, "Read", "read", "Read " + path, {"file_path": path}, read)
+    elif text.startswith("bash "):
+        command = text[5:]
+
+        def bash():
+            result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+            return (result.stdout + result.stderr).strip() + f" (exit {result.returncode})"
+        guarded(session, call_id, "Bash", "execute", command, {"command": command}, bash)
     elif text == "perm":
         tool(session, call_id, "Bash: rm -rf build", "execute", "pending")
         answer = request("session/request_permission", {
@@ -169,6 +235,12 @@ def prompt(rid, params):
     send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": stop}})
 
 
+def remember_hooks(session, params):
+    meta = params.get("_meta") or {}
+    settings = ((meta.get("claudeCode") or {}).get("options") or {}).get("settings") or {}
+    session_hooks[session] = settings.get("hooks") or {}
+
+
 def handle(frame):
     method, rid, params = frame.get("method"), frame.get("id"), frame.get("params") or {}
     if method is None:
@@ -186,10 +258,16 @@ def handle(frame):
             "authMethods": [],
         }})
     elif method == "session/new":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "fake-" + uuid.uuid4().hex[:12]}})
+        session = "fake-" + uuid.uuid4().hex[:12]
+        remember_hooks(session, params)
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": session}})
     elif method == "session/fork":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "fork-" + uuid.uuid4().hex[:12]}})
+        session = "fork-" + uuid.uuid4().hex[:12]
+        remember_hooks(session, params)
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": session}})
     elif method in ("session/resume", "session/load", "session/close"):
+        if method != "session/close":
+            remember_hooks(params.get("sessionId"), params)
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/set_mode":
         update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})

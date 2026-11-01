@@ -1049,9 +1049,15 @@ function M.open(ws, agent, win)
     chat = make(ws, agent)
     chats[key(ws, agent)] = chat
   end
+  -- Replacing another agent's chat (shown nowhere else), its composer gives way to this one's.
+  local shown = by_buf(vim.api.nvim_win_get_buf(win))
+  local replaced = shown and shown ~= chat and shown.buf == vim.api.nvim_win_get_buf(win) and #vim.fn.win_findbuf(shown.buf) == 1
+  local old_composer = replaced and vim.fn.bufwinid(shown.composer) or -1
   vim.api.nvim_win_set_buf(win, chat.buf)
   pcall(vim.api.nvim_win_set_cursor, win, { vim.api.nvim_buf_line_count(chat.buf), 0 })
-  if vim.fn.bufwinid(chat.composer) == -1 then
+  if old_composer ~= -1 and vim.fn.bufwinid(chat.composer) == -1 then
+    vim.api.nvim_win_set_buf(old_composer, chat.composer)
+  elseif vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = 5 })
   end
   update_bar(chat)

@@ -390,7 +390,7 @@ M.GROUP = {
   { "T", function()
     sidebar().focus_window("terminals")
   end, "the Terminals window" },
-  { "s", M.spawn, "spawn a worker in the repo" },
+  { "s", M.spawn, "spawn a worker over ACP in the repo" },
   { "t", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)

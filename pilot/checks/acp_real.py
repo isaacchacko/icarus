@@ -34,8 +34,8 @@ iso.env.pop("ISOVIM_ACP_CMD")
 iso.env["ANTHROPIC_MODEL"] = "haiku"
 
 
-def run(*args, timeout=200):
-    r = subprocess.run([BIN, *args], env=iso.env, capture_output=True, text=True, timeout=timeout)
+def run(*args, timeout=200, cwd=None):
+    r = subprocess.run([BIN, *args], env=iso.env, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     return r.returncode, r.stdout.strip(), r.stderr
 
 
@@ -53,8 +53,8 @@ try:
     iso.start()
     prompt = ("Answer with one lowercase word and nothing else: the name of the agent multiplexer "
               "your system prompt says you are running inside.")
-    rc, addr, err = run("spawn", "--acp", "--name", "smoke", prompt)
-    check(rc == 0 and addr == "_/a0", "iso spawn --acp with the real adapter", (rc, addr, err))
+    rc, addr, err = run("spawn", "--name", "smoke", prompt, cwd=iso.tmp)
+    check(rc == 0 and addr == "_/a0", "iso spawn (ACP by default) with the real adapter", (rc, addr, err))
     iso.wait(lambda: any(e["kind"] == "turn" and e["state"] == "end" for e in journal()), "the turn to end", 180)
     ended = [e for e in journal() if e["kind"] == "turn" and e["state"] == "end"][0]
     notices = [e["text"] for e in journal() if e["kind"] == "notice"]
@@ -89,6 +89,43 @@ try:
     notices = [e["text"] for e in journal() if e["kind"] == "notice"]
     check(not notices and [e["sessionId"] for e in journal() if e["kind"] == "session"][-1] == sid,
           "a restart resumes the same session", notices)
+
+    # The PreToolUse hook from _meta on the real adapter: an agent's first edit in its repo makes its
+    # worktree and is refused, and the model makes it again under w/; a read-only agent's is refused.
+    def git(*args, cwd=None):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    remote = iso.tmp / "remotes" / "acme" / "app.git"
+    remote.mkdir(parents=True)
+    git("init", "-q", "--bare", "-b", "main", str(remote))
+    app = iso.tmp / "src" / "app"
+    git("clone", "-q", str(remote), str(app))
+    (app / "README").write_text("app\n")
+    git("add", "-A", cwd=app)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first", cwd=app)
+    git("push", "-q", "-u", "origin", "main", cwd=app)
+    unit = iso.tmp / "work" / "acme" / "app"
+
+    def turns(agent):
+        path = unit / "iso" / "journal" / f"{agent}.jsonl"
+        entries = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [e for e in entries if e["kind"] == "turn" and e["state"] == "end"]
+
+    target = unit / "a0" / "notes" / "hello.txt"
+    rc, edit_addr, err = run("spawn", "--repo", str(app), "--name", "edit",
+                             f"Use the Write tool to create the file {target} containing the word hi. If the tool call "
+                             "is refused, do what the refusal says, then reply with the word done.", cwd=iso.tmp)
+    iso.wait(lambda: turns("a0"), "the editing agent's turn", 240)
+    w = unit / "a0" / "w"
+    check((w / ".git").exists() and not target.exists(), "real adapter: the first edit made aN/w and was refused", list((unit / "a0").iterdir()))
+    check((w / "notes" / "hello.txt").exists(), "real adapter: the model made the edit again under w/",
+          list(w.rglob("hello.txt")))
+    base = iso.tmp / "home" / "repos" / "acme" / "app" / "base-clone"
+    rc, ro_addr, err = run("spawn", "--repo", str(app), "--read-only", "--name", "ro",
+                           f"Use the Write tool to create the file {base / 'ro.txt'} containing hi. If it is refused, "
+                           "don't try again in any way; reply with the word refused.", cwd=iso.tmp)
+    iso.wait(lambda: turns("a1"), "the read-only agent's turn", 240)
+    check(not (base / "ro.txt").exists(), "real adapter: a read-only agent's Write is refused", list(base.iterdir()))
 finally:
     iso.stop()
 

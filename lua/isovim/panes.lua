@@ -46,24 +46,36 @@ local repo = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.uv.fs_realpath(her
 M.hook_script = repo .. "/bin/iso-hook"
 M.bin = repo .. "/bin/iso"
 
-local function hook(event, matcher)
-  return { { matcher = matcher, hooks = { { type = "command", command = ("'%s' %s"):format(M.hook_script, event) } } } }
+-- The tools that edit files, which iso __pretool guards.
+M.edit_tools = "Edit|Write|MultiEdit|NotebookEdit"
+
+local function hook(event, matcher, timeout)
+  return { matcher = matcher, hooks = { { type = "command", command = ("'%s' %s"):format(M.hook_script, event), timeout = timeout } } }
 end
 
+-- Each event's hooks: {iso-hook's argument, the tool matcher, a timeout in seconds}.
 local EVENTS = {
-  SessionStart = { "start" },
-  UserPromptSubmit = { "prompt" },
-  Stop = { "stop" },
-  -- Waiting on you: a question, or a plan to approve.
-  PreToolUse = { "ask", "AskUserQuestion|ExitPlanMode" },
-  PostToolUse = { "tool-done" },
-  Notification = { "notification" },
+  SessionStart = { { "start" } },
+  UserPromptSubmit = { { "prompt" } },
+  Stop = { { "stop" } },
+  PreToolUse = {
+    -- Waiting on you: a question, or a plan to approve.
+    { "ask", "AskUserQuestion|ExitPlanMode" },
+    -- A new-layout agent's first edit makes its worktree (which can run the repo's worktree_setup),
+    -- and a read-only agent's edits and mutating git commands are refused (iso __pretool).
+    { "edit", M.edit_tools, 600 },
+    { "bash", "Bash" },
+  },
+  PostToolUse = { { "tool-done" } },
+  Notification = { { "notification" } },
 }
 
 -- An agent reports its state into $ISOVIM_STATE, which only its own process has; the sidebar watches it.
 local HOOKS = vim.json.encode({
-  hooks = vim.tbl_map(function(event)
-    return hook(event[1], event[2])
+  hooks = vim.tbl_map(function(list)
+    return vim.tbl_map(function(event)
+      return hook(event[1], event[2], event[3])
+    end, list)
   end, EVENTS),
 })
 
@@ -75,10 +87,10 @@ end
 -- Codex takes the same hooks as config overrides; Interrupt (Esc) is Codex-only.
 local function codex_hooks()
   local args = {}
-  local events = vim.tbl_extend("force", EVENTS, { Interrupt = { "interrupt" } })
+  local events = vim.tbl_extend("force", EVENTS, { Interrupt = { { "interrupt" } } })
   events.PreToolUse, events.Notification = nil, nil
   for name, event in pairs(events) do
-    local command = ("'%s' %s"):format(M.hook_script, event[1])
+    local command = ("'%s' %s"):format(M.hook_script, event[1][1])
     vim.list_extend(args, { "-c", ("hooks.%s=[{hooks=[{type=\"command\",command=%s}]}]"):format(name, vim.json.encode(command)) })
   end
   return args
@@ -278,9 +290,31 @@ M.fullscreen_title = "isovim fullscreen"
 
 local HOST_NVIM_ENV = { "NVIM", "NVIM_APPNAME", "MYVIMRC", "VIMRUNTIME", "NVIM_LOG_FILE" }
 
+-- A read-only agent's dir: its repo's base clone, made if missing, fetched and moved to origin's
+-- default branch (detached), so it reads what's current. Offline, the clone as it was.
+---@return string? dir, string? err
+function M.read_only_base(agent)
+  local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
+  local base, err = require("isovim.repoconf").base(agent.repo, checkout)
+  local path = require("isovim.repos").dir(agent.repo) .. "/base-clone"
+  if not base then
+    return vim.fn.isdirectory(path .. "/.git") == 1 and path or nil, err
+  end
+  vim.system({ "git", "-C", base, "checkout", "--quiet", "--detach", "origin/HEAD" }):wait()
+  return base
+end
+
 ---@param agent isovim.Agent
 ---@param dir string where it runs: store.agent_dir
 function M.start(ws, agent, dir)
+  -- A read-only agent works in the base clone; a terminal or command of one keeps to its own dir.
+  if store.v2(ws) and agent.read_only and agent.repo and not agent.of and (agent.kind == "claude" or agent.kind == "codex") then
+    local base, err = M.read_only_base(agent)
+    if not base then
+      return { code = 1, stderr = ("%s is read-only and runs in %s's base clone, which isn't there: %s"):format(agent.name, agent.repo, err) }
+    end
+    dir = base
+  end
   if store.v2(ws) then
     vim.fn.mkdir(dir, "p")
   end

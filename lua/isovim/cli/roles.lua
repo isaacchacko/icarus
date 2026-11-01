@@ -201,8 +201,9 @@ local function send_as(from, ws, agent, text)
   c.prompt(ws, agent, stamp .. " " .. text, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
 end
 
--- iso spawn --acp: a new-layout agent (<repo key>/aN) that runs over ACP (isovim.acp), in the
--- repo dir names, else the spawner's repo, else in no repo ("_").
+-- A new-layout agent (<repo key>/aN) that runs over ACP (isovim.acp), in the repo dir names, else
+-- the spawner's repo, else in no repo ("_", General). A read-only one starts in its repo's base
+-- clone, fetched first (panes.start).
 local function spawn_acp(key, dir, spec)
   local agent, err = store.add_agent(key, vim.tbl_extend("force", spec, { kind = "claude", acp = true, checkout = dir }))
   if not agent then
@@ -212,14 +213,24 @@ local function spawn_acp(key, dir, spec)
   out(key .. "/" .. agent.id)
 end
 
+-- The top of the git checkout dir is in, when it's a clone of a repo; nil otherwise.
+local function checkout_of(dir)
+  local result = vim.system({ "git", "-C", dir, "rev-parse", "--show-toplevel" }, { text = true }):wait()
+  local top = result.code == 0 and vim.uv.fs_realpath(vim.trim(result.stdout)) or nil
+  return top and require("isovim.repos").of(top) and top or nil
+end
+
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no
--- higher than its own). Today each spawn is a workspace with one claude agent, in the repo's dir;
--- with --acp, a new-layout agent over ACP.
+-- higher than its own). Each spawn is a new-layout agent over ACP, <repo key>/aN, in the repo
+-- --repo names, else the spawner's (for the user, the clone the shell is in), else in General.
+-- --legacy (until the cutover) makes a workspace with one agent in claude's TUI, in the repo's
+-- dir, as spawns did before. --acp is the default now, and still accepted.
 function M.spawn(args)
   local repo = option(args, "--repo")
   local role = option(args, "--role", "worker")
   local read_only = flag(args, "--read-only")
-  local acp = flag(args, "--acp")
+  local legacy = flag(args, "--legacy")
+  flag(args, "--acp")
   local name = option(args, "--name")
   local prompt = vim.trim(table.concat(args, " "))
   if not RANK[role] then
@@ -233,17 +244,20 @@ function M.spawn(args)
   if not dir and caller_ws and not store.v2(caller_ws) and store.dir(caller_ws) ~= store.path(caller_ws) then
     dir = store.dir(caller_ws)
   end
-  local key = acp and (dir and require("isovim.repos").of(dir) or (caller_ws and store.v2(caller_ws) and caller_ws) or "_")
-  check_unique(role, dir and repo_key(dir) or (key ~= "_" and key or nil))
+  if not dir and not address and not legacy then
+    dir = checkout_of(vim.uv.cwd())
+  end
+  local key = not legacy and (dir and require("isovim.repos").of(dir) or (caller_ws and store.v2(caller_ws) and caller_ws) or "_") or nil
+  check_unique(role, dir and repo_key(dir) or (key and key ~= "_" and key or nil))
+  if read_only and key == "_" then
+    fail("a read-only agent works in its repo's base clone: spawn it with --repo and a git repo")
+  end
   if not name then
     name = prompt ~= "" and table.concat(vim.list_slice(vim.split(prompt, "%s+"), 1, 4), " "):sub(1, 30) or role
   end
-  if acp then
+  if key then
     spawn_acp(key, dir, { name = name, prompt = prompt ~= "" and prompt or nil, role = role,
       parent = not ROOTS[role] and address or nil, read_only = read_only or nil })
-    if read_only then
-      io.stderr:write("iso: --read-only is recorded on the agent; nothing enforces it yet\n")
-    end
     c.tui("require('isovim').refresh()")
     return
   end
@@ -258,7 +272,7 @@ function M.spawn(args)
   c.ensure_running(ws, store.agent(id, "main"))
   out(id .. "/main")
   if read_only then
-    io.stderr:write("iso: --read-only is recorded on the agent; nothing enforces it yet\n")
+    io.stderr:write("iso: --read-only is recorded on a --legacy agent; nothing enforces it\n")
   end
   c.tui("require('isovim').refresh()")
 end

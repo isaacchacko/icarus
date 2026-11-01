@@ -76,20 +76,20 @@ M.list = {
   },
   { name = "spawn", module = "roles",
     args = { "<text>..." },
-    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>", ["--acp"] = false },
+    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>" },
     audience = "user",
-    summary = "start a claude agent in a workspace of its own",
+    summary = "start a claude agent over ACP, the repo's next aN",
     help = [=[
-       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [--acp] [<prompt...>]
-                                     start a claude agent in a workspace of its own, in the
-                                     repo's dir (from an agent, its own project by default),
-                                     on the prompt; prints <ws>/<agent>. An agent's spawn is
-                                     its child, of a role no higher than its own; one router
-                                     per repo here, one repo-root per repo, one root per host.
-                                     --read-only is recorded only: nothing enforces it yet.
-                                     --acp runs it over ACP instead of claude's TUI, as the
-                                     repo's next <owner>/<repo>/aN: messages to it queue while
-                                     it works, and its chat is rebuilt from its journal]=],
+       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [<prompt...>]
+                                     start a claude agent over ACP on the prompt, as the
+                                     repo's next <owner>/<repo>/aN (from an agent, in its own
+                                     repo; from a shell, the clone it's in; else General, _/aN),
+                                     and print its address. It starts in aN/ and gets its
+                                     worktree, aN/w, on its first edit (or iso <role> wt).
+                                     An agent's spawn is its child, of a role no higher than
+                                     its own; one router per repo here, one repo-root per repo,
+                                     one root per host. --read-only runs it in the repo's base
+                                     clone, fetched first, and refuses its edits]=],
   },
   { name = "new", module = "workspaces",
     audience = "user",
@@ -434,6 +434,13 @@ M.list = {
   },
   -- A config sync in the background, after a write (isovim.sync).
   { name = "__sync", module = "lifecycle",
+    hidden = true,
+    audience = "plumbing",
+  },
+  -- iso-hook's PreToolUse for edit tools and Bash: a new-layout agent's first edit makes its
+  -- worktree; a read-only agent's edits are refused (isovim.cli.work).
+  { name = "__pretool", module = "work",
+    args = { "edit|bash" },
     hidden = true,
     audience = "plumbing",
   },

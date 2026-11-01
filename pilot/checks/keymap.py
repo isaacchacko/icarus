@@ -308,17 +308,31 @@ try:
     target = next(i for i, r in enumerate(lua("return vim.api.nvim_buf_get_lines(0, 0, -1, false)")) if "api1" in r)
     lua("vim.api.nvim_win_set_cursor(0, {..., 0})", target + 1)
     iso.keys("s")
-    iso.wait(lambda: "Spawn in acme/api" in iso.screen(), "the spawn prompt")
-    iso.type("feat")
-    iso.keys("Enter")
-    iso.wait(lambda: "New worktree on" in iso.screen(), "the worktree choice")
-    iso.keys("Enter")
-    feat = iso.wait(lambda: next((r for r in json.loads(iso.cli("ls", "--json")) if r["workspace"] == "feat"), None), "feat spawned", timeout=30)
-    feat_dir = lua("return require('isovim.store').dir(...)", feat["id"].split("/")[0])
-    check(lua("return require('isovim.repos').of(...)", feat_dir) == "acme/api" and "src/api" not in feat_dir,
-          "s spawns a worker in a new worktree of the repo", feat_dir)
-    iso.wait(lambda: shown() == feat["id"], "the spawned agent opened")
+    # A legacy workspace's row spawns in the repo its dir is a clone of: its next aN, over ACP.
+    feat = iso.wait(lambda: lua("return require('isovim.store').agent('acme/api', 'a0')"), "s spawned acme/api/a0", timeout=30)
+    check(feat.get("acp") is True and feat.get("repo") == "acme/api" and feat.get("checkout"),
+          "s spawns a worker over ACP, the repo's next aN", feat)
+    iso.wait(lambda: lua(
+        "for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do local b = vim.api.nvim_win_get_buf(w)"
+        " if vim.b[b].isovim_id == 'acme/api' and vim.b[b].isovim_agent == 'a0' then return true end end return false"),
+        "the spawned agent's chat opened", 30)
+    # <leader>is from its chat spawns beside it, in the same repo.
+    lua("vim.cmd.stopinsert()")
+    iso.keys("Escape")
+    leader("i", "s")
+    iso.wait(lambda: lua("return require('isovim.store').agent('acme/api', 'a1')"), "<leader>is spawned acme/api/a1", timeout=30)
+    check(True, "<leader>is spawns in the shown agent's repo")
+    composers = lambda: lua(  # noqa: E731
+        "local n = 0 for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
+        " if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w)):match('composer$') then n = n + 1 end end return n")
+    iso.wait(lambda: lua(
+        "for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do local b = vim.api.nvim_win_get_buf(w)"
+        " if vim.b[b].isovim_id == 'acme/api' and vim.b[b].isovim_agent == 'a1' then return true end end return false"),
+        "a1's chat opened", 30)
+    check(composers() == 1, "its chat replaces a0's, composer and all", composers())
     iso.focus_sidebar()
+    lua("vim.cmd.stopinsert()")
+    iso.keys("Escape")
     iso.keys("x")
     toasted("Root mode: not yet")
     sort = lua("return require('isovim').sort")
