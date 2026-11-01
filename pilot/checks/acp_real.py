@@ -2,7 +2,10 @@
 tiny prompt on haiku (ANTHROPIC_MODEL=haiku) whose answer can only come from isovim's role prompt in
 _meta, the TUI's chat drawing it, isovim's hooks firing from _meta's settings (the prompt hook writes the agent's transcript),
 the session kept with CLAUDE_CODE_ENTRYPOINT=isovim (so claude --resume lists it), and a restart
-resuming that session without a model call. It spends a little of your Claude usage, so it only runs
+resuming that session without a model call. Then the sessions (L2), on a few more haiku prompts:
+a fork at the first answer doesn't know what came after it and a whole fork does (each resumed in its
+own dir), and AskUserQuestion comes as a question surface whose answer reaches the agent
+(ISOVIM_ACP_REAL_SESSIONS=0 skips these). It spends a little of your Claude usage, so it only runs
 with ISOVIM_ACP_REAL=1; otherwise it says it skipped.
 Run from pilot/: ISOVIM_ACP_REAL=1 uv run --with pynvim --with pillow --with fonttools python checks/acp_real.py"""
 
@@ -126,6 +129,52 @@ try:
                            "don't try again in any way; reply with the word refused.", cwd=iso.tmp)
     iso.wait(lambda: turns("a1"), "the read-only agent's turn", 240)
     check(not (base / "ro.txt").exists(), "real adapter: a read-only agent's Write is refused", list(base.iterdir()))
+    if os.environ.get("ISOVIM_ACP_REAL_SESSIONS", "1") == "1":
+        print("\n# sessions (L2): a fork at a message and a whole one, AskUserQuestion through the Inbox")
+
+        def journal_of(agent):
+            path = iso.tmp / "work" / "_" / "iso" / "journal" / f"{agent}.jsonl"
+            return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+        def turn(agent, text, timeout=180):
+            ends = len([e for e in journal_of(agent) if e["kind"] == "turn" and e["state"] == "end"])
+            seq = journal_of(agent)[-1]["seq"] if journal_of(agent) else 0
+            rc, _, err = run("send", f"_/{agent}", text)
+            assert rc == 0, err
+            iso.wait(lambda: len([e for e in journal_of(agent) if e["kind"] == "turn" and e["state"] == "end"]) > ends,
+                     f"{agent}'s turn", timeout)
+            return "".join(e["update"]["content"].get("text", "") for e in journal_of(agent)
+                           if e["seq"] > seq and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
+
+        first = next(e for e in journal() if e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
+        check(bool(first["update"].get("messageId")), "the adapter stamps its chunks with a messageId", first["update"])
+        turn("a0", "Remember the word kiwi. Reply with just: ok")
+        recall = "Did I ask you to remember a word? Reply with only that word, or with none."
+        rc, at, err = run("fork", "_/a0", "--at", str(first["seq"]))
+        check(rc == 0 and at == "_/a1", "iso fork --at the first answer", (rc, at, err))
+        iso.wait(lambda: any(e["kind"] == "session" and e["how"] == "fork" for e in journal_of("a1")), "a1's forked session", 120)
+        notices = [e["text"] for e in journal_of("a1") if e["kind"] == "notice"]
+        check(not notices, "it forked at that message", notices)
+        answer = turn("a1", recall)
+        check("kiwi" not in answer.lower(), "the fork at the first answer doesn't know kiwi (its own cwd, resumed there)", answer)
+        rc, whole, err = run("fork", "_/a0")
+        iso.wait(lambda: any(e["kind"] == "session" and e["how"] == "fork" for e in journal_of("a2")), "a2's forked session", 120)
+        answer = turn("a2", recall)
+        check("kiwi" in answer.lower(), "the whole fork does", answer)
+
+        seq = journal_of("a0")[-1]["seq"]
+        run("send", "_/a0", "Use the AskUserQuestion tool to ask me which color I prefer, with the options Red and Blue."
+                             " After I answer, reply with only the color I chose.")
+        asked = iso.wait(lambda: next((e for e in journal_of("a0") if e["seq"] > seq and e["kind"] == "question"
+                                       and e["state"] == "asked"), None), "AskUserQuestion as a question surface", 180)
+        print("     asked:", asked["questions"])
+        rc, _, err = run("answer", asked["questions"][0]["name"], "Blue")
+        check(rc == 0, "iso answer answers it", err)
+        iso.wait(lambda: any(e["seq"] > seq and e["kind"] == "turn" and e["state"] == "end" for e in journal_of("a0")),
+                 "the turn after the answer", 180)
+        replies = "".join(e["update"]["content"].get("text", "") for e in journal_of("a0")
+                          if e["seq"] > asked["seq"] and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
+        check("blue" in replies.lower(), "the answer reached the agent", replies)
 finally:
     iso.stop()
 

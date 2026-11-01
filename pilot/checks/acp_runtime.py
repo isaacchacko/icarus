@@ -5,7 +5,7 @@ session in the agent's dir with the role prompt and isovim's hooks in _meta, set
 and sends the spawn's prompt; every update lands in iso/journal/aN.jsonl; iso send and iso msg reach
 it over its socket, and one sent while it works is queued and sent when the turn ends, never two at
 once (the fake logs an overlap); the state file and the bus follow (ready, working, idle; msg with
-queued); a permission it asks for is denied and journaled; an agent's own iso msg is stamped; a
+queued); a permission it asks for waits in the Inbox and the denial is journaled; an agent's own iso msg is stamped; a
 restart resumes the recorded session; and a legacy agent beside them still runs in claude's TUI.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/acp_runtime.py"""
 
@@ -159,13 +159,17 @@ try:
     rc, out, _ = run("status", a0)
     check(rc == 0 and out in ("idle", "unread"), "iso status reads its state", out)
 
-    print("\n# a permission it asks for is denied")
+    print("\n# a permission it asks for waits in the Inbox, and is denied there")
     run("send", a1, "perm")
+    asked = iso.wait(lambda: next((e for e in journal("a1") if e["kind"] == "permission" and e["decision"] == "asked"), None),
+                     "the permission asked")
+    peek = iso.wait(lambda: (lambda p: p if "asked: Bash: rm -rf build (waiting in the Inbox: acme/app/" in p else None)(run("peek", a1)[1]),
+                    "its pane says it waits in the Inbox")
+    check(True, "and shown in its pane")
+    run("answer", asked["name"], "Deny")
     iso.wait(lambda: reply_done(a1.split("/")[-1], "permission: reject"), "the permission answered")
-    denied = [e for e in journal("a1") if e["kind"] == "permission"]
+    denied = [e for e in journal("a1") if e["kind"] == "permission" and e["decision"] != "asked"]
     check(denied and denied[0]["decision"] == "denied" and denied[0]["tool"] == "Bash: rm -rf build", "the denial is journaled", denied)
-    peek = run("peek", a1)[1]
-    check("denied: Bash: rm -rf build (approvals not built yet)" in peek, "and shown in its pane", peek[-400:])
 
     print("\n# one agent messages another")
     run("send", a1, f"run {BIN} worker msg {a0} hi-from-beta")

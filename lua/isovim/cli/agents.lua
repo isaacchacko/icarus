@@ -216,11 +216,41 @@ end
 -- A tangent: a new workspace whose agent starts from a copy of <agent>'s conversation (default: the
 -- agent running this), in the same project dir. It shows in the sidebar but nothing opens it, so
 -- your focus stays put; it reports back with iso msg parent.
+-- An ACP agent's fork is an ACP agent in the same repo whose supervisor forks the session on its
+-- first start (isovim.acp.host), at the message --at names (a seq in its journal, as the chat's
+-- <leader>if passes it) or whole; its chat starts with the history up to there.
+local function fork_acp(ws, agent, name, prompt, at, caller)
+  local session = store.session_id(ws.id, agent.id) or fail(("%s has no session to fork yet"):format(agent.name))
+  local from = ws.id .. "/" .. agent.id
+  local fields = { fork_of = session, fork_from = from }
+  if at then
+    local seq = tonumber(at) or fail("--at takes a seq in the agent's journal")
+    local acp_sessions = require("isovim.acp.sessions")
+    local cut = acp_sessions.cut(require("isovim.acp.journal").read(ws.id, agent.id), seq, "at")
+    fields.fork_seq, fields.fork_at = cut.upto, cut.messageId
+  end
+  local fork, err = store.add_agent(ws.id, { kind = "claude", name = name, prompt = prompt, acp = true,
+    parent = caller or from, read_only = agent.read_only or nil })
+  if not fork then
+    fail(err)
+  end
+  store.update_agent(ws.id, fork.id, fields)
+  ensure_running(ws, store.agent(ws.id, fork.id))
+  out(ws.id .. "/" .. fork.id)
+  tui("require('isovim').refresh()")
+end
+
 function commands.fork(args)
   local name = option(args, "--name")
   local prompt = option(args, "--prompt")
+  local at = option(args, "--at")
   local caller = caller_address()
   local ws, agent = resolve_agent(args[1] or caller or fail("iso fork needs an <agent> outside an isovim agent"))
+  if agent.acp then
+    return fork_acp(ws, agent, name, prompt, at, caller)
+  elseif at then
+    fail("--at forks an ACP agent at a message; " .. agent.name .. " runs in Claude's TUI")
+  end
   local session = store.session_id(ws.id, agent.id)
   if agent.kind ~= "claude" or not session then
     fail(("%s · %s has no Claude conversation to fork"):format(ws.name, agent.name))

@@ -260,13 +260,16 @@ M.list = {
   },
   { name = "fork", module = "agents",
     args = { "<agent>" },
-    flags = { ["--name"] = "<text>", ["--prompt"] = "<text>" },
+    flags = { ["--name"] = "<text>", ["--prompt"] = "<text>", ["--at"] = "<seq>" },
     summary = "a tangent: a new workspace from a copy of an agent's conversation",
     help = [=[
-       iso fork [<agent>] [--name n] [--prompt text]
+       iso fork [<agent>] [--name n] [--prompt text] [--at seq]
                                      a tangent: a new workspace in the same project whose agent
                                      starts from a copy of <agent>'s conversation (default: the
-                                     agent running this); nothing opens it, so focus stays put]=],
+                                     agent running this); nothing opens it, so focus stays put.
+                                     An ACP agent's fork is its repo's next aN, its chat starting
+                                     with the history it forked; --at forks it at a message (the
+                                     seq of a journal entry, as <leader>if in its chat gives)]=],
   },
   { name = "ask", module = "messaging",
     args = { "<text>..." },

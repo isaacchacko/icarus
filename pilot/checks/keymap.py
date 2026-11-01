@@ -287,10 +287,13 @@ try:
     # Not yet.
     leader("i", "q")
     toasted("The prompt queue: open an ACP agent's chat first")
-    for key, text in (("u", "Rewind"), ("f", "Fork at a message"), ("x", "Root mode")):
-        leader("i", key)
-        toasted(f"{text}: not yet")
-    check(True, "iu if ix say not yet, iq that it needs an ACP chat")
+    leader("i", "x")
+    toasted("Root mode: not yet")
+    leader("i", "u")
+    toasted("rewind: put the cursor on one of your prompts in an ACP agent's chat")
+    leader("i", "f")
+    toasted("fork: open an ACP agent's chat first")
+    check(True, "ix says not yet; iq, iu and if that they need an ACP chat")
 
     # Retiring <leader>a keys: they still work, and say once what replaced them.
     lua("require('isovim.root').raise(..., 'main', 'again?')", ws["api1"])

@@ -3,12 +3,17 @@
 -- it from the start and then follows it. It lives in the repo's iso/, as iso/journal/aN.jsonl.
 --
 -- Each line is {seq, ts, kind, ...}: seq counts up from 1 within the file, ts is epoch seconds.
---   session   {how: new|resume|load, sessionId, imports?}  the session the supervisor holds, and
---                                                 the files its CLAUDE.md files @import
+--   session   {how: new|resume|load|fork|rewind, sessionId, imports?, previous?, cleared?, from?,
+--             prompt?, files?}                    the session the supervisor holds, and the files
+--                                                 its CLAUDE.md files @import; previous is the one
+--                                                 it left (/new, /clear, /resume, a rewind), from
+--                                                 the agent a fork came from, files what a rewind
+--                                                 did to the files (isovim.acp.sessions)
 --   mode      {modeId}                            the permission mode it set (bypassPermissions)
 --   prompt    {id, text, via, from?, message?, stamp?}  a prompt sent to the agent: via is iso
 --                                                 (iso send/msg), composer (the TUI), spawn, or
---                                                 claude (typed on Claude's screen, iso handover);
+--                                                 claude (typed on Claude's screen, iso handover),
+--                                                 load (from a loaded session's replay);
 --                                                 from is the sender's address and message the
 --                                                 message's kind, for iso send/msg; nil for you
 --   queued    {id, text, via, from?, position}    a prompt held until the running turn ends
@@ -18,8 +23,14 @@
 --                                                 (or made from Claude's transcript after a handover)
 --   handover  {state: start|end, sessionId?, code?} the session was handed to Claude's own screen,
 --                                                 or came back (code: claude's exit code)
---   turn      {state: start|end, stopReason?, id} a turn began or ended (stopReason from the agent)
---   permission {tool, toolCallId?, decision}      a permission the agent asked for and was answered
+--   turn      {state: start|end, stopReason?, id, snapshot?, snapshot_dir?}  a turn began or ended
+--                                                 (stopReason from the agent); snapshot is the
+--                                                 commit of the files before it, in snapshot_dir
+--   permission {tool, toolCallId?, decision, repo?, name?, by?}  a permission the agent asked
+--                                                 for: asked (its question surface repo/name),
+--                                                 then allowed, denied or cancelled
+--   question  {state: asked|answered|cancelled, id, questions?, answers?}  what the agent asked
+--                                                 you (AskUserQuestion), as question surfaces
 --   notice    {text}                              the supervisor's own words: errors, restarts
 -- Raw updates are kept as they came so the renderer stays faithful to the protocol and new update
 -- kinds need no change here.

@@ -17,8 +17,16 @@
 -- that come in meanwhile wait in the queue.
 --
 -- Permissions: the session runs in bypassPermissions mode, as TUI agents run with
--- --permission-mode bypassPermissions. A permission the agent asks for anyway is denied (approvals
--- aren't built yet) and the denial is journaled, so the chat shows it.
+-- --permission-mode bypassPermissions. A permission the agent asks for anyway, and every question
+-- it asks (AskUserQuestion, as a form elicitation), becomes a question surface in its repo's Inbox,
+-- and the answer goes back to the agent (isovim.acp.asks).
+--
+-- Sessions (isovim.acp.sessions): a restart resumes the recorded session; an agent made by iso fork
+-- (fork_of in its record, with fork_at and fork_seq for a fork at a message) forks it on its first
+-- start, its journal starting with its parent's up to there. /new and /clear start a new session,
+-- /resume goes back to one the agent had, and a rewind forks the session before one of your
+-- prompts, puts the files back as they were before that prompt's turn (from the turn's git
+-- snapshot) and sends the edited prompt; each keeps the journal it leaves as that session's.
 local store = require("isovim.store")
 local events = require("isovim.events")
 local status = require("isovim.status")
@@ -26,6 +34,8 @@ local journal = require("isovim.acp.journal")
 local adapter = require("isovim.acp.adapter")
 local imports = require("isovim.acp.imports")
 local log = require("isovim.acp.log")
+local sessions = require("isovim.acp.sessions")
+local asks_mod = require("isovim.acp.asks")
 local Client = require("isovim.acp.client")
 
 local M = {}
@@ -57,6 +67,10 @@ local S = {
   subscribers = {}, ---@type table<integer, true> RPC channels of chats that get each entry
   handover = nil, ---@type {pid: integer, transcript?: string, offset: integer}?
   init = nil, ---@type table? what initialize answered: the agent's capabilities
+  caps = {}, -- the adapter's agentCapabilities
+  asks = nil, ---@type isovim.acp.Asks
+  after_turn = nil, ---@type fun()? what waits for the running turn to end (a session switch)
+  loading = false, -- a session/load whose replay goes into the journal (a /resume with no kept journal)
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -74,17 +88,28 @@ local function out(text)
   io.stdout:flush()
 end
 
--- Journals an entry and sends it to every subscribed chat; one whose channel is gone is dropped.
-local function append(kind, fields)
-  local entry = S.writer.append(kind, fields)
+-- Runs code (isovim.acp.chat's) in every subscribed chat; one whose channel is gone is dropped.
+local function broadcast(code, args)
   for chan in pairs(S.subscribers) do
-    local ok = pcall(vim.rpcnotify, chan, "nvim_exec_lua", "require('isovim.acp.chat').push(...)",
-      { S.ws, S.agent, entry })
+    local ok = pcall(vim.rpcnotify, chan, "nvim_exec_lua", code, args)
     if not ok then
       S.subscribers[chan] = nil
     end
   end
+end
+
+-- Journals an entry and sends it to every subscribed chat.
+local function append(kind, fields)
+  local entry = S.writer.append(kind, fields)
+  broadcast("require('isovim.acp.chat').push(...)", { S.ws, S.agent, entry })
   return entry
+end
+
+-- The journal becomes entries (the one it was kept as session's), and the chats read it again.
+local function replace_journal(entries, session)
+  sessions.replace_journal(S.ws, S.agent, entries, session)
+  S.writer = journal.writer(S.ws, S.agent)
+  broadcast("require('isovim.acp.chat').reload(...)", { S.ws, S.agent })
 end
 
 local function notice(text)
@@ -151,6 +176,15 @@ local function turn_ended(prompt, result, err)
     notice("the prompt failed: " .. tostring(err.message or vim.inspect(err)))
   end
   out("\n")
+  -- What it asked and you didn't answer is moot now.
+  if S.asks and asks_mod.waiting(S.asks) then
+    asks_mod.cancel_all(S.asks, "the turn ended")
+  end
+  local after = S.after_turn
+  if after then
+    S.after_turn = nil
+    return after()
+  end
   next_prompt()
 end
 
@@ -160,9 +194,16 @@ deliver = function(prompt)
     return reload()
   end
   S.busy = true
+  S.prompted = true
+  -- The files as they were before this turn, for a rewind to put back.
+  local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
+  snapshot = ok and snapshot or nil
   append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind, stamp = prompt.stamp,
     via = prompt.via })
-  append("turn", { state = "start", id = prompt.id })
+  append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
+    snapshot_dir = snapshot and snapshot.dir })
+  -- The session's title in the history picker: its first prompt.
+  pcall(sessions.note, S.ws, S.agent, S.session, { title = (prompt.message or prompt.text):sub(1, 120) })
   set_state("working")
   out(("\n❯ %s%s\n"):format(prompt.from and ("(" .. prompt.from .. ") ") or "", prompt.text))
   S.client:request("session/prompt", { sessionId = S.session, prompt = { { type = "text", text = prompt.text } } },
@@ -310,20 +351,17 @@ function M.call(name, payload)
   return call(payload or {})
 end
 
--- A permission the agent asks for: denied, with the reject option it offered (or a cancel).
-local function deny(params, answer)
-  local reject
-  for _, option in ipairs(params.options or {}) do
-    if option.kind == "reject_once" or (option.kind == "reject_always" and not reject) then
-      reject = option.optionId
-    end
+-- What the agent asks you goes to its repo's Inbox; the pane's tail says so.
+local function journal_ask(kind, fields)
+  append(kind, fields)
+  if kind == "permission" then
+    out(("\n%s: %s%s\n"):format(fields.decision, fields.tool or "a tool",
+      fields.decision == "asked" and (" (waiting in the Inbox: " .. tostring(fields.repo) .. "/" .. tostring(fields.name) .. ")") or ""))
+  elseif kind == "question" and fields.state == "asked" then
+    out(("\nasked: %s (waiting in the Inbox)\n"):format(fields.questions and fields.questions[1] and fields.questions[1].question or ""))
+  elseif kind == "notice" then
+    out("\n[" .. tostring(fields.text) .. "]\n")
   end
-  answer({ outcome = reject and { outcome = "selected", optionId = reject } or { outcome = "cancelled" } })
-  local call = params.toolCall or {}
-  local tool = call.title or (call.rawInput and vim.inspect(call.rawInput)) or call.toolCallId or "a tool"
-  append("permission", { tool = tool, toolCallId = call.toolCallId, decision = "denied",
-    reason = "approvals not built yet" })
-  out(("\ndenied: %s (approvals not built yet)\n"):format(tool))
 end
 
 local handlers = {
@@ -333,13 +371,24 @@ local handlers = {
       if S.replaying then
         return
       end
+      -- One whose journal wasn't kept: what you said in it comes back as prompts.
+      if S.loading and params.update.sessionUpdate == "user_message_chunk" then
+        local content = type(params.update.content) == "table" and params.update.content or {}
+        if content.type == "text" and vim.trim(content.text or "") ~= "" then
+          append("prompt", { id = next_id(), text = content.text, via = "load" })
+        end
+        return
+      end
       append("update", { update = params.update })
       show_update(params.update)
     end
   end,
   on_request = function(method, params, answer)
     if method == "session/request_permission" then
-      deny(params, answer)
+      asks_mod.permission(S.asks, params, answer)
+      return true
+    elseif method == "elicitation/create" then
+      asks_mod.elicit(S.asks, params, answer)
       return true
     end
     return false
@@ -380,16 +429,17 @@ local function meta()
   }
 end
 
-local function remember_session(id)
+local function remember_session(id, how)
   S.session = id
   vim.fn.mkdir(store.run_dir(S.ws), "p")
   vim.fn.writefile({ id }, store.run_dir(S.ws) .. "/" .. S.agent .. ".session")
   store.update_agent(S.ws, S.agent, { session = id })
+  pcall(sessions.note, S.ws, S.agent, id, { how = how })
 end
 
--- The session is up: bypass mode, then ready, then what was waiting.
-local function session_ready(how, fresh)
-  append("session", { how = how, sessionId = S.session, imports = S.imported })
+-- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session entry.
+local function session_ready(how, fresh, extra)
+  append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported }))
   S.client:request("session/set_mode", { sessionId = S.session, modeId = "bypassPermissions" }, function(_, err)
     if err then
       notice("could not set bypassPermissions mode: " .. tostring(err.message))
@@ -456,43 +506,87 @@ reload = function()
   end)
 end
 
-local function new_session()
+-- A new session. before(id) runs once it's open, before it's ready (a switch replaces the journal
+-- there); on_fail when it couldn't open (default: the supervisor ends, as there's no session).
+local function new_session(how, fresh, before, on_fail, extra)
   S.client:request("session/new", { cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(result, err)
     if err or not result or not result.sessionId then
       notice("could not open a session: " .. tostring(err and err.message or "no session id"))
+      if on_fail then
+        return on_fail()
+      end
       return M.shutdown(1)
     end
-    remember_session(result.sessionId)
-    session_ready("new", true)
+    if before then
+      before(result.sessionId)
+    end
+    remember_session(result.sessionId, how or "new")
+    session_ready(how or "new", fresh ~= false, extra)
   end)
 end
 
--- A fork's first session (a router or repo-root made root): a copy of the session it was forked
--- from (spec.fork_of), opened with its own role prompt; a new one when the agent can't fork.
+local function session_cap(name)
+  return type(S.caps.sessionCapabilities) == "table" and S.caps.sessionCapabilities[name] ~= nil
+end
+
+-- session/fork of source, at messageId (the adapter's fork point) or whole.
+local function fork_request(source, message_id, callback)
+  local fork_meta = meta()
+  if message_id then
+    fork_meta.jetbrains = { air = { fork = { version = 1, messageId = message_id } } }
+  end
+  S.client:request("session/fork", { sessionId = source, cwd = S.cwd, mcpServers = {}, _meta = fork_meta }, callback)
+end
+
+-- A fork's first session: an agent iso fork made (fork_from: its journal starts with its parent's up
+-- to the fork, fork_seq, all of it without one), or a router or repo-root made root (isovim.cli.roles,
+-- no fork_from). Its session is a copy of spec.fork_of (at fork_at; none before the first thing the
+-- agent said, which is a new session), opened with its own role prompt; a new one when the agent
+-- can't fork.
 local function fork_session()
   local spec = S.spec
-  S.client:request("session/fork", { sessionId = spec.fork_of, cwd = S.cwd, mcpServers = {}, _meta = meta() },
-    function(result, err)
-      if err or not result or not result.sessionId then
-        notice(("could not fork session %s (%s); starting a new one"):format(spec.fork_of,
-          tostring(err and err.message or "no session id")))
-        return new_session()
+  local from_ws, from_agent = tostring(spec.fork_from or ""):match("^(.*)/([^/]+)$")
+  local function carry(id)
+    if from_ws then
+      replace_journal(sessions.carry(journal.read(from_ws, from_agent), tonumber(spec.fork_seq)))
+      -- What was queued before the session opened (a promoter's message) is still queued.
+      if #S.queue > 0 then
+        queue_changed()
       end
-      remember_session(result.sessionId)
-      session_ready("fork", true)
-    end)
+    end
+    return id
+  end
+  local extra = { from = spec.fork_from, source = spec.fork_of, at = spec.fork_at }
+  if spec.fork_seq and not spec.fork_at then
+    return new_session("fork", true, carry, nil, extra)
+  elseif not session_cap("fork") then
+    notice("the agent can't fork sessions; this one starts new")
+    return new_session("fork", true, carry, nil, extra)
+  end
+  fork_request(spec.fork_of, spec.fork_at, function(result, err)
+    if err or not result or not result.sessionId then
+      notice(("could not fork session %s (%s); starting a new one"):format(tostring(spec.fork_of),
+        tostring(err and err.message or "no session id")))
+      return new_session("fork", true, carry, nil, extra)
+    end
+    carry()
+    remember_session(result.sessionId, "fork")
+    session_ready("fork", true, extra)
+  end)
 end
 
 -- Resumes the recorded session: session/resume when the agent has it (no replay), else
 -- session/load with its replay left out of the journal; a new one when neither works.
 local function open_session(init)
+  S.caps = init.agentCapabilities or {}
   local id = store.session_id(S.ws, S.agent)
-  if not id and S.spec.fork_of and select(2, session_caps()).fork then
-    return fork_session()
-  elseif not id then
+  if not id then
+    if S.spec.fork_of then
+      return fork_session()
+    end
     return new_session()
   end
-  local caps = init.agentCapabilities or {}
+  local caps = S.caps
   local resume = type(caps.sessionCapabilities) == "table" and caps.sessionCapabilities.resume ~= nil
   local method = resume and "session/resume" or (caps.loadSession and "session/load") or nil
   if not method then
@@ -508,6 +602,158 @@ local function open_session(init)
     S.session = id
     session_ready(resume and "resume" or "load", false)
   end)
+end
+
+-- Switching sessions (/new, /clear, /resume, a rewind): what's running stops first (its turn is
+-- cancelled, and the switch goes when it ends); the session isn't ready meanwhile, so prompts that
+-- come in wait in the queue and go to the new session.
+local function when_idle(fn)
+  if S.handover then
+    error("it's handed over to Claude's screen (iso handover)")
+  elseif not S.session or not S.ready and not S.busy then
+    error("its session isn't up yet")
+  elseif S.after_turn then
+    error("it's already switching sessions")
+  end
+  S.ready = false
+  if S.busy then
+    S.after_turn = fn
+    cancel_turn()
+    return true
+  end
+  fn()
+  return false
+end
+
+-- The session left behind is closed in the adapter, when it can, so it stops holding it.
+local function close_old(id)
+  if id and session_cap("close") then
+    S.client:request("session/close", { sessionId = id }, function() end)
+  end
+end
+
+-- The switch failed: the old session stays.
+local function stay()
+  S.ready = true
+  set_state("ready")
+  next_prompt()
+end
+
+-- /new and /clear: a new session, its journal empty; the old one's is kept for /resume.
+function CALLS.new_session(payload)
+  local old = S.session
+  local waited = when_idle(function()
+    new_session("new", false, function()
+      replace_journal({}, old)
+      close_old(old)
+    end, stay, { cleared = true, command = payload.command, previous = old })
+  end)
+  return { switching = true, waited = waited, previous = old }
+end
+
+-- /resume <id>: back to a session the agent had, with the journal it kept (session/resume); one
+-- with no kept journal is loaded (session/load), its replay going into the journal.
+function CALLS.resume(payload)
+  local id = payload.id
+  if type(id) ~= "string" or id == "" then
+    error("/resume needs a session id")
+  elseif id == S.session then
+    error("that's its session now")
+  end
+  local old = S.session
+  local kept = sessions.read_archive(S.ws, S.agent, id)
+  local resume = session_cap("resume") and kept ~= nil
+  local method = resume and "session/resume" or (S.caps.loadSession and "session/load") or nil
+  if not method then
+    error("the agent can't resume sessions")
+  end
+  local waited = when_idle(function()
+    replace_journal(kept and sessions.carry(kept) or {}, old)
+    S.loading = method == "session/load" and not kept
+    S.replaying = method == "session/load" and kept ~= nil
+    S.client:request(method, { sessionId = id, cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(_, err)
+      S.loading, S.replaying = false, false
+      if err then
+        -- Back to the old one, as it was.
+        replace_journal(sessions.read_archive(S.ws, S.agent, old) or {})
+        notice(("could not resume session %s (%s)"):format(id, tostring(err.message)))
+        return stay()
+      end
+      close_old(old)
+      remember_session(id, "resume")
+      session_ready(method == "session/resume" and "resume" or "load", false, { previous = old })
+    end)
+  end)
+  return { switching = true, waited = waited, previous = old }
+end
+
+-- The sessions this agent has had, for the history picker, newest first.
+function CALLS.sessions()
+  local list = sessions.list(S.ws, S.agent)
+  for _, item in ipairs(list) do
+    item.current = item.id == S.session
+    item.kept = vim.uv.fs_stat(sessions.archive(S.ws, S.agent, item.id)) ~= nil or item.current
+  end
+  return { sessions = list, current = S.session }
+end
+
+-- A rewind: your prompt (its id) edited to text. The session forks at the agent's message before
+-- it (a new session when there's none), the files go back to the snapshot taken before its turn,
+-- the journal keeps what came before it, and the edited prompt goes first.
+---@param payload {id: string, text: string}
+function CALLS.rewind(payload)
+  if type(payload.text) ~= "string" or vim.trim(payload.text) == "" then
+    error("a rewind needs the prompt's new text")
+  end
+  local entries = journal.read(S.ws, S.agent)
+  local prompt, snapshot
+  for _, entry in ipairs(entries) do
+    if entry.kind == "prompt" and entry.id == payload.id then
+      prompt = entry
+    elseif prompt and not snapshot and entry.kind == "turn" and entry.state == "start" and entry.id == payload.id then
+      snapshot = entry
+    end
+  end
+  if not prompt then
+    error("no prompt " .. tostring(payload.id) .. " in this session")
+  end
+  local cut = sessions.cut(entries, prompt.seq, "before")
+  local old = S.session
+  local function done(id)
+    local restored
+    local checkout = sessions.checkout(S.ws, S.agent)
+    if snapshot and snapshot.snapshot and snapshot.snapshot_dir == checkout then
+      local result, err = sessions.restore(snapshot.snapshot_dir, snapshot.snapshot)
+      restored = result and ("files restored from the snapshot before it (%d put back, %d removed)")
+        :format(result.restored, result.deleted) or ("could not restore the files: " .. tostring(err))
+    elseif snapshot and snapshot.snapshot then
+      -- A fork's carried turns snapshot its parent's checkout, not this one.
+      restored = "its snapshot is of another checkout, so the files stay as they are"
+    else
+      restored = "no snapshot of its files (no checkout then), so they stay as they are"
+    end
+    local carried = sessions.carry(entries, cut.upto)
+    replace_journal(carried, old)
+    close_old(old)
+    remember_session(id, "rewind")
+    table.insert(S.queue, 1, { id = next_id(), text = payload.text, via = "composer" })
+    session_ready("rewind", false, { previous = old, prompt = payload.id, at = cut.messageId, files = restored })
+  end
+  local waited = when_idle(function()
+    local function opened(result, err)
+      if err or not result or not result.sessionId then
+        notice(("could not fork the session before that prompt (%s)"):format(tostring(err and err.message or "no session id")))
+        return stay()
+      end
+      done(result.sessionId)
+    end
+    -- Before anything the agent said: nothing to fork.
+    if not cut.messageId then
+      return S.client:request("session/new", { cwd = S.cwd, mcpServers = {}, _meta = meta() }, opened)
+    end
+    fork_request(old, cut.messageId, opened)
+  end)
+  return { rewinding = true, waited = waited }
 end
 
 -- Starts the adapter and opens the session. Live Bash output comes as terminal output deltas
@@ -528,7 +774,10 @@ local function start_adapter()
   S.client:request("initialize", {
     protocolVersion = 1,
     clientInfo = { name = "isovim", version = "1" },
+    -- Forms: AskUserQuestion comes as a form elicitation, which the adapter sends (and enables the
+    -- tool for) only when the client offers them.
     clientCapabilities = { fs = { readTextFile = false, writeTextFile = false }, terminal = false,
+      elicitation = { form = vim.empty_dict() },
       _meta = { terminal_output = true, terminal_output_delta = true } },
   }, function(init, init_err)
     if init_err or not init then
@@ -627,6 +876,7 @@ function M.run(addr)
   vim.fn.mkdir(store.run_dir(ws), "p")
   log.file = store.run_dir(ws) .. "/" .. agent .. ".acp.log"
   S.writer = journal.writer(ws, agent)
+  S.asks = asks_mod.new(ws, agent, journal_ask)
   S.prompted = vim.iter(journal.read(ws, agent)):any(function(entry)
     return entry.kind == "prompt"
   end)

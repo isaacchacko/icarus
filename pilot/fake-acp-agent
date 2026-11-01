@@ -15,6 +15,15 @@ exit code, "stream <n>" streams n words one chunk at a time ($FAKE_STREAM_GAP se
 run the session's PreToolUse hooks (from _meta.claudeCode.options.settings) as Claude Code does: a
 hook that exits 2 blocks the call, its stderr the reason, which the reply then starts "blocked: ".
 
+Sessions are kept on disk ($FAKE_ACP_LOG.sessions/<id>.json: the user's prompts and the agent's
+messages, each agent message with the messageId its chunks carry, as claude-agent-acp's do), so a
+session outlives the process: session/resume and session/load (which replays it) find it, and
+session/fork copies it, up to the agent message _meta.jetbrains.air.fork.messageId names (the
+adapter's fork point), into a new one. "history" answers with the session's earlier prompts, so a
+check sees what a resumed, forked or rewound session remembers. "ask" asks two questions as a form
+elicitation (elicitation/create, as the adapter presents AskUserQuestion) when the client offers
+forms, and replies with what came back.
+
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
 logged as an overlap: the client is meant to queue them."""
@@ -38,6 +47,39 @@ session_hooks = {}
 next_id = [1000]
 running = {"prompt": None, "cancelled": False}
 state_lock = threading.Lock()
+client = {"capabilities": {}}
+SESSIONS = (LOG + ".sessions") if LOG else None
+memory = {}
+session_lock = threading.Lock()
+turn = {"messageId": None, "text": ""}
+
+
+def load_session(sid):
+    if not SESSIONS:
+        return memory.get(sid)
+    path = os.path.join(SESSIONS, sid + ".json")
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def save_session(sid, data):
+    if not SESSIONS:
+        memory[sid] = data
+        return
+    os.makedirs(SESSIONS, exist_ok=True)
+    tmp = os.path.join(SESSIONS, f".{sid}.{os.getpid()}.tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, os.path.join(SESSIONS, sid + ".json"))
+
+
+def remember(sid, message):
+    with session_lock:
+        data = load_session(sid) or {"messages": []}
+        data["messages"].append(message)
+        save_session(sid, data)
 
 
 def log(entry):
@@ -57,13 +99,17 @@ def update(session, body):
 
 
 def request(method, params):
-    """A request to the client; returns its result (or error) once answered."""
+    """A request to the client; returns its result (or error) once answered, None when the turn is
+    cancelled first (as the adapter gives up on what it asked)."""
     next_id[0] += 1
     rid = next_id[0]
     done = threading.Event()
     pending[rid] = {"event": done}
     send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
-    done.wait(30)
+    deadline = time.time() + 120
+    while not done.wait(0.05) and time.time() < deadline:
+        if running["cancelled"]:
+            break
     return pending.pop(rid).get("answer")
 
 
@@ -72,7 +118,12 @@ def text_of(prompt):
 
 
 def chunk(session, text):
-    update(session, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+    """The agent's text, with the turn's messageId (one agent message a turn)."""
+    if turn["messageId"] is None:
+        turn["messageId"] = "msg_" + uuid.uuid4().hex[:12]
+    turn["text"] += text
+    update(session, {"sessionUpdate": "agent_message_chunk", "messageId": turn["messageId"],
+                     "content": {"type": "text", "text": text}})
 
 
 def work(seconds):
@@ -140,7 +191,34 @@ def prompt(rid, params):
         running["prompt"] = text
     call_id = "tool-" + uuid.uuid4().hex[:8]
     stop = "end_turn"
-    if text.startswith("run "):
+    earlier = [m["text"] for m in (load_session(session) or {"messages": []})["messages"] if m["role"] == "user"]
+    remember(session, {"role": "user", "text": text})
+    turn["messageId"], turn["text"] = None, ""
+    if text == "history":
+        chunk(session, "history: " + " | ".join(earlier))
+    elif text == "ask":
+        if (client["capabilities"].get("elicitation") or {}).get("form") is None:
+            chunk(session, "no elicitation")
+        else:
+            tool(session, call_id, "AskUserQuestion", "other", "pending")
+            answer = request("elicitation/create", {
+                "mode": "form", "sessionId": session, "toolCallId": call_id,
+                "message": "Please answer the following questions.",
+                "requestedSchema": {"type": "object", "properties": {
+                    "question_0": {"type": "string", "title": "Color", "description": "Which color?",
+                                   "oneOf": [{"const": "Red", "title": "Red"},
+                                             {"const": "Blue", "title": "Blue", "description": "the calm one"}]},
+                    "question_0_custom": {"type": "string", "title": "Other"},
+                    "question_1": {"type": "array", "title": "Sizes", "description": "Which sizes?",
+                                   "items": {"anyOf": [{"const": "S", "title": "S"}, {"const": "M", "title": "M"},
+                                                       {"const": "L", "title": "L"}]}},
+                    "question_1_custom": {"type": "string", "title": "Other"},
+                }},
+            })
+            result = (answer or {}).get("result") or {}
+            tool(session, call_id, None, None, "completed" if result.get("action") == "accept" else "failed")
+            chunk(session, "answer: " + json.dumps(result, sort_keys=True))
+    elif text.startswith("run "):
         command = text[4:]
         tool(session, call_id, "run " + command, "execute", "pending")
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
@@ -182,6 +260,8 @@ def prompt(rid, params):
         chosen = outcome.get("optionId") or outcome.get("outcome")
         tool(session, call_id, None, None, "failed" if chosen == "reject" else "completed")
         chunk(session, "permission: " + str(chosen))
+        if running["cancelled"]:
+            stop = "cancelled"
     elif text == "diff":
         path = os.path.join(os.getcwd(), "src", "app.lua")
         old = "local a = 1\nlocal b = 2\nlocal c = 3\nreturn a\n"
@@ -230,6 +310,8 @@ def prompt(rid, params):
             chunk(session, text)
         else:
             stop = "cancelled"
+    if turn["messageId"]:
+        remember(session, {"role": "agent", "id": turn["messageId"], "text": turn["text"]})
     with state_lock:
         running["prompt"] = None
     send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": stop}})
@@ -250,24 +332,51 @@ def handle(frame):
             entry["event"].set()
         return
     if method == "initialize":
+        client["capabilities"] = params.get("clientCapabilities") or {}
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": 1,
-            "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}, "close": {}, "fork": {}},
+            "agentCapabilities": {"loadSession": True,
+                                  "sessionCapabilities": {"resume": {}, "fork": {}, "close": {}, "list": {}},
                                   "promptCapabilities": {"image": False}},
             "agentInfo": {"name": "fake-acp", "version": "1"},
             "authMethods": [],
         }})
     elif method == "session/new":
-        session = "fake-" + uuid.uuid4().hex[:12]
-        remember_hooks(session, params)
-        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": session}})
+        sid = "fake-" + uuid.uuid4().hex[:12]
+        remember_hooks(sid, params)
+        with session_lock:
+            save_session(sid, {"messages": [], "cwd": params.get("cwd")})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
+    elif method == "session/resume":
+        remember_hooks(params.get("sessionId"), params)
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "session/load":
+        sid = params["sessionId"]
+        remember_hooks(sid, params)
+        for message in (load_session(sid) or {"messages": []})["messages"]:
+            kind = "user_message_chunk" if message["role"] == "user" else "agent_message_chunk"
+            body = {"sessionUpdate": kind, "content": {"type": "text", "text": message["text"]}}
+            if message.get("id"):
+                body["messageId"] = message["id"]
+            update(sid, body)
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/fork":
-        session = "fork-" + uuid.uuid4().hex[:12]
-        remember_hooks(session, params)
-        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": session}})
-    elif method in ("session/resume", "session/load", "session/close"):
-        if method != "session/close":
-            remember_hooks(params.get("sessionId"), params)
+        source = load_session(params["sessionId"]) or {"messages": []}
+        point = ((((params.get("_meta") or {}).get("jetbrains") or {}).get("air") or {}).get("fork") or {}).get("messageId")
+        messages = source["messages"]
+        if point:
+            ids = [m.get("id") for m in messages]
+            if point not in ids:
+                send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602,
+                                                              "message": f"Fork point message {point} was not found"}})
+                return
+            messages = messages[:ids.index(point) + 1]
+        sid = "fork-" + uuid.uuid4().hex[:12]
+        remember_hooks(sid, params)
+        with session_lock:
+            save_session(sid, {"messages": messages, "cwd": params.get("cwd"), "forkedFrom": params["sessionId"]})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
+    elif method == "session/close":
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/set_mode":
         update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})

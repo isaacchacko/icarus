@@ -29,6 +29,12 @@
 -- keys: <CR> sends (queued while the agent works), <S-CR> or <C-j> a new line, <C-c> cancels the
 -- turn, <Up> <Down> your earlier prompts while it's empty, <Esc> normal mode, <C-k> the chat.
 -- <leader>iq edits the queue (isovim.acp.queue).
+--
+-- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
+-- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
+-- every other /command goes to the agent. <leader>iu puts your prompt under the cursor into the
+-- composer to edit, and sending it rewinds there (the bar says so; <C-c> drops it); <leader>if
+-- forks the agent at the message under the cursor (isovim.acp.host does the rest).
 local acp = require("isovim.acp")
 local journal = require("isovim.acp.journal")
 local store = require("isovim.store")
@@ -202,9 +208,12 @@ local function add_block(chat, lines, hl)
   return row
 end
 
--- Every message's first line is marked, and your own prompts' again in MINE, for ]] [[ and ]m [m.
+-- Every message's first line is marked, and your own prompts' again in MINE, for ]] [[ and ]m [m;
+-- each mark knows the journal entry that began the message, for a fork or a rewind there.
 local function mark_message(chat, row, mine)
-  vim.api.nvim_buf_set_extmark(chat.buf, MESSAGES, row, 0, {})
+  local id = vim.api.nvim_buf_set_extmark(chat.buf, MESSAGES, row, 0, {})
+  local entry = chat.entry or {}
+  chat.marks[id] = { seq = entry.seq, kind = entry.kind, id = entry.id, text = entry.text, mine = mine }
   if mine then
     vim.api.nvim_buf_set_extmark(chat.buf, MINE, row, 0, {})
   end
@@ -546,9 +555,42 @@ function RENDER.turn(chat, entry)
   end
 end
 
+-- A permission the agent asked for: waiting in the Inbox, then what you decided.
 function RENDER.permission(chat, entry)
-  add_block(chat, { ("%s: %s (%s)"):format(entry.decision or "denied", entry.tool or "a tool",
-    entry.reason or "approvals not built yet") }, "IsovimAcpDenied")
+  local decision = entry.decision or "denied"
+  if decision == "asked" then
+    add_block(chat, { ("? %s asks to run: %s"):format(chat.agent, entry.tool or "a tool"),
+      ("  allow or deny it in the Inbox (<leader>in), or: iso answer %s allow|deny"):format(entry.name or "?") },
+      "IsovimAcpDenied")
+    return
+  end
+  local why = entry.reason and (" (" .. entry.reason .. ")") or (entry.by and (" (by " .. entry.by .. ")")) or ""
+  add_block(chat, { ("%s: %s%s"):format(decision, entry.tool or "a tool", why) },
+    decision == "allowed" and "IsovimAcpNotice" or "IsovimAcpDenied")
+end
+
+-- What the agent asked you (AskUserQuestion): its questions, waiting in the Inbox, then the answers.
+function RENDER.question(chat, entry)
+  if entry.state == "asked" then
+    local lines = {}
+    for _, q in ipairs(entry.questions or {}) do
+      local labels = vim.tbl_map(function(option)
+        return option.label
+      end, q.options or {})
+      lines[#lines + 1] = ("? %s%s"):format(q.question or "", #labels > 0 and ("  [" .. table.concat(labels, " / ") .. "]") or "")
+    end
+    local first = (entry.questions or {})[1]
+    lines[#lines + 1] = ("  answer in the Inbox (<leader>in), or: iso answer %s <answer>"):format(first and first.name or "?")
+    add_block(chat, lines, "IsovimAcpDenied")
+  elseif entry.state == "answered" then
+    local lines = {}
+    for i, text in ipairs(entry.answers or {}) do
+      lines[i] = (i == 1 and FIRST or REST) .. text:gsub("\n", ", ")
+    end
+    add_lines(chat, #lines > 0 and lines or { FIRST .. "(no answer)" }, "IsovimAcpResult")
+  else
+    add_block(chat, { ("[the question was withdrawn: %s]"):format(entry.reason or "cancelled") }, "IsovimAcpNotice")
+  end
 end
 
 function RENDER.notice(chat, entry)
@@ -560,9 +602,22 @@ end
 
 function RENDER.session(chat, entry)
   chat.busy, chat.handover = false, false
-  if entry.how ~= "new" then
-    add_block(chat, { ("[%s session %s]"):format(entry.how == "resume" and "resumed" or "loaded", entry.sessionId or "") },
-      "IsovimAcpNotice")
+  local sid = entry.sessionId or ""
+  local said
+  if entry.how == "new" then
+    said = entry.cleared and ("[new session %s; /resume brings back the one before]"):format(sid) or nil
+  elseif entry.how == "fork" then
+    said = ("[forked from %s%s: session %s]"):format(entry.from or "another agent", entry.at and " at a message" or "", sid)
+  elseif entry.how == "reload" then
+    -- A promotion's reload (isovim.acp.host): its notice says so.
+    said = nil
+  elseif entry.how == "rewind" then
+    said = ("[rewound: going on from before your edited prompt, session %s; %s]"):format(sid, entry.files or "")
+  else
+    said = ("[%s session %s]"):format(entry.how == "resume" and "resumed" or "loaded", sid)
+  end
+  if said then
+    add_block(chat, { said }, "IsovimAcpNotice")
   end
 end
 
@@ -585,7 +640,9 @@ local spinner ---@type uv.uv_timer_t?
 ---@param chat isovim.acp.Chat
 function M.bar_text(chat)
   local parts = {}
-  if chat.handover then
+  if chat.rewind then
+    parts[1] = "↶ rewind: edit your prompt; <CR> goes on from before it (its files too) · <C-c> drops the rewind"
+  elseif chat.handover then
     parts[1] = "⇄ on Claude's screen (iso handover); prompts wait"
   elseif chat.busy then
     local secs = chat.since and math.max(0, math.floor(os.time() - chat.since)) or 0
@@ -647,7 +704,9 @@ local function render(chat, entry)
   end
   local draw = RENDER[entry.kind]
   if draw then
+    chat.entry = entry
     draw(chat, entry)
+    chat.entry = nil
   end
   update_bar(chat)
 end
@@ -675,6 +734,7 @@ end
 
 local function reset(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.tail, chat.fresh = nil, {}, {}, {}, 0, 0, true
+  chat.marks = {}
   chat.busy, chat.handover = false, false
   if vim.api.nvim_buf_is_valid(chat.buf) then
     for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE }) do
@@ -799,11 +859,125 @@ local function scratch(name)
   return buf
 end
 
+-- A toast in the TUI (Snacks), a plain message in iso attach.
+local function say(text, level)
+  if rawget(_G, "Snacks") then
+    Snacks.notify(text, { title = "isovim", level = level or vim.log.levels.INFO })
+  else
+    vim.notify("isovim: " .. text, level or vim.log.levels.INFO)
+  end
+end
+
+local function call_error(result)
+  return (tostring(result):gsub("^.-:%d+: ", ""))
+end
+
+-- Forks the agent into a new one (iso fork), at the message whose journal entry is seq or whole,
+-- and opens it once it's up.
+function M.fork(chat, seq, name)
+  local cmd = { require("isovim.panes").bin, "fork", chat.ws .. "/" .. chat.agent }
+  if seq then
+    vim.list_extend(cmd, { "--at", tostring(seq) })
+  end
+  if name and name ~= "" then
+    vim.list_extend(cmd, { "--name", name })
+  end
+  say(("forking %s%s..."):format(chat.agent, seq and " at that message" or ""))
+  vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
+    local addr = vim.trim(result.stdout or ""):match("([^\n]+)$")
+    local ws, id = (addr or ""):match("^(.*)/([^/]+)$")
+    if result.code ~= 0 or not ws then
+      return say("could not fork " .. chat.agent .. ": " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
+    end
+    say(("%s is a fork of %s"):format(addr, chat.agent))
+    local isovim = package.loaded["isovim"]
+    if isovim and isovim.open and isovim.refresh then
+      pcall(isovim.refresh)
+      pcall(isovim.open, ws, id)
+    end
+  end))
+end
+
+-- The history picker: the sessions this agent has had; the one you pick is resumed.
+function M.history(chat)
+  local ok, result = acp.call(chat.ws, chat.agent, "sessions")
+  if not ok then
+    return say("its sessions: " .. call_error(result), vim.log.levels.ERROR)
+  end
+  local items = result.sessions or {}
+  if #items == 0 then
+    return say(chat.agent .. " has no sessions yet")
+  end
+  vim.ui.select(items, {
+    prompt = ("Sessions of %s"):format(chat.agent),
+    format_item = function(item)
+      return ("%s %s · %s · %s%s"):format(item.current and "●" or " ", os.date("%Y-%m-%d %H:%M", item.used or item.started or 0),
+        item.title or "(no prompt yet)", item.id:sub(1, 8), item.current and " (now)" or "")
+    end,
+  }, function(item)
+    if item and not item.current then
+      local resumed, err = acp.call(chat.ws, chat.agent, "resume", { id = item.id })
+      if not resumed then
+        say("could not resume it: " .. call_error(err), vim.log.levels.ERROR)
+      end
+    end
+  end)
+end
+
+-- The slash commands isovim runs itself; every other one goes to the agent as typed.
+local COMMANDS = {}
+
+function COMMANDS.new(chat, _, command)
+  local ok, result = acp.call(chat.ws, chat.agent, "new_session", { command = command })
+  if not ok then
+    say(("/%s: %s"):format(command, call_error(result)), vim.log.levels.ERROR)
+  end
+  return ok
+end
+
+COMMANDS.clear = COMMANDS.new
+
+function COMMANDS.resume(chat, rest)
+  if rest == "" then
+    M.history(chat)
+    return true
+  end
+  local ok, result = acp.call(chat.ws, chat.agent, "resume", { id = rest })
+  if not ok then
+    say("/resume: " .. call_error(result), vim.log.levels.ERROR)
+  end
+  return ok
+end
+
+function COMMANDS.fork(chat, rest)
+  M.fork(chat, nil, rest)
+  return true
+end
+
 -- Sends what's in the composer and empties it; on failure the text stays and you're told why.
+-- During a rewind it's the rewound prompt's new text.
 function M.submit(composer)
   local chat = by_buf(composer)
   local text = vim.trim(table.concat(vim.api.nvim_buf_get_lines(composer, 0, -1, false), "\n"))
   if not chat or text == "" then
+    return
+  end
+  if chat.rewind then
+    local ok, result = acp.call(chat.ws, chat.agent, "rewind", { id = chat.rewind.id, text = text })
+    if not ok then
+      return say("could not rewind: " .. call_error(result), vim.log.levels.ERROR)
+    end
+    chat.rewind = nil
+    vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+    update_bar(chat)
+    return
+  end
+  local command, rest = text:match("^/(%a+)%s*(.-)$")
+  if command and COMMANDS[command] then
+    if COMMANDS[command](chat, rest, command) then
+      chat.recall = nil
+      vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+    end
     return
   end
   local ok, result = acp.call(chat.ws, chat.agent, "prompt", { text = text })
@@ -882,8 +1056,13 @@ local function map_composer(chat)
   map("i", "<S-CR>", "<CR>", "new line")
   map("i", "<C-j>", "<CR>", "new line")
   map({ "n", "i" }, "<C-c>", function()
+    if chat.rewind then
+      chat.rewind = nil
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+      return update_bar(chat)
+    end
     cancel(chat)
-  end, "cancel the agent's turn")
+  end, "cancel the agent's turn (or the rewind you're editing)")
   for _, key_dir in ipairs({ { "<Up>", -1 }, { "<Down>", 1 } }) do
     map({ "n", "i" }, key_dir[1], function()
       if not recall(chat, key_dir[2]) then
@@ -935,7 +1114,7 @@ local function make(ws, agent)
   vim.b[composer].completion = false
 
   local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, seq = 0,
-    tail = 0, fresh = true, busy = false, handover = false, unseen = false }
+    tail = 0, fresh = true, busy = false, handover = false, unseen = false, marks = {} }
   -- Window options follow the buffer into any window that shows it (a layout rebuilt, :b).
   vim.api.nvim_create_autocmd("BufWinEnter", {
     buffer = buf,
@@ -1074,6 +1253,70 @@ function M.focus_composer(ws, agent)
   vim.api.nvim_set_current_win(win)
   vim.cmd.startinsert({ bang = true })
   return true
+end
+
+-- The supervisor replaced the journal (a session switch): read it again from the start.
+function M.reload(ws, agent)
+  local chat = chats[key(ws, agent)]
+  if chat then
+    chat.rewind = nil
+    chat.drain()
+  end
+end
+
+-- The message at or above row (0-based): its mark's entry info; only your prompts with mine.
+local function message_at(chat, row, mine)
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(chat.buf, MESSAGES, { row, 0 }, 0, {})) do
+    local info = chat.marks[mark[1]]
+    if info and info.seq and (not mine or info.mine) then
+      return info
+    end
+  end
+end
+
+-- The chat you're in (its buffer or its composer), and the row the cursor is on in the chat (nil
+-- in the composer).
+local function here()
+  local buf = vim.api.nvim_get_current_buf()
+  local chat = by_buf(buf)
+  if not chat then
+    return nil
+  end
+  return chat, buf == chat.buf and vim.api.nvim_win_get_cursor(0)[1] - 1 or nil
+end
+
+-- <leader>iu: your prompt under the cursor (in the composer, your last) goes into the composer to
+-- edit; sending it rewinds there (isovim.acp.host's rewind).
+function M.rewind_at_cursor()
+  local chat, row = here()
+  if not chat then
+    return say("rewind: put the cursor on one of your prompts in an ACP agent's chat")
+  end
+  local info = message_at(chat, row or vim.api.nvim_buf_line_count(chat.buf) - 1, true)
+  if not info or info.kind ~= "prompt" or not info.id then
+    return say("rewind: no prompt of yours at or above the cursor")
+  end
+  chat.rewind = { id = info.id, text = info.text or "" }
+  local lines = vim.split(info.text or "", "\n", { plain = true })
+  vim.api.nvim_buf_set_lines(chat.composer, 0, -1, false, lines)
+  if M.focus_composer(chat.ws, chat.agent) then
+    vim.api.nvim_win_set_cursor(0, { #lines, #lines[#lines] })
+  end
+  update_bar(chat)
+  return chat.rewind
+end
+
+-- <leader>if: a fork of the agent at the message under the cursor (in the composer, all of it).
+function M.fork_at_cursor()
+  local chat, row = here()
+  if not chat then
+    return say("fork: open an ACP agent's chat first")
+  end
+  local info = row and message_at(chat, row, false) or nil
+  if row and not info then
+    return say("fork: no message at or above the cursor")
+  end
+  M.fork(chat, info and info.seq or nil)
 end
 
 -- The agent went away: its chat and composer go too.

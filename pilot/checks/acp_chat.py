@@ -3,7 +3,7 @@ from its journal (prompts, the agent's streamed text, each tool call one line up
 a composer below it whose Enter sends to the agent's supervisor over its socket; two agents side by
 side keep their own chats; a message from another agent while you type in a composer goes in through
 the socket and never touches what you typed; a prompt you send while the agent works shows as queued
-and goes once the turn ends; a denied permission shows as a line; the chat's keys (]] [[ over
+and goes once the turn ends; a permission asked in the Inbox and denied there shows as lines; the chat's keys (]] [[ over
 your own prompts, ]m [m over any message, za zo zc a tool call's folded output, gf, i to the
 composer) and the composer's (<C-k> to the chat, <Up> <Down> your earlier prompts, <C-j> a new
 line, <C-c> cancels the turn) work; and closing the TUI leaves the
@@ -162,8 +162,13 @@ try:
 
     print("\n# a denied permission")
     run("send", a1, "perm")
+    asked = iso.wait(lambda: next((e for e in journal("a1") if e["kind"] == "permission" and e["decision"] == "asked"), None),
+                     "the permission asked in the Inbox")
+    iso.wait(lambda: has("a1", "? a1 asks to run: Bash: rm -rf build"), "the chat says it waits on you")
+    rc, _, err = run("answer", asked["name"], "deny")
+    check(rc == 0, "iso answer denies it", err)
     iso.wait(lambda: has("a1", "permission: reject"), "the permission answered")
-    check(has("a1", "denied: Bash: rm -rf build (approvals not built yet)"), "the chat says it was denied", chat("a1"))
+    check(has("a1", "denied: Bash: rm -rf build (by user)"), "the chat says it was denied", chat("a1"))
     iso.screenshot("chats")
 
     print("\n# chat keys")

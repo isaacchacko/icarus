@@ -403,8 +403,12 @@ M.GROUP = {
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },
   { "q", M.prompt_queue, "the prompt queue of the agent on screen" },
-  { "u", not_yet("Rewind"), "rewind at the prompt under the cursor (not yet)" },
-  { "f", not_yet("Fork at a message"), "fork at the message under the cursor (not yet)" },
+  { "u", function()
+    require("isovim.acp.chat").rewind_at_cursor()
+  end, "rewind: edit your prompt under the cursor and go on from before it" },
+  { "f", function()
+    require("isovim.acp.chat").fork_at_cursor()
+  end, "fork the agent at the message under the cursor" },
 }
 
 -- The <leader>a keys from before: {key, what it did, its replacement}.
