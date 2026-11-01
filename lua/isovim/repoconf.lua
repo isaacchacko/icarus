@@ -123,7 +123,7 @@ function M.base(name, checkout)
   elseif repos.of(checkout) ~= name then
     return nil, ("%s is not a checkout of %s"):format(checkout, name)
   end
-  local url = out(git(checkout, { "remote", "get-url", "origin" }))
+  local url = repos.remote_url(checkout)
   local objects = out(git(checkout, { "rev-parse", "--path-format=absolute", "--git-common-dir" }))
   local tmp = ("%s.%d.tmp"):format(path, vim.uv.os_getpid())
   vim.fn.delete(tmp, "rf")

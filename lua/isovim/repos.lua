@@ -69,11 +69,27 @@ end
 
 local names = {} ---@type table<string, string|false> dir -> repo name, false outside git or without an origin
 
+-- The URL a checkout's repo is named by: its origin, or its only remote when it has no origin
+-- (a clone whose remote is called github, say).
+function M.remote_url(dir)
+  local result = vim.system({ "git", "-C", dir, "remote", "get-url", "origin" }, { text = true }):wait()
+  if result.code == 0 then
+    return vim.trim(result.stdout)
+  end
+  local listed = vim.system({ "git", "-C", dir, "remote" }, { text = true }):wait()
+  local remotes = listed.code == 0 and vim.split(vim.trim(listed.stdout), "\n", { trimempty = true }) or {}
+  if #remotes ~= 1 then
+    return nil
+  end
+  result = vim.system({ "git", "-C", dir, "remote", "get-url", remotes[1] }, { text = true }):wait()
+  return result.code == 0 and vim.trim(result.stdout) or nil
+end
+
 -- Asked of git once per dir per session.
 function M.of(dir)
   if names[dir] == nil then
-    local result = vim.system({ "git", "-C", dir, "remote", "get-url", "origin" }, { text = true }):wait()
-    names[dir] = result.code == 0 and M.normalize(result.stdout) or false
+    local url = M.remote_url(dir)
+    names[dir] = url and M.normalize(url) or false
   end
   return names[dir] or nil
 end
