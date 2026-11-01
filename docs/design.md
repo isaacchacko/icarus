@@ -172,7 +172,7 @@ sends that prompt now. A redraw never touches it while you're editing it, nor cl
 part of a saved layout: the chat brings it back under each window that shows it, so switching
 workspaces, opening another agent or restarting leaves no stray queue window.
 
-`<C-j>` / `<C-k>` walk down and up the column, as they walk the sidebar's windows: from the
+`<C-j>` / `<C-k>` walk down and up the column: from the
 conversation `<C-j>` goes to the input box (typing), from the input box to the queue while it shows;
 `<C-k>` goes from the queue to the input box and from the input box up to the conversation's end.
 
@@ -266,25 +266,30 @@ one tab, isovim, in every scope.
 
 ```
 S (7) - swarming            ← style meter: live agents on this host
+‹ macbook ›                 ← the host you're viewing (< >)
 Inbox 2                     ← the shown host's: every surface waiting on you
   app - ? a0 asks: merge?   ← its repo's glyph and name, then the surface
   isovim - ? mini-animate …
-‹ macbook ›                 ← the host you're viewing (< >)
-  root  ⏺
-    Inbox                   ← the root's surfaces (Task Board, markdown, files, questions)
-  isovim ●                  ← repo header in its color; opens the router
-    Inbox                   ← this repo's surfaces
+♛ root  ⏺                   ← the host root, with the crown
+  Inbox                     ← the root's surfaces (Task Board, markdown, files, questions)
+▾ isovim ●                  ← repo header in its color; opens the router
+  Inbox                     ← this repo's surfaces
     router · rework vocab
     a3 · tab line fix        (workers; teams behind them are counted, not listed)
-  general
-Terminals 2                 ← this host's terminals; script panes marked with a robot
-cpu 12%  ram 18/24G         ← u to measure
+▾  general                 ← fa-globe: agents in no repo
+▾ 󰆍 terminals 2             ← md-console: this host's terminals; script panes marked with a robot
+    zsh
+─────────────────────────
+cpu 12%  ram 18/24G         ← the footer, the column's only other window; u to measure
 Settings
 ISOVIM 2de9e2b
 ```
 
-The top window is the Inbox of the host the list shows, so `<` and `>` switch it with the list (on
-another host it says whose, `Inbox 2 · cleopatra`); `<leader>ih` brings it back to this host. Each
+The column is two windows, the list and the footer. The list starts with the Inbox of the host it
+shows, so `<` and `>` switch it with the rest (on another host it says whose, `Inbox 2 ·
+cleopatra`); `<leader>ih` brings it back to this host. Terminals is the list's last group, as General
+is one: Enter on a terminal opens it, `t` makes one, `r` / `d` / `o` rename, remove and open its
+port, and `<leader>iT` lands on it. Each
 surface waiting on you is a row of its own, in the order `<leader>in` walks them: its repo's glyph in
 its color and short name (root's or general's for theirs), then the surface's mark and title, cut to
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
@@ -412,7 +417,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | key | does |
 |---|---|
 | `n` | the next thing that needs you |
-| `i` / `h` | the repo / host Inbox (the host's is the sidebar's top window) |
+| `i` / `h` | the repo / host Inbox (the host's is at the top of the list) |
 | `r` | the router |
 | `R` | the nearest root |
 | `H` | the host root |
@@ -470,7 +475,6 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 |---|---|
 | `<CR>` / `<Tab>` | open / collapse |
 | `<` / `>` | switch host |
-| `<C-j>` / `<C-k>` | move between windows |
 | `<C-l>` | back to the window you came from |
 | `s` / `t` | spawn / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |

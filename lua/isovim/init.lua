@@ -24,7 +24,6 @@ M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened firs
 M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
 M.recent_scopes = {} ---@type string[] the scopes current_scope was, most recent first (<leader>ip)
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
-M.terminals_collapsed = false -- the sidebar's Terminals shows only its title
 M.collapsed = {} ---@type table<string, true> the sidebar's collapsed groups: [host:]repo:<key>, [host:]repo_inbox:<key>, [host:]inbox
 
 -- Persisted so a hot reload picks up where the old code left off.
@@ -42,7 +41,6 @@ function M.remember(key, value)
     recent_agents = M.recent_agents,
     recent_scopes = M.recent_scopes,
     expanded = M.expanded,
-    terminals_collapsed = M.terminals_collapsed,
     collapsed = M.collapsed,
   })
 end
@@ -676,7 +674,6 @@ function M.setup(opts)
   M.recent_agents = session.recent_agents or {}
   M.recent_scopes = session.recent_scopes or {}
   M.expanded = session.expanded or {}
-  M.terminals_collapsed = session.terminals_collapsed or false
   M.collapsed = session.collapsed or {}
 
   local sidebar = require("isovim.sidebar")

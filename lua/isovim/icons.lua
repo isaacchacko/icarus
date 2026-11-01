@@ -18,6 +18,7 @@ M.map = {
   script = { "\u{f06a9}", "Comment" }, -- md-robot: a pane a repo script started
   root = { "\u{f01a5}", "Special" }, -- md-crown: Root, the host root's pseudo-repo
   general = { "\u{f0ac}", "Directory" }, -- fa-globe: General, agents in no repo and files outside every repo
+  terminals = { "\u{f018d}", "Directory" }, -- md-console: Terminals, terminals and repo script panes
   landing = { "\u{f015}", "Title" }, -- fa-home: the landing page's tab
 }
 

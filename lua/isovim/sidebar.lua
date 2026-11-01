@@ -1,5 +1,6 @@
--- The sidebar: a column of windows (the shown host's Inbox, its list grouped by repo, its terminals, a
--- footer) under its title in the tab line, and the file explorer that can take its place.
+-- The sidebar: a column of two windows under its title in the tab line, the shown host's list (its
+-- Inbox, root, repos, General and Terminals) and a footer, and the file explorer that can take its
+-- place.
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
@@ -16,7 +17,6 @@ local isovim = require("isovim")
 
 local M = {}
 
-M.inbox = {} ---@type table[] the top window's rows: the shown host's Inbox
 M.local_groups = {} ---@type table<string, table> this host's groups by key, from the last refresh
 
 -- Only what waits on you: a raised decision or a question. A finished turn (the green dot) doesn't.
@@ -69,7 +69,10 @@ local KINDS = {
       end
       local label = item.group_kind == "repo" and item.name:match("[^/]+$") or item.name
       local row = { { chevron, "Comment" } }
-      if item.group_kind == "repo" then
+      if item.group_kind == "general" then
+        glyph, glyph_hl = icons.get("general")
+      end
+      if item.group_kind == "repo" or item.group_kind == "general" then
         vim.list_extend(row, { { glyph, glyph_hl }, { " " } })
       end
       vim.list_extend(row, { { label, item.group_kind == "repo" and name_hl or "Comment" } })
@@ -87,8 +90,21 @@ local KINDS = {
     end,
     id = { "host", "repo_key" },
   },
-  -- The host's Inbox, the top window's title: the root's surfaces and a row per repo with something
-  -- waiting under it. Another host's says whose it is.
+  -- Terminals, the list's last group, as General is one: its terminals and repo script panes under
+  -- it. Enter or Tab collapses it.
+  terminals = {
+    format = function(item)
+      local glyph, glyph_hl = icons.get("terminals")
+      return { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "terminals", "Comment" }, { " " .. item.count, "Comment" } }
+    end,
+    open = function(item)
+      M.set_collapsed(item.host, "terminals", nil, not item.collapsed)
+      M.refresh()
+    end,
+    id = { "host" },
+  },
+  -- The host's Inbox, under the host's name at the list's top: a row for each surface waiting on you.
+  -- Another host's says whose it is.
   host_inbox = {
     format = function(item)
       local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "Inbox", "Title" }, { " " .. item.count, item.count > 0 and "DiagnosticWarn" or "Comment" } }
@@ -186,7 +202,7 @@ local KINDS = {
   agent = {
     format = function(item)
       local icon, hl = status.icon(item.status)
-      local kind_icon, kind_hl = icons.get(item.agent_kind)
+      local kind_icon, kind_hl = icons.get(item.glyph or item.agent_kind)
       local name_hl = item.hidden and "Comment" or (not item.running and "Comment" or nil)
       local label = item.label
       if not label and (item.role == "router" or item.role == "repo-root") then
@@ -381,8 +397,8 @@ local function with_right_mark(chunks, mark, width)
   return fitted
 end
 
--- A row of the Terminals window: a terminal, or a repo script's pane, named for its action and
--- workspace (a new-layout one's <repo>/<agent>) with the robot at the right. width: the window's.
+-- A row under Terminals: a terminal, or a repo script's pane, named for its action and workspace (a
+-- new-layout one's <repo>/<agent>) with the robot at the right. width: the window's.
 KINDS.terminal = {
   format = function(item, width)
     local icon, hl = status.icon(item.status)
@@ -391,14 +407,14 @@ KINDS.terminal = {
     if item.script then
       label = ("%s · %s%s"):format(item.name, item.ws_name, item.of and ("/" .. item.of) or "")
     end
-    local row = { { "  " }, { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { label, not item.running and "Comment" or nil } }
+    local row = { { "    " }, { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { label, not item.running and "Comment" or nil } }
     if isovim.show_ports and item.ports and #item.ports > 0 then
       row[#row + 1] = { "  :" .. table.concat(item.ports, " :"), "Special" }
     end
     if item.subtitle and item.subtitle ~= item.name then
       row[#row + 1] = { "  " .. item.subtitle, "Comment" }
     end
-    if item.script then
+    if item.script and width then
       return with_right_mark(row, { icons.get("script") }, width)
     end
     return row
@@ -408,7 +424,7 @@ KINDS.terminal = {
   id = { "host", "ws", "agent" },
 }
 
--- What the Terminals window lists: terminals, and the panes repo scripts start. On another host,
+-- What Terminals lists: terminals, and the panes repo scripts start. On another host,
 -- what its `iso ls` says; hosts from before `script` was listed send their script panes as agents.
 local function is_terminal(agent)
   return agent.kind == "terminal" or agent.kind == "shell" or agent.script ~= nil
@@ -666,8 +682,7 @@ local function surface_rows(items, base, list, depth)
   end
 end
 
--- One host's list, its groups, and its Inbox for the top window (the root's surfaces and a row per
--- repo with something waiting). host/ssh are nil for this host. surfaces_by_key nil: no surfaces
+-- One host's list, its groups, and its Inbox for the list's top (a row per surface waiting on you). host/ssh are nil for this host. surfaces_by_key nil: no surfaces
 -- module (or the host hasn't answered).
 ---@return table[] items, table[] inbox
 local function host_rows(host, ssh, entries, surfaces_by_key, extra)
@@ -736,14 +751,14 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
     if g.kind == "root" then
       for i, entry in ipairs(agents) do
-        items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY })
+        items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY, glyph = "root" })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
       -- Its Inbox, as a repo's: all its surfaces (the Task Board, markdown, files, questions), while
-      -- the top window keeps only those that need you.
+      -- the host's Inbox keeps only those that need you.
       if #list > 0 then
         if #agents == 0 then
-          items[#items + 1] = { kind = "hint", text = "root (none here now)" }
+          items[#items + 1] = { kind = "hint", text = icons.get("root") .. " root (none here now)" }
         end
         local inbox_collapsed = is_collapsed(host, "repo_inbox", ROOT_KEY)
         items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "repo_inbox", repo_key = ROOT_KEY, count = waiting(list), root_mode = has_root, collapsed = inbox_collapsed })
@@ -819,14 +834,14 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
   if host and #entries == 0 and #items <= 1 then
     items[#items + 1] = { kind = "hint", text = "no agents" }
   end
-  -- The top window always has its title, even with no surfaces module to count.
+  -- The host's Inbox always has its title, even with no surfaces module to count.
   if #inbox == 0 then
     inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = 0, collapsed = is_collapsed(host, "inbox") })
   end
   return items, inbox
 end
 
--- This host's agents as list entries; terminals go to the Terminals window.
+-- This host's agents as list entries; terminals go under Terminals.
 local function local_entries(workspaces)
   local titles = panes.titles()
   local entries = {}
@@ -991,8 +1006,6 @@ end
 -- Whether some shown agent is working, so its spinner turns.
 local spinning = false
 
-M.terminals = {} ---@type table[] the Terminals window's rows: the shown host's terminals
-
 -- What counts toward the style meter: a running agent that reports its state (claude, codex), an
 -- ACP agent's supervisor among them.
 local function is_live(agent)
@@ -1000,9 +1013,8 @@ local function is_live(agent)
 end
 M.is_live = is_live
 
--- The rows returned are the shown host's list (its root, repos, general); its Inbox goes to M.inbox,
--- the top window, and its terminals to M.terminals. Hidden agents show only while show_hidden is on
--- or while they need you; a hint counts the rest.
+-- The shown host's list: its Inbox, root, repos, General, then Terminals with its terminals. Hidden
+-- agents show only while show_hidden is on or while they need you; a hint counts the rest.
 local function collect()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()
@@ -1066,22 +1078,23 @@ local function collect()
   table.sort(workspaces, function(a, b)
     return a[isovim.sort] > b[isovim.sort]
   end)
-  M.terminals = terminals or local_terminals(workspaces)
-  if items then
-    M.inbox = inbox
-    return items
+  terminals = terminals or local_terminals(workspaces)
+  if not items then
+    local entries, extra = local_entries(workspaces)
+    items, inbox = host_rows(nil, nil, entries, local_surfaces(), extra)
   end
-  local entries, extra = local_entries(workspaces)
-  local rows
-  rows, M.inbox = host_rows(nil, nil, entries, local_surfaces(), extra)
+  local list = vim.list_extend(vim.list_extend({}, inbox), items)
+  local collapsed = is_collapsed(shown, "terminals")
+  list[#list + 1] = { kind = "terminals", host = shown, count = #terminals, collapsed = collapsed }
+  vim.list_extend(list, collapsed and {} or terminals)
   -- So you know they're there.
-  if hidden > 0 then
-    rows[#rows + 1] = { kind = "hint", text = ("%d hidden · H"):format(hidden) }
+  if not shown and hidden > 0 then
+    list[#list + 1] = { kind = "hint", text = ("%d hidden · H"):format(hidden) }
   end
-  return rows
+  return list
 end
 
--- The column's windows by role (inbox, list, terminals, footer), found by their buffers' b:isovim_sidebar.
+-- The column's windows by role (list, footer), found by their buffers' b:isovim_sidebar.
 local function windows()
   local wins = {}
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -1141,7 +1154,7 @@ local function set_height(win, height)
 end
 
 -- What each window's lines stand for, line by line: the actions take the one under the cursor.
-local rows = { list = {}, inbox = {}, terminals = {}, footer = {} }
+local rows = { list = {}, footer = {} }
 
 -- H, P, L and T show in the title as badges while they're on.
 local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "L" }, { "show_tasks", "T" } }
@@ -1193,30 +1206,6 @@ end
 function M.offset_text(width)
   local call = ("%%{%%v:lua.isovim_title(%d)"):format(width)
   return call .. (" "):rep(width - #call - 2) .. "%}"
-end
-
--- The top window: the shown host's Inbox, under a title with the count of what waits on you, a row
--- for each surface waiting. Collapsed, only the title.
-local function inbox_lines(width)
-  rows.inbox = M.inbox
-  return vim.tbl_map(function(item)
-    return KINDS[item.kind].format(item, width)
-  end, M.inbox)
-end
-
--- The shown host's terminals, under a title with the count. Collapsed, only the title. The title
--- row carries the shown host, so t there refuses another host as its rows do.
-local function terminal_lines(width)
-  local count = #M.terminals
-  local lines = {
-    { { isovim.terminals_collapsed and "▸ " or "▾ ", "Comment" }, { "Terminals", "Title" }, { " " .. count, "Comment" } },
-  }
-  rows.terminals = { { kind = "terminals", host = shown_host() } }
-  for _, item in ipairs(isovim.terminals_collapsed and {} or M.terminals) do
-    lines[#lines + 1] = KINDS.terminal.format(item, width)
-    rows.terminals[#rows.terminals + 1] = item
-  end
-  return lines
 end
 
 -- The shown host's name, with ‹ › when < and > have others to show.
@@ -1281,9 +1270,12 @@ end
 local shown_title
 
 local function render(wins)
-  -- A title window from before the title moved to the tab line.
-  if wins.title then
-    pcall(vim.api.nvim_win_close, wins.title, true)
+  -- A title window from before the title moved to the tab line, and the Inbox and Terminals windows
+  -- from before they moved into the list (kept through a hot reload).
+  for _, old in ipairs({ "title", "inbox", "terminals" }) do
+    if wins[old] then
+      pcall(vim.api.nvim_win_close, wins[old], true)
+    end
   end
   local title = wins.list and M.title(vim.api.nvim_win_get_width(wins.list) - 2)
   if title ~= shown_title then
@@ -1291,21 +1283,12 @@ local function render(wins)
     vim.cmd.redrawtabline()
   end
   status.animate(spinning or meter.moving())
-  if wins.inbox then
-    local lines = inbox_lines(vim.api.nvim_win_get_width(wins.inbox))
-    draw(wins.inbox, lines)
-    set_height(wins.inbox, math.min(#lines, 11))
-  end
   if wins.list then
+    local width = vim.api.nvim_win_get_width(wins.list)
     draw(wins.list, vim.tbl_map(function(item)
-      return KINDS[item.kind].format(item)
+      return KINDS[item.kind].format(item, width)
     end, rows.list))
     vim.wo[wins.list].winbar = host_bar()
-  end
-  if wins.terminals then
-    local lines = terminal_lines(vim.api.nvim_win_get_width(wins.terminals))
-    draw(wins.terminals, lines)
-    set_height(wins.terminals, math.min(#lines, 9))
   end
   if wins.footer then
     local lines = footer_lines()
@@ -1314,8 +1297,8 @@ local function render(wins)
   end
 end
 
--- The fields that keep a row of the other windows through redraws (the list's are its kind's).
-local ROW_ID = { inbox = { "host", "repo_key", "name" }, terminals = { "host", "ws", "agent" }, footer = {} }
+-- The fields that keep a row of the footer through redraws (the list's are its kind's).
+local ROW_ID = { footer = {} }
 
 local function line_of(list, item, fields)
   for i, row in ipairs(list) do
@@ -1379,22 +1362,12 @@ local function refresh_now()
   end
   local wanted = keep
   local before = keep or rows.list[vim.api.nvim_win_get_cursor(wins.list)[1]]
-  local queued = wins.inbox and rows.inbox[vim.api.nvim_win_get_cursor(wins.inbox)[1]]
-  local terminal = wins.terminals and rows.terminals[vim.api.nvim_win_get_cursor(wins.terminals)[1]]
   keep = nil
   rows.list = collect()
   render(wins)
   require("isovim.landing").refresh()
   -- The tab bar tidied: windows marked, no stray [No Name] tab (isovim.tabs).
   require("isovim.tabs").sync()
-  local inbox_line = queued and line_of(rows.inbox, queued, ROW_ID.inbox)
-  if inbox_line then
-    vim.api.nvim_win_set_cursor(wins.inbox, { inbox_line, 0 })
-  end
-  local terminal_line = terminal and line_of(rows.terminals, terminal, ROW_ID.terminals)
-  if terminal_line then
-    vim.api.nvim_win_set_cursor(wins.terminals, { terminal_line, 0 })
-  end
   if not isovim.is_sidebar(vim.api.nvim_get_current_win()) or not before then
     return M.follow()
   end
@@ -1494,8 +1467,6 @@ end
 
 -- {key, action, description}: each window's keys, which `?` lists. COLUMN_KEYS work in all of them.
 local COLUMN_KEYS = {
-  { "<c-j>", "isovim_window_down", "to the window below" },
-  { "<c-k>", "isovim_window_up", "to the window above" },
   { "<c-l>", "isovim_focus_chat", "back to the window you came from (<C-h> there), typing again if you were" },
   { "<", "isovim_prev_host", "the host list shows the previous host" },
   { ">", "isovim_next_host", "the host list shows the next host" },
@@ -1503,16 +1474,16 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, surface or PR; on a repo, its router; a pinned file as a tab" },
-  { "<Tab>", "isovim_toggle_expand", "open or collapse the repo or Inbox (from a row in one, collapse it)" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox or Terminals, collapse or expand it; a pinned file as a tab" },
+  { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, Inbox or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "t", "isovim_terminal", "new terminal (it opens in ~)" },
-  { "r", "isovim_rename", "rename the workspace or agent" },
-  { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
+  { "r", "isovim_rename", "rename the workspace, agent or terminal" },
+  { "d", "isovim_delete", "remove the agent, terminal or pinned path, or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
-  { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows or General: the host)" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
+  { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },
+  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's; on a PR, the PR" },
   { "y", "isovim_yank_url", "copy the PR's URL" },
   { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
@@ -1531,23 +1502,10 @@ local RETIRED_KEYS = {
   { "b", "isovim_last_workspace", "<leader>ip" },
   { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
 }
-local INBOX_KEYS = {
-  { "<cr>", "isovim_open", "open the surface, as a tab; on the title, collapse or expand" },
-  { "<Tab>", "isovim_toggle_expand", "collapse or expand the Inbox" },
-  { "x", "isovim_root_mode", "root mode on or off for the host (on a surface: its repo's)" },
-}
-local TERMINAL_KEYS = {
-  { "<cr>", "isovim_open_terminal", "open the terminal; on the title, collapse or expand Terminals" },
-  { "<Tab>", "isovim_toggle_terminals", "collapse or expand Terminals" },
-  { "t", "isovim_terminal", "new terminal (it opens in ~)" },
-  { "r", "isovim_rename", "rename the terminal" },
-  { "d", "isovim_delete", "remove the terminal" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
-}
 local FOOTER_KEYS = {
   { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json as a tab; on cpu, ram, measure them; on not updating, check again" },
 }
-local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, terminals = TERMINAL_KEYS, footer = FOOTER_KEYS }
+local ROLE_KEYS = { list = LIST_KEYS, footer = FOOTER_KEYS }
 M.COLUMN_KEYS, M.LIST_KEYS = COLUMN_KEYS, LIST_KEYS
 
 local function map_keys(buf, role)
@@ -1581,9 +1539,7 @@ function M.help()
     lines[#lines + 1] = ""
   end
   section("Sidebar (any of its windows)", COLUMN_KEYS)
-  section("Host list", LIST_KEYS)
-  section("Inbox (the shown host's surfaces waiting on you, in the order <leader>in walks them)", INBOX_KEYS)
-  section("Terminals (a robot marks a repo script's pane)", TERMINAL_KEYS)
+  section("Host list (its Inbox, root, repos, General, Terminals; a robot marks a repo script's pane)", LIST_KEYS)
   section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
@@ -1637,21 +1593,6 @@ local function toggle(option)
   end
 end
 
--- C-j and C-k step through the Inbox, the list, Terminals and the footer; the title is no stop.
-local STOPS = { "inbox", "list", "terminals", "footer" }
-local function step_window(by)
-  local at = 0
-  for i, role in ipairs(STOPS) do
-    if role == vim.b.isovim_sidebar then
-      at = i
-    end
-  end
-  local target = STOPS[at + by] and windows()[STOPS[at + by]]
-  if target then
-    vim.api.nvim_set_current_win(target)
-  end
-end
-
 local function step_host(by)
   local all = hosts()
   local at = 1
@@ -1688,27 +1629,6 @@ function M.step_host(by)
   step_host(by)
 end
 
--- Into one of the column's windows (inbox, list, terminals, footer), from anywhere.
-function M.focus_window(role)
-  leave_main()
-  local win = column()[role]
-  if win then
-    vim.api.nvim_set_current_win(win)
-  end
-end
-
--- The list's group key a workspace (or repo key) is under: its repo, "general" for general, "root"
--- for the root's workspace.
-function M.group_key(ws)
-  local name = scope.of_workspace(ws)
-  if name == scope.GENERAL then
-    return GENERAL_KEY
-  elseif name == scope.ROOT then
-    return ROOT_KEY
-  end
-  return name
-end
-
 -- Puts the list's cursor on a row of the shown host, entering the list.
 local function land(want)
   local wins = column()
@@ -1727,8 +1647,39 @@ local function land(want)
   return false
 end
 
--- A host's repo (key) with its Inbox open, the cursor on that Inbox: the top window's rows for repos
--- with something waiting go here. host nil: this host.
+-- Into the list or the footer, from anywhere; "terminals" is the list on Terminals, expanded.
+---@param role "list"|"footer"|"terminals"
+function M.focus_window(role)
+  leave_main()
+  if role == "terminals" then
+    local host = shown_host()
+    if is_collapsed(host, "terminals") then
+      set_collapsed(host, "terminals", nil, false)
+    end
+    return land(function(row)
+      return row.kind == "terminals"
+    end)
+  end
+  local win = column()[role]
+  if win then
+    vim.api.nvim_set_current_win(win)
+  end
+end
+
+-- The list's group key a workspace (or repo key) is under: its repo, "general" for general, "root"
+-- for the root's workspace.
+function M.group_key(ws)
+  local name = scope.of_workspace(ws)
+  if name == scope.GENERAL then
+    return GENERAL_KEY
+  elseif name == scope.ROOT then
+    return ROOT_KEY
+  end
+  return name
+end
+
+
+-- A host's repo (key) with its Inbox open, the cursor on that Inbox. host nil: this host.
 function M.reveal_repo_inbox(host, key)
   if (host or nil) ~= shown_host() then
     vim.g.isovim_sidebar_host = host
@@ -1752,9 +1703,8 @@ function M.reveal_repo_inbox(host, key)
   end
 end
 
--- Into an Inbox, expanded: the current repo's ("repo", in the list) or this host's ("host", the top
--- window, which then shows this host), on its first surface or repo waiting on you; on its title
--- when none is.
+-- Into an Inbox, expanded: the current repo's ("repo") or this host's ("host", at the list's top,
+-- which then shows this host), on its first surface waiting on you; on its title when none is.
 ---@param which "repo"|"host"
 function M.focus_inbox(which)
   local wins = column()
@@ -1763,20 +1713,13 @@ function M.focus_inbox(which)
     if is_collapsed(nil, "inbox") then
       set_collapsed(nil, "inbox", nil, false)
     end
-    refresh_now()
-    if not wins.inbox then
-      return
+    if not land(function(row)
+      return row.kind == "waiting"
+    end) then
+      land(function(row)
+        return row.kind == "host_inbox"
+      end)
     end
-    vim.cmd.stopinsert()
-    vim.api.nvim_set_current_win(wins.inbox)
-    local line = 1
-    for i, row in ipairs(rows.inbox) do
-      if row.kind == "waiting" then
-        line = i
-        break
-      end
-    end
-    vim.api.nvim_win_set_cursor(wins.inbox, { line, 0 })
     return
   end
   local current = isovim.current_scope
@@ -1948,16 +1891,6 @@ M.actions = {
   isovim_open = function(item)
     return item and KINDS[item.kind].open and KINDS[item.kind].open(item)
   end,
-  isovim_open_terminal = function(item)
-    if item and item.kind == "terminals" then
-      return M.actions.isovim_toggle_terminals()
-    end
-    return item and KINDS.terminal.open(item)
-  end,
-  isovim_toggle_terminals = function()
-    isovim.remember("terminals_collapsed", not isovim.terminals_collapsed)
-    refresh_now()
-  end,
   isovim_open_footer = function(row)
     if row and row.kind == "settings" then
       isovim.show(require("isovim.config").path)
@@ -1968,12 +1901,6 @@ M.actions = {
     end
   end,
   isovim_usage = measure,
-  isovim_window_down = function()
-    step_window(1)
-  end,
-  isovim_window_up = function()
-    step_window(-1)
-  end,
   isovim_next_host = function()
     step_host(1)
   end,
@@ -2180,13 +2107,12 @@ M.actions = {
       return
     end
     local host = item.host
-    -- The top window's rows: its cursor goes back to the title as the rows under it go.
     if item.kind == "host_inbox" or item.kind == "waiting" then
       set_collapsed(host, "inbox", nil, item.kind ~= "host_inbox" or not item.collapsed)
-      local wins = windows()
-      if wins.inbox then
-        vim.api.nvim_win_set_cursor(wins.inbox, { 1, 0 })
-      end
+      keep = { kind = "host_inbox", host = host }
+    elseif item.kind == "terminals" or item.kind == "terminal" then
+      set_collapsed(host, "terminals", nil, item.kind ~= "terminals" or not item.collapsed)
+      keep = { kind = "terminals", host = host }
     elseif item.kind == "repo_inbox" or item.kind == "surface" then
       set_collapsed(host, "repo_inbox", item.repo_key, item.kind == "surface" or not item.collapsed)
       keep = { kind = "repo_inbox", host = host, repo_key = item.repo_key }
@@ -2279,22 +2205,16 @@ local function column_buffer(role)
   return buf
 end
 
--- The column on the left, top to bottom: the Inbox, the host list, Terminals and the footer, under
--- its title in the tab line. Only the host list changes height with the screen. A column opened
--- before Terminals had a window (kept through a hot reload) gets one.
+-- The column on the left, top to bottom: the host list and the footer, under its title in the tab
+-- line. Only the host list changes height with the screen.
 ---@param opts? {enter?: boolean}
 function M.open(opts)
   local wins = windows()
   local made = {}
   if not wins.list then
     made.list = vim.api.nvim_open_win(column_buffer("list"), false, { split = "left", win = -1, width = 40 })
-    made.inbox = vim.api.nvim_open_win(column_buffer("inbox"), false, { split = "above", win = made.list, height = 1 })
     made.footer = vim.api.nvim_open_win(column_buffer("footer"), false, { split = "below", win = made.list, height = 3 })
     wins = made
-  end
-  if not wins.terminals and wins.footer then
-    made.terminals = vim.api.nvim_open_win(column_buffer("terminals"), false, { split = "above", win = wins.footer, height = 1 })
-    wins.terminals = made.terminals
   end
   for role, win in pairs(made) do
     for option, value in pairs(WINDOW_OPTIONS) do

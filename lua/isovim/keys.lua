@@ -139,7 +139,7 @@ local function in_repo(role)
   end)[1]
 end
 
--- Opens the scope: the root for Root, the Terminals window for Terminals, else the scope's agent
+-- Opens the scope: the root for Root, the sidebar's Terminals for Terminals, else the scope's agent
 -- opened last (or its workspace changed last); General with nothing in it just becomes current.
 function M.select_scope(name)
   if name == scope.TERMINALS then
@@ -177,7 +177,7 @@ function M.scopes()
   return vim.list_extend(list, { scope.GENERAL, scope.TERMINALS })
 end
 
-local PSEUDO_ICONS = { root = "root", general = "general", terminals = "terminal" }
+local PSEUDO_ICONS = { root = "root", general = "general", terminals = "terminals" }
 
 function M.pick_repo()
   local counts = {}
@@ -347,7 +347,7 @@ function M.open_host_root()
   return root and open(root) or toast("No root on this host")
 end
 
--- The current repo's Inbox (repo) or this host's (host, the sidebar's top window), opened, the
+-- The current repo's Inbox (repo) or this host's (host, at the top of the sidebar's list), opened, the
 -- cursor on its first surface waiting on you.
 local function inbox(which)
   return function()
@@ -407,7 +407,7 @@ M.GROUP = {
   end, "General (agents in no repo)" },
   { "T", function()
     sidebar().focus_window("terminals")
-  end, "the Terminals window" },
+  end, "Terminals in the sidebar" },
   { "s", M.spawn, "spawn a worker over ACP in the repo" },
   { "t", M.new_terminal, "new terminal" },
   { "<lt>", function()
