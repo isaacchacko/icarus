@@ -1164,49 +1164,143 @@ local function thread_tab(chat)
   pcall(vim.cmd.redrawtabline)
 end
 
+-- Drawn as the PR view draws (isovim.boxes): a banner (an open or resolved pill, the title bold, a dim
+-- line of facts), then each post in a rounded box headed "author · time", yours tinted as your
+-- prompts are, the router's border in its bullet's color, markdown and tables inside it; a resolved
+-- thread ends with its outcome's box.
+local function box_width(chat)
+  return math.max(30, table_width(chat) + 1)
+end
+
+local function ago(at)
+  local secs = math.max(0, os.time() - (at or os.time()))
+  return secs < 60 and "now" or secs < 3600 and math.floor(secs / 60) .. "m" or secs < 86400 and math.floor(secs / 3600) .. "h"
+    or math.floor(secs / 86400) .. "d"
+end
+
+local function clock(at)
+  at = at or os.time()
+  return os.date("%Y%m%d", at) == os.date("%Y%m%d") and os.date("%H:%M", at) or os.date("%b %d %H:%M", at)
+end
+
+-- The banner's two lines, with their marks.
+local function banner(chat)
+  local boxes = require("isovim.boxes")
+  local info = chat.thread_info or {}
+  local resolved = chat.resolved ~= nil
+  local pill = boxes.seg(resolved and " resolved " or " open ", resolved and "IsovimPrPillDraft" or "IsovimPrPillOpen")
+  local first = boxes.cat(pill, boxes.seg(" "), boxes.seg(THREAD_GLYPH .. " " .. (chat.title or chat.thread or ""), "IsovimPrTitle"))
+  local facts = { ("\u{f06a9} %s"):format(chat.router or store.router(chat.ws) or "no router"),
+    ("\u{f415} started by %s"):format(info.created_by or "?"), ("\u{f43a} %s"):format(ago(info.at)),
+    ("%d %s"):format(info.posts or 0, info.posts == 1 and "post" or "posts") }
+  if info.last then
+    facts[#facts + 1] = "last " .. ago(info.last)
+  end
+  return { first, boxes.seg(table.concat(facts, "  ·  "), "IsovimPrDim") }
+end
+
+-- The banner drawn again where it is (the first two lines) when what it says changed.
+local function update_banner(chat)
+  if not (chat.thread and chat.banner) or chat.drawing_banner then
+    return
+  end
+  local lines = banner(chat)
+  local texts = vim.tbl_map(function(line)
+    return line.text
+  end, lines)
+  if vim.deep_equal(texts, vim.api.nvim_buf_get_lines(chat.buf, 0, 2, false)) then
+    return
+  end
+  chat.drawing_banner = true
+  edit(chat, function(buf)
+    vim.api.nvim_buf_clear_namespace(buf, NS, 0, 2)
+    vim.api.nvim_buf_set_lines(buf, 0, 2, false, texts)
+    for i, line in ipairs(lines) do
+      for _, mark in ipairs(line.marks) do
+        span(buf, i - 1, mark[1], mark[2], mark[3], 150)
+      end
+    end
+  end)
+  chat.drawing_banner = nil
+end
+
+-- A rounded box of body lines under title, as a block; returns its first row.
+local function draw_box(chat, title, body, border, tint, mine)
+  local boxes = require("isovim.boxes")
+  local width = box_width(chat)
+  local lines = { boxes.top(width, title, border) }
+  for _, line in ipairs(body) do
+    lines[#lines + 1] = boxes.side(width, line, border)
+  end
+  lines[#lines + 1] = boxes.bottom(width, nil, border)
+  local row = add_block(chat, vim.tbl_map(function(line)
+    return line.text
+  end, lines))
+  for i, line in ipairs(lines) do
+    for _, mark in ipairs(line.marks) do
+      span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
+    end
+  end
+  if tint then
+    line_hl(chat.buf, row, #lines, tint)
+  end
+  mark_message(chat, row, mine)
+  return row
+end
+
 function RENDER.thread(chat, entry)
+  require("isovim.boxes").highlights()
   chat.title = entry.title or entry.id
+  chat.thread_info = { created_by = entry.created_by, at = entry.at, posts = 0 }
   thread_tab(chat)
-  add_block(chat, { ("[thread %s · %s · started by %s]"):format(entry.id or chat.thread, chat.title, entry.created_by or "?") },
-    "IsovimAcpNotice")
+  local lines = banner(chat)
+  local row = add_lines(chat, vim.tbl_map(function(line)
+    return line.text
+  end, lines))
+  for i, line in ipairs(lines) do
+    for _, mark in ipairs(line.marks) do
+      span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
+    end
+  end
+  chat.banner = true
 end
 
 function RENDER.post(chat, entry)
-  if entry.by == "user" then
-    local lines = prompt_lines(entry.text or "")
-    local row = add_block(chat, lines)
-    span(chat.buf, row, 0, #GLYPH.prompt + 1, "IsovimAcpPromptGlyph")
-    span(chat.buf, row, #GLYPH.prompt + 1, #lines[1], "IsovimAcpPrompt")
-    for i = 2, #lines do
-      span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
-    end
-    chips(chat.buf, row, lines)
-    mark_message(chat, row, true)
-    if entry.text and chat.history[#chat.history] ~= entry.text then
-      chat.history[#chat.history + 1] = entry.text
-    end
-    if entry.images then
-      chat.history_images[entry.text] = entry.images
-    end
-    return
+  local boxes = require("isovim.boxes")
+  local info = chat.thread_info or {}
+  info.posts, info.last = (info.posts or 0) + 1, entry.at
+  local mine = entry.by == "user"
+  local body = boxes.markdown(entry.text or "", box_width(chat) - 4)
+  for _, image in ipairs(entry.images or {}) do
+    body[#body + 1] = boxes.seg("\u{f03e} image: " .. vim.fn.fnamemodify(image.path or "", ":t"), "IsovimPrLink")
   end
-  -- The router's: a message of its own, whole, its tables drawn at once.
-  chat.block = "other"
-  add_text(chat, entry.text or "")
-  edit(chat, function()
-    draw_tables(chat, true)
-  end)
-  chat.block = "other"
+  local who = mine and "you" or entry.by:match("([^/]+)$") or entry.by
+  local title = mine and boxes.cat(boxes.seg(GLYPH.prompt .. " " .. who, "IsovimAcpPromptGlyph"), boxes.seg(" · " .. clock(entry.at), "IsovimPrDim"))
+    or boxes.cat(boxes.seg(GLYPH.message .. " ", "IsovimAcpMessage"), boxes.seg(who, "IsovimPrTitle"), boxes.seg(" · " .. clock(entry.at), "IsovimPrDim"))
+  draw_box(chat, title, body, mine and "IsovimPrBorder" or "IsovimAcpMessage", mine and "IsovimAcpPrompt" or nil, mine)
+  if mine and entry.text and chat.history[#chat.history] ~= entry.text then
+    chat.history[#chat.history + 1] = entry.text
+  end
+  if mine and entry.images then
+    chat.history_images[entry.text] = entry.images
+  end
+  update_banner(chat)
 end
 
 function RENDER.resolved(chat, entry)
+  local boxes = require("isovim.boxes")
   chat.resolved = { by = entry.by, outcome = entry.outcome }
-  add_block(chat, { ("[resolved by %s%s]"):format(entry.by or "?", entry.outcome and (": " .. entry.outcome) or "") }, "IsovimAcpNotice")
+  local body = entry.outcome and boxes.markdown(entry.outcome, box_width(chat) - 4) or { boxes.seg("No outcome given.", "IsovimPrDim") }
+  local who = entry.by == "user" and "you" or (entry.by or "?"):match("([^/]+)$")
+  draw_box(chat, boxes.cat(boxes.seg("✓ resolved", "IsovimPrOk"), boxes.seg((" by %s · %s"):format(who, clock(entry.at)), "IsovimPrDim")),
+    body, "IsovimPrOk")
+  update_banner(chat)
 end
 
 function RENDER.reopened(chat, entry)
   chat.resolved = nil
-  add_block(chat, { ("[opened again by %s]"):format(entry.by or "?") }, "IsovimAcpNotice")
+  add_block(chat, { ("opened again by %s · %s"):format(entry.by == "user" and "you" or entry.by or "?", clock(entry.at)) }, "IsovimPrDim")
+  update_banner(chat)
 end
 
 function RENDER.working(chat, entry)
@@ -1401,6 +1495,11 @@ update_bar = function(chat)
   if not vim.api.nvim_buf_is_loaded(chat.buf) then
     return
   end
+  -- A thread's banner says how long ago: drawn again as the minutes pass.
+  if chat.thread and chat.banner and chat.banner_minute ~= math.floor(os.time() / 60) then
+    chat.banner_minute = math.floor(os.time() / 60)
+    update_banner(chat)
+  end
   decorate(chat)
   local bar = " "
   for _, part in ipairs(M.bar_parts(chat)) do
@@ -1489,7 +1588,7 @@ local function reset(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.fresh = nil, {}, {}, {}, 0, true
   chat.history_images = {}
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
-  chat.busy, chat.handover, chat.resolved = false, false, nil
+  chat.busy, chat.handover, chat.resolved, chat.banner, chat.thread_info = false, false, nil, nil, nil
   if vim.api.nvim_buf_is_loaded(chat.buf) then
     for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS }) do
       vim.api.nvim_buf_clear_namespace(chat.buf, ns, 0, -1)

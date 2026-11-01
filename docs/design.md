@@ -204,8 +204,12 @@ host; General, Root and Terminals have none, and starting one there says why.
   {state: start|end}` around the router's turn on one of its posts. What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
 - **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
-  its own: your posts on the prompt band, the router's after its bullet, markdown and tables drawn
-  as in the chat, and the one-buffer composer at its end (insert keys go to the draft, normal mode
+  its own, drawn as the PR view is (isovim.boxes, its helpers shared with isovim.pr_view): a banner
+  (an open or resolved pill, the title bold, a dim line: the router, who started it, how long ago,
+  how many posts, the last one's age), then each post in a rounded box headed `author · time`,
+  yours tinted as your prompts are, the router's border in its bullet's color, markdown and tables
+  inside it with their marks taken out; a resolved thread ends with its outcome's box. The
+  one-buffer composer stays at its end, unboxed (insert keys go to the draft, normal mode
   everywhere, the draft's own undo, `<C-v>` images). `<CR>` there posts, and sends the router a
   prompt through its queue: `[thread <repo>#<id> "<title>"] <text>` (and its images). While its
   turn on the post runs, the bar over the composer says `<router> is working on it…`. `r` on the
