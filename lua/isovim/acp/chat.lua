@@ -1170,6 +1170,17 @@ local frame = 1
 -- What the bar above the composer says, as {text, hl} parts: while the agent works, Claude's
 -- spinner line (its glyph, the turn's verb, how long, about how many tokens, how to interrupt).
 ---@param chat isovim.acp.Chat
+-- The agent's name from its record, read again at most every 2s: the bar and the composer's
+-- placeholder draw on every streamed chunk, and reading the record each time (a file read and a
+-- JSON decode) was most of a streaming chat's cost, while a rename still shows.
+local function agent_name(chat)
+  local now = vim.uv.now()
+  if not chat.name_read or now - chat.name_read > 2000 then
+    chat.name_read, chat.agent_name = now, (store.agent(chat.ws, chat.agent) or {}).name or chat.agent
+  end
+  return chat.agent_name
+end
+
 function M.bar_parts(chat)
   local parts = {}
   local function add(text, hl)
@@ -1198,8 +1209,7 @@ function M.bar_parts(chat)
     notes[#notes + 1] = "<C-c> to interrupt"
     add(" (" .. table.concat(notes, " · ") .. ")", "IsovimAcpSpinnerNote")
   else
-    local spec = store.agent(chat.ws, chat.agent) or {}
-    add(GLYPH.prompt .. " " .. (spec.name or chat.agent), "IsovimAcpIdle")
+    add(GLYPH.prompt .. " " .. agent_name(chat), "IsovimAcpIdle")
   end
   if #chat.queue > 0 then
     add((" · %d queued"):format(#chat.queue), "IsovimAcpSpinnerNote")
@@ -2057,8 +2067,7 @@ decorate = function(chat)
   vim.api.nvim_buf_set_extmark(buf, COMPOSER, count - 1, 0,
     { virt_lines = { RULE_LINE, { { composer_hint(chat), "IsovimAcpHint" } } }, virt_lines_leftcol = true })
   if count - first == 1 and vim.api.nvim_buf_get_lines(buf, first, count, false)[1] == "" then
-    local spec = store.agent(chat.ws, chat.agent) or {}
-    vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { ("Message %s…"):format(spec.name or chat.agent),
+    vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { ("Message %s…"):format(agent_name(chat)),
       "IsovimAcpHint" } }, virt_text_pos = "overlay" })
   end
 end
