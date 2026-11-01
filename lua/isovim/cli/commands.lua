@@ -318,6 +318,13 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
+  { name = "repo", module = "repo",
+    subs = {
+      import = { args = { "<dir>" } },
+      base = { args = { "<text>" }, flags = { ["--from"] = "<dir>" } },
+    },
+    hidden = true,
+  },
   { name = "__complete", module = "complete",
     args = { "<text>..." },
     hidden = true,

@@ -2,6 +2,7 @@
 -- a glyph and a color, from ~/.isovim/repos/<owner>/<repo>/config.json:
 --   glyph   any string up to two cells wide, e.g. a nerd-font glyph
 --   color   a name from M.palette or "#rrggbb"
+-- (its scripts, actions and base clone are isovim.repoconf's)
 -- A repo first seen without a color is given one: the default glyph (unless it has a glyph) and the next
 -- palette color are written into its config, which from then on is the one source of truth. The next
 -- color is the palette's entry at (number of repo configs that have a color) mod (palette size), so repos
@@ -105,9 +106,23 @@ local function read(path)
   return object and repo_config or nil
 end
 
+-- Every repo's config.json, never looking inside a base clone, which can be a big repo with its own.
+local function config_paths()
+  local root, paths = store.root .. "/repos", {}
+  local function outside_clones(dir)
+    return vim.fs.basename(dir) ~= "base-clone"
+  end
+  for path, kind in vim.fs.dir(root, { depth = 8, skip = outside_clones }) do
+    if kind == "file" and vim.fs.basename(path) == "config.json" then
+      paths[#paths + 1] = root .. "/" .. path
+    end
+  end
+  return paths
+end
+
 local function next_color(palette)
   local taken = 0
-  for _, path in ipairs(vim.fn.glob(store.root .. "/repos/**/config.json", true, true)) do
+  for _, path in ipairs(config_paths()) do
     local repo_config = read(path)
     if repo_config and hex(repo_config.color) then
       taken = taken + 1
@@ -127,6 +142,20 @@ local function write(path, repo_config)
   end
 end
 
+-- ~/.isovim/repos/<name>: the repo's config.json, the scripts it names, its base clone.
+function M.dir(name)
+  return ("%s/repos/%s"):format(store.root, name)
+end
+
+-- The repo's config: {} when it has no file, nil when its file isn't a JSON object.
+function M.config(name)
+  return read(M.dir(name) .. "/config.json")
+end
+
+function M.set_config(name, repo_config)
+  write(M.dir(name) .. "/config.json", repo_config)
+end
+
 local function stamp_of(path)
   local stat = vim.uv.fs_stat(path)
   return stat and ("%d.%d.%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size) or ""
@@ -139,7 +168,7 @@ local styles = {} ---@type table<string, {stamp: string, style: {name: string, g
 -- written over: until it's fixed the repo shows the default glyph and the color it would be given.
 ---@return {name: string, glyph: string, color: string}
 function M.style(name)
-  local path = ("%s/repos/%s/config.json"):format(store.root, name)
+  local path = M.dir(name) .. "/config.json"
   local cached = styles[name]
   if cached and cached.stamp == stamp_of(path) then
     return cached.style

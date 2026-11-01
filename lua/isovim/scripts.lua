@@ -1,27 +1,44 @@
--- A repo's workspace scripts, in Superset's format so repos set up for Superset work unchanged:
--- .isovim/config.json or .superset/config.json with "setup", "teardown" and "run" command lists, run
--- in the workspace's checkout with Superset's variables set.
+-- A workspace's scripts, in Superset's format so repos set up for Superset work unchanged: "setup",
+-- "teardown" and "run" command lists, run in the workspace's checkout with Superset's variables set.
+-- They come from the repo's config (isovim.repoconf), into which the repo's own .isovim/config.json or
+-- .superset/config.json is imported once; a script the config lacks is still read from those files.
 local M = {}
 
----@return {setup?: string[], teardown?: string[], run?: string[]}?
+-- The repo's own scripts file in dir, and its path.
+---@return {setup?: string[], teardown?: string[], run?: string[]}?, string?
 function M.config(dir)
   for _, name in ipairs({ ".isovim/config.json", ".superset/config.json" }) do
-    local ok, lines = pcall(vim.fn.readfile, dir .. "/" .. name)
+    local path = dir .. "/" .. name
+    local ok, lines = pcall(vim.fn.readfile, path)
     if ok then
       local decoded, config = pcall(vim.json.decode, table.concat(lines, "\n"))
       if decoded and type(config) == "table" then
-        return config
+        return config, path
       end
     end
   end
 end
 
+---@return string[]?
+local function commands(dir, which)
+  local repoconf, name = require("isovim.repoconf"), require("isovim.repos").of(dir)
+  if name then
+    repoconf.import(dir)
+    local configured = repoconf.commands(name, which)
+    if configured then
+      return configured
+    end
+  end
+  local config = M.config(dir)
+  local listed = config and config[which]
+  return type(listed) == "table" and #listed > 0 and listed or nil
+end
+
 -- The commands of one script as a shell line, with Superset's variables; nil if there are none.
 ---@param root string the repo's main checkout
 function M.line(dir, root, name, which)
-  local config = M.config(dir)
-  local commands = config and config[which]
-  if type(commands) ~= "table" or #commands == 0 then
+  local listed = commands(dir, which)
+  if not listed then
     return nil
   end
   local env = {
@@ -34,7 +51,7 @@ function M.line(dir, root, name, which)
     exports[#exports + 1] = ("export %s=%s"):format(key, vim.fn.shellescape(value))
   end
   table.sort(exports)
-  return table.concat(exports, "; ") .. "; " .. table.concat(commands, " && ")
+  return table.concat(exports, "; ") .. "; " .. table.concat(listed, " && ")
 end
 
 -- Runs a workspace's setup or run script as a terminal of its own, named after it, which ends in a

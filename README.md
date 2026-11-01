@@ -95,7 +95,7 @@ Everything lives in `~/.isovim/`:
 - **Roles.** Every agent is a `worker` unless made a `root` (sets the north star) or `router` (a repo's one interface to you, running the swarm): `iso agent ... --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
 - **`iso agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `iso ls --json` says when each agent was last active.
 
-A repo can ship workspace scripts in `.isovim/config.json` (or a Superset `.superset/config.json`, read as-is): `setup`, `teardown` and `run` command lists.
+A repo's workspace scripts, `setup`, `teardown` and `run` command lists in Superset's format, live in the same `repos/<owner>/<repo>/config.json`, beside `worktree_setup` and `actions` (name → command list) for commands still to come. A command whose first word is a file in that folder runs it, so scripts can sit beside the config (`"./setup.sh"`). The first time isovim looks for a repo's scripts and its config has none, it copies them from the repo's own `.isovim/config.json` (or a Superset `.superset/config.json`) and records `imported_from` and `imported_at`; it never imports again or writes over a key you set. A script the config lacks is still read from the repo's file.
 
 ## Develop
 
