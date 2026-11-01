@@ -749,9 +749,14 @@ function M.answer(entry, value, by)
   answer.by, answer.at = by or "user", os.time()
   local data = vim.json.decode(read_file(current.file))
   data.answer = answer
-  write_json(current.file, data)
+  -- Written and published under the scan lock: the asker can collect the answer (removing the
+  -- file) the moment it lands, and a scan that sees it gone (the asker's, the TUI's watcher's)
+  -- must publish removed after answered.
+  locked(entry.repo, function()
+    write_json(current.file, data)
+    publish(current, "answered", { title = current.title, answer = answer })
+  end)
   M.scan(entry.repo, { [current.base] = true })
-  publish(current, "answered", { title = current.title, answer = answer })
   return answer
 end
 
