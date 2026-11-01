@@ -723,7 +723,9 @@ M.role_actions = {
                                      opens it
                                      These go in ~/.iso/<owner>/<repo>/iso/, where you
                                      also write <name>.md surfaces yourself (optional
-                                     frontmatter: name, icon, color, consumable) and
+                                     frontmatter: name, icon (a glyph, or a word:
+                                     mail, chart, doc, bug, rocket, idea, plan, ...),
+                                     color, consumable) and
                                      tasks.md, the Task Board (headings todo, doing,
                                      waiting, blocked, done; one task a line). From a
                                      shell, --repo owner/repo says whose]=],

@@ -218,10 +218,13 @@ local function apply_fields(entry, fields)
     entry.title = fields.name
   end
   if fields.icon ~= nil then
-    if type(fields.icon) ~= "string" or vim.fn.strdisplaywidth(fields.icon) > 2 then
-      return "icon is a string up to two cells wide"
+    local icon = type(fields.icon) == "string" and (require("isovim.icons").words[fields.icon:lower()] or fields.icon)
+    if not icon or vim.fn.strdisplaywidth(icon) > 2 then
+      local words = vim.tbl_keys(require("isovim.icons").words)
+      table.sort(words)
+      return "icon is a glyph up to two cells wide or one of " .. table.concat(words, ", ")
     end
-    entry.icon = fields.icon
+    entry.icon = icon
   end
   if fields.color ~= nil then
     local palette = require("isovim.repos").palette
@@ -477,8 +480,10 @@ local function parse(repo, base, state, taken)
   end
   entry.sig = vim.fn.sha256(text .. "\0" .. (err or ""))
   local seen = state[base] or {}
-  entry.consumed = entry.consumable and seen.consumed == entry.sig or nil
-  if entry.type == "markdown" and entry.consumable and not entry.consumed and not err then
+  -- A file or folder an agent surfaced is unread until you open it, as consumable markdown is.
+  local pointer = entry.type == "file" or entry.type == "folder"
+  entry.consumed = (entry.consumable or pointer) and seen.consumed == entry.sig or nil
+  if (entry.type == "markdown" and entry.consumable or pointer) and not entry.consumed and not err then
     entry.needs_you = true
   end
   local stat = vim.uv.fs_stat(file)
@@ -836,13 +841,15 @@ function M.show(repo, kind, path, name)
   path = vim.fs.normalize(vim.fn.fnamemodify(path, ":p")):gsub("(.)/$", "%1")
   name = name or vim.fs.basename(path):gsub("[^%w._-]+", "-")
   local current = M.get(repo, name)
-  if current and current.type ~= kind then
+  -- A broken one of its name (its target was missing) is put right by surfacing it again.
+  local fixable = current and current.type == "broken" and current.base:match("%.surface$")
+  if current and current.type ~= kind and not fixable then
     return nil, ("%s/%s is already a %s surface"):format(repo, name, current.type)
-  elseif not (current and current.path == path) then
-    local ok, err = put(repo, name, { type = kind, path = path, created = os.time() })
-    if not ok then
-      return nil, err
-    end
+  end
+  -- Again, even at the same path, brings it back unread: a surfaced file means look at this.
+  local ok, err = put(repo, name, { type = kind, path = path, created = os.time() })
+  if not ok then
+    return nil, err
   end
   return scanned(repo, name)
 end
@@ -1031,7 +1038,7 @@ function M.consume(entry)
     publish(entry, "consumed", { agent = entry.agent })
     M.scan(entry.repo)
     return true
-  elseif entry.type == "markdown" and entry.consumable and not entry.consumed then
+  elseif (entry.type == "markdown" and entry.consumable or entry.type == "file" or entry.type == "folder") and not entry.consumed then
     locked(entry.repo, function()
       local state = read_state(entry.repo)
       state[entry.base] = vim.tbl_extend("force", state[entry.base] or { first = entry.created }, { consumed = entry.sig })
@@ -1235,6 +1242,7 @@ function M.open(entry)
   elseif entry.type == "file" or entry.type == "folder" then
     if entry.exists then
       reveal(entry.path)
+      M.consume(entry)
     end
   elseif entry.type == "chat" then
     M.consume(entry)
