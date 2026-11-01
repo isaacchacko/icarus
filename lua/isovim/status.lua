@@ -154,7 +154,7 @@ function M.start(on_change, on_tick)
       return
     end
     handles.debounce:stop()
-    handles.debounce:start(50, 0, require("isovim.safe").schedule_wrap("the agents' states", function()
+    handles.debounce:start(50, 0, require("isovim.safe").ticker("the agents' states", function()
       watch_all(on_event)
       on_change()
     end))
@@ -170,7 +170,7 @@ function M.animate(on)
     return
   end
   if on and not timer:is_active() then
-    timer:start(100, 100, require("isovim.safe").schedule_wrap("the sidebar's spinners", M.on_tick))
+    timer:start(100, 100, require("isovim.safe").ticker("the sidebar's spinners", M.on_tick))
   elseif not on then
     timer:stop()
   end

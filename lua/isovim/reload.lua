@@ -37,7 +37,8 @@ local function git_dir()
   return dot
 end
 
-local function reload()
+-- Unloads every isovim module and runs setup on the new code; on an error, the old code again.
+local function swap()
   local old = {}
   for name, mod in pairs(package.loaded) do
     if name == "isovim" or name:match("^isovim%.") then
@@ -61,6 +62,17 @@ local function reload()
   end
   pcall(old.isovim.setup, { reload = true })
   return false, err
+end
+
+-- Timers and the supervisors' pushes wait it out (isovim.safe.ticker).
+local function reload()
+  _G.isovim_reloading = true
+  local ok, done, err = pcall(swap)
+  _G.isovim_reloading = false
+  if not ok then
+    return false, done
+  end
+  return done, err
 end
 
 -- Pilots call this instead of touching files, which would reload every running isovim.

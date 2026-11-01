@@ -283,8 +283,8 @@ function M.arm()
     return
   end
   _G.isovim_restart_timer = vim.uv.new_timer()
-  _G.isovim_restart_timer:start(1000, 1000, vim.schedule_wrap(function()
-    require("isovim.safe").wrap("the restart's clock", require("isovim.update").tick)()
+  _G.isovim_restart_timer:start(1000, 1000, require("isovim.safe").ticker("the restart's clock", function()
+    require("isovim.update").tick()
   end))
 end
 
@@ -292,13 +292,23 @@ end
 -- ticker (a reload replaces this module, not the timers).
 function M.start()
   vim.on_key(on_key, vim.api.nvim_create_namespace("isovim_update"))
+  -- Ones an older isovim started, not skipping a reload, are replaced.
+  if _G.isovim_update_timers ~= "ticker" then
+    for _, name in ipairs({ "isovim_restart_timer", "isovim_update_timer" }) do
+      if _G[name] and not _G[name]:is_closing() then
+        _G[name]:close()
+      end
+      _G[name] = nil
+    end
+    _G.isovim_update_timers = "ticker"
+  end
   if state.restart and M.can_restart then
     M.arm()
   end
   if M.enabled and not _G.isovim_update_timer then
     _G.isovim_update_timer = vim.uv.new_timer()
-    _G.isovim_update_timer:start(math.min(5000, M.INTERVAL), M.INTERVAL, vim.schedule_wrap(function()
-      require("isovim.safe").wrap("the update check", require("isovim.update").check)()
+    _G.isovim_update_timer:start(math.min(5000, M.INTERVAL), M.INTERVAL, require("isovim.safe").ticker("the update check", function()
+      require("isovim.update").check()
     end))
   end
 end

@@ -366,6 +366,10 @@ end
 -- Runs fn with the buffer modifiable, as it is only while your cursor is in the composer.
 local function writable(buf, fn)
   local was = vim.bo[buf].modifiable
+  -- Already (a batch is): setting an option fires OptionSet, and a batch edits thousands of times.
+  if was then
+    return fn()
+  end
   vim.bo[buf].modifiable = true
   local ok, err = pcall(fn)
   vim.bo[buf].modifiable = was
@@ -382,7 +386,7 @@ local function edit(chat, fn)
   if chat.edit_from then
     return fn(buf)
   end
-  local follow = followers(chat)
+  local follow = not chat.batch and followers(chat)
   chat.edit_from = vim.api.nvim_buf_line_count(buf)
   local ok, err = pcall(writable, buf, function()
     fn(buf)
@@ -393,6 +397,9 @@ local function edit(chat, fn)
   if not ok then
     error(err, 0)
   end
+  if chat.batch then
+    return
+  end
   decorate(chat)
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     if vim.tbl_contains(follow, win) then
@@ -402,6 +409,33 @@ local function edit(chat, fn)
     end
   end
   set_unseen(chat)
+end
+
+-- Draws what fn adds as one batch: the windows that followed go to the end once, after it, rather
+-- than every window being measured after every entry. A journal read from the start (a chat made,
+-- or made again by a hot reload) is thousands of entries, and measuring each took a reload of a
+-- long chat many seconds, the TUI frozen meanwhile.
+local function batch(chat, fn)
+  if chat.batch or not vim.api.nvim_buf_is_loaded(chat.buf) then
+    return fn()
+  end
+  local follow = followers(chat)
+  chat.batch = true
+  local ok, err = pcall(writable, chat.buf, fn)
+  chat.batch = false
+  decorate(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
+    if vim.tbl_contains(follow, win) then
+      pcall(to_end, win)
+    else
+      vim.w[win].isovim_follows = false
+    end
+  end
+  set_unseen(chat)
+  update_bar(chat)
+  if not ok then
+    error(err, 0)
+  end
 end
 
 local function line_hl(buf, row, count, hl)
@@ -1199,7 +1233,7 @@ update_bar = function(chat)
   if any_busy() and not _G.isovim_acp_spinner then
     local spinner = vim.uv.new_timer()
     _G.isovim_acp_spinner = spinner
-    spinner:start(100, 100, vim.schedule_wrap(function()
+    spinner:start(100, 100, safe.ticker("the chat's spinner", function()
       frame = frame % #FRAMES + 1
       local busy = false
       for _, each in pairs(chats) do
@@ -1226,7 +1260,9 @@ local function render(chat, entry)
     draw(chat, entry)
     chat.entry = nil
   end
-  update_bar(chat)
+  if not chat.batch then
+    update_bar(chat)
+  end
 end
 
 -- Takes an entry once, in order: one pushed ahead of what's been read (a gap) reads the journal.
@@ -1243,7 +1279,12 @@ local function ingest(chat, entry, pushed)
 end
 
 -- An entry the supervisor pushed (isovim.acp.host, to every subscribed chat).
+-- Not during a hot reload, which makes the chat again: the journal, written before each push,
+-- brings what was pushed meanwhile.
 M.push = safe.wrap("the chat's stream", function(ws, agent, entry)
+  if safe.reloading() then
+    return
+  end
   local chat = chats[key(ws, agent)]
   if chat and type(entry) == "table" then
     ingest(chat, entry, true)
@@ -2119,7 +2160,9 @@ local function make(ws, agent, old, lines)
     ingest(chat, entry, false)
   end), safe.wrap("the chat's journal", function()
     reset(chat)
-  end))
+  end), function(read)
+    batch(chat, read)
+  end)
   guard(chat)
   subscribe(chat)
   -- What the journal can't say: whether the supervisor is still at it (it may have died mid-turn).
@@ -2131,7 +2174,7 @@ local function make(ws, agent, old, lines)
   end
   -- A supervisor that comes back (a restart, a handover's end) is subscribed to again.
   chat.timer = vim.uv.new_timer()
-  chat.timer:start(1000, 1000, safe.schedule_wrap("the chat's subscription", function()
+  chat.timer:start(1000, 1000, safe.ticker("the chat's subscription", function()
     if not chat.dead and vim.api.nvim_buf_is_loaded(buf) then
       subscribe(chat)
     end
@@ -2247,13 +2290,13 @@ function M.open(ws, agent, win)
 end
 
 -- The supervisor replaced the journal (a session switch): read it again from the start.
-function M.reload(ws, agent)
-  local chat = chats[key(ws, agent)]
+M.reload = safe.wrap("the chat's journal", function(ws, agent)
+  local chat = not safe.reloading() and chats[key(ws, agent)]
   if chat then
     chat.rewind = nil
     chat.drain()
   end
-end
+end)
 
 -- The message at or above row (0-based): its mark's entry info; only your prompts with mine.
 local function message_at(chat, row, mine)
@@ -2334,9 +2377,10 @@ remake = function(old, lines)
   local repairing = lines ~= nil
   lines = lines or (composer and vim.api.nvim_buf_get_lines(composer, 0, -1, false))
     or vim.api.nvim_buf_get_lines(old.buf, count, -1, false)
-  local views, at, opened = {}, {}, {}
+  local views, at, opened, follows = {}, {}, {}, {}
   for _, win in ipairs(vim.fn.win_findbuf(old.buf)) do
     views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    follows[win] = vim.w[win].isovim_follows
     local row, col = unpack(vim.api.nvim_win_get_cursor(win))
     if row > count then
       at[win] = { row - count, col }
@@ -2393,6 +2437,10 @@ remake = function(old, lines)
         to_draft(chat, win)
       elseif at[win] then
         pcall(vim.api.nvim_win_set_cursor, win, { math.min(chat.lines + at[win][1], count_now), at[win][2] })
+      end
+      -- One that followed the end goes on following it, past what came while it was made again.
+      if follows[win] then
+        pcall(to_end, win)
       end
     end
   end

@@ -61,6 +61,29 @@ function M.wrap(name, fn)
   end
 end
 
+-- A hot reload (isovim.reload) unloads every isovim module and makes the open chats again, and nvim
+-- can run other events in the middle of it (a long nvim_win_text_height checks for input and handles
+-- what's waiting): a timer or a supervisor's push landing then found modules half loaded ("loop or
+-- previous error loading module") and a chat half made. What runs again by itself skips its turn.
+function M.reloading()
+  return _G.isovim_reloading == true
+end
+
+-- A timer's callback: scheduled, skipped while a reload is under way, and safe. It outlives hot
+-- reloads, so fn reaches the code it runs through require.
+function M.ticker(name, fn)
+  local report = M.report
+  return vim.schedule_wrap(function(...)
+    if _G.isovim_reloading then
+      return
+    end
+    local ok, err = xpcall(fn, debug.traceback, ...)
+    if not ok then
+      report(name, err)
+    end
+  end)
+end
+
 function M.schedule(name, fn)
   vim.schedule(M.wrap(name, fn))
 end

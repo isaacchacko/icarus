@@ -627,7 +627,7 @@ function M.migrate()
       -- root still holds work, a glob or two), so this process isn't long on a work root that's
       -- gone; the move is tried again every 20s.
       local ticks = 0
-      _G.isovim_migrate_timer:start(5000, 5000, safe.schedule_wrap("the move's retry", function()
+      _G.isovim_migrate_timer:start(5000, 5000, safe.ticker("the move's retry", function()
         ticks = ticks + 1
         -- Another process made the move: the work root is the new one now.
         local before = store.work
@@ -919,28 +919,32 @@ function M.setup(opts)
     local message = ("%s · #%s %s"):format(store.name(ws), pr.number or "?", news)
     notify(message, news == "checks failed" and "warn" or "info")
   end
+  -- Timers call through require, so after a hot reload they run the new code; ones an older isovim
+  -- started (with its own closure, or not skipping a reload) are replaced.
+  if _G.isovim_timers ~= "ticker" then
+    for _, name in ipairs({ "isovim_pr_timer", "isovim_title_timer", "isovim_idle_timer" }) do
+      if _G[name] and not _G[name]:is_closing() then
+        _G[name]:close()
+      end
+      _G[name] = nil
+    end
+    _G.isovim_timers = "ticker"
+  end
   if not _G.isovim_pr_timer then
     _G.isovim_pr_timer = vim.uv.new_timer()
-    _G.isovim_pr_timer:start(5000, 60000, vim.schedule_wrap(function()
+    _G.isovim_pr_timer:start(5000, 60000, safe.ticker("watching PRs", function()
       require("isovim").poll_prs()
     end))
   end
-  -- Timers call through require, so after a hot reload they run the new code; one an older isovim
-  -- started with its own closure is replaced.
-  if _G.isovim_title_timer and not _G.isovim_title_timer_polls then
-    _G.isovim_title_timer:close()
-    _G.isovim_title_timer = nil
-  end
-  _G.isovim_title_timer_polls = true
   if not _G.isovim_title_timer then
     _G.isovim_title_timer = vim.uv.new_timer()
-    _G.isovim_title_timer:start(3000, 3000, vim.schedule_wrap(function()
+    _G.isovim_title_timer:start(3000, 3000, safe.ticker("the 3s poll", function()
       require("isovim").poll()
     end))
   end
   if not _G.isovim_idle_timer then
     _G.isovim_idle_timer = vim.uv.new_timer()
-    _G.isovim_idle_timer:start(60000, 60000, vim.schedule_wrap(function()
+    _G.isovim_idle_timer:start(60000, 60000, safe.ticker("the idle check", function()
       require("isovim.hooks").check_idle()
     end))
   end

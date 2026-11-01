@@ -130,11 +130,13 @@ end
 -- Calls on_entry for every entry from the start, then for each one appended, until the returned
 -- stop() is called; drain() reads what's been added at once. A journal that's replaced (another
 -- inode) or cut short starts over, after on_reset. It watches the journal's folder (FSEvents/kqueue or inotify, through libuv), as
--- isovim.events does, and reads only what was added; on_entry runs on the main loop.
+-- isovim.events does, and reads only what was added; on_entry runs on the main loop. Each read
+-- runs inside around, if given (the chat draws what one read brings as one batch).
 ---@param on_entry fun(entry: table)
 ---@param on_reset? fun()
+---@param around? fun(read: fun())
 ---@return fun() stop, fun() drain
-function M.follow(ws, agent, on_entry, on_reset)
+function M.follow(ws, agent, on_entry, on_reset, around)
   local path = M.path(ws, agent)
   vim.fn.mkdir(M.dir(ws), "p")
   local inode, offset, partial = nil, 0, ""
@@ -183,6 +185,12 @@ function M.follow(ws, agent, on_entry, on_reset)
       end
     end
     vim.uv.fs_close(fd)
+  end
+  if around then
+    local read = drain
+    drain = function()
+      around(read)
+    end
   end
   -- Watching before reading, so nothing written in between is missed.
   local watcher = assert(vim.uv.new_fs_event())

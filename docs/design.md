@@ -453,10 +453,15 @@ each directory has its own and one made later (a pull's) is watched as it appear
   they restart, which each does by itself at its next idle moment (see Agents run over ACP, Resume);
   `R` in the sidebar restarts one at once. The toast names such files.
 
-Nothing that runs on its own (timers, scheduled callbacks, autocmds, the supervisors' pushes) raises
-into nvim's messages, where an error's hit-enter prompt held the whole TUI: `isovim.safe` catches
-it and toasts it at WARN with its stack, at most once a minute for each place, and the TUI carries
-on. isovim also sets `messagesopt=wait:0` and `nomore`, so a message that does reach the command
+A chat made again draws its journal as one batch: windows that followed the end go to it once,
+after, rather than being measured after every entry (a 7.5k-entry chat took 9s, the TUI frozen
+meanwhile; now about 2). Nothing that runs on its own (timers, scheduled callbacks,
+autocmds, the supervisors' pushes) raises into nvim's messages, where an error's hit-enter prompt
+held the whole TUI: `isovim.safe` catches it and toasts it at WARN with its stack, at most once a
+minute for each place, and the TUI carries on. nvim runs other events in the middle of a reload (a
+long `nvim_win_text_height` handles what's waiting), when modules are half loaded and a chat half
+made, so timers and the supervisors' pushes skip their turn while one is under way; the journal
+brings what was pushed. isovim also sets `messagesopt=wait:0` and `nomore`, so a message that does reach the command
 line never waits on a key. The TUI's nvim server ends itself once its TUI process is gone, even
 while it waits on a key (`isovim.orphan`, a libuv timer), and names itself in
 `~/.isovim/isovim.server`, so `bin/iso` kills one left behind before it starts a TUI; the TUI binds
