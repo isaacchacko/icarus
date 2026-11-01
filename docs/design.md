@@ -201,7 +201,8 @@ host; General, Root and Terminals have none, and starting one there says why.
 - **Stored** as `iso/threads/<id>.jsonl` (`t1`, `t2`…), appended to, never rewritten: a header
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
   address>, text, at, images?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
-  {state: start|end}` around the router's turn on one of its posts. What you've read is
+  {state: start|end}` around the router's turn on one of its posts, and `renamed {by, title}`, its
+  title from then on (posts already sent keep their tags). What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
 - **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
   its own, drawn as the PR view is (isovim.boxes, its helpers shared with isovim.pr_view): a banner
@@ -213,7 +214,10 @@ host; General, Root and Terminals have none, and starting one there says why.
   everywhere, the draft's own undo, `<C-v>` images). `<CR>` there posts, and sends the router a
   prompt through its queue: `[thread <repo>#<id> "<title>"] <text>` (and its images). While its
   turn on the post runs, the bar over the composer says `<router> is working on it…`. `r` on the
-  conversation resolves the thread, or opens a resolved one again.
+  conversation resolves the thread, or opens a resolved one again; `R` (or `:IsovimThreadRename`)
+  renames it, its title in the composer to edit (`<CR>` renames, `<C-c>` keeps it), as `r` on its
+  row in the sidebar does and `iso router thread rename <id> "<title>"`; the banner, tab, row and
+  jump picker show the new title.
 - **The router's replies:** its supervisor sees the tag on the prompt it delivers, marks that turn
   working in the thread, and when the turn ends posts its last message (what it said after its
   last tool call) there, so the router just answers. Its tool calls stay in its own chat. It posts

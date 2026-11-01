@@ -741,6 +741,7 @@ M.role_actions = {
       new = { args = { "<text>", "<text>..." } },
       post = { args = { "<text>", "<text>..." }, flags = { ["--image"] = "<path>" } },
       resolve = { args = { "<text>", "<text>..." } },
+      rename = { args = { "<text>", "<text>..." } },
       ls = { flags = { ["--all"] = false } },
       show = { args = { "<text>" } },
     },
@@ -760,9 +761,11 @@ M.role_actions = {
                                      worker finished that it was about
        iso thread resolve <id> [<outcome...>]
                                      resolve it, with its outcome; it leaves the list
+       iso thread rename <id> <title...>
+                                     a new title (posts already sent keep their tags)
        iso thread ls [--all]         the repo's open threads (--all: resolved too)
        iso thread show <id>          a thread's posts
-                                     Routers make, post and resolve threads; any other
+                                     Routers make, post, rename and resolve threads; any other
                                      role reads them (ls, show)]=],
   },
   promote = { name = "promote", module = "roles",

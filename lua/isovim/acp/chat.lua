@@ -1297,6 +1297,15 @@ function RENDER.resolved(chat, entry)
   update_banner(chat)
 end
 
+function RENDER.renamed(chat, entry)
+  chat.title = entry.title or chat.title
+  thread_tab(chat)
+  local who = entry.by == "user" and "you" or (entry.by or "?"):match("([^/]+)$")
+  add_block(chat, { ("renamed “%s” by %s · %s"):format(chat.title, who, clock(entry.at)) },
+    "IsovimPrDim")
+  update_banner(chat)
+end
+
 function RENDER.reopened(chat, entry)
   chat.resolved = nil
   add_block(chat, { ("opened again by %s · %s"):format(entry.by == "user" and "you" or entry.by or "?", clock(entry.at)) }, "IsovimPrDim")
@@ -1430,6 +1439,8 @@ function M.bar_parts(chat)
   if chat.pending_title or chat.thread then
     if chat.pending_title then
       add(THREAD_GLYPH .. " a new thread in " .. chat.ws .. ": its title first", "IsovimAcpSpinner")
+    elseif chat.renaming then
+      add("✎ its new title: <CR> renames it · <C-c> keeps " .. (chat.title or chat.thread), "IsovimAcpSpinner")
     elseif chat.busy then
       local sec, usec = vim.uv.gettimeofday()
       local secs = chat.since and math.max(0, math.floor(sec + usec / 1e6 - chat.since)) or 0
@@ -2189,11 +2200,15 @@ local function map_keys(chat)
   local to_composer = ("<Cmd>lua require('isovim.acp.chat').focus_composer(%q, %q)<CR>"):format(chat.ws, chat.agent)
   -- Not nowait, so a longer map that starts with one (surround's cs) still gets its keys.
   local taken = global_maps("n")
+  local rename = "<Cmd>lua require('isovim.acp.chat').rename_thread()<CR>"
   for _, lhs in ipairs(TYPING) do
+    -- A thread's R on the conversation renames it.
+    local thread_rename = lhs == "R" and (chat.thread or chat.pending_title)
     if not taken[lhs] then
       map("n", lhs, function()
-        return mine() and lhs or to_composer
-      end, "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
+        return mine() and lhs or (thread_rename and rename or to_composer)
+      end, thread_rename and "rename the thread (in the composer: replace mode)"
+        or "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
     end
   end
   taken = global_maps("x")
@@ -2274,7 +2289,12 @@ local function map_keys(chat)
     end, "delete before the cursor, back to the composer's start", { expr = true })
   end
   map({ "n", "i" }, "<C-c>", function()
-    if chat.rewind then
+    if chat.renaming then
+      local before = chat.renaming
+      chat.renaming = nil
+      M.set_draft(chat, before)
+      return update_bar(chat)
+    elseif chat.rewind then
       chat.rewind = nil
       M.set_draft(chat, { "" })
       return update_bar(chat)
@@ -2359,6 +2379,7 @@ M.help_keys = {
   thread = {
     { "<CR>", "in its composer: post to the router (a new thread's first <CR> takes its title)" },
     { "r", "on the thread: resolve it, or open it again" },
+    { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
     { "", "otherwise as a chat: insert keys go to the draft, u undoes it, ]] [[ your posts" },
   },
@@ -3180,7 +3201,16 @@ end
 -- <CR> in a thread's composer: its title (a new thread), else a post, sent to the router as a
 -- prompt tagged with the thread (its supervisor posts the turn's last message back).
 function M.post_thread(chat, text)
-  if chat.pending_title then
+  if chat.renaming then
+    local title, err = threads.rename(chat.ws, chat.thread, "user", text)
+    if not title then
+      return say("not renamed: " .. tostring(err), vim.log.levels.WARN)
+    end
+    local before = chat.renaming
+    chat.renaming = nil
+    M.set_draft(chat, before)
+    return update_bar(chat)
+  elseif chat.pending_title then
     local id, err = threads.new(chat.ws, text, "user")
     if not id then
       return say("no thread: " .. tostring(err), vim.log.levels.WARN)
@@ -3225,6 +3255,25 @@ function M.post_thread(chat, text)
     end
   end))
 end
+
+-- R on a thread's conversation (or :IsovimThreadRename): its title in the composer to edit, <CR>
+-- renaming it, <C-c> keeping it; what you were writing comes back either way.
+function M.rename_thread()
+  local chat = by_buf(vim.api.nvim_get_current_buf())
+  if not (chat and chat.thread) then
+    return say("rename: open a thread first")
+  end
+  if not chat.renaming then
+    chat.renaming = draft(chat)
+  end
+  M.set_draft(chat, { chat.title or "" })
+  M.focus_composer(chat.ws, chat.agent)
+  update_bar(chat)
+end
+
+vim.api.nvim_create_user_command("IsovimThreadRename", function()
+  require("isovim.acp.chat").rename_thread()
+end, { desc = "isovim: rename the thread on screen" })
 
 -- r on a thread's conversation: resolved by you, or opened again.
 function M.resolve_thread()

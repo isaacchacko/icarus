@@ -367,7 +367,7 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | rename <id> <title...> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   if sub ~= "ls" and sub ~= "show" then
@@ -411,6 +411,13 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s is resolved"):format(repo, id))
+  elseif sub == "rename" then
+    local id = args[1] or fail(usage)
+    local title, err = threads.rename(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
+    if not title then
+      fail(err)
+    end
+    out(("%s#%s is %q now"):format(repo, id, title))
   elseif sub == "ls" then
     local list = threads.list(repo, flag(args, "--all"))
     if #list == 0 then
@@ -429,6 +436,8 @@ function M.thread(args)
       elseif entry.kind == "post" then
         out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
         out(entry.text)
+      elseif entry.kind == "renamed" then
+        out(("\n[renamed %q by %s]"):format(entry.title or "", entry.by or "?"))
       elseif entry.kind == "resolved" or entry.kind == "reopened" then
         out(("\n[%s by %s%s]"):format(entry.kind, entry.by or "?", entry.outcome and (": " .. entry.outcome) or ""))
       end

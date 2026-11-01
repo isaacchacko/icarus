@@ -8,6 +8,7 @@
 --   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
 --   {kind = "post", by = "user"|<agent address>, text, at, images?}
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
+--   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
 --   {kind = "working", state = "start"|"end", at}   the router's turn on one of its posts
 -- A post of the user's goes to the router as a prompt tagged "[thread <repo>#<id> "<title>"]";
 -- the supervisor (isovim.acp.host) marks that turn working in the thread and posts the turn's last
@@ -72,6 +73,8 @@ function M.summary(entries)
       info.status, info.outcome = "resolved", entry.outcome
     elseif entry.kind == "reopened" then
       info.status, info.outcome = "open", nil
+    elseif entry.kind == "renamed" and type(entry.title) == "string" then
+      info.title = entry.title
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
     end
@@ -182,6 +185,23 @@ function M.resolve(repo, id, by, outcome, reopen)
   outcome = outcome and vim.trim(outcome) ~= "" and vim.trim(outcome) or nil
   append(repo, id, { kind = "resolved", by = by, outcome = outcome })
   return "resolved"
+end
+
+-- A new title for the thread, by the user or a router.
+---@return string? title, string? err
+function M.rename(repo, id, by, title)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  title = vim.trim((title or ""):gsub("%s+", " "))
+  if title == "" then
+    return nil, "a thread needs a title"
+  elseif title == M.summary(entries).title then
+    return nil, ("%s is %q already"):format(id, title)
+  end
+  append(repo, id, { kind = "renamed", by = by, title = title })
+  return title
 end
 
 -- The router's turn on the thread started or ended (the supervisor's).

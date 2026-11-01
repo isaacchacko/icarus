@@ -1578,7 +1578,7 @@ local LIST_KEYS = {
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
-  { "r", "isovim_rename", "rename the workspace, agent or terminal" },
+  { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; a thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
@@ -2158,7 +2158,21 @@ M.actions = {
     end
   end,
   isovim_rename = function(item)
-    if not item or not item.ws then
+    -- A thread's row: its title (isovim.threads), appended to its file.
+    local thread = item and item.kind == "surface" and item.surface and item.surface.type == "thread" and item.surface
+    if thread and not item.host then
+      return vim.ui.input({ prompt = "Rename thread: ", default = thread.title }, function(title)
+        if title and title ~= "" then
+          local ok, err = require("isovim.threads").rename(thread.repo, thread.name, "user", title)
+          if not ok then
+            return Snacks.notify.warn(tostring(err), { title = "isovim" })
+          end
+          require("isovim.surfaces").scan(thread.repo)
+          require("isovim.surfaces").recheck()
+          isovim.refresh()
+        end
+      end)
+    elseif not item or not item.ws then
       return
     end
     -- On an agent or terminal row it renames the agent, e.g. a terminal after what runs in it; a
