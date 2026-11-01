@@ -106,21 +106,23 @@ local KINDS = {
     end,
     id = { "host" },
   },
-  -- A repo with surfaces waiting, in the host's Inbox; Enter goes to that repo's Inbox, opened.
-  busy = {
-    format = function(item)
-      local row = { { "    " } }
-      if item.mark then
-        vim.list_extend(row, { { item.mark.glyph, item.mark.hl }, { " " } })
+  -- A surface waiting on you, in the host's Inbox: its repo's glyph in its color and short name, then
+  -- the surface's own mark and title, and a question a root raised says why, dimmed. Cut to the
+  -- window's width. Enter opens it, as in its repo's Inbox.
+  waiting = {
+    format = function(item, width)
+      local mark = item.mark or { glyph = " ", hl = "Comment" }
+      local row = { { " " }, { mark.glyph, mark.hl }, { " " }, { item.label, mark.hl }, { " - ", "Comment" } }
+      local chunks = M.surface_chunks(item.surface)
+      vim.list_extend(row, vim.list_slice(chunks, 1, 3))
+      for _, chunk in ipairs(chunks) do
+        if vim.startswith(chunk[1], "  ↑ ") then
+          row[#row + 1] = { chunk[1], "Comment" }
+        end
       end
-      local label = item.group_kind == "repo" and item.name:match("[^/]+$") or item.name
-      vim.list_extend(row, { { label, item.mark and item.mark.hl or nil }, { " " .. item.count, "DiagnosticWarn" } })
-      return row
+      return width and M.fit(row, width) or row
     end,
-    open = function(item)
-      M.reveal_repo_inbox(item.host, item.repo_key)
-    end,
-    id = { "host", "repo_key" },
+    id = { "host", "repo_key", "name" },
   },
   -- A repo's own Inbox: its surfaces, the count those waiting on you.
   repo_inbox = {
@@ -266,6 +268,7 @@ local KINDS = {
   },
 }
 KINDS.task.open = KINDS.agent.open
+KINDS.waiting.open = KINDS.surface.open
 
 -- A file's or folder's icon, from mini.icons when it's there.
 local function path_icon(path, is_dir)
@@ -341,6 +344,21 @@ function M.surface_chunks(entry)
     row[#row + 1] = { "  broken", "DiagnosticError" }
   end
   return row
+end
+
+-- The chunks cut to width cells, the last one cut ending in …
+function M.fit(chunks, width)
+  local fitted, used = {}, 0
+  for _, chunk in ipairs(chunks) do
+    local w = vim.api.nvim_strwidth(chunk[1])
+    if used + w > width then
+      fitted[#fitted + 1] = { vim.fn.strcharpart(chunk[1], 0, math.max(0, width - used - 1)) .. "…", chunk[2] }
+      return fitted
+    end
+    fitted[#fitted + 1] = chunk
+    used = used + w
+  end
+  return fitted
 end
 
 -- The chunks cut to leave room for mark at the right edge of width cells, and the mark.
@@ -679,28 +697,38 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     table.insert(groups, 1, { key = ROOT_KEY, kind = "root", name = "root", agents = {} })
   end
   if surfaces_by_key then
-    local root_list = surfaces_by_key[ROOT_KEY] or {}
-    local busy = {}
-    local count = waiting(root_list)
-    for _, g in ipairs(groups) do
-      local n = g.kind ~= "root" and waiting(surfaces_by_key[g.key]) or 0
-      if n > 0 then
-        busy[#busy + 1] = { group = g, count = n }
-        count = count + n
+    -- Exactly what needs you (needs_you: a question a root is still deciding has none), a row each,
+    -- in the order <leader>in walks them (isovim.waiting_surfaces); all of them are in the root's and
+    -- each repo's own Inbox in the list too.
+    local waiting_on = {}
+    for key, list in pairs(surfaces_by_key) do
+      for i, entry in ipairs(list) do
+        if entry.needs_you then
+          waiting_on[#waiting_on + 1] = { key = key, entry = entry, at = vim.list_extend(isovim.inbox_place(entry), { i }) }
+        end
       end
     end
-    local collapsed = is_collapsed(host, "inbox")
-    inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = count, root_mode = has_root, collapsed = collapsed })
-    -- Exactly what needs you, as the count: the root's surfaces with needs_you (a question a root is
-    -- still deciding has none) and the repos with any. All of them are in the root's and each repo's
-    -- own Inbox in the list.
-    if not collapsed then
-      surface_rows(inbox, base_host, vim.tbl_filter(function(entry)
-        return entry.needs_you
-      end, root_list), 1)
-      for _, b in ipairs(busy) do
-        inbox[#inbox + 1] = vim.tbl_extend("force", base_host, { kind = "busy", repo_key = b.group.key, name = b.group.name, group_kind = b.group.kind, mark = repo_mark(b.group.style), count = b.count })
+    table.sort(waiting_on, function(a, b)
+      for i = 1, 4 do
+        if a.at[i] ~= b.at[i] then
+          return a.at[i] < b.at[i]
+        end
       end
+      return false
+    end)
+    local collapsed = is_collapsed(host, "inbox")
+    inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = #waiting_on, root_mode = has_root, collapsed = collapsed })
+    for _, w in ipairs(collapsed and {} or waiting_on) do
+      local key = w.key
+      local mark = key == ROOT_KEY and { icons.get("root") } or key == GENERAL_KEY and { icons.get("general") } or nil
+      inbox[#inbox + 1] = vim.tbl_extend("force", base_host, {
+        kind = "waiting",
+        surface = w.entry,
+        name = w.entry.name,
+        repo_key = key,
+        label = store.is_pseudo(key) and key or key:match("[^/]+$"),
+        mark = mark and { glyph = mark[1], hl = mark[2] } or repo_mark(repos.style(key)),
+      })
     end
   end
   for _, g in ipairs(groups) do
@@ -1167,13 +1195,12 @@ function M.offset_text(width)
   return call .. (" "):rep(width - #call - 2) .. "%}"
 end
 
--- The top window: the shown host's Inbox, under a title with the count of what waits on you; the
--- root's surfaces, then a row per repo with something waiting, whose Enter opens that repo's Inbox
--- in the list. Collapsed, only the title.
-local function inbox_lines()
+-- The top window: the shown host's Inbox, under a title with the count of what waits on you, a row
+-- for each surface waiting. Collapsed, only the title.
+local function inbox_lines(width)
   rows.inbox = M.inbox
   return vim.tbl_map(function(item)
-    return KINDS[item.kind].format(item)
+    return KINDS[item.kind].format(item, width)
   end, M.inbox)
 end
 
@@ -1265,7 +1292,7 @@ local function render(wins)
   end
   status.animate(spinning or meter.moving())
   if wins.inbox then
-    local lines = inbox_lines()
+    local lines = inbox_lines(vim.api.nvim_win_get_width(wins.inbox))
     draw(wins.inbox, lines)
     set_height(wins.inbox, math.min(#lines, 11))
   end
@@ -1505,9 +1532,9 @@ local RETIRED_KEYS = {
   { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
 }
 local INBOX_KEYS = {
-  { "<cr>", "isovim_open", "open the surface; on a repo, its Inbox in the list; on the title, collapse or expand" },
+  { "<cr>", "isovim_open", "open the surface, as a tab; on the title, collapse or expand" },
   { "<Tab>", "isovim_toggle_expand", "collapse or expand the Inbox" },
-  { "x", "isovim_root_mode", "root mode on or off for the host (on a repo: the repo)" },
+  { "x", "isovim_root_mode", "root mode on or off for the host (on a surface: its repo's)" },
 }
 local TERMINAL_KEYS = {
   { "<cr>", "isovim_open_terminal", "open the terminal; on the title, collapse or expand Terminals" },
@@ -1555,7 +1582,7 @@ function M.help()
   end
   section("Sidebar (any of its windows)", COLUMN_KEYS)
   section("Host list", LIST_KEYS)
-  section("Inbox (the shown host's: the root's surfaces, and each repo with something waiting)", INBOX_KEYS)
+  section("Inbox (the shown host's surfaces waiting on you, in the order <leader>in walks them)", INBOX_KEYS)
   section("Terminals (a robot marks a repo script's pane)", TERMINAL_KEYS)
   section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
@@ -1744,7 +1771,7 @@ function M.focus_inbox(which)
     vim.api.nvim_set_current_win(wins.inbox)
     local line = 1
     for i, row in ipairs(rows.inbox) do
-      if row.kind == "busy" or (row.kind == "surface" and row.surface.needs_you) then
+      if row.kind == "waiting" then
         line = i
         break
       end
@@ -1875,7 +1902,7 @@ end
 function M.root_mode_scope(item)
   local key
   if item then
-    if item.kind == "host_inbox" or (item.kind == "surface" and item.depth == 1) then
+    if item.kind == "host_inbox" then
       return "host"
     end
     key = item.repo_key or item.group_key
@@ -2154,7 +2181,7 @@ M.actions = {
     end
     local host = item.host
     -- The top window's rows: its cursor goes back to the title as the rows under it go.
-    if item.kind == "host_inbox" or item.kind == "busy" or (item.kind == "surface" and item.depth == 1) then
+    if item.kind == "host_inbox" or item.kind == "waiting" then
       set_collapsed(host, "inbox", nil, item.kind ~= "host_inbox" or not item.collapsed)
       local wins = windows()
       if wins.inbox then

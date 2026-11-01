@@ -266,7 +266,9 @@ one tab, isovim, in every scope.
 
 ```
 S (7) - swarming            ← style meter: live agents on this host
-Inbox 1                     ← the shown host's: root surfaces + one row per busy repo
+Inbox 2                     ← the shown host's: every surface waiting on you
+  app - ? a0 asks: merge?   ← its repo's glyph and name, then the surface
+  isovim - ? mini-animate …
 ‹ macbook ›                 ← the host you're viewing (< >)
   root  ⏺
     Inbox                   ← the root's surfaces (Task Board, markdown, files, questions)
@@ -282,8 +284,10 @@ ISOVIM 2de9e2b
 ```
 
 The top window is the Inbox of the host the list shows, so `<` and `>` switch it with the list (on
-another host it says whose, `Inbox 2 · cleopatra`); `<leader>ih` brings it back to this host. Enter
-on a busy repo opens that repo's Inbox in the list. There is no Inbox of the other hosts: their
+another host it says whose, `Inbox 2 · cleopatra`); `<leader>ih` brings it back to this host. Each
+surface waiting on you is a row of its own, in the order `<leader>in` walks them: its repo's glyph in
+its color and short name (root's or general's for theirs), then the surface's mark and title, cut to
+the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
 surfaces are reached by showing that host.
 
 Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
