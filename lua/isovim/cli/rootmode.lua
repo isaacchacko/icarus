@@ -70,10 +70,20 @@ end
 -- none; one a root raised stays with the user. from is the asking router (<ws>/<agent>), if any.
 ---@return string? to the root it went to
 function M.route_question(entry, from)
-  if entry.answer or entry.raised then
+  -- The root pseudo-repo's questions are the host root's own, to you.
+  if entry.answer or entry.raised or entry.repo == "root" then
     return entry.routed
   end
   local to, mode, scope = rootmode.route(entry.repo)
+  -- A root never gets its own question: a repo root's goes on to the host root.
+  if to and to == from then
+    local was = scope
+    to, mode, scope = nil, nil, nil
+    if was ~= "host" and rootmode.active("host") ~= from then
+      to, mode = rootmode.active("host")
+      scope = to and "host" or nil
+    end
+  end
   if to == entry.routed then
     return to
   end

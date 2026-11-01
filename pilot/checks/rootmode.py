@@ -114,14 +114,14 @@ def inside(address, *cmds, timeout=60):
             for i in range(len(cmds))]
 
 
-def ask(router, name, question="Ship it?", options=("yes", "no")):
+def ask(router, name, question="Ship it?", options=("yes", "no"), repo="acme/app"):
     """The router asks (its turn blocks on it); returns a function giving (rc, out, err) once it returns."""
     d = iso.tmp / f"q-{name}"
     d.mkdir()
     (d / "q.json").write_text(json.dumps({"question": question, "options": [{"label": o} for o in options]}))
     rc, _, err = run("send", router, f"run {BIN} router surface question {d}/q.json --name {name} > {d}/out 2> {d}/err; echo $? > {d}/rc")
     assert rc == 0, err
-    iso.wait(lambda: surface("acme/app", name), f"the question {name}")
+    iso.wait(lambda: surface(repo, name), f"the question {name}")
 
     def result(timeout=30):
         iso.wait(lambda: (d / "rc").exists(), f"the router's question {name} to return", timeout)
@@ -247,6 +247,11 @@ try:
     res = inside(HR, "root answer acme/app/q2 no")
     check(res[0][0] == 0, "the host root answers it", res[0])
     check(q2()[:2] == (0, "no"), "and the router's call returns its answer", q2())
+    qr = ask(HR, "qr", "Spend money?", repo="root")
+    entry = surface("root", "qr")
+    check(entry["needs_you"] and not entry.get("routed"), "the host root's own question is yours, never routed to itself", entry)
+    run("answer", "root/qr", "no")
+    check(qr()[:2] == (0, "no"), "your answer returns the host root's call", qr())
 
     print("\n# root mode on for the repo, with a task")
     rc, out, err = run("rootmode", "on", "acme/app", "--task", "only the tab line fix")
