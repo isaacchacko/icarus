@@ -331,7 +331,14 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   and `N` replace it with the next or previous question waiting on you in the Inbox's order (round
   past the end; one a root is deciding isn't waiting on you). An
   agent's permission request (Allow / Deny) is one of these too.
-- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. `<CR>` on a PR
+- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. A router can
+  curate it: `iso <role> pr group "<name>" <pr>... [--note "<one line>"]` makes or fills a group (a PR
+  is in one at most; grouping it again moves it, and registers it if it wasn't), `pr group --rm` and
+  `--order` drop and order them, `pr ungroup` takes PRs out, `pr groups` lists them; they live in the
+  repo's `iso/prs.groups.json`. With groups, the surface shows them in order, each a box (isovim.boxes)
+  with its name and count in its top border and its note under it, its PRs drawn as before; the PRs in
+  none go last in Other, and a group whose PRs are gone (merged or closed over a day ago) isn't shown.
+  When no group holds any, it's the state sections. Whether the surface waits on you stays per PR. `<CR>` on a PR
   there (or picking it in `<leader><leader>`) opens its own view (`isovim_pr`, isovim.pr_view), a tab:
   its header (#n and title; state, author, base ← head, the agent that registered it, age,
   mergeable or conflicts), its description drawn as the chat draws an agent's markdown (tables

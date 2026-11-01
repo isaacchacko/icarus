@@ -1039,6 +1039,7 @@ function M.prs_entry(repo, empty)
   local prs = require("isovim.prs")
   local cached, info, now = prs.cached(repo), store.pr_info(repo), os.time()
   local groups, waiting, shown = { open = {}, draft = {}, merged = {}, closed = {} }, 0, 0
+  local visible, order = {}, {}
   for i = #urls, 1, -1 do
     local pr = vim.tbl_extend("force", { url = urls[i] }, cached[urls[i]] or {})
     pr.by, pr.registered = (info[urls[i]] or {}).by, (info[urls[i]] or {}).at
@@ -1046,6 +1047,7 @@ function M.prs_entry(repo, empty)
     local ended = prs.time(pr.mergedAt or pr.closedAt)
     if not ((group == "merged" or group == "closed") and ended and now - ended > DAY) then
       table.insert(groups[group], pr)
+      visible[urls[i]], order[#order + 1] = pr, urls[i]
       shown = shown + 1
       waiting = waiting + (prs.needs_you(pr) and 1 or 0)
     end
@@ -1064,8 +1066,40 @@ function M.prs_entry(repo, empty)
     count = shown,
     registered = #urls,
     groups = groups,
-    sig = vim.fn.sha256(vim.json.encode({ groups, waiting })),
+    sections = M.prs_sections(repo, visible, order),
+    sig = vim.fn.sha256(vim.json.encode({ groups, waiting, prs.groups(repo) })),
   }
+end
+
+-- The router's groups of the PRs shown, in its order, each {name, note?, prs} with its PRs in the
+-- order it gave them; a group left empty (its PRs merged or closed a day ago, or gone) is left out,
+-- and the PRs in none go last, in Other. nil when no group holds any: the state sections instead.
+function M.prs_sections(repo, visible, order)
+  local sections, grouped = {}, {}
+  for _, group in ipairs(require("isovim.prs").groups(repo)) do
+    local list = {}
+    for _, url in ipairs(group.prs or {}) do
+      if visible[url] and not grouped[url] then
+        list[#list + 1], grouped[url] = visible[url], true
+      end
+    end
+    if #list > 0 then
+      sections[#sections + 1] = { name = group.name, note = group.note, prs = list }
+    end
+  end
+  if #sections == 0 then
+    return nil
+  end
+  local other = {}
+  for _, url in ipairs(order) do
+    if not grouped[url] then
+      other[#other + 1] = visible[url]
+    end
+  end
+  if #other > 0 then
+    sections[#sections + 1] = { name = "Other", prs = other }
+  end
+  return sections
 end
 
 -- A repo's surfaces: the watcher's while M.watch runs, else scanned now; and its PRs surface, made

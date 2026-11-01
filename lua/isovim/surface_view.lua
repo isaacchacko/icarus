@@ -212,67 +212,87 @@ end
 -- The PRs surface's lines, highlights and the PR on each line: its title, then each group that has
 -- PRs, a PR a line: its CI (or merged/closed glyph), #n and title, then dim: its review, the agent
 -- that registered it and its age.
-local function prs_board(entry)
-  local prs = require("isovim.prs")
-  local lines, marks, rows = {}, {}, {}
-  local function add(text, hl)
-    lines[#lines + 1] = text
-    if hl then
-      marks[#marks + 1] = { #lines - 1, 0, #text, hl }
-    end
+-- A PR's line: its CI glyph (the merged or closed one once it's done), #n and title, its review,
+-- then dim the agent that registered it and its age; an isovim.boxes line.
+local function pr_line(pr)
+  local prs, boxes = require("isovim.prs"), require("isovim.boxes")
+  local seg = boxes.seg
+  local glyph, hl
+  if pr.state == "MERGED" or pr.state == "CLOSED" then
+    glyph, hl = prs.icon(pr)
+  else
+    glyph, hl = unpack(CI[pr.checks or ""] or { "·", "Comment" })
   end
-  add("PRs", "Title")
-  local repo = "  " .. entry.repo
-  marks[#marks + 1] = { 0, #lines[1], #lines[1] + #repo, "Comment" }
-  lines[1] = lines[1] .. repo
+  local parts = { seg(glyph, hl), seg(" ") }
+  if pr.number then
+    vim.list_extend(parts, { seg(("#%d"):format(pr.number), "Comment"), seg(" ") })
+  end
+  parts[#parts + 1] = seg(pr.title or pr.url)
+  local review = pr.state == "OPEN" and REVIEW[pr.review or ""]
+  if review then
+    vim.list_extend(parts, { seg("  "), seg(review[1], review[2]) })
+  end
+  local tail = {}
+  local ws, agent = (pr.by or ""):match("^(.*)/([^/]+)$")
+  if ws then
+    local spec = store.agent(ws, agent)
+    tail[#tail + 1] = spec and spec.name or agent
+  end
+  local since = prs.time(pr.createdAt) or pr.registered
+  if since then
+    tail[#tail + 1] = age(since)
+  end
+  if #tail > 0 then
+    parts[#parts + 1] = seg("  " .. table.concat(tail, " · "), "Comment")
+  end
+  return boxes.cat(unpack(parts))
+end
+
+-- The PRs surface's lines, highlights and the PR on each line: its title, then the router's groups
+-- (iso <role> pr group), each a box with its name and count in its top border and its note under
+-- it, the PRs in none in Other; with none, the state sections (open, draft, merged today, closed).
+-- width: the window's, for the boxes.
+local function prs_board(entry, width)
+  local boxes = require("isovim.boxes")
+  local seg, cat = boxes.seg, boxes.cat
+  local lines, marks, rows = {}, {}, {}
+  local function add(line, pr)
+    lines[#lines + 1] = line.text
+    for _, mark in ipairs(line.marks) do
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3] }
+    end
+    rows[#lines] = pr
+  end
+  add(cat(seg("PRs", "Title"), seg("  " .. entry.repo, "Comment")))
+  if entry.sections then
+    boxes.highlights()
+    width = math.max(40, (width or 100) - 1)
+    for _, section in ipairs(entry.sections) do
+      add(seg(""))
+      add(boxes.top(width, cat(seg(section.name, "IsovimPrTitle"), seg("  " .. #section.prs, "IsovimPrDim"))))
+      if section.note and section.note ~= "" then
+        add(boxes.side(width, seg(section.note, "IsovimPrDim")))
+      end
+      for _, pr in ipairs(section.prs) do
+        add(boxes.side(width, pr_line(pr)), pr)
+      end
+      add(boxes.bottom(width))
+    end
+    return lines, marks, rows
+  end
   for _, group in ipairs(PR_GROUPS) do
     local list = entry.groups and entry.groups[group[1]] or {}
     if #list > 0 then
-      add("")
-      add(("%s  %d"):format(group[2], #list))
-      marks[#marks + 1] = { #lines - 1, 0, #group[2], "Bold" }
-      marks[#marks + 1] = { #lines - 1, #group[2], #lines[#lines], "Comment" }
+      add(seg(""))
+      add(cat(seg(group[2], "Bold"), seg(("  %d"):format(#list), "Comment")))
       for _, pr in ipairs(list) do
-        local glyph, hl
-        if pr.state == "MERGED" or pr.state == "CLOSED" then
-          glyph, hl = prs.icon(pr)
-        else
-          glyph, hl = unpack(CI[pr.checks or ""] or { "·", "Comment" })
-        end
-        local line, row = "  " .. glyph .. " ", #lines
-        marks[#marks + 1] = { row, 2, 2 + #glyph, hl }
-        local number = pr.number and ("#%d"):format(pr.number) or ""
-        marks[#marks + 1] = { row, #line, #line + #number, "Comment" }
-        line = line .. number .. (number ~= "" and " " or "") .. (pr.title or pr.url)
-        local review = pr.state == "OPEN" and REVIEW[pr.review or ""]
-        if review then
-          line = line .. "  "
-          marks[#marks + 1] = { row, #line, #line + #review[1], review[2] }
-          line = line .. review[1]
-        end
-        local tail = {}
-        local ws, agent = (pr.by or ""):match("^(.*)/([^/]+)$")
-        if ws then
-          local spec = store.agent(ws, agent)
-          tail[#tail + 1] = spec and spec.name or agent
-        end
-        local since = prs.time(pr.createdAt) or pr.registered
-        if since then
-          tail[#tail + 1] = age(since)
-        end
-        if #tail > 0 then
-          local text = "  " .. table.concat(tail, " · ")
-          marks[#marks + 1] = { row, #line, #line + #text, "Comment" }
-          line = line .. text
-        end
-        add(line)
-        rows[#lines] = pr
+        add(cat(seg("  "), pr_line(pr)), pr)
       end
     end
   end
   if #lines == 1 then
-    add("")
-    add(entry.registered == 0 and "No PRs registered here yet (iso <role> pr registers one)." or "No PRs from the last day.", "Comment")
+    add(seg(""))
+    add(seg(entry.registered == 0 and "No PRs registered here yet (iso <role> pr registers one)." or "No PRs from the last day.", "Comment"))
   end
   return lines, marks, rows
 end
@@ -281,12 +301,13 @@ end
 -- by render-markdown, so no highlights), the Task Board as board draws it, the PRs surface as
 -- prs_board does (with the PR on each line).
 ---@param entry isovim.Surface
+---@param width? integer the window's, for what's drawn in boxes
 ---@return string[] lines, table[] marks, table<integer, isovim.Pr>? rows
-function M.render(entry)
+function M.render(entry, width)
   if entry.type == "tasks" then
     return board(entry)
   elseif entry.type == "prs" then
-    return prs_board(entry)
+    return prs_board(entry, width)
   elseif entry.type == "page" then
     -- Its body line for line (no title over it, nothing trimmed from its top), so a comment's
     -- lines are the file's less where the body starts (isovim.pages.draw).
@@ -337,7 +358,9 @@ local set_lines
 
 -- A view drawn from its surface: its lines, and for the PRs surface the PR on each.
 local function draw_surface(view, entry)
-  local lines, marks, rows = M.render(entry)
+  local win = vim.fn.bufwinid(view.buf)
+  view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
+  local lines, marks, rows = M.render(entry, view.width)
   view.pr_rows = rows
   set_lines(view.buf, lines, marks)
   if view.kind == "page" then
@@ -1028,6 +1051,19 @@ function M.rebind()
     end
   end
 end
+
+-- A PRs surface's window resized: drawn again, its boxes to the new width.
+vim.api.nvim_create_autocmd("WinResized", {
+  group = vim.api.nvim_create_augroup("isovim_prs_resize", { clear = true }),
+  callback = function()
+    for _, view in pairs(M.views) do
+      local win = view.kind == "prs" and vim.api.nvim_buf_is_valid(view.buf) and vim.fn.bufwinid(view.buf) or -1
+      if win ~= -1 and vim.api.nvim_win_get_width(win) ~= view.width then
+        return require("isovim.safe").wrap("drawing the PRs", M.refresh_prs)()
+      end
+    end
+  end,
+})
 
 -- The PRs surfaces open, drawn again from the PRs' cache: run as the sidebar refreshes, which it
 -- does as a fetch lands, a PR is registered and a pr.* event comes.

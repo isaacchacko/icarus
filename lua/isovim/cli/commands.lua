@@ -208,7 +208,17 @@ M.list = {
   { name = "pr", module = "workspaces",
     args = { "<ws>", "<text>" },
     help = [=[
-       iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)]=],
+       iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)
+       iso pr group "<name>" <pr>... [--note "<one line>"]
+                                     a router puts its repo's PRs (URL, owner/repo#n or
+                                     #n) in a group, made if it's new: the PRs surface
+                                     shows the groups in order, each a box with its note,
+                                     the PRs in none in Other. A PR is in one group at
+                                     most; grouping it again moves it
+       iso pr group --rm "<name>" | --order "<name>"...
+                                     drop a group, or put groups in that order
+       iso pr ungroup <pr>...         take PRs out of their group
+       iso pr groups                  the groups and their PRs]=],
   },
   { name = "prs", module = "workspaces",
     retired = "iso listen 'pr.<owner/repo>.**' follows a repo's PRs",

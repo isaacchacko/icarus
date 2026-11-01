@@ -166,6 +166,10 @@ function commands.archive(args)
 end
 
 function commands.pr(args)
+  -- The router's groups of its PRs (isovim.cli.surfaces.pr_grouping).
+  if args[1] == "group" or args[1] == "ungroup" or args[1] == "groups" then
+    return require("isovim.cli.surfaces").pr_grouping(args)
+  end
   local ws = resolve(args[1])
   local url = args[2] and prs.normalize(args[2]) or fail("usage: iso pr <ws> <pr url|owner/repo#n>")
   store.add_pr(ws.id, url, caller_address())

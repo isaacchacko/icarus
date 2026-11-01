@@ -261,7 +261,10 @@ local V0 = {
       .. "open ones. A broken "
       .. "surface gets a <file>.surface.error beside it saying why. A PR shows in the sidebar only once you "
       .. "register it, `iso router pr <owner/repo> <url|owner/repo#n>`: do that for each one you or your "
-      .. "workers open or take up. `iso task`, `iso pin` and `iso ask` are retired: tasks.md, `surface "
+      .. "workers open or take up. Group your repo's PRs by what they're for (a feature, who they wait "
+      .. "on), with a one-line note per group: `iso router pr group \"<name>\" <pr>... --note \"...\"` "
+      .. "(`pr groups` lists them, `pr ungroup`, `pr group --rm|--order` tidy them); the PRs surface "
+      .. "shows them that way. `iso task`, `iso pin` and `iso ask` are retired: tasks.md, `surface "
       .. "file|folder` and `surface question` replace them.",
     ["repo-root"] = "As the repo-root you hold your repo's north star. In root mode you decide your repo's "
       .. "Inbox before the user sees it: its questions, however they were asked (a router's surface question, "

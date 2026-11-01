@@ -457,4 +457,106 @@ M.__surfaces = function(args)
   out(vim.json.encode(list))
 end
 
+
+-- A PR as a router names it: a URL, owner/repo#n, or #n / n in its own repo.
+local function pr_url(repo, ref)
+  local prs = require("isovim.prs")
+  local number = ref:match("^#?(%d+)$")
+  if number and repo:find("/", 1, true) then
+    return ("https://github.com/%s/pull/%s"):format(repo, number)
+  end
+  return prs.normalize(ref) or fail(("%s isn't a PR: a URL, owner/repo#n, or #n in %s"):format(ref, repo))
+end
+
+-- iso <role> pr group|ungroup|groups: the router's groups of its repo's PRs, in iso/prs.groups.json,
+-- which the PRs surface draws in their order (isovim.prs.groups). A PR is in one group at most:
+-- grouping it again moves it. A PR grouped that isn't registered yet is registered too.
+function M.pr_grouping(args)
+  local prs = require("isovim.prs")
+  local sub = table.remove(args, 1)
+  local repo = my_repo(option(args, "--repo"))
+  local groups = prs.groups(repo)
+  local usage = 'usage: iso <role> pr group "<name>" <pr>... [--note "<one line>"] | group --rm "<name>" | group --order "<name>"... | ungroup <pr>... | groups'
+  local function find(name)
+    for i, group in ipairs(groups) do
+      if group.name == name then
+        return group, i
+      end
+    end
+  end
+  local function take_out(urls)
+    for _, group in ipairs(groups) do
+      group.prs = vim.tbl_filter(function(url)
+        return not vim.tbl_contains(urls, url)
+      end, group.prs or {})
+    end
+  end
+  if sub == "groups" then
+    local cached = prs.cached(repo)
+    if #groups == 0 then
+      return out("no groups: the PRs surface shows them by state")
+    end
+    for _, group in ipairs(groups) do
+      out(group.name .. (group.note and ("  · " .. group.note) or ""))
+      for _, url in ipairs(group.prs or {}) do
+        local pr = cached[url] or {}
+        out(("  %s %s%s"):format(pr.number and "#" .. pr.number or url, pr.title or "", pr.state and pr.state ~= "OPEN" and ("  (" .. pr.state:lower() .. ")") or ""))
+      end
+    end
+    return
+  elseif sub == "ungroup" then
+    if #args == 0 then
+      fail(usage)
+    end
+    local urls = {}
+    for _, ref in ipairs(args) do
+      urls[#urls + 1] = pr_url(repo, ref)
+    end
+    take_out(urls)
+  elseif sub == "group" then
+    if flag(args, "--rm") then
+      local _, i = find(args[1] or fail(usage))
+      if not i then
+        fail(("no group %q in %s"):format(args[1], repo))
+      end
+      table.remove(groups, i)
+    elseif flag(args, "--order") then
+      local ordered = {}
+      for _, name in ipairs(args) do
+        ordered[#ordered + 1] = find(name) or fail(("no group %q in %s"):format(name, repo))
+      end
+      for _, group in ipairs(groups) do
+        if not vim.tbl_contains(args, group.name) then
+          ordered[#ordered + 1] = group
+        end
+      end
+      groups = ordered
+    else
+      local note = option(args, "--note")
+      local name = table.remove(args, 1) or fail(usage)
+      -- ipairs: the CLI's args carry the script at [0].
+      local urls = {}
+      for _, ref in ipairs(args) do
+        urls[#urls + 1] = pr_url(repo, ref)
+      end
+      take_out(urls)
+      local group = find(name)
+      if not group then
+        group = { name = name, prs = {} }
+        groups[#groups + 1] = group
+      end
+      group.note = note or group.note
+      vim.list_extend(group.prs, urls)
+      local by = c.caller_address()
+      for _, url in ipairs(urls) do
+        store.add_pr(repo, url, by)
+      end
+    end
+  else
+    fail(usage)
+  end
+  prs.save_groups(repo, groups)
+  c.tui("require('isovim').refresh()")
+end
+
 return M

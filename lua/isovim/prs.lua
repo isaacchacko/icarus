@@ -188,6 +188,25 @@ function M.needs_you(pr)
   return pr.state == "OPEN" and not pr.isDraft and pr.checks == "pass" and pr.review ~= "CHANGES_REQUESTED"
 end
 
+-- The groups a router made of its repo's PRs (iso <role> pr group), in their order, from
+-- iso/prs.groups.json: {name, note?, prs: urls}; a PR is in one at most. {} when it made none.
+---@return {name: string, note?: string, prs: string[]}[]
+function M.groups(repo)
+  local path = require("isovim.surfaces").dir(repo) .. "/prs.groups.json"
+  local ok, lines = pcall(vim.fn.readfile, path)
+  local decoded, value = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  return decoded and type(value) == "table" and type(value.groups) == "table" and value.groups or {}
+end
+
+-- Writes the repo's groups, through a temp file so a reader never sees half of them.
+function M.save_groups(repo, groups)
+  local dir = require("isovim.surfaces").dir(repo)
+  vim.fn.mkdir(dir, "p")
+  local tmp = ("%s/.prs.groups.json.%d.tmp"):format(dir, vim.uv.os_getpid())
+  vim.fn.writefile({ vim.json.encode({ groups = groups }) }, tmp)
+  assert(vim.uv.fs_rename(tmp, dir .. "/prs.groups.json"))
+end
+
 ---@param pr isovim.Pr
 ---@return string icon, string hl
 function M.icon(pr)
