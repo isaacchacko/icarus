@@ -986,7 +986,7 @@ function M.watch(on_change)
     timers[key] = timer
     handles["timer:" .. key] = timer
     timer:stop()
-    timer:start(100, 0, vim.schedule_wrap(fn))
+    timer:start(100, 0, require("isovim.safe").schedule_wrap("the surfaces' scan", fn))
   end
   discover = function()
     -- Never an old work root again, once isovim.migrate has moved it from under this process.
@@ -1026,7 +1026,7 @@ function M.watch(on_change)
   discover()
   local tick = assert(vim.uv.new_timer())
   handles["timer:tick"] = tick
-  tick:start(5000, 5000, vim.schedule_wrap(function()
+  tick:start(5000, 5000, require("isovim.safe").schedule_wrap("the surfaces' check", function()
     discover()
     for repo, entries in pairs(M.cache) do
       local stale = vim.iter(entries):any(function(entry)

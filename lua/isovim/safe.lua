@@ -1,16 +1,34 @@
 -- What runs on its own (timers, scheduled callbacks, autocmds, the supervisors' pushes) never
 -- raises into nvim's messages: an error there showed as a hit-enter prompt (or, under noice with
--- cmdheight=0, nothing at all) that held the whole TUI until a key it couldn't see. Each error is
--- a WARN toast with its stack instead, at most once a minute for each place, and the TUI carries on.
+-- cmdheight=0, nothing at all) that held the whole TUI until a key it couldn't see. Each error's
+-- stack goes to ~/.isovim/errors.log, a one-line WARN toast says which place failed, at most once
+-- every five minutes for each place, and the TUI carries on.
 local M = {}
+
+M.log = require("isovim.store").root .. "/errors.log"
 
 -- When each place last told, and how many it has kept quiet since; across hot reloads.
 _G.isovim_safe = _G.isovim_safe or {}
 local told = _G.isovim_safe
 
-local QUIET_MS = 60000
+local QUIET_MS = 5 * 60000
+local MAX_LOG_BYTES = 1024 * 1024
+
+-- Every error, told or not, with its stack; the log moves to errors.log.1 past 1 MiB.
+local function append(name, err)
+  local stat = vim.uv.fs_stat(M.log)
+  if stat and stat.size > MAX_LOG_BYTES then
+    vim.uv.fs_rename(M.log, M.log .. ".1")
+  end
+  local file = io.open(M.log, "a")
+  if file then
+    file:write(("%s  %s\n%s\n\n"):format(os.date("%Y-%m-%d %H:%M:%S"), name, tostring(err)))
+    file:close()
+  end
+end
 
 function M.report(name, err)
+  pcall(append, name, err)
   local now = vim.uv.now()
   local place = told[name] or { at = -QUIET_MS, quiet = 0 }
   told[name] = place
@@ -22,7 +40,8 @@ function M.report(name, err)
   place.at, place.quiet = now, 0
   -- Later, as the error may come in a fast event or under textlock, where a toast can't open.
   vim.schedule(function()
-    pcall(vim.notify, ("isovim: %s failed%s: %s"):format(name, more, tostring(err)), vim.log.levels.WARN)
+    local message = ("isovim: %s failed%s (see %s)"):format(name, more, vim.fn.fnamemodify(M.log, ":~"))
+    pcall(vim.notify, message, vim.log.levels.WARN)
   end)
 end
 

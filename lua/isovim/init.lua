@@ -697,7 +697,7 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = require("isovim.meter").setup })
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
-    callback = function(ev)
+    callback = safe.wrap("entering a buffer", function(ev)
       local ws = vim.b[ev.buf].isovim_id
       if ws then
         status.mark_seen(ws, vim.b[ev.buf].isovim_agent or "main")
@@ -718,7 +718,7 @@ function M.setup(opts)
       elseif ws then
         sidebar.follow()
       end
-    end,
+    end),
   })
   -- The sidebar's window and row you leave, for <C-h> to come back to (isovim.sidebar.focus).
   vim.api.nvim_create_autocmd("WinLeave", {

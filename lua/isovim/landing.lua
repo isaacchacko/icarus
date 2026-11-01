@@ -290,14 +290,14 @@ local function create()
     buffer = buf,
     callback = function()
       window_options(vim.api.nvim_get_current_win())
-      vim.schedule(M.refresh)
+      require("isovim.safe").schedule("the landing", M.refresh)
     end,
   })
   for _, action in ipairs(actions()) do
     vim.keymap.set("n", action[1], action[2], { buffer = buf, nowait = true, desc = "isovim: " .. described(action[3], action[4]) })
   end
   local group = vim.api.nvim_create_augroup("isovim_landing", { clear = true })
-  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, { group = group, callback = M.refresh })
+  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, { group = group, callback = require("isovim.safe").wrap("the landing", M.refresh) })
   return buf
 end
 

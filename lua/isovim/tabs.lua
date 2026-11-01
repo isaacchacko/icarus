@@ -189,7 +189,7 @@ vim.api.nvim_create_autocmd("WinEnter", { group = GROUP, callback = mark_slots }
 
 vim.api.nvim_create_autocmd("BufWinEnter", {
   group = GROUP,
-  callback = function(ev)
+  callback = require("isovim.safe").wrap("the tab bar", function(ev)
     main_buffer(ev.buf)
     if slot_buffer(ev.buf) then
       return mark_slots()
@@ -225,7 +225,7 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
       end
       open_in(win, ws, agent)
     end)
-  end,
+  end),
 })
 
 -- An empty, nameless, unmodified buffer, as nvim starts with.
