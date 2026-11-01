@@ -483,8 +483,21 @@ local function host_bar()
   return bar
 end
 
-local usage = {} ---@type table<string, {cpu: number, used: number, total: number}|"busy"|false>
+local usage = {} ---@type table<string, {cpu: number, used: number, total: number, at: integer}|"busy"|false>
 local version
+
+-- How long ago, in its largest unit: "now", "5m", "2h", "3d".
+local function age(at)
+  local seconds = os.time() - at
+  if seconds < 60 then
+    return "now"
+  elseif seconds < 3600 then
+    return math.floor(seconds / 60) .. "m"
+  elseif seconds < 86400 then
+    return math.floor(seconds / 3600) .. "h"
+  end
+  return math.floor(seconds / 86400) .. "d"
+end
 
 local function footer_lines()
   local host = shown_host() or remote.self()
@@ -500,7 +513,8 @@ local function footer_lines()
       { ("%d%%"):format(measured.cpu), measured.cpu >= 80 and "DiagnosticWarn" or "Special" },
       { "  ram " },
       { ("%.1f/%.0fG"):format(measured.used / 2 ^ 30, measured.total / 2 ^ 30), measured.used / measured.total >= 0.9 and "DiagnosticWarn" or "Special" },
-      { "  " .. host, "Comment" },
+      -- The short name, so the age fits: Mac.localdomain is Mac.
+      { "  " .. host:match("^[^.]+") .. " " .. age(measured.at), "Comment" },
     }
   end
   rows.footer = { { kind = "usage" }, { kind = "settings" }, { kind = "about" } }
@@ -647,7 +661,7 @@ local function measure()
   M.redraw()
   vim.system(cmd, { text = true, timeout = 15000 }, vim.schedule_wrap(function(result)
     local cpu, used, total = (result.stdout or ""):match("([%d.]+) (%d+) (%d+)")
-    usage[name] = cpu and { cpu = tonumber(cpu), used = tonumber(used), total = tonumber(total) } or false
+    usage[name] = cpu and { cpu = tonumber(cpu), used = tonumber(used), total = tonumber(total), at = os.time() } or false
     M.redraw()
   end))
 end

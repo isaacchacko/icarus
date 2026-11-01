@@ -1158,6 +1158,10 @@ function M.poll()
   if ticks % 3 == 1 then
     require("isovim.ports").poll(require("isovim.sidebar").refresh)
   end
+  -- Once a minute, so ages in the sidebar (the footer's "cpu, ram ... 5m") move on with nothing new.
+  if ticks % 20 == 0 then
+    require("isovim.sidebar").redraw()
+  end
   -- Only the workspace you're in: a git diff per workspace every few seconds adds up. The others
   -- catch up when their agents next report.
   if M.current then
