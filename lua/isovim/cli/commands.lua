@@ -274,11 +274,12 @@ M.list = {
     summary = "drive the open TUI: request, keys, screen, status, release",
     help = [=[
        iso pilot request <reason...> ask to drive the TUI: control comes after a 10s countdown unless declined;
-                                     blocks until allowed or denied
+                                     blocks until allowed or denied; busy at once while another agent holds it
        iso pilot keys <keys>         type into the TUI, in nvim key notation ("<C-h>j<CR>")
        iso pilot screen              print the TUI's screen
-       iso pilot status|release      off | asking | active | denied; release hands control back
-                                     (pressing Esc in the TUI takes control back too)]=],
+       iso pilot status|release      off | asking | active | denied, and who holds it; release hands control back
+                                     (pressing Esc in the TUI takes control back too)
+                                     keys, screen and release are only for the agent holding control]=],
   },
   { name = "completion", module = "complete",
     args = { "zsh|bash" },

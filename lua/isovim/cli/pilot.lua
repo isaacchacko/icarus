@@ -31,27 +31,43 @@ function commands.pilot(args)
     end
     return result
   end
-  local function state()
-    return call("return require('isovim.pilot').state()")
+  local function status()
+    return call("return require('isovim.pilot').status()")
+  end
+  local me = pilot_name()
+  local function as_holder(action, ...)
+    local done = call("return require('isovim.pilot').as_holder(...)", me, action, ...)
+    if done.refused then
+      fail(("pilot %s refused: %s"):format(action, done.refused))
+    end
+    return done.result
   end
   local sub = table.remove(args, 1)
   if sub == "request" then
     local reason = table.concat(args, " ")
-    call("require('isovim.pilot').request(...)", pilot_name(), reason ~= "" and reason or "no reason given")
+    -- A nil result would come back over RPC as vim.NIL, which is truthy.
+    local busy = call("return require('isovim.pilot').request(...) or false", me, reason ~= "" and reason or "no reason given")
+    if busy then
+      out(busy)
+      os.exit(1)
+    end
+    local now
     vim.wait(300000, function()
-      return state() ~= "asking"
+      now = status()
+      return now.state ~= "asking" or now.holder ~= me
     end, 300)
-    local now = state()
-    out(now == "active" and "allowed" or now == "asking" and "no answer" or "denied")
-    os.exit(now == "active" and 0 or 1)
+    local allowed = now.state == "active" and now.holder == me
+    out(allowed and "allowed" or now.state == "asking" and now.holder == me and "no answer" or "denied")
+    os.exit(allowed and 0 or 1)
   elseif sub == "keys" then
-    call("require('isovim.pilot').input(...)", args[1] or fail("usage: iso pilot keys <keys>"))
+    as_holder("keys", args[1] or fail("usage: iso pilot keys <keys>"))
   elseif sub == "screen" then
-    out(call("return require('isovim.pilot').screen()"))
+    out(as_holder("screen"))
   elseif sub == "status" then
-    out(state())
+    local now = status()
+    out(now.holder and now.state .. " " .. now.holder or now.state)
   elseif sub == "release" then
-    call("require('isovim.pilot').release(...)")
+    as_holder("release")
   else
     fail("usage: iso pilot request|keys|screen|status|release")
   end
