@@ -31,7 +31,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "pilot", "fork" }
+  "version", "pilot", "fork", "spawn", "promote" }
 M.only = { router = { "pr" } }
 
 M.header = [=[
@@ -64,8 +64,23 @@ M.list = {
   { name = "repo-root", module = "roles",
     summary = "a repo-root's actions (iso repo-root help)",
   },
+  { name = "spawn", module = "roles",
+    args = { "<text>..." },
+    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>" },
+    audience = "user",
+    summary = "start a claude agent in a workspace of its own",
+    help = [=[
+       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [<prompt...>]
+                                     start a claude agent in a workspace of its own, in the
+                                     repo's dir (from an agent, its own project by default),
+                                     on the prompt; prints <ws>/<agent>. An agent's spawn is
+                                     its child, of a role no higher than its own; one router
+                                     per repo here, one repo-root per repo, one root per host.
+                                     --read-only is recorded only: nothing enforces it yet]=],
+  },
   { name = "new", module = "workspaces",
     audience = "user",
+    role_form = "spawn",
     args = { "<text>..." },
     flags = { ["--dir"] = "<dir>", ["--worktree"] = false, ["--from"] = "<text>" },
     help = [=[
@@ -115,6 +130,7 @@ M.list = {
   },
   { name = "agent", module = "agents",
     audience = "user",
+    role_form = "spawn",
     args = { "<ws>", "<kind>" },
     flags = {
       ["--name"] = "<text>",
@@ -141,6 +157,7 @@ M.list = {
   },
   { name = "role", module = "agents",
     audience = "user",
+    role_form = "promote",
     args = { "<agent>", "<role>" },
     help = [=[
        iso role <agent> [root|repo-root|router|worker]   print or change its role; a change
@@ -424,6 +441,11 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
+  -- Restarts a promoted agent once it isn't working and tells it who promoted it (iso <role> promote).
+  { name = "__promote-finish", module = "roles",
+    hidden = true,
+    audience = "plumbing",
+  },
   -- The role warnings for a command bin/iso runs itself (iso browser).
   { name = "__warn", module = "roles",
     hidden = true,
@@ -434,6 +456,19 @@ M.list = {
 -- Actions that exist only under a role, written as `iso <action>` like the rest: iso <role> help
 -- puts the role in.
 M.role_actions = {
+  promote = { name = "promote", module = "roles",
+    args = { "<agent>|router|repo-root|root", "router|repo-root|root", "<text>" },
+    summary = "raise an agent (default: you) to router, repo-root or root",
+    help = [=[
+       iso promote [<agent>] router|repo-root|root ["reason"]
+                                     raise an agent (default: you): a worker to router when
+                                     it's in a git repo with no router here; a worker or router
+                                     to repo-root or root when there's none. No demotion. It
+                                     restarts on its conversation as the new role, and one you
+                                     promote gets a stamped message saying who and why. A
+                                     router made root is forked: the fork is the root, the
+                                     router stays]=],
+  },
 }
 
 -- The entry iso <role> <name> runs; nil when the role has no such action.

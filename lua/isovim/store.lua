@@ -444,7 +444,8 @@ end
 ---@field hidden? boolean left out of the sidebar and never notifies
 ---@field role? "root"|"repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
----@field read_only? boolean a new-layout agent that works in its repo's base clone
+---@field read_only? boolean a new-layout agent that works in its repo's base clone; on a workspace's
+--- agent, iso spawn --read-only records it and nothing enforces it yet
 ---@field repo? string a new-layout agent's repo key; nil in "_"
 ---@field created? integer when a new-layout agent was made
 ---@field session? string a new-layout agent's conversation id, as also kept in its run dir
@@ -738,6 +739,13 @@ function M.set_role(ws, id, role)
     local events = require("isovim.events")
     events.publish(events.agent_topic(ws, id, "promoted"), { role = role, previous = previous })
   end
+end
+
+-- nil makes it top-level: roots have no parent.
+function M.set_parent(ws, id, parent)
+  with_agent(ws, id, function(entry)
+    entry.parent = parent
+  end)
 end
 
 -- PR URLs the workspace's agents registered with `iso pr`, oldest first.
