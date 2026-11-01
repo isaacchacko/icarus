@@ -67,6 +67,27 @@ function M.icon(path)
   end
 end
 
+-- What the statusline shows for buf: <scope>/<its tab's text>, scope its repo (owner/repo), general,
+-- terminals or root, and the text the tab bar draws for it (M.name, which bufferline's name_formatter
+-- calls; bufferline's own name for a file), status mark included; a composer, a queue or an input
+-- box shows its chat's or view's.
+function M.status(buf)
+  buf = M.owner(buf or vim.api.nvim_get_current_buf())
+  local path = vim.api.nvim_buf_get_name(buf)
+  local scope = vim.b[buf].isovim_scope
+    or (path ~= "" and vim.bo[buf].buftype == "" and require("isovim.scope").of_path(path))
+    or require("isovim").current_scope or "general"
+  local text = M.name(buf)
+  if not text then
+    local ok, state = pcall(require, "bufferline.state")
+    local shown = ok and vim.iter(state.components or {}):find(function(component)
+      return component.id == buf
+    end)
+    text = shown and shown.name or (path ~= "" and vim.fn.fnamemodify(path, ":t")) or "[No Name]"
+  end
+  return scope .. "/" .. text
+end
+
 local function number(agent)
   return tonumber(agent:match("^a(%d+)$")) or math.huge
 end

@@ -34,6 +34,21 @@ return {
           return package.loaded["isovim.acp.images"] ~= nil and require("isovim.acp.images").status() ~= ""
         end,
       })
+      -- The buffer's path, outside the sidebar: <scope>/<its tab's text> (isovim.tabs.status), as the
+      -- tab bar names it, so isovim-acp:/…/a0/composer reads isaacchacko/isovim/router.
+      local probe = debug.getinfo(LazyVim.lualine.pretty_path(), "S")
+      for _, component in ipairs(opts.sections.lualine_c) do
+        local fn = type(component) == "table" and component[1]
+        local info = type(fn) == "function" and debug.getinfo(fn, "S")
+        if info and info.source == probe.source and info.linedefined == probe.linedefined then
+          component[1] = function(self)
+            if require("isovim").is_sidebar(vim.api.nvim_get_current_win()) then
+              return fn(self)
+            end
+            return require("isovim.tabs").status()
+          end
+        end
+      end
     end,
   },
   {
