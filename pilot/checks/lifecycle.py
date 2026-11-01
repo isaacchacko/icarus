@@ -215,13 +215,16 @@ try:
     iso.cli("repo", "import", str(src3))
     iso.wait(lambda: (down_home / "repos" / "o" / "r2" / "config.json").exists(), "the host that was down catches up")
     check(json.loads((down_home / "config.json").read_text())["self"] == "down", "the next write catches it up (its self is its own name)")
-    # The write's own background sync may still be going round; iso sync would only queue behind it.
-    iso.wait(lambda: not (home / "run" / "sync.lock").exists(), "the background sync to finish", 30)
-    result = subprocess.run([str(REPO / "bin" / "iso"), "sync"], env=iso.env, capture_output=True, text=True)
+    # A write's own background sync may be going round (or start any moment); iso sync then only
+    # queues behind it, so it's run until it runs itself.
+    def own_sync():
+        r = subprocess.run([str(REPO / "bin" / "iso"), "sync"], env=iso.env, capture_output=True, text=True)
+        return None if "running already" in r.stdout else r
+    result = iso.wait(own_sync, "an iso sync of its own", 30)
     check(result.returncode == 0 and result.stdout.split("\n")[:2] == ["synced to down", "synced to peer"], "iso sync reports each host",
           (result.returncode, result.stdout, result.stderr))
     (tmp / "down").write_text("")
-    result = subprocess.run([str(REPO / "bin" / "iso"), "sync"], env=iso.env, capture_output=True, text=True)
+    result = iso.wait(own_sync, "an iso sync of its own", 30)
     check(result.returncode == 1 and "FAILED down" in result.stdout, "iso sync fails on a down host", result.stdout)
 
     # iso jump.
