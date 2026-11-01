@@ -84,10 +84,10 @@ try:
     assert rows(iso)[kid]["parent"] == boss, rows(iso)[kid]
     assert (unit / "a1").is_dir()
 
-    # The sidebar lists the repo's agents (in the legacy grouping, under a row for the key).
-    iso.wait(lambda: any("acme/app" in row for row in iso.sidebar()), "repo row in the sidebar")
-    iso.lua("require('isovim').expanded['acme/app'] = true; require('isovim.sidebar').refresh()")
-    iso.wait(lambda: any("boss" in row for row in iso.sidebar()) and any("kid" in row for row in iso.sidebar()), "agents in the sidebar")
+    # The sidebar lists the repo's agents under its header, the legacy workspace among them.
+    iso.wait(lambda: any(row.endswith(" app") for row in iso.sidebar()), "repo row in the sidebar")
+    # a1 is a0's team: counted on its row, not listed.
+    iso.wait(lambda: any("boss (+1)" in row for row in iso.sidebar()) and not any("kid" in row for row in iso.sidebar()), "agents in the sidebar")
     iso.wait(lambda: any("legacy" in row for row in iso.sidebar()), "legacy row in the sidebar")
     # Opened in the TUI: its chat shows, and the selection's layout is kept in the repo's iso/.
     iso.cli("open", boss)

@@ -61,8 +61,9 @@ try:
     assert [entry[0] for entry in layout] == ["inbox", "list", "terminals", "footer"], layout
     assert iso.sidebar("terminals") == ["▾ Terminals 0"], iso.sidebar("terminals")
 
-    # t in the list: a terminal, in ~.
+    # t in the list, on alpha's row: a terminal, in ~.
     iso.focus_sidebar()
+    iso.lua("vim.api.nvim_win_set_cursor(0, {(...), 0})", row_of(iso.sidebar(), "alpha") + 1)
     iso.keys("t")
     iso.wait(lambda: iso.lua("return vim.b.isovim_agent") == "terminal", "the new terminal in the main window")
     cwd = iso.wait(lambda: (iso.lua("return (require('isovim.panes').titles()[...] or {}).path", f"{ws}/terminal")), "the terminal's pane")

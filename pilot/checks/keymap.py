@@ -122,7 +122,8 @@ try:
         ws[name] = iso.cli(*args)
     iso.cli("role", f"{ws['web1']}/main", "router")
     iso.cli("root", f"{ws['boss']}/main")
-    iso.wait(lambda: sum(1 for row in iso.sidebar() if any(n in row for n in ws)) == 5, "five workspaces")
+    # Four workspaces by name, and the root's pinned first as "root".
+    iso.wait(lambda: sum(1 for row in iso.sidebar() if any(n in row for n in ws)) == 4 and any(row.endswith(" root") for row in iso.sidebar()), "five workspaces")
 
     # Every global and <leader>i key is isovim's, over LazyVim's.
     maps = lua(
@@ -225,22 +226,30 @@ try:
     # Needs you: next, and the Inbox by repo / host / other hosts.
     lua("require('isovim.root').raise(..., 'main', 'api?')", ws["api1"])
     lua("require('isovim.root').raise(..., 'main', 'web?')", ws["web2"])
-    iso.wait(lambda: len(iso.sidebar("inbox")) == 3, "two in the Inbox")
+    iso.wait(lambda: sum(r["status"] == "attention" for r in json.loads(iso.cli("ls", "--json"))) == 2, "two raised")
+    # Inboxes show only surfaces: a question in acme/web's.
+    web_iso = Path(iso.env["ISOVIM_WORK"]) / "acme" / "web" / "iso"
+    web_iso.mkdir(parents=True, exist_ok=True)
+    (web_iso / "q.surface").write_text(json.dumps({"type": "question", "question": "Merge web?", "options": [{"label": "yes"}]}))
+    lua("require('isovim.sidebar').refresh()")
+    iso.wait(lambda: any("Merge web?" in row for row in iso.sidebar()), "the question in web's Inbox")
     open_agent(f"{ws['notes']}/main")
     leader("i", "n")
     iso.wait(lambda: shown() in (f"{ws['api1']}/main", f"{ws['web2']}/main"), "<leader>in: an agent that needs you")
     check(True, "<leader>in opens what needs you")
     open_agent(f"{ws['web1']}/main")
     leader("i", "i")
-    iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "inbox", "the Inbox focused")
+    iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "list", "the list focused")
     line = lua("return vim.api.nvim_get_current_line()")
-    check("web2" in line, "<leader>ii: the repo's entry", line)
+    check("Merge web?" in line, "<leader>ii: the repo's waiting surface", line)
     leader("i", "I")
+    iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "inbox", "the top Inbox focused")
     row = lua("return vim.api.nvim_win_get_cursor(0)[1]")
-    check(row == 1, "<leader>iI: no other host's entry, the title", row)
+    check(row == 1, "<leader>iI: no other host's surface, the title", row)
     leader("i", "h")
+    iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "list", "the list focused")
     line = lua("return vim.api.nvim_get_current_line()")
-    check("api1" in line or "web2" in line, "<leader>ih: the host's first entry", line)
+    check("web" in line and "1" in line, "<leader>ih: the host Inbox's busy repo", line)
 
     # Terminals, General, a new terminal.
     leader("i", "T")

@@ -86,6 +86,31 @@ function M.list(name, host, on_update)
   return entry.rows
 end
 
+-- The peer's surfaces (its `iso __surfaces`: every repo's, as isovim.surfaces lists them), fetched
+-- in the background like M.list; nil while unknown, and for a peer from before surfaces.
+---@return table[]?
+function M.surfaces(name, host, on_update)
+  local key = name .. "\0surfaces"
+  local entry = cache[key]
+  if not entry then
+    entry = { at = 0 }
+    cache[key] = entry
+  end
+  if not entry.busy and os.time() - entry.at >= TTL then
+    entry.busy = true
+    vim.system({ "bash", "-c", command(host, "__surfaces") }, { text = true }, function(result)
+      local decoded, list = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
+      local new = decoded and type(list) == "table" and list or nil
+      local changed = vim.json.encode(new or false) ~= vim.json.encode(entry.rows or false)
+      entry.rows, entry.at, entry.busy = new, os.time(), nil
+      if changed then
+        vim.schedule(on_update)
+      end
+    end)
+  end
+  return entry.rows
+end
+
 -- Whether the peer's last listing failed (asleep, off the network).
 function M.down(name)
   return cache[name] ~= nil and cache[name].down == true
@@ -93,8 +118,10 @@ end
 
 -- After something changed on that host (a move), so the next listing asks again.
 function M.invalidate(name)
-  if cache[name] then
-    cache[name].at = 0
+  for _, key in ipairs({ name, name .. "\0surfaces" }) do
+    if cache[key] then
+      cache[key].at = 0
+    end
   end
 end
 

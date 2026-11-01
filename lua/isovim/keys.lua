@@ -322,23 +322,11 @@ function M.open_host_root()
   return root and open(root) or toast("No root on this host")
 end
 
--- The Inbox's first entry from the current repo (repo), this host (host) or the other hosts (others).
--- There is one Inbox for now: these put its cursor there.
-local INBOXES = {
-  repo = function(entry)
-    return entry.ws and not entry.host and scope.of_workspace(entry.ws) == current_scope()
-  end,
-  host = function(entry)
-    return entry.ws and not entry.host
-  end,
-  others = function(entry)
-    return entry.host ~= nil
-  end,
-}
-
+-- The current repo's Inbox (repo), this host's (host) or the other hosts' (others), opened, the
+-- cursor on its first surface waiting on you.
 local function inbox(which)
   return function()
-    sidebar().focus_inbox(INBOXES[which])
+    sidebar().focus_inbox(which)
   end
 end
 
