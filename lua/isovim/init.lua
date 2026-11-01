@@ -321,6 +321,15 @@ function M.open(ws, agent, win)
   enter_dir(ws)
   win = win or main_win()
   vim.api.nvim_set_current_win(win)
+  -- An ACP agent's chat is drawn from its journal, with a composer below it (isovim.acp.chat).
+  if spec.acp then
+    local acp_chat = require("isovim.acp.chat")
+    acp_chat.open(ws, agent, win)
+    status.mark_seen(ws, agent)
+    select(ws)
+    acp_chat.focus_composer(ws, agent)
+    return
+  end
   local buf, stale = chat_buf(ws, agent)
   if buf then
     vim.api.nvim_win_set_buf(win, buf)
@@ -468,6 +477,7 @@ function M.remove_agent(ws, agent)
       vim.api.nvim_buf_delete(buf, { force = true })
     end
   end
+  require("isovim.acp.chat").close(ws, agent)
   store.remove_agent(ws, agent)
   M.refresh()
 end

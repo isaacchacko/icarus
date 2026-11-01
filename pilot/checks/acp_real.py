@@ -1,6 +1,6 @@
 """One smoke test of an ACP agent with the real claude-agent-acp and your own claude login: a single
 tiny prompt on haiku (ANTHROPIC_MODEL=haiku) whose answer can only come from isovim's role prompt in
-_meta, isovim's hooks firing from _meta's settings (the prompt hook writes the agent's transcript),
+_meta, the TUI's chat drawing it, isovim's hooks firing from _meta's settings (the prompt hook writes the agent's transcript),
 the session kept with CLAUDE_CODE_ENTRYPOINT=isovim (so claude --resume lists it), and a restart
 resuming that session without a model call. It spends a little of your Claude usage, so it only runs
 with ISOVIM_ACP_REAL=1; otherwise it says it skipped.
@@ -76,6 +76,12 @@ try:
         check(entrypoints == {"isovim"}, "its entrypoint is isovim, not the SDK's sdk-ts", entrypoints)
         modes = {json.loads(line).get("permissionMode") for line in found[0].read_text().splitlines()} - {None}
         check(modes == {"bypassPermissions"}, "Claude Code ran the prompt in bypassPermissions", modes)
+    iso.cli("open", addr)
+    chat = lambda: iso.lua("local c = require('isovim.acp.chat').get('_', 'a0')"  # noqa: E731
+                           " return c and vim.api.nvim_buf_get_lines(c.buf, 0, -1, false) or {}")
+    iso.wait(lambda: any(line.startswith("⏺ ") and "isovim" in line.lower() for line in chat()), "the chat drawn", 20)
+    check(any(line.startswith("❯ Answer with one lowercase word") for line in chat()), "the chat shows the prompt and the answer",
+          chat())
     rc, _, err = run("restart", addr)
     iso.wait(lambda: any(e["kind"] == "session" and e["how"] == "resume" for e in journal()), "the restart's resume", 60)
     notices = [e["text"] for e in journal() if e["kind"] == "notice"]

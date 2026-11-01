@@ -5,9 +5,11 @@
 -- Each line is {seq, ts, kind, ...}: seq counts up from 1 within the file, ts is epoch seconds.
 --   session   {how: new|resume|load, sessionId}   the session the supervisor holds
 --   mode      {modeId}                            the permission mode it set (bypassPermissions)
---   prompt    {id, text, from?, kind?, stamp?}    a prompt sent to the agent: from is the sender's
---                                                 address for a message (iso send/msg), nil for you
---   queued    {id, text, from?, position}         a prompt held until the running turn ends
+--   prompt    {id, text, via, from?, message?, stamp?}  a prompt sent to the agent: via is iso
+--                                                 (iso send/msg), composer (the TUI) or spawn;
+--                                                 from is the sender's address and message the
+--                                                 message's kind, for iso send/msg; nil for you
+--   queued    {id, text, via, from?, position}    a prompt held until the running turn ends
 --   update    {update}                            a raw ACP session/update, as the agent sent it
 --   turn      {state: start|end, stopReason?, id} a turn began or ended (stopReason from the agent)
 --   permission {tool, toolCallId?, decision}      a permission the agent asked for and was answered

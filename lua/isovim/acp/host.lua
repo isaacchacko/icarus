@@ -28,6 +28,7 @@ local M = {}
 ---@field stamp? string the message's stamp id (m<hex>)
 ---@field message? string the message without its stamp, for its msg event
 ---@field publish? boolean whether to publish msg.<scope>.<id> (prompts from iso send/msg)
+---@field via "iso"|"composer"|"spawn" where it came from: iso send/msg, the TUI's composer, iso spawn
 
 local S = {
   ws = nil, ---@type string
@@ -95,7 +96,8 @@ end
 ---@param prompt isovim.acp.Prompt
 deliver = function(prompt)
   S.busy = true
-  S.writer.append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp })
+  S.writer.append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind, stamp = prompt.stamp,
+    via = prompt.via })
   S.writer.append("turn", { state = "start", id = prompt.id })
   set_state("working")
   out(("\n❯ %s%s\n"):format(prompt.from and ("(" .. prompt.from .. ") ") or "", prompt.text))
@@ -116,7 +118,7 @@ local function submit(prompt)
   end
   if queued then
     S.queue[#S.queue + 1] = prompt
-    S.writer.append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, position = #S.queue })
+    S.writer.append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, position = #S.queue })
     out(("\n(queued %d) %s\n"):format(#S.queue, prompt.text))
     return { id = prompt.id, queued = true, position = #S.queue }
   end
@@ -133,7 +135,7 @@ function CALLS.prompt(payload)
     error("a prompt needs text")
   end
   return submit({ text = payload.text, from = payload.from, kind = payload.kind, stamp = payload.stamp,
-    message = payload.message, publish = payload.publish })
+    message = payload.message, publish = payload.publish, via = payload.publish and "iso" or "composer" })
 end
 
 function CALLS.status()
@@ -231,7 +233,7 @@ local function session_ready(how, spec, fresh)
     out(("[session %s: %s]\n"):format(how, S.session))
     -- The spawn's prompt goes once, to the agent's first session.
     if fresh and spec.prompt and spec.prompt ~= "" and not S.prompted then
-      table.insert(S.queue, 1, { id = next_id(), text = spec.prompt })
+      table.insert(S.queue, 1, { id = next_id(), text = spec.prompt, via = "spawn" })
     end
     local first = table.remove(S.queue, 1)
     if first then

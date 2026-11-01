@@ -75,7 +75,8 @@ def texts(agent, kind="prompt"):
 
 
 def reply_done(agent, text):
-    return any(e["kind"] == "update" and e["update"].get("content", {}).get("text") == text for e in journal(agent))
+    return any(e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk"
+               and e["update"]["content"].get("text") == text for e in journal(agent))
 
 
 try:
