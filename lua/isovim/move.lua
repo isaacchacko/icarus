@@ -9,10 +9,14 @@
 -- queue file and the sessions it kept), its plain-text transcript and its session's transcript
 -- (Claude's, filed on the other host under the key of the path it will run in there; Codex's
 -- rollout). Its worktree goes as its branch: pushed to origin here and made again there, as aN/w
--- from that host's base clone, so a dirty worktree is refused (commit first). It keeps its aN when
--- the other host never gave that number out, else takes the next one there. It's refused mid-turn,
--- and roots stay on their host. Once the other host has it, it's removed here (its children go on
--- as when it's removed: to its parent, else the repo's router).
+-- from that host's base clone, so uncommitted changes to tracked files are refused (commit first).
+-- The rest of aN/ goes as files, whole: what's beside w/, and in w/ what git doesn't carry (ignored
+-- and untracked files). The other host checks each file against the list sent with them (sizes and
+-- hashes), and the agent starts there, before it says it has it; anything short of that and the
+-- other host keeps nothing of it, and it starts here again as it was. It keeps its aN when the
+-- other host never gave that number out, else takes the next one there. It's refused mid-turn, and
+-- roots stay on their host. Once the other host has it, it's removed here (its children go on as
+-- when it's removed: to its parent, else the repo's router).
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 local worktree = require("isovim.worktree")
@@ -223,6 +227,82 @@ local function claude_transcript(session)
   return file, is_dir(dir) and dir or nil
 end
 
+-- What's under root, as a sorted list of {path, type, size, sha256 | target}: every file (hashed),
+-- link and dir, but `skip` (a path relative to root) and what's in it. Sockets and fifos aren't
+-- listed. A file that can't be read is an error, as it couldn't go along.
+---@return table[]? entries, string? err
+function M.listing(root, skip)
+  local entries = {}
+  local function walk(rel)
+    local dir = rel == "" and root or root .. "/" .. rel
+    local handle, err = vim.uv.fs_scandir(dir)
+    if not handle then
+      return ("can't read %s: %s"):format(dir, tostring(err))
+    end
+    while true do
+      local name = vim.uv.fs_scandir_next(handle)
+      if not name then
+        break
+      end
+      local path = rel == "" and name or rel .. "/" .. name
+      local full = root .. "/" .. path
+      local stat = path ~= skip and vim.uv.fs_lstat(full)
+      if stat and stat.type == "link" then
+        entries[#entries + 1] = { path = path, type = "link", target = vim.uv.fs_readlink(full) }
+      elseif stat and stat.type == "file" then
+        local f, open_err = io.open(full, "rb")
+        if not f then
+          return ("can't read %s: %s"):format(full, tostring(open_err))
+        end
+        local data = f:read("*a")
+        f:close()
+        entries[#entries + 1] = { path = path, type = "file", size = #data, sha256 = vim.fn.sha256(data) }
+      elseif stat and stat.type == "directory" then
+        entries[#entries + 1] = { path = path, type = "directory" }
+        local walk_err = walk(path)
+        if walk_err then
+          return walk_err
+        end
+      end
+    end
+  end
+  local err = walk("")
+  if err then
+    return nil, err
+  end
+  table.sort(entries, function(a, b)
+    return a.path < b.path
+  end)
+  return entries
+end
+
+-- The first entry of want that root doesn't have as it was listed, said as why; nil when all match.
+-- What root has besides (a setup script's output, say) doesn't count.
+---@return string? mismatch
+function M.compare(want, root, skip)
+  local have, err = M.listing(root, skip)
+  if not have then
+    return err
+  end
+  local by_path = {}
+  for _, entry in ipairs(have) do
+    by_path[entry.path] = entry
+  end
+  for _, entry in ipairs(want) do
+    local got = by_path[entry.path]
+    if not got then
+      return entry.path .. " is missing"
+    elseif got.type ~= entry.type then
+      return ("%s is a %s, not a %s"):format(entry.path, got.type, entry.type)
+    elseif entry.type == "file" and (got.size ~= entry.size or got.sha256 ~= entry.sha256) then
+      return ("%s arrived different (%d bytes, sha256 %s; sent %d bytes, sha256 %s)")
+        :format(entry.path, got.size, got.sha256:sub(1, 12), entry.size, entry.sha256:sub(1, 12))
+    elseif entry.type == "link" and got.target ~= entry.target then
+      return ("%s points to %s, not %s"):format(entry.path, tostring(got.target), tostring(entry.target))
+    end
+  end
+end
+
 -- The files of the agent's that go along, as {from, to under the stage}.
 local function agent_files(key, id)
   local journal = require("isovim.acp.journal")
@@ -271,7 +351,8 @@ function M.send_agent(key, agent, host)
   local w = store.dir(key) .. "/" .. id .. "/w"
   local branch
   if is_dir(w) then
-    local _, dirty = run_git(w, { "status", "--porcelain" })
+    -- Untracked and ignored files go along as files, with the rest of aN/.
+    local _, dirty = run_git(w, { "status", "--porcelain", "--untracked-files=no" })
     if dirty ~= "" then
       return false, ("%s's worktree (%s) has uncommitted changes; commit them first, since the move takes its branch")
         :format(address, store.home_relative(w))
@@ -318,6 +399,17 @@ function M.send_agent(key, agent, host)
     return false, err
   end
 
+  -- Its whole aN/ goes too, listed (sizes and hashes) for the other host to check against before it
+  -- says it has it. Its worktree's .git stays: the worktree is made again there from the branch.
+  local own = store.dir(key) .. "/" .. id
+  if is_dir(own) then
+    local files, err = M.listing(own, branch and "w/.git" or nil)
+    if not files then
+      return abort(err)
+    end
+    manifest.files = files
+  end
+
   local stage = vim.fn.tempname()
   vim.fn.mkdir(stage .. "/journal", "p")
   for _, file in ipairs(agent_files(key, id)) do
@@ -341,7 +433,11 @@ function M.send_agent(key, agent, host)
   end
   vim.fn.writefile({ vim.json.encode(manifest) }, stage .. "/manifest.json")
 
+  -- aN/ goes beside the stage's files, under its id.
   local tar = { "tar", "-cf", "-", "-C", stage, "." }
+  if manifest.files then
+    vim.list_extend(tar, { "-C", store.dir(key), id })
+  end
   local pipeline = ("set -o pipefail; %s | %s %s %s"):format(
     table.concat(vim.tbl_map(vim.fn.shellescape, tar), " "),
     M.ssh,
@@ -353,7 +449,15 @@ function M.send_agent(key, agent, host)
   if result.code ~= 0 then
     return abort(vim.trim((result.stderr or "") .. (result.stdout or "")))
   end
-  local there = vim.trim(result.stdout or ""):match("([^%s]+/a%d+) is here") or address
+  local said = vim.trim(result.stdout or "")
+  local there = said:match("([^%s]+/a%d+) is here") or address
+  -- Only once the other host says it checked every file is it removed here. One that doesn't say
+  -- so (an older isovim, which drops aN/) may have it running there too, without its files.
+  local checked = tonumber(said:match("(%d+) files? checked") or "")
+  if manifest.files and checked ~= #manifest.files then
+    return abort(("%s didn't confirm it has %s's %d files (it said: %s); it stays here, and may be running at %s:%s too")
+      :format(host, address, #manifest.files, said, host, there))
+  end
   -- It's there now: gone from here, as iso rm removes one, its journal too.
   store.remove_agent(key, id)
   for _, file in ipairs(agent_files(key, id)) do
@@ -434,17 +538,53 @@ function M.receive_agent(stage, manifest)
   end
   local id = adopted.id
   local address = key .. "/" .. id
+  local own = store.dir(key) .. "/" .. id
+  -- What a failed move leaves here: nothing. Files it put down are removed, its worktree is
+  -- unregistered, and the sender keeps the agent.
+  local placed = {}
   local function undo(why)
+    pcall(panes.stop, key, id)
     os.remove(store.record_file(key, id))
-    vim.fn.delete(store.dir(key) .. "/" .. id, "rf")
-    return false, why
+    vim.fn.delete(own, "rf")
+    for _, path in ipairs(placed) do
+      vim.fn.delete(path, "rf")
+    end
+    local base = repo and require("isovim.repos").dir(repo) .. "/base-clone"
+    if base and is_dir(base) then
+      run_git(base, { "worktree", "prune" })
+    end
+    vim.fn.delete(stage, "rf")
+    return false, why .. "; nothing of it is kept here"
   end
   if manifest.branch then
     local log = store.run_dir(key) .. "/" .. id .. ".worktree_setup.log"
     vim.fn.mkdir(store.run_dir(key), "p")
+    placed[#placed + 1] = log
     local path, branch_or_err = require("isovim.cli.work").ensure_worktree(key, adopted, manifest.branch, log)
     if not path then
       return undo("could not make its worktree here: " .. tostring(branch_or_err))
+    end
+  end
+  -- Its aN/, over the worktree just made (whose own .git stays), then checked file by file against
+  -- what the sender listed.
+  local files = manifest.files
+  if files then
+    local skip = manifest.branch and "w/.git" or nil
+    local from = stage .. "/" .. was
+    if not is_dir(from) then
+      return undo(("its files (%s/) didn't arrive"):format(was))
+    end
+    if skip then
+      vim.fn.delete(from .. "/" .. skip, "rf")
+    end
+    vim.fn.mkdir(own, "p")
+    local copied = vim.system({ "cp", "-pR", from .. "/.", own }, { text = true }):wait()
+    if copied.code ~= 0 then
+      return undo("could not copy its files in: " .. vim.trim(copied.stderr or ""))
+    end
+    local mismatch = M.compare(files, own, skip)
+    if mismatch then
+      return undo("its files didn't arrive whole: " .. mismatch)
     end
   end
   -- Its journal and transcript, under its id here.
@@ -453,44 +593,59 @@ function M.receive_agent(stage, manifest)
   for _, suffix in ipairs({ ".jsonl", ".queue.json", ".sessions" }) do
     local from = stage .. "/journal/" .. was .. suffix
     if vim.uv.fs_stat(from) then
-      vim.fn.delete(journal.dir(key) .. "/" .. id .. suffix, "rf")
-      copy(from, journal.dir(key) .. "/" .. id .. suffix)
+      local to = journal.dir(key) .. "/" .. id .. suffix
+      vim.fn.delete(to, "rf")
+      placed[#placed + 1] = to
+      copy(from, to)
     end
   end
   local text = stage .. "/transcripts/" .. was .. ".txt"
   if vim.uv.fs_stat(text) then
-    copy(text, store.path(key) .. "/transcripts/" .. id .. ".txt")
+    local to = store.path(key) .. "/transcripts/" .. id .. ".txt"
+    placed[#placed + 1] = to
+    copy(text, to)
   end
   -- Its session: Claude finds a session by the path it runs in, so the transcript goes under that
   -- path's project here.
   local session = adopted.session
   if session then
     vim.fn.mkdir(store.run_dir(key), "p")
-    vim.fn.writefile({ session }, store.run_dir(key) .. "/" .. id .. ".session")
+    local to = store.run_dir(key) .. "/" .. id .. ".session"
+    placed[#placed + 1] = to
+    vim.fn.writefile({ session }, to)
   end
   if is_dir(stage .. "/claude") then
     local cwd = store.agent_dir(key, id)
     vim.fn.mkdir(cwd, "p")
     local project = panes.claude_project(cwd)
     vim.fn.mkdir(project, "p")
+    for _, name in ipairs(vim.fn.readdir(stage .. "/claude")) do
+      if not vim.uv.fs_stat(project .. "/" .. name) then
+        placed[#placed + 1] = project .. "/" .. name
+      end
+    end
     vim.system({ "cp", "-R", stage .. "/claude/.", project }):wait()
   end
   for _, file in ipairs(vim.fn.glob(stage .. "/codex/**/*.jsonl", false, true)) do
     local target = panes.codex_sessions .. "/" .. file:sub(#stage + #"/codex/" + 1)
     if not vim.uv.fs_stat(target) then
+      placed[#placed + 1] = target
       copy(file, target)
     end
   end
-  vim.fn.delete(stage, "rf")
   local renamed = id ~= was and (" (%s was taken here)"):format(was) or ""
+  local checked = files and ("; its %d files checked"):format(#files) or ""
+  -- One that was running starts here, or the move fails and it stays running there.
   if manifest.running then
     local started = panes.start(key, adopted, store.agent_dir(key, id))
     if started.code ~= 0 then
-      return true, ("%s is here%s; it didn't start: %s"):format(address, renamed, vim.trim(started.stderr or ""))
+      return undo("it didn't start here: " .. vim.trim((started.stderr or "") .. (started.stdout or "")))
     end
-    return true, ("%s is here%s; resumed"):format(address, renamed)
+    vim.fn.delete(stage, "rf")
+    return true, ("%s is here%s; resumed%s"):format(address, renamed, checked)
   end
-  return true, ("%s is here%s"):format(address, renamed)
+  vim.fn.delete(stage, "rf")
+  return true, ("%s is here%s%s"):format(address, renamed, checked)
 end
 
 return M

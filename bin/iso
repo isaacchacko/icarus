@@ -12,7 +12,12 @@ PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 if [ "${1:-}" = receive ]; then
   mkdir -p "$home/workspaces"
   incoming="$(mktemp -d "$home/incoming.XXXXXX")"
-  tar -xf - -C "$incoming"
+  # A copy that fails partway leaves nothing here; the sender keeps what it sent.
+  if ! tar -xf - -C "$incoming"; then
+    rm -rf "$incoming"
+    echo "iso receive: the copy here failed; nothing of it is kept" >&2
+    exit 1
+  fi
   NVIM_APPNAME=isovim exec nvim -l "$cli" receive "$incoming"
 fi
 
