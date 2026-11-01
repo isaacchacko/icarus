@@ -10,10 +10,11 @@
 --                   gone from the Inbox once opened, until the router rewrites it)
 --   <name>.surface  JSON with a type, made by iso router surface:
 --                   question  {question, options: [{label, description?}], multi?, other?, created,
---                             by? (who asked), raised? (the user's: no root answers it), answer?:
---                             {labels, other?, by, at}}: answered with iso answer or M.answer (by
---                             the user, or in root mode a root, isovim.rootmode), then removed when
---                             its asker collects the answer
+--                             by? (who asked), raised?, raised_by?, why? (the user's alone: a root
+--                             raised it, with its one-line recommendation, or it's a permission
+--                             request, raised_by "isovim"), answer?: {labels, other?, by, at}}:
+--                             answered with iso answer or M.answer (by the user, or in root mode a
+--                             root, isovim.rootmode), then removed when its asker collects it
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
@@ -49,7 +50,8 @@ end
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
----@field needs_you boolean waiting on the user: a pending question, a chat, an unopened consumable
+---@field needs_you boolean waiting on the user: a pending question no root is deciding, a chat, an
+--- unopened consumable; what the host Inbox, its counts, notifications and <leader>in go by
 ---@field error? string why it's broken, as its error_file says
 ---@field error_file string where that goes
 ---@field icon? string markdown and tasks: from the frontmatter
@@ -66,6 +68,9 @@ end
 ---@field answer? {labels: string[], other?: string, by: string, at: number}
 ---@field asker? string question: who asked it, <ws>/<agent>; nil from a shell
 ---@field raised? boolean question: yours alone (a root raised it, or it's a permission request)
+---@field raised_by? string question: the root that raised it, or "isovim" for a permission request
+---@field why? string question: the root's one line on why it raised it, its recommendation
+---@field deciding? string question: the root deciding it (root mode), while it's pending and not raised
 ---@field path? string file, folder: the target
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
@@ -351,9 +356,13 @@ local function parse_surface(entry, text)
       entry.answer = data.answer
     end
     entry.raised = data.raised == true or nil
+    entry.raised_by = entry.raised and type(data.raised_by) == "string" and data.raised_by or nil
+    entry.why = entry.raised and type(data.why) == "string" and data.why ~= "" and data.why or nil
     entry.asker = type(data.by) == "string" and data.by or nil
-    -- The Inbox is shared: a root may answer it too, but until someone does it waits on you.
-    entry.needs_you = not entry.answer
+    -- In root mode its root decides it first: it waits on you once raised, or with no root in
+    -- charge (root mode off). You may answer it either way.
+    entry.deciding = require("isovim.rootmode").root_for(entry)
+    entry.needs_you = not entry.answer and not entry.deciding
   elseif data.type == "file" or data.type == "folder" then
     if type(data.path) ~= "string" or data.path == "" then
       return "path is the " .. data.type .. "'s path, a string"
@@ -624,7 +633,7 @@ end
 -- Asks a question in the repo, or finds it asked already: by name (spec.name, or name), else by
 -- the same question, options, multi and other. A pending question of that name asked differently
 -- is reworded in place; an answered one keeps its answer. by is who asks (<ws>/<agent>), which its
--- view shows; yours makes it the user's alone from the start (raised).
+-- view shows; yours makes it the user's alone from the start (raised by isovim: a permission request).
 ---@param spec table as M.validate_question takes it
 ---@return isovim.Surface? entry, string how_or_err "asked", "reattached", "reworded", "kept" (answered
 --- before it was asked differently), or what's wrong
@@ -646,12 +655,13 @@ function M.ask(repo, spec, name, by, yours)
   if existing and existing.key ~= key and not existing.answer then
     how = "reworded"
     put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = existing.created, raised = existing.raised, by = existing.asker or by })
+      other = q.other, created = existing.created, raised = existing.raised, raised_by = existing.raised_by,
+      why = existing.why, by = existing.asker or by })
   elseif not existing then
     how = "asked"
     name = name or free_name(repo, q.question)
     local ok, why = put(repo, name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = os.time(), by = by, raised = yours or nil })
+      other = q.other, created = os.time(), by = by, raised = yours or nil, raised_by = yours and "isovim" or nil })
     if not ok then
       return nil, why
     end
@@ -659,16 +669,17 @@ function M.ask(repo, spec, name, by, yours)
   return scanned(repo, existing and existing.name or name), how
 end
 
--- Makes a pending question the user's alone (a root's --raise): no root answers it after.
+-- Makes a pending question the user's alone, from the root by (its raise), with why, its one-line
+-- recommendation: it's in the host Inbox from then on, and no root answers it.
 ---@return isovim.Surface? entry, string? err
-function M.raise(entry)
+function M.raise(entry, by, why)
   local current = M.get(entry.repo, entry.name)
   if not current or current.type ~= "question" or current.answer then
     return nil, ("%s/%s isn't a pending question"):format(entry.repo, entry.name)
   end
   locked(entry.repo, function()
     local data = vim.json.decode(read_file(current.file))
-    data.raised = true
+    data.raised, data.raised_by, data.why = true, by, why
     write_json(current.file, data)
   end)
   return scanned(entry.repo, entry.name)
@@ -950,6 +961,9 @@ function M.rewatch()
   end
 end
 
+-- Set by M.watch; nothing to do while nothing watches.
+function M.recheck() end
+
 function M.unwatch()
   for key, handle in pairs(handles) do
     if not handle:is_closing() then
@@ -968,9 +982,10 @@ function M.watch(on_change)
   M.unwatch()
   notify = on_change
   local timers = {}
+  -- needs_you too: root mode turning on or off changes it without touching the file.
   local function signature(entries)
     return table.concat(vim.tbl_map(function(entry)
-      return entry.base .. entry.sig
+      return entry.base .. entry.sig .. tostring(entry.needs_you)
     end, entries), "\n")
   end
   local function rescan(repo)
@@ -1046,10 +1061,26 @@ function M.watch(on_change)
     end
   end
   discover()
+  -- Every repo again, as root mode turning on or off (iso rootmode calls it) changes which
+  -- questions wait on you.
+  M.recheck = function()
+    for repo in pairs(M.cache) do
+      rescan(repo)
+    end
+  end
+  local function rootmode_stamp()
+    local stat = vim.uv.fs_stat(require("isovim.rootmode").file)
+    return stat and ("%d.%d"):format(stat.mtime.sec, stat.mtime.nsec) or ""
+  end
+  local mode = rootmode_stamp()
   local tick = assert(vim.uv.new_timer())
   handles["timer:tick"] = tick
   tick:start(5000, 5000, require("isovim.safe").schedule_wrap("the surfaces' check", function()
     discover()
+    if rootmode_stamp() ~= mode then
+      mode = rootmode_stamp()
+      M.recheck()
+    end
     for repo, entries in pairs(M.cache) do
       local stale = vim.iter(entries):any(function(entry)
         if entry.type == "file" or entry.type == "folder" then

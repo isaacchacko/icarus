@@ -271,6 +271,16 @@ function M.question_rows(view)
     rows[#rows + 1] = { " " .. line, "IsovimAcpBold" }
   end
   rows[#rows + 1] = { "" }
+  -- Root mode: the root deciding it, or the why of a root that raised it to you.
+  if not view.answer and not view.gone and entry.deciding then
+    rows[#rows + 1] = { (" %s is deciding this (root mode); you can answer it anyway."):format(entry.deciding),
+      "IsovimAcpOptionNote" }
+    rows[#rows + 1] = { "" }
+  elseif not view.answer and not view.gone and entry.raised and entry.raised_by and entry.raised_by ~= "isovim" then
+    rows[#rows + 1] = { (" ↑ %s raised it to you%s"):format(entry.raised_by, entry.why and (": " .. entry.why) or ""),
+      "IsovimAcpNotice" }
+    rows[#rows + 1] = { "" }
+  end
   if view.answer then
     local by = view.answer.by and view.answer.by ~= "user" and view.answer.by or "you"
     rows[#rows + 1] = { ("  ⎿  Answered by %s:"):format(by), "IsovimAcpToolDone" }

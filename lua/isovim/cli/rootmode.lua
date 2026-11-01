@@ -1,15 +1,16 @@
 -- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode on <repo|host>
--- puts a root in charge of clearing the Inbox: an agent spawned over ACP with the role (repo-root
--- for a repo, root for the host), or the agent that holds that role already, with --task
--- "<description>" as its first message (guidance only: the root decides what's outside it and
--- leaves that to you). iso rootmode off just stops telling it of questions. iso rootmode on host
--- takes the place of a root the iso root file names, and tells it so.
+-- has a root decide the Inbox's questions before they reach you: an agent spawned over ACP with
+-- the role (repo-root for a repo, root for the host), or the agent that holds that role already,
+-- with --task "<description>" as its first message (guidance only: the root decides what's outside
+-- it and raises that to you). iso rootmode off puts what it hadn't decided in your host Inbox.
+-- iso rootmode on host takes the place of a root the iso root file names, and tells it so.
 --
--- The root and you share the Inbox. The root is told of each new question open to roots by its
--- own supervisor's subscription (isovim.rootmode.listen, one message per batch), and of those
--- already waiting when root mode turns on (one message listing them, from here). It answers with iso <role>
--- answer <question> <answer>, which reaches the asker as yours does (a router blocked in iso router
--- surface question, an ACP agent's supervisor), or leaves it to you with --raise.
+-- The root is told of each new question by its own supervisor's subscription
+-- (isovim.rootmode.listen, one message per batch), and of those already waiting when root mode
+-- turns on (one message listing them, from here). It answers with iso <role> answer <question>
+-- <answer>, which reaches the asker as yours does (a router blocked in iso router surface
+-- question, an ACP agent's supervisor), or raises it to your host Inbox with iso <role> raise
+-- <question> <why>.
 local store = require("isovim.store")
 local rootmode = require("isovim.rootmode")
 local surfaces = require("isovim.surfaces")
@@ -40,7 +41,7 @@ local label = rootmode.label
 -- The --task text, as the root's first message.
 local function task_text(scope, task)
   return ("Root mode is on for %s, and you are its %s. Your task, as guidance (you decide what falls "
-    .. "outside it, and leave that to the user with iso %s answer <question> --raise):\n\n%s")
+    .. "outside it, and raise that to the user with iso %s raise <question> <why>):\n\n%s")
     :format(label(scope), scope == "host" and "host root" or "repo root", rootmode.role(scope), task)
 end
 
@@ -98,8 +99,8 @@ end
 local function tell_waiting(scope, address)
   local list = rootmode.take(address, scope == "host" and surfaces.repos() or { scope }, true)
   if list and #list > 0 then
-    local ok, err = c.try(send, address, rootmode.questions_text(("Root mode is on for %s: you clear its Inbox with "
-      .. "the user. %s waiting there now:"):format(label(scope), #list == 1 and "One question is"
+    local ok, err = c.try(send, address, rootmode.questions_text(("Root mode is on for %s: you decide its Inbox's "
+      .. "questions before the user. %s waiting there now:"):format(label(scope), #list == 1 and "One question is"
       or (#list .. " questions are")), list, scope))
     if not ok then
       io.stderr:write(("iso: root mode: could not tell %s of the %d waiting question(s): %s\n"):format(address, #list, err))
@@ -129,7 +130,7 @@ local function on(scope, task)
     if first then
       send(address, first)
     end
-    out(("root mode is on for %s: %s, its %s already, clears its Inbox with you now"):format(label(scope), address, role))
+    out(("root mode is on for %s: %s, its %s already, decides its Inbox before you now"):format(label(scope), address, role))
   else
     -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
     -- the role's prompt, which a resumed or reloaded session couldn't take as its system prompt.
@@ -149,11 +150,11 @@ local function on(scope, task)
     address = key .. "/" .. agent.id
     rootmode.set(scope, { agent = address, task = task, since = os.time() })
     c.ensure_running(c.resolve(key), store.agent(key, agent.id))
-    out(("root mode is on for %s: %s, a new %s, clears its Inbox with you"):format(label(scope), address, role))
+    out(("root mode is on for %s: %s, a new %s, decides its Inbox before you"):format(label(scope), address, role))
   end
   tell_replaced(before, scope, address)
   tell_waiting(scope, address)
-  c.tui("require('isovim').refresh()")
+  c.tui("require('isovim.surfaces').recheck() require('isovim').refresh()")
 end
 
 local function off(scope)
@@ -162,14 +163,24 @@ local function off(scope)
     out("root mode is already off for " .. label(scope))
     return
   end
+  -- What it was deciding goes to your host Inbox (a question no root decides waits on you).
+  local deciding = 0
+  for _, repo in ipairs(scope == "host" and surfaces.repos() or { scope }) do
+    for _, entry in ipairs(surfaces.scan(repo)) do
+      if entry.deciding == mode.agent then
+        deciding = deciding + 1
+      end
+    end
+  end
   rootmode.set(scope, nil)
   local ws, id = mode.agent:match("^(.*)/([^/]+)$")
   if ws and store.agent(ws, id) then
-    c.try(send, mode.agent, ("Root mode is off for %s: you aren't told of its questions now, and they're the "
-      .. "user's to answer. You keep your role."):format(label(scope)))
+    c.try(send, mode.agent, ("Root mode is off for %s: you aren't told of its questions now, and those you "
+      .. "hadn't decided are in the user's host Inbox. You keep your role."):format(label(scope)))
   end
-  out(("root mode is off for %s; %s keeps its role"):format(label(scope), mode.agent))
-  c.tui("require('isovim').refresh()")
+  out(("root mode is off for %s; %s keeps its role%s"):format(label(scope), mode.agent, deciding > 0
+    and ("; the %d question(s) it hadn't decided are in your host Inbox"):format(deciding) or ""))
+  c.tui("require('isovim.surfaces').recheck() require('isovim').refresh()")
 end
 
 -- iso rootmode on|off <repo|host> [--task "<description>"]

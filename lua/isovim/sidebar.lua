@@ -315,9 +315,11 @@ function M.surface_chunks(entry)
     elseif entry.options then
       row[#row + 1] = { ("  %d options"):format(#entry.options), "Comment" }
     end
-    -- Raised: no root answers it, even in root mode.
-    if entry.raised and not entry.answer then
-      row[#row + 1] = { "  yours", "DiagnosticWarn" }
+    -- Root mode: a root decides it first, quietly; one it raised to you says why.
+    if entry.deciding then
+      row[#row + 1] = { "  root deciding", "Comment" }
+    elseif entry.raised and not entry.answer and entry.raised_by ~= "isovim" then
+      row[#row + 1] = { "  ↑ " .. (entry.why or ("raised by " .. (entry.raised_by or "a root"))), "DiagnosticWarn" }
     end
   elseif kind == "tasks" then
     for _, name in ipairs({ "doing", "blocked", "waiting", "todo" }) do

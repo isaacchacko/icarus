@@ -40,8 +40,8 @@ M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "brows
 M.only = {
   worker = { "wt", "setup", "teardown", "run" },
   router = { "surface", "pr", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer" },
-  root = { "answer" },
+  ["repo-root"] = { "answer", "raise" },
+  root = { "answer", "raise" },
 }
 
 M.header = [=[
@@ -334,9 +334,12 @@ M.list = {
                                      number, several for a multi question, or your own
                                      words where it takes them; with no answer, print
                                      the question and its options. In root mode the
-                                     root answers its Inbox's questions too, with iso
-                                     <root|repo-root> answer (the first answer wins),
-                                     and --raise leaves one to the user alone]=],
+                                     root decides its Inbox's questions first (they're
+                                     tagged root deciding and wait on you only once
+                                     raised); you can answer any of them anyway, and
+                                     the first answer wins. A root answers with iso
+                                     <root|repo-root> answer, or gives one to you with
+                                     iso <role> raise <question> [why] (or --raise)]=],
   },
   { name = "rootmode", module = "rootmode",
     audience = "user",
@@ -345,15 +348,17 @@ M.list = {
     summary = "put a root in charge of clearing the Inbox, for a repo or the host",
     help = [=[
        iso rootmode on|off <repo|host> [--task "<description>"]
-                                     root mode: a root clears the Inbox with you,
-                                     answering any question in it however it was asked
-                                     (permission requests stay yours); it's told of each
+                                     root mode: a root decides the Inbox's questions
+                                     before they reach you, however they were asked;
+                                     they're tagged root deciding, and come to your host
+                                     Inbox only when it raises them, with its why
+                                     (permission requests always do). It's told of each
                                      new one, and on lists those waiting. on spawns a
                                      worker over ACP and promotes it (repo-root, or root
                                      for the host), or uses the agent holding that
                                      role; --task is its first message, guidance it
-                                     narrows itself by, leaving what's outside it to
-                                     you. off stops telling it; it keeps its role]=],
+                                     narrows itself by. off puts every question not
+                                     decided in your host Inbox; the root keeps its role]=],
   },
   { name = "root", module = "messaging",
     args = { "<address>" },
@@ -666,6 +671,16 @@ M.list = {
 -- puts the role in.
 local SURFACE_FLAGS = { ["--name"] = "<text>", ["--repo"] = "<repo>" }
 M.role_actions = {
+  raise = { name = "raise", module = "surfaces",
+    args = { "<question>", "<text>..." },
+    summary = "give a question root mode has you decide to the user, with a one-line why",
+    help = [=[
+       iso raise <question> [<why...>]
+                                     give a question you can't stand behind to the user: it
+                                     moves to their host Inbox with your one-line why (your
+                                     recommendation), and no root answers it after. The same
+                                     as iso answer <question> --raise [<why...>]]=],
+  },
   surface = { name = "surface", module = "surfaces",
     subs = {
       question = { args = { "<path>" }, flags = SURFACE_FLAGS },

@@ -204,23 +204,33 @@ box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-yo
   repo's router.
 - **Role prompts** are files set in `config.json` (`prompts`). The host root's prompt lists the actions
   that are permanently off; agents are trusted to follow it.
-- **Root mode:** a root is in charge of clearing the Inbox, and it and you share it.
+- **Root mode:** a root decides the Inbox's questions before they reach you.
   `iso rootmode on|off <repo|host> [--task "<description>"]` turns it on for a repo (its repo-root) or
   the host (the host root), spawning a worker and promoting it if the role is empty.
   - Questions aren't routed: each stays in its repo's Inbox. While root mode is on for its repo or
-    the host, that root may answer it (`iso <root|repo-root> answer`), however it was asked: a
-    router's surface question, an ACP agent's AskUserQuestion, a shell. You may answer anything. The
-    first answer wins, and reaches the asker the same way whoever gave it.
-  - The root in charge of a question (the repo's root, else the host root, never the one that asked
-    it) is told of each new one, in one message per batch, and when root mode turns on gets one
-    message listing those already waiting. The telling is a subscription: a root's ACP supervisor
-    listens on the event bus for its Inboxes' question surfaces, a few seconds after the last,
-    and catches up on start with those asked while it was down, so it doesn't matter who asked or
-    scanned a question, or on what code. Each question is told once (marked in the scan's state).
-  - A root leaves a question to you with `--raise`: it's marked yours (the sidebar says "yours")
-    and no root answers it after. An ACP agent's permission requests are yours from the start, since
+    the host, its root decides it first, however it was asked: a router's surface question, an ACP
+    agent's AskUserQuestion, a shell. The root deciding a question is the repo's root, else the host
+    root, never the one that asked it.
+  - A question a root is deciding is tagged "root deciding" in its repo's Inbox (the surface's
+    `deciding`, read when it's parsed) and doesn't need you: it isn't counted, notified, in the host
+    Inbox or reached by `<leader>in` (`needs_you` is false). The root's answer
+    (`iso <root|repo-root> answer`) clears it. Its raise (`iso <root|repo-root> raise <question>
+    <why>`, or `answer --raise <why>`) writes `raised`, `raised_by` and `why` into the surface: the
+    question goes to your host Inbox, its row and view showing the one-line why, and no root answers
+    it after. An ACP agent's permission requests are raised from the start (`raised_by` isovim), since
     they let it run a tool its mode stopped.
-  - `iso rootmode off` stops the telling and the root's answering; there's nothing to hand on.
+  - You may answer anything, root deciding or not. The first answer wins, and reaches the asker the
+    same way whoever gave it.
+  - With root mode off, no root decides anything: every pending question needs you. So turning it on
+    tags what's waiting, and turning it off puts what the root hadn't decided in your host Inbox,
+    neither touching the files; the TUI rechecks its surfaces when `iso rootmode` runs, or within 5s
+    of `rootmode.json` changing.
+  - The root is told of each new question it decides, in one message per batch, and when root mode
+    turns on gets one message listing those already waiting. The telling is a subscription: a root's
+    ACP supervisor listens on the event bus for its Inboxes' question surfaces, a few seconds after
+    the last, and catches up on start with those asked while it was down, so it doesn't matter who
+    asked or scanned a question, or on what code. Each question is told once (marked in the scan's
+    state).
   - A root narrowed by `--task` raises everything outside it. The description is guidance only,
     delivered as the root's first message.
   - Your delegated authority (stamps) belongs to the host root.
@@ -275,7 +285,8 @@ on a busy repo opens that repo's Inbox in the list. There is no Inbox of the oth
 surfaces are reached by showing that host.
 
 Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
-shows a "root mode" marker beside its count, and a question a root left to you says "yours".
+shows a "root mode" marker beside its count; a question its root is deciding says "root deciding",
+quietly, and one it raised to you shows its why after "↑".
 
 ## The tab bar
 
@@ -351,7 +362,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 **Router only:** `surface question|file|folder|chat`, `pr`.
 
-**Roots:** `answer`.
+**Roots:** `answer`, `raise`.
 
 **Yours:** `iso` opens the TUI. The bare commands are:
 - `spawn` (no parent), `jump` (fzf drill-down with `.` and `..`)

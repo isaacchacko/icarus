@@ -118,7 +118,7 @@ local function question(args)
   local id = entry.repo .. "/" .. entry.name
   local root = require("isovim.rootmode").root_for(entry)
   if root and how == "asked" then
-    note(("root mode: %s, the root, is told of %s and may answer it"):format(root, id))
+    note(("root mode: %s, the root, decides %s first; it reaches the user if it raises it"):format(root, id))
   end
   if how == "kept" then
     note(id .. " was answered before it was asked this way; its answer stands")
@@ -228,9 +228,9 @@ local function publish_root(what, me, entry, details)
 end
 
 -- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes any
--- question in the Inbox root mode has it clear (isovim.rootmode.may_answer), and --raise to leave
--- one to the user alone. A root's answer and its raise are published as root.<scope>.decided and
--- root.<scope>.raised.
+-- question in the Inbox root mode has it clear (isovim.rootmode.may_answer), and --raise [why...]
+-- to give one to the user, in the host Inbox. A root's answer and its raise are published as
+-- root.<scope>.decided and root.<scope>.raised.
 function M.answer(args)
   local raise = flag(args, "--raise")
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
@@ -245,17 +245,19 @@ function M.answer(args)
   end
   if raise then
     if not me then
-      fail("--raise is a root's, to leave a question to you")
+      fail("raising is a root's, to give a question to you")
     elseif entry.answer then
       fail(("%s is already answered: %s"):format(id, surfaces.answer_text(entry.answer)))
     end
-    local raised, err = surfaces.raise(entry)
+    local why = vim.trim(table.concat(args, " "))
+    why = why ~= "" and why:gsub("%s+", " ") or nil
+    local raised, err = surfaces.raise(entry, me, why)
     if not raised then
       fail(err)
     end
-    publish_root("raised", me, entry)
-    out(id .. " is the user's now: no root answers it")
-    c.tui("require('isovim').refresh()")
+    publish_root("raised", me, entry, { why = why })
+    out(id .. " is in the user's host Inbox now" .. (why and "" or "; a one-line why helps them: iso <role> raise <question> <why>"))
+    c.tui("require('isovim.surfaces').recheck()")
     return
   end
   if #args == 0 then
@@ -272,6 +274,13 @@ function M.answer(args)
     publish_root("decided", me, entry, { answer = answer })
   end
   out(surfaces.answer_text(answer))
+end
+
+-- A root's iso <root|repo-root> raise <question> [why...]: gives the question to the user, in the
+-- host Inbox, with a one-line why (its recommendation); iso <role> answer <question> --raise [why].
+function M.raise(args)
+  table.insert(args, "--raise")
+  M.answer(args)
 end
 
 -- iso __surfaces [<repo>...]: the repos' surfaces (default every repo's), scanned, as JSON.

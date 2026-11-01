@@ -1,10 +1,13 @@
--- Root mode: a root is in charge of clearing the Inbox, which it shares with you. iso rootmode
--- on|off <repo|host> (isovim.cli.rootmode) turns it on for one repo (its repo root) or the whole
--- host (the host root); this module keeps which is on, in ~/.isovim/rootmode.json (this host's
--- alone: it isn't synced), and says which roots may answer a question and which one is told of it.
--- A question isn't routed anywhere: it stays in its repo's Inbox, and the first answer wins,
--- yours or a root's. A root's ACP supervisor subscribes to the Inbox (M.listen) and tells the root
--- of each new question it's in charge of, whoever asked it and whatever code they run.
+-- Root mode: a root decides the Inbox's questions before they reach you. iso rootmode on|off
+-- <repo|host> (isovim.cli.rootmode) turns it on for one repo (its repo root) or the whole host (the
+-- host root); this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it
+-- isn't synced), and says which roots may answer a question and which one decides it.
+-- A question isn't routed anywhere: it stays in its repo's Inbox, tagged root deciding (the
+-- surface's deciding, so it doesn't count as needing you) until the root answers it or raises it
+-- to your host Inbox with a one-line why; with root mode off it's yours at once. You may answer
+-- any of them, and the first answer wins. A root's ACP supervisor subscribes to the Inbox
+-- (M.listen) and tells the root of each new question it decides, whoever asked it and whatever
+-- code they run.
 --   { "host": {agent, task?, since}, "repos": { "<owner/repo>": {agent, task?, since} } }
 -- An entry is active while its agent's record still holds the role it needs (root for the host,
 -- repo-root for a repo); one whose agent went away is off.
@@ -135,9 +138,10 @@ function M.questions_text(intro, entries, scope)
       lines[#lines + 1] = "  (or your own words)"
     end
   end
-  lines[#lines + 1] = ("Answer what you can stand behind with `iso %s answer <repo>/<name> <answer...>`; leave "
-    .. "the rest to the user with `iso %s answer <repo>/<name> --raise`. The user may answer first: the first "
-    .. "answer wins."):format(role, role)
+  lines[#lines + 1] = ("Decide what you can stand behind with `iso %s answer <repo>/<name> <answer...>`; raise "
+    .. "the rest to the user with `iso %s raise <repo>/<name> <one line: why, and your recommendation>`. Until "
+    .. "you do, it's tagged root deciding and stays out of their host Inbox; they may still answer it first, "
+    .. "and the first answer wins."):format(role, role)
   local mode = M.entry(scope)
   if mode and mode.task then
     lines[#lines + 1] = "Your task (raise what's outside it): " .. mode.task
@@ -183,7 +187,7 @@ function M.listen(address, say)
     pending, everywhere = {}, false
     local list, scope = M.take(address, repos)
     if list and #list > 0 then
-      say(M.questions_text(("%s in %s, which root mode has you clear with the user:"):format(
+      say(M.questions_text(("%s in %s, which root mode has you decide before the user:"):format(
         #list == 1 and "A new question" or (#list .. " new questions"),
         scope == "host" and "this host's Inboxes" or (scope .. "'s Inbox")), list, scope))
     end
