@@ -170,6 +170,24 @@ local KINDS = {
     end,
     id = { "host", "repo_key" },
   },
+  -- A section of a group (Threads, Surfaces, Files, Agents; its Inbox is repo_inbox): its fold, its
+  -- name and count. Threads says when a reply waits unread, Agents how many run, at the right.
+  -- Enter or Tab folds it.
+  section = {
+    format = function(item)
+      local row = { { "  " }, { item.collapsed and "▸ " or "▾ ", "Comment" }, { item.section, "Title" }, { " " .. item.count, "Comment" } }
+      if item.unread then
+        row[#row + 1] = { "  ● new reply", "DiagnosticWarn" }
+      end
+      row[#row + 1] = item.running_mark
+      return row
+    end,
+    open = function(item)
+      M.set_section_folded(item.host, item.repo_key, item.section, not item.collapsed)
+      M.refresh()
+    end,
+    id = { "host", "repo_key", "section" },
+  },
   -- A surface: one format per type (markdown, question, file, folder, chat, the Task Board).
   surface = {
     format = function(item, width)
@@ -223,7 +241,8 @@ local KINDS = {
       if not label and (item.role == "router" or item.role == "repo-root") then
         label = item.v2 and item.role or (item.role .. " · " .. item.name)
       end
-      local row = { { ("  "):rep((item.depth or 0) + 1) }, { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { label or item.name, name_hl } }
+      local lead = item.guide and { { "  " }, { item.guide, "NonText" } } or { { ("  "):rep((item.depth or 0) + 1) } }
+      local row = vim.list_extend(lead, { { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { label or item.name, name_hl } })
       if item.team and item.team > 0 then
         row[#row + 1] = { (" (+%d)"):format(item.team), "Comment" }
       end
@@ -268,7 +287,8 @@ local KINDS = {
           icon, hl = mini.get("file", item.path)
         end
       end
-      return { { "  " }, { " " }, { " " }, { icon, hl }, { " " }, { item.label, item.is_dir and "Directory" or nil } }
+      local lead = item.guide and { { "  " }, { item.guide, "NonText" } } or { { "  " }, { " " }, { " " } }
+      return vim.list_extend(lead, { { icon, hl }, { " " }, { item.label, item.is_dir and "Directory" or nil } })
     end,
     open = function(item)
       isovim.reveal(item.ws, item.path)
@@ -769,30 +789,130 @@ local function surface_rows(items, base, list, depth)
   end
 end
 
--- A group's surfaces, right under its header: the ones that need nothing from you as plain rows, the
--- Task Board first, then its Inbox, the ones that need you (needs_you) under tree guides. With none
--- needing you there's no Inbox row. A surface moves from the Inbox to the plain rows once dealt with.
-local function group_surface_rows(items, base, host, key, list, root_mode)
-  local boards, plain, needing = {}, {}, {}
-  for _, entry in ipairs(list) do
-    table.insert(entry.needs_you and needing or (entry.type == "tasks" or entry.type == "prs") and boards or plain, entry)
+-- The sections a group's rows sit in, in this order: the Inbox (what needs you; questions only
+-- ever here), Threads (a repo's open ones, marked while one has a reply you haven't read), Surfaces
+-- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths) and
+-- Agents. An empty one isn't shown. The Inbox and Threads start open, the rest folded; each one's
+-- state is kept per repo and host (isovim.collapsed, in the session). M.all_rows opens them all.
+local FOLDED = { Surfaces = true, Files = true, Agents = true }
+local all_open = false
+
+local function section_folded(host, key, name)
+  if all_open then
+    return false
+  elseif name == "Inbox" then
+    return is_collapsed(host, "repo_inbox", key)
+  elseif FOLDED[name] then
+    return not is_collapsed(host, "open_" .. name:lower(), key)
+  end
+  return is_collapsed(host, name:lower(), key)
+end
+
+local function set_section_folded(host, key, name, folded)
+  if name == "Inbox" then
+    set_collapsed(host, "repo_inbox", key, folded)
+  elseif FOLDED[name] then
+    set_collapsed(host, "open_" .. name:lower(), key, not folded)
+  else
+    set_collapsed(host, name:lower(), key, folded)
+  end
+end
+M.set_section_folded = set_section_folded
+
+-- A group's sections under its header, each child on a tree guide. threads: whether it has a
+-- Threads section (a repo; Root's and General's threads, if any, are surfaces). pins: its pinned
+-- paths' rows. agents: its listed agents, add_tasks: puts an agent's tasks under it.
+local function group_sections(items, base, host, key, opts)
+  local inbox, threads, boards, others, files = {}, {}, {}, {}, {}
+  for _, entry in ipairs(opts.list) do
+    local kind = entry.type
+    if kind == "thread" and opts.threads then
+      threads[#threads + 1] = entry
+    elseif entry.needs_you then
+      inbox[#inbox + 1] = entry
+    elseif kind == "file" or kind == "folder" then
+      files[#files + 1] = entry
+    elseif kind == "tasks" or kind == "prs" then
+      boards[#boards + 1] = entry
+    elseif kind ~= "question" and kind ~= "chat" then
+      others[#others + 1] = entry
+    end
   end
   -- The Task Board, then the PRs.
   table.sort(boards, function(a, b)
     return a.type == "tasks" and b.type ~= "tasks"
   end)
-  for _, entry in ipairs(vim.list_extend(boards, plain)) do
-    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 1, group_key = key })
+  local function guide(i, n)
+    return i == n and "└─ " or "├─ "
   end
-  if #needing == 0 then
-    return
+  local function surface(entry, name, i, n, extra)
+    return vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 2,
+      guide = guide(i, n), section = name, group_key = key }, extra or {})
   end
-  local collapsed = is_collapsed(host, "repo_inbox", key)
-  items[#items + 1] = vim.tbl_extend("force", base, { kind = "repo_inbox", repo_key = key, count = #needing, root_mode = root_mode, collapsed = collapsed })
-  for i, entry in ipairs(collapsed and {} or needing) do
-    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 2,
-      guide = i == #needing and "└─ " or "├─ ", in_inbox = true })
+  if #inbox > 0 then
+    local folded = section_folded(host, key, "Inbox")
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "repo_inbox", repo_key = key, count = #inbox, root_mode = opts.root_mode, collapsed = folded })
+    for i, entry in ipairs(folded and {} or inbox) do
+      items[#items + 1] = surface(entry, "Inbox", i, #inbox, { in_inbox = true, group_key = false })
+    end
   end
+  local function section(name, count, children, extra)
+    if count == 0 then
+      return
+    end
+    local folded = section_folded(host, key, name)
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "section", section = name, repo_key = key, count = count, collapsed = folded }, extra or {})
+    if not folded then
+      children()
+    end
+  end
+  section("Threads", #threads, function()
+    for i, entry in ipairs(threads) do
+      items[#items + 1] = surface(entry, "Threads", i, #threads)
+    end
+  end, { unread = vim.iter(threads):any(function(entry)
+    return entry.needs_you
+  end) })
+  local surfaces_list = vim.list_extend(boards, others)
+  section("Surfaces", #surfaces_list, function()
+    for i, entry in ipairs(surfaces_list) do
+      items[#items + 1] = surface(entry, "Surfaces", i, #surfaces_list)
+    end
+  end)
+  local n_files = #files + #opts.pins
+  section("Files", n_files, function()
+    for i, entry in ipairs(files) do
+      items[#items + 1] = surface(entry, "Files", i, n_files)
+    end
+    for i, pin in ipairs(opts.pins) do
+      items[#items + 1] = vim.tbl_extend("force", pin, { guide = guide(#files + i, n_files), section = "Files" })
+    end
+  end)
+  section("Agents", #opts.agents, function()
+    for i, entry in ipairs(opts.agents) do
+      entry.group_key = key
+      items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = key, guide = guide(i, #opts.agents), section = "Agents" })
+      opts.add_tasks(entry)
+    end
+  end, { running_mark = opts.running_mark })
+end
+
+-- A group's pinned paths, as rows: the files and folders its workspaces' agents pinned for you.
+local function pin_rows(host, extra, key)
+  local pins = {}
+  for _, ws in ipairs(not host and extra and extra.workspaces_of[key] or {}) do
+    for _, pin in ipairs(store.pinned(ws.id)) do
+      pins[#pins + 1] = {
+        kind = "path", group_key = key,
+        ws = ws.id,
+        ws_name = ws.name,
+        path = pin.path,
+        label = pin.label or short_path(ws.id, pin.path),
+        is_dir = vim.fn.isdirectory(pin.path) == 1,
+      }
+    end
+  end
+  return pins
 end
 
 -- One host's list, its groups, and its Inbox for the list's top (a row per surface waiting on you). host/ssh are nil for this host. surfaces_by_key nil: no surfaces
@@ -869,12 +989,13 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
           running_mark = i == 1 and running_mark(g.agents) or nil })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
-      -- Its surfaces, as a repo's.
-      if #list > 0 then
+      -- Its sections, as a repo's (no Threads): its own row heads them.
+      local pins = pin_rows(host, extra, ROOT_KEY)
+      if #list > 0 or #pins > 0 then
         if #agents == 0 then
           items[#items + 1] = { kind = "hint", text = icons.get("root") .. " root (none here now)" }
         end
-        group_surface_rows(items, base_host, host, ROOT_KEY, list, has_root)
+        group_sections(items, base_host, host, ROOT_KEY, { list = list, pins = pins, agents = {}, root_mode = has_root })
       end
     -- General shows on this host even when empty, so s on it spawns a general/aN.
     elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
@@ -896,31 +1017,22 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
         running_mark = running_mark(g.agents),
       })
       if not collapsed then
-        if surfaces_by_key and #list > 0 then
-          local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
-            return entry.role == "repo-root"
-          end))
-          group_surface_rows(items, base_host, host, g.key, list, root_mode)
-        end
+        local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
+          return entry.role == "repo-root"
+        end))
+        group_sections(items, base_host, host, g.key, {
+          list = surfaces_by_key and list or {},
+          threads = g.kind == "repo",
+          pins = pin_rows(host, extra, g.key),
+          agents = listed_agents(agents),
+          add_tasks = function(entry)
+            add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+          end,
+          running_mark = running_mark(g.agents),
+          root_mode = root_mode,
+        })
         if g.kind == "general" and #agents == 0 and not host then
           items[#items + 1] = { kind = "hint", text = "no agents · s spawn" .. (#entries == 0 and " · ? keys" or ""), repo_key = GENERAL_KEY }
-        end
-        for _, entry in ipairs(listed_agents(agents)) do
-          entry.group_key = g.key
-          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = g.key })
-          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
-        end
-        for _, ws in ipairs(not host and extra and extra.workspaces_of[g.key] or {}) do
-          for _, pin in ipairs(store.pinned(ws.id)) do
-            items[#items + 1] = {
-              kind = "path", group_key = g.key,
-              ws = ws.id,
-              ws_name = ws.name,
-              path = pin.path,
-              label = pin.label or short_path(ws.id, pin.path),
-              is_dir = vim.fn.isdirectory(pin.path) == 1,
-            }
-          end
         end
       end
     end
@@ -1573,8 +1685,8 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox or Terminals, collapse or expand it; a pinned file as a tab" },
-  { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, Inbox or Terminals (from a row in one, collapse it)" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
+  { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
@@ -1766,9 +1878,9 @@ end
 ---@param hidden boolean
 function M.all_rows(hidden)
   local collapsed, show_hidden = isovim.collapsed, isovim.show_hidden
-  isovim.collapsed, isovim.show_hidden = {}, hidden
+  isovim.collapsed, isovim.show_hidden, all_open = {}, hidden, true
   local ok, list = pcall(collect)
-  isovim.collapsed, isovim.show_hidden = collapsed, show_hidden
+  isovim.collapsed, isovim.show_hidden, all_open = collapsed, show_hidden, false
   return ok and list or error(list)
 end
 
@@ -1793,8 +1905,13 @@ function M.open_row(item)
     set_collapsed(host, "inbox", nil, false)
   elseif item.kind == "terminal" then
     set_collapsed(host, "terminals", nil, false)
-  elseif item.group_key and item.group_key ~= ROOT_KEY then
-    set_collapsed(host, "repo", item.group_key, false)
+  elseif item.group_key then
+    if item.group_key ~= ROOT_KEY then
+      set_collapsed(host, "repo", item.group_key, false)
+    end
+    if item.section then
+      set_section_folded(host, item.group_key, item.section, false)
+    end
   end
   refresh_now()
   local wins = windows()
@@ -2276,6 +2393,12 @@ M.actions = {
     elseif item.kind == "repo_inbox" or (item.kind == "surface" and item.in_inbox) then
       set_collapsed(host, "repo_inbox", item.repo_key, item.kind == "surface" or not item.collapsed)
       keep = { kind = "repo_inbox", host = host, repo_key = item.repo_key }
+    elseif item.kind == "section" then
+      set_section_folded(host, item.repo_key, item.section, not item.collapsed)
+      keep = { kind = "section", host = host, repo_key = item.repo_key, section = item.section }
+    elseif item.section and item.group_key then
+      set_section_folded(host, item.group_key, item.section, true)
+      keep = { kind = "section", host = host, repo_key = item.group_key, section = item.section }
     elseif item.kind == "repo" then
       set_collapsed(host, "repo", item.repo_key, not item.collapsed)
       keep = { kind = "repo", host = host, repo_key = item.repo_key }

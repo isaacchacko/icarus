@@ -378,13 +378,17 @@ Inbox 2                     ← the shown host's: every surface that needs you
 ♛ root  ⏺                   ← the host root, with the crown
 ▾ isovim ●             2    ← repo header in its color; opens the router; at the right, how
                                many of its agents run (the working color while any works)
-     Task Board ◐ 2         ← surfaces that need nothing from you, plain, the Task Board first
-     the plan                 (read markdown, files, answered questions)
-  ▾ Inbox 2                 ← the ones that need you; gone when none does
-  ├─ ? merge the fix?
+  ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
+  ├─ ? merge the fix?          holds what needs you (questions only ever here)
   └─ ✎ review notes
-    router · rework vocab
-    a3 · tab line fix        (workers; teams behind them are counted, not listed)
+  ▾ Threads 2  ● new reply  ← its open threads, marked while a reply waits unread
+  ├─  repo structure
+  └─  hot reload
+  ▸ Surfaces 3              ← the Task Board, the PRs, pages, write-ups (folded at first)
+  ▸ Files 1                 ← file and folder surfaces, pinned paths (folded at first)
+  ▾ Agents 2           1    ← how many run at the right (folded at first)
+  ├─  router · rework vocab
+  └─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
 ▾  general                 ← fa-globe: agents in no repo
 ▾ 󰆍 terminals 2             ← md-console: this host's terminals; script panes marked with a robot
     zsh
@@ -404,9 +408,16 @@ its color and short name (root's or general's for theirs), then the surface's ma
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
 surfaces are reached by showing that host.
 
-Every Inbox shows only the surfaces that need you, under dim tree guides (`├─`, `└─` for the last);
-the rest of a repo's (or the root's) surfaces list as plain rows under its header, above its agents,
-the Task Board first, and a surface moves there from the Inbox once it's dealt with. Each surface
+A repo's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files, Agents, each a header
+with its count that Enter or Tab folds, its rows on dim tree guides (`├─`, `└─` for the last); an
+empty one isn't shown. The Inbox holds only the surfaces that need you (questions live only there),
+and a surface moves to its section once it's dealt with. Threads holds the repo's open threads and
+says when one has a reply you haven't read; Surfaces the Task Board first, then the PRs, pages and
+write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
+explorer's, `E`); Agents the agents, with how many run at the right. The Inbox and Threads start
+open and the rest folded, and each section's fold is kept per repo in the session. Root and General
+get the same sections where they have something; threads are a repo's only. The repo's own fold
+still folds it whole. Each surface
 type has its own row format. In root mode, an Inbox
 shows a "root mode" marker beside its count; a question its root is deciding says "root deciding",
 quietly, and one it raised to you shows its why after "↑".
