@@ -298,6 +298,7 @@ end
 local SURFACE_GLYPHS = {
   markdown = { "\u{f48a}", "Special" }, -- oct-markdown
   page = { "\u{f15c}", "Special" }, -- fa-file-text
+  thread = { "\u{f086}", "Special" }, -- fa-comments
   question = { "?", "DiagnosticWarn" },
   chat = { "●", "DiagnosticOk" },
   tasks = { "\u{f0ae}", "Special" }, -- fa-tasks
@@ -355,6 +356,14 @@ function M.surface_chunks(entry)
       row[#row + 1] = { ("  %d waiting on you"):format(entry.waiting), "DiagnosticWarn" }
     else
       row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
+    end
+  elseif kind == "thread" then
+    -- How many posts, the router's turn on it, a reply of the router's you haven't read.
+    row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
+    if entry.working then
+      row[#row + 1] = { "  working…", "Comment" }
+    elseif entry.needs_you then
+      row[#row + 1] = { "  new reply", "DiagnosticWarn" }
     end
   elseif kind == "page" then
     -- Its open comments; in the Inbox, how many of them wait on you.
@@ -1529,6 +1538,7 @@ local LIST_KEYS = {
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
   { "P", "isovim_open_prs", "the PRs surface of the row's repo (the root's on its rows; on General or Terminals, the current repo's)" },
+  { "n", "isovim_new_thread", "a new thread with the repo's router (isovim.threads): its title, then your first post" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
 -- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
@@ -1592,6 +1602,7 @@ function M.help()
   section("Prompt queue (under the chat, while prompts wait)", acp_keys.queue)
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
+  section("A thread (a chat with the router about one thing)", acp_keys.thread)
   section("PRs surface (on a PR's line)", vim.tbl_map(function(key)
     return { key[1], key[2] }
   end, require("isovim.surface_view").prs_keys))
@@ -2219,6 +2230,11 @@ M.actions = {
       key = nil
     end
     require("isovim.keys").prs(key)
+  end,
+  -- n: a new thread in the row's repo (none in General, Root or Terminals).
+  isovim_new_thread = function(item)
+    local key = item and (item.repo_key or item.group_key or (item.ws and not item.host and M.group_key(item.ws)))
+    require("isovim.acp.chat").new_thread(key ~= GENERAL_KEY and key ~= ROOT_KEY and key or nil)
   end,
   isovim_toggle_ports = toggle("show_ports"),
   isovim_toggle_tasks = toggle("show_tasks"),

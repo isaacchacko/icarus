@@ -16,6 +16,8 @@ gets. It's a personal tool, not built for teams.
 | **agent** | one ACP session run by a supervisor, addressed `<owner>/<repo>/aN` |
 | **role** | `worker` < `router` < `repo-root` < `root` |
 | **surface** | an agent's structured output, a file in a repo's `iso/` that isovim draws in a TUI buffer (a question, markdown, the Task Board, a file or folder, a chat); some take an answer |
+| **thread** | one idea's conversation between you and a repo's router, a view of it apart from the router's own chat (`iso/threads/<id>.jsonl`); only in a repo with a router |
+| **page** | markdown a router writes for you to read and comment on line by line (`iso/pages/<name>.md`) |
 | **Inbox** | the surfaces that need you (`needs_you`): an unanswered question, a raised one, unread markdown, a chat not yet opened. Every other surface lists as a plain row under its repo |
 
 ## On disk
@@ -187,6 +189,40 @@ a window that's gone, shows another buffer or has no rows.
 
 `iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat, input
 box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.
+
+## Threads
+
+A single chat for a single idea is easy to read, but a new agent per small idea costs a cold start
+each time, and one router taking every idea in its one chat is hard to follow. A thread is a
+virtual chat: the router stays one agent with one session, its context warm, and each thread
+shows only the exchanges about its one thing. Threads exist only in a repo with a router on this
+host; General, Root and Terminals have none, and starting one there says why.
+
+- **Stored** as `iso/threads/<id>.jsonl` (`t1`, `t2`…), appended to, never rewritten: a header
+  `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
+  address>, text, at, images?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
+  {state: start|end}` around the router's turn on one of its posts. What you've read is
+  `run/<repo>/threads.json` (the last line seen, per thread).
+- **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
+  its own: your posts on the prompt band, the router's after its bullet, markdown and tables drawn
+  as in the chat, and the one-buffer composer at its end (insert keys go to the draft, normal mode
+  everywhere, the draft's own undo, `<C-v>` images). `<CR>` there posts, and sends the router a
+  prompt through its queue: `[thread <repo>#<id> "<title>"] <text>` (and its images). While its
+  turn on the post runs, the bar over the composer says `<router> is working on it…`. `r` on the
+  conversation resolves the thread, or opens a resolved one again.
+- **The router's replies:** its supervisor sees the tag on the prompt it delivers, marks that turn
+  working in the thread, and when the turn ends posts its last message (what it said after its
+  last tool call) there, so the router just answers. Its tool calls stay in its own chat. It posts
+  anytime with `iso router thread post <id> "..."`, opens a thread for a new topic itself with
+  `iso router thread new "<title>" ["first post"]` rather than bury it in its chat, and resolves one
+  with `iso router thread resolve <id> ["outcome"]`; `thread ls [--all]` and `thread show <id>` read
+  them, which any role may; only routers (and you, from a shell) make, post and resolve.
+- **Starting one:** `n` on a repo's row in the sidebar, or `<leader>ic` in the current repo: the
+  view opens with its composer asking for the title (`<CR>`), then your first post.
+- **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
+  posts (`working…` while the router's turn on it runs). One with a router post you haven't read
+  waits on you: it's in the repo's and the host's Inbox (`new reply`) until you open it. A resolved
+  one drops off the list (`thread ls --all` shows it); the jump picker lists the open ones.
 
 ## Roles and root mode
 

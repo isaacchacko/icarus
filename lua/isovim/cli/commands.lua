@@ -38,10 +38,10 @@ end
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
   "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug" }
 M.only = {
-  worker = { "wt", "setup", "teardown", "run", "page" },
-  router = { "surface", "page", "pr", "rm", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer", "raise", "rm", "page" },
-  root = { "answer", "raise", "rm", "page" },
+  worker = { "wt", "setup", "teardown", "run", "page", "thread" },
+  router = { "surface", "page", "thread", "pr", "rm", "wt", "setup", "teardown", "run" },
+  ["repo-root"] = { "answer", "raise", "rm", "page", "thread" },
+  root = { "answer", "raise", "rm", "page", "thread" },
 }
 
 M.header = [=[
@@ -735,6 +735,35 @@ M.role_actions = {
        iso page resolve <page> <id> [<note...>]
                                      resolve a comment once the page does what it asks,
                                      with a note of what changed; it leaves the page]=],
+  },
+  thread = { name = "thread", module = "surfaces",
+    subs = {
+      new = { args = { "<text>", "<text>..." } },
+      post = { args = { "<text>", "<text>..." }, flags = { ["--image"] = "<path>" } },
+      resolve = { args = { "<text>", "<text>..." } },
+      ls = { flags = { ["--all"] = false } },
+      show = { args = { "<text>" } },
+    },
+    summary = "a repo's threads: one idea's conversation between the user and the router",
+    help = [=[
+       iso thread new "<title>" ["first post"]
+                                     open a thread for a new topic, rather than burying
+                                     it in your own chat; prints its id (t1, t2...).
+                                     Threads live in iso/threads/ of a repo with a
+                                     router here (none in General or Root). The user's
+                                     posts come to you as prompts tagged [thread
+                                     <repo>#<id> "<title>"]: answer them as usual, and
+                                     your turn's last message is posted to the thread
+                                     for you (tool calls stay in your chat)
+       iso thread post <id> <text...> [--image <file>]...
+                                     post to a thread anytime: a follow-up, or what a
+                                     worker finished that it was about
+       iso thread resolve <id> [<outcome...>]
+                                     resolve it, with its outcome; it leaves the list
+       iso thread ls [--all]         the repo's open threads (--all: resolved too)
+       iso thread show <id>          a thread's posts
+                                     Routers make, post and resolve threads; any other
+                                     role reads them (ls, show)]=],
   },
   promote = { name = "promote", module = "roles",
     args = { "<agent>|router|repo-root|root", "router|repo-root|root", "<text>" },

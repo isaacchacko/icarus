@@ -53,6 +53,7 @@ local log = require("isovim.acp.log")
 local sessions = require("isovim.acp.sessions")
 local asks_mod = require("isovim.acp.asks")
 local images = require("isovim.acp.images")
+local threads = require("isovim.threads")
 local Client = require("isovim.acp.client")
 local auth = require("isovim.auth")
 
@@ -354,6 +355,16 @@ local function turn_ended(prompt, result, err)
   S.busy = false
   local reason = result and result.stopReason or nil
   append("turn", { state = "end", id = prompt.id, stopReason = reason, error = err and err.message or nil })
+  -- A turn on a thread's post: its last message is the thread's reply (isovim.threads).
+  local thread = S.thread_turn
+  S.thread_turn = nil
+  if thread then
+    local text = vim.trim(thread.text)
+    if text ~= "" and not err and reason ~= "cancelled" then
+      pcall(threads.post, thread.repo, thread.id, S.ws .. "/" .. S.agent, text)
+    end
+    pcall(threads.working, thread.repo, thread.id, "end")
+  end
   local kept = err and failure_kind(err)
   if not err then
     S.backoff = nil
@@ -406,6 +417,13 @@ deliver = function(prompt)
   end
   append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
     snapshot_dir = snapshot and snapshot.dir })
+  -- A thread's post (isovim.threads): the turn shows working there, and its last message goes there.
+  local thread_repo, thread_id = threads.tagged(prompt.text)
+  S.thread_turn = nil
+  if thread_repo and vim.uv.fs_stat(threads.file(thread_repo, thread_id)) then
+    S.thread_turn = { repo = thread_repo, id = thread_id, text = "" }
+    pcall(threads.working, thread_repo, thread_id, "start")
+  end
   -- The session's title in the history picker: its first prompt.
   pcall(sessions.note, S.ws, S.agent, S.session, { title = (prompt.message or prompt.text):sub(1, 120) })
   set_state("working")
@@ -737,6 +755,14 @@ local handlers = {
       end
       append("update", { update = params.update })
       show_update(params.update)
+      -- A thread's reply is the turn's last message: what it says after its last tool call.
+      local thread, kind = S.thread_turn, params.update.sessionUpdate
+      if thread and kind == "agent_message_chunk" and type(params.update.content) == "table"
+        and params.update.content.type == "text" then
+        thread.text = thread.text .. (params.update.content.text or "")
+      elseif thread and kind == "tool_call" then
+        thread.text = ""
+      end
     end
   end,
   on_request = function(method, params, answer)

@@ -19,6 +19,8 @@
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
 --   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
 --                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
+--   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
+--                   one lists (resolved ones don't), waiting on you while a router post is unread
 -- The PRs surface is isovim's own, no file: M.list adds it for a repo with PRs registered (M.prs_entry).
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
 -- <file>.surface.error beside it (foo.surface's is foo.surface.error) saying why, rewritten as
@@ -49,7 +51,7 @@ end
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"prs"|"page"|"question"|"file"|"folder"|"chat"|"broken"
+---@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"broken"
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -64,6 +66,8 @@ end
 ---@field body? string markdown, tasks and page: the text after the frontmatter
 ---@field body_line? integer page: the file's line its body starts on
 ---@field comments_open? integer page: how many of its comments are open
+---@field posts? integer thread: how many posts it has
+---@field working? boolean thread: the router's turn on it runs
 ---@field waiting? integer page: how many of them wait on the user (an agent's reply asked them); prs: PRs
 ---@field tasks? {status: string, text: string, line: integer}[] tasks
 ---@field counts? table<string, integer> tasks: how many under each heading
@@ -511,9 +515,37 @@ function M.read(repo, state)
   end
   table.sort(bases)
   vim.list_extend(bases, pages)
-  return vim.tbl_map(function(base)
+  local list = vim.tbl_map(function(base)
     return parse(repo, base, state, taken)
   end, bases)
+  vim.list_extend(list, M.threads(repo))
+  return list
+end
+
+-- The repo's open threads as surfaces (isovim.threads), newest first: named by id, titled, waiting
+-- on you while a router post is past what you've read.
+---@return isovim.Surface[]
+function M.threads(repo)
+  local threads = require("isovim.threads")
+  local seen = threads.seen(repo)
+  return vim.tbl_map(function(info)
+    local file = threads.file(repo, info.id)
+    local needs_you = info.last_reply > (seen[info.id] or 0)
+    return {
+      repo = repo,
+      name = info.id,
+      base = "threads/" .. info.id .. ".jsonl",
+      type = "thread",
+      title = info.title,
+      file = file,
+      error_file = "",
+      created = info.at or 0,
+      posts = info.posts,
+      working = info.working,
+      needs_you = needs_you,
+      sig = vim.fn.sha256(("%s|%d|%s|%s|%s"):format(info.title, info.posts, tostring(info.working), info.status, tostring(needs_you))),
+    }
+  end, threads.list(repo))
 end
 
 -- One surface by name; nil when it has none.
@@ -1028,6 +1060,9 @@ function M.open(entry)
   elseif entry.type == "page" then
     -- Rendered, its comments drawn on it, commented on in the input box under it.
     require("isovim.surface_view").open(entry)
+  elseif entry.type == "thread" then
+    -- The thread's view: the chat's look, its composer posting to the router.
+    require("isovim.acp.chat").open_thread(entry.repo, entry.name)
   elseif entry.type == "broken" then
     reveal(entry.file)
     M.consume(entry)
@@ -1157,8 +1192,10 @@ function M.watch(on_change)
         rescan(repo)
       end
       -- Its pages and their comments, once it has any (made later: within 5s, and scanned then).
-      if vim.fn.isdirectory(M.dir(repo) .. "/pages") == 1 and watch_dir(M.dir(repo) .. "/pages", changed) then
-        rescan(repo)
+      for _, sub in ipairs({ "pages", "threads" }) do
+        if vim.fn.isdirectory(M.dir(repo) .. "/" .. sub) == 1 and watch_dir(M.dir(repo) .. "/" .. sub, changed) then
+          rescan(repo)
+        end
       end
     end
   end

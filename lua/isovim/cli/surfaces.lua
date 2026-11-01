@@ -362,6 +362,83 @@ function M.page(args)
   out(("%s/%s %s %s"):format(repo, name, id, sub == "reply" and (ask and "asks the user now" or "has your reply") or "is resolved"))
 end
 
+-- iso <role> thread new|post|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
+-- repo's. Routers (and the user, from a shell) make, post and resolve them; other roles read.
+function M.thread(args)
+  local threads = require("isovim.threads")
+  local sub = table.remove(args, 1)
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | ls [--all] | show <id>'
+  local repo = my_repo(nil)
+  local me = require("isovim.cli.roles").caller()
+  if sub ~= "ls" and sub ~= "show" then
+    local ws, id = me and me:match("^(.*)/([^/]+)$")
+    local record = ws and store.agent(ws, id)
+    if record and store.role(record) ~= "router" then
+      fail(("only routers make, post and resolve threads; %s reads them with thread ls and show"):format(store.role(record)))
+    end
+  end
+  me = me or "user"
+  local images = {}
+  while true do
+    local path = option(args, "--image")
+    if not path then
+      break
+    end
+    path = vim.fs.normalize(vim.fn.fnamemodify(path, ":p"))
+    images[#images + 1] = { path = path, mimeType = require("isovim.acp.images").mime(path) or fail(path .. " isn't a png, jpeg, gif or webp") }
+  end
+  if sub == "new" then
+    local id, err = threads.new(repo, args[1] or fail(usage), me)
+    if not id then
+      fail(err)
+    end
+    local first = vim.trim(table.concat(vim.list_slice(args, 2), " "))
+    if first ~= "" then
+      threads.post(repo, id, me, first, images[1] and images or nil)
+    end
+    out(id)
+  elseif sub == "post" then
+    local id = args[1] or fail(usage)
+    local post, err = threads.post(repo, id, me, table.concat(vim.list_slice(args, 2), " "), images[1] and images or nil)
+    if not post then
+      fail(err)
+    end
+    out(("posted to %s#%s"):format(repo, id))
+  elseif sub == "resolve" then
+    local id = args[1] or fail(usage)
+    local status, err = threads.resolve(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
+    if not status then
+      fail(err)
+    end
+    out(("%s#%s is resolved"):format(repo, id))
+  elseif sub == "ls" then
+    local list = threads.list(repo, flag(args, "--all"))
+    if #list == 0 then
+      out(repo .. " has no " .. (flag(args, "--all") and "" or "open ") .. "threads")
+    end
+    for _, info in ipairs(list) do
+      out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
+        info.working and "  (working)" or ""))
+    end
+  elseif sub == "show" then
+    local id = args[1] or fail(usage)
+    local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
+    for _, entry in ipairs(entries) do
+      if entry.kind == "thread" then
+        out(("%s: %s (started by %s, %s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0)))
+      elseif entry.kind == "post" then
+        out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
+        out(entry.text)
+      elseif entry.kind == "resolved" or entry.kind == "reopened" then
+        out(("\n[%s by %s%s]"):format(entry.kind, entry.by or "?", entry.outcome and (": " .. entry.outcome) or ""))
+      end
+    end
+  else
+    fail(usage)
+  end
+  surfaces.scan(repo)
+end
+
 -- iso __surfaces [<repo>...]: the repos' surfaces (default every repo's), scanned, as JSON.
 M.__surfaces = function(args)
   local list = {}
