@@ -15,7 +15,7 @@ end
 
 local USAGE = [[
 usage: iso                           open the TUI (iso --takeover to steal it from another terminal)
-       iso ls [--json]               list agents: ws/agent, status, workspace · agent
+       iso ls [--json]               list agents: ws/agent, status, role, workspace · agent
        iso new <name> [--dir path] [--worktree | --from <branch|PR>]
                                      create a workspace, print its id; its agents and files
                                      live in path (a project), else its own dir. --worktree
@@ -29,9 +29,13 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
        iso unarchive <ws>            bring one back (a worktree workspace gets its worktree)
        iso move <ws> <host> [--force]   move it to another host (ssh name); its agents resume
                                      there. --force moves it even while an agent is working
-       iso agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text]
+       iso agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r]
                                      add an agent (claude|codex|terminal|command), start it;
-                                     --prompt starts a claude or codex agent on that prompt
+                                     --prompt starts a claude or codex agent on that prompt;
+                                     --role root|router|worker (default worker) picks the
+                                     role prompt it's told (prompts in ~/.isovim/config.json)
+       iso role <agent> [root|router|worker]   print or change its role; a change takes effect
+                                     when it next restarts
        iso rm <agent>                stop an agent and remove it from its workspace
        iso pr <ws> <url|owner/repo#n>   register a PR for the workspace (agents run this)
        iso prs <ws> [--json]         its PRs with their state
@@ -233,6 +237,7 @@ function commands.ls(args)
         workspace = ws.name,
         agent = agent.name,
         kind = agent.kind,
+        role = store.role(agent),
         hidden = agent.hidden or false,
         status = running and (status.get(ws.id, agent.id) or "idle") or "stopped",
         doing = running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
@@ -252,7 +257,7 @@ function commands.ls(args)
   end
   for _, row in ipairs(rows) do
     local label = ("%s · %s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "")
-    out(("%-18s %-9s %s%s"):format(row.id, row.status, label, row.doing and ("  — " .. row.doing) or ""))
+    out(("%-18s %-9s %-6s %s%s"):format(row.id, row.status, row.role, label, row.doing and ("  — " .. row.doing) or ""))
   end
 end
 
@@ -441,6 +446,20 @@ function commands.doctor()
   end
   local link = vim.fn.resolve(vim.fn.exepath("iso"))
   check(link == panes.bin, "iso on PATH is this repo's", "ln -s " .. panes.bin .. " ~/.local/bin/iso")
+  -- A prompt file that can't be read is left out of what its role is told, silently.
+  local config = require("isovim.config")
+  for _, role in ipairs(store.roles) do
+    local path = config.prompt_file(role)
+    if path then
+      check(vim.fn.filereadable(path) == 1, ("%s prompt %s"):format(role, path), "create it, or fix prompts." .. role .. " in " .. config.path)
+    end
+  end
+  local prompts = config.get().prompts
+  for role in pairs(type(prompts) == "table" and prompts or {}) do
+    if not vim.tbl_contains(store.roles, role) then
+      check(false, "prompts." .. role .. " is a role", "roles are " .. table.concat(store.roles, ", "))
+    end
+  end
   local here = repo_commit()
   out("     this isovim: " .. here)
   local remote = require("isovim.remote")
@@ -509,18 +528,41 @@ function commands.agent(args)
   local cmd = option(args, "--cmd")
   local prompt = option(args, "--prompt")
   local hidden = flag(args, "--hidden")
+  local role = option(args, "--role")
   local ws = resolve(args[1])
   local kind = args[2]
   if not vim.tbl_contains(panes.kinds, kind) then
-    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text]")
+    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r]")
   end
   if kind == "command" and not cmd then
     fail("a command agent needs --cmd")
   end
-  local agent = store.add_agent(ws.id, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt })
+  if role and not vim.tbl_contains(store.roles, role) then
+    fail("--role is one of " .. table.concat(store.roles, ", "))
+  end
+  local agent = store.add_agent(ws.id, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role })
   ensure_running(ws, agent)
   out(ws.id .. "/" .. agent.id)
   tui("require('isovim').refresh()")
+end
+
+-- The role picks the prompt an agent is told at launch, so a change reaches it only when it restarts.
+function commands.role(args)
+  local ws, agent = resolve_agent(args[1])
+  local address = ws.id .. "/" .. agent.id
+  local role = args[2]
+  if not role then
+    out(store.role(agent))
+    return
+  elseif not vim.tbl_contains(store.roles, role) then
+    fail("usage: iso role <agent> [" .. table.concat(store.roles, "|") .. "]")
+  elseif role == store.role(agent) then
+    out(("%s is already a %s"):format(address, role))
+    return
+  end
+  store.set_role(ws.id, agent.id, role)
+  tui("require('isovim').refresh()")
+  out(("%s is now a %s; it takes effect when it next restarts (iso restart %s)"):format(address, role, address))
 end
 
 function commands.pr(args)

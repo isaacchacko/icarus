@@ -62,7 +62,7 @@ local function codex_hooks()
 end
 
 -- What every agent is told at launch. PRs and pins in the sidebar come from the agents themselves.
-local INSTRUCTIONS = "You are running inside isovim, in workspace $ISOVIM_WS. Whenever you open a pull request, "
+local INSTRUCTIONS = "You are running inside isovim, as a %s agent in workspace $ISOVIM_WS. Whenever you open a pull request, "
   .. "or start working on an existing one, register it so it shows in isovim's sidebar: "
   .. "`iso pr $ISOVIM_WS <pr url>`. Keep your work as tasks the user can follow, current as you go: "
   .. "`iso task set <id> \"<title>\" --status todo|doing|waiting|blocked|done [--parent <id>]` "
@@ -92,13 +92,24 @@ local INSTRUCTIONS = "You are running inside isovim, in workspace $ISOVIM_WS. Wh
   .. "the main thread should know goes back with `iso send $ISOVIM_PARENT \"[tangent <this "
   .. "workspace's name>] ...\"`."
 
--- ~/.isovim/instructions.md, if there is one, is added to what every agent is told.
+-- ~/.isovim/instructions.md, if there is one, is added to what every agent is told, and then the
+-- prompt file config.json names for its role. A file that can't be read is left out.
 M.instructions_file = store.root .. "/instructions.md"
 
-local function instructions()
-  local ok, lines = pcall(vim.fn.readfile, M.instructions_file)
-  local own = ok and vim.trim(table.concat(lines, "\n")) or ""
-  return own == "" and INSTRUCTIONS or (INSTRUCTIONS .. "\n\n" .. own)
+local function read(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  return ok and vim.trim(table.concat(lines, "\n")) or ""
+end
+
+---@param agent isovim.Agent
+local function instructions(agent)
+  local role = store.role(agent)
+  local parts = { INSTRUCTIONS:format(role), read(M.instructions_file) }
+  local prompt = require("isovim.config").prompt_file(role)
+  parts[#parts + 1] = prompt and read(prompt) or ""
+  return table.concat(vim.tbl_filter(function(part)
+    return part ~= ""
+  end, parts), "\n\n")
 end
 
 -- Claude keeps a workspace's transcripts under ~/.claude/projects/<cwd with / and . as ->.
@@ -161,7 +172,7 @@ function M.agent_cmd(ws, agent, dir)
     end
     -- A Claude that starts again picks its own last conversation back up.
     local cmd = { M.exe("claude"), "--permission-mode", "bypassPermissions", "--settings", HOOKS }
-    vim.list_extend(cmd, { "--append-system-prompt", instructions() })
+    vim.list_extend(cmd, { "--append-system-prompt", instructions(agent) })
     local id = store.session_id(ws, agent.id)
     if id and has_conversation(id) then
       vim.list_extend(cmd, { "--resume", id })
@@ -186,7 +197,7 @@ function M.agent_cmd(ws, agent, dir)
     vim.list_extend(cmd, { "--dangerously-bypass-approvals-and-sandbox", "--enable", "hooks", "--dangerously-bypass-hook-trust" })
     vim.list_extend(cmd, { "-c", ("projects={%s={trust_level=\"trusted\"}}"):format(vim.json.encode(path)) })
     vim.list_extend(cmd, codex_hooks())
-    vim.list_extend(cmd, { "-c", "developer_instructions=" .. vim.json.encode(instructions()) })
+    vim.list_extend(cmd, { "-c", "developer_instructions=" .. vim.json.encode(instructions(agent)) })
     if not id and agent.prompt then
       table.insert(cmd, agent.prompt)
     end
@@ -238,6 +249,7 @@ function M.start(ws, agent, dir)
     "-e", "ISOVIM_STATE=" .. store.state_file(ws, agent.id),
     "-e", "ISOVIM_SOCK=" .. store.socket,
     "-e", "ISOVIM_AGENT=" .. agent.name,
+    "-e", "ISOVIM_ROLE=" .. store.role(agent),
     "-e", "ISOVIM_PARENT=" .. (agent.parent or ""),
     "-e", "ISOVIM_META=" .. store.path(ws) .. "/.isovim.json",
     "-e", "ISOVIM_HIDDEN=" .. (agent.hidden and "1" or ""),

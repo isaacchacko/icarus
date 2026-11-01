@@ -83,11 +83,13 @@ Everything lives in `~/.isovim/`:
     "hosts": { "desktop": "desktop.local" },
     "aliases": { "box": "desktop" },
     "repo_dirs": ["~/clients"],
-    "idle_after": 30
+    "idle_after": 30,
+    "prompts": { "root": "~/notes/root.md", "router": "prompts/router.md" }
   }
   ```
-  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in).
+  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told.
 - **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes, once per quiet spell.
+- **Roles.** Every agent is a `worker` unless made a `root` (sets the north star) or `router` (a repo's one interface to you, running the swarm): `iso agent ... --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
 - **`iso agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `iso ls --json` says when each agent was last active.
 
 A repo can ship workspace scripts in `.isovim/config.json` (or a Superset `.superset/config.json`, read as-is): `setup`, `teardown` and `run` command lists.

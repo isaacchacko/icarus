@@ -329,6 +329,15 @@ end
 ---@field kind "claude"|"codex"|"shell"|"command"
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
+---@field role? "root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+
+-- The root sets the north star, the router is a repo's one interface to the user, workers do the work.
+M.roles = { "root", "router", "worker" }
+
+---@param agent isovim.Agent
+function M.role(agent)
+  return agent.role or "worker"
+end
 
 -- A workspace without an agent list has just its main agent.
 local DEFAULT_AGENTS = { { id = "main", name = "main", kind = "claude" } }
@@ -355,7 +364,7 @@ local function has_agent(agents, id)
 end
 
 -- Ids come from the name or kind, numbered when taken: codex, codex2, ...
----@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string}
+---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string}
 ---@return isovim.Agent
 function M.add_agent(ws, spec)
   local dir = M.path(ws)
@@ -368,6 +377,7 @@ function M.add_agent(ws, spec)
     id = base .. n
   end
   local agent = { id = id, name = spec.name or id, kind = spec.kind, cmd = spec.cmd, hidden = spec.hidden or nil, prompt = spec.prompt }
+  agent.role = spec.role ~= "worker" and spec.role or nil
   agents[#agents + 1] = agent
   meta.agents = agents
   write_meta(dir, meta)
@@ -479,6 +489,12 @@ function M.set_hidden(ws, id, hidden)
     end
   end
   write_meta(dir, meta)
+end
+
+function M.set_role(ws, id, role)
+  with_agent(ws, id, function(entry)
+    entry.role = role ~= "worker" and role or nil
+  end)
 end
 
 -- PR URLs the workspace's agents registered with `iso pr`, oldest first.
