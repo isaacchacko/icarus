@@ -95,8 +95,8 @@ end
 
 -- A chat belongs to its workspace, a file to the workspace whose dir holds it, anything else to the
 -- workspace selected when it was opened ("" when none was). Its scope: a chat's agent's (looked up
--- again each time: an agent made root moves), a file's path's; another host's chat keeps the scope
--- it was opened in.
+-- again each time: an agent made root moves), an ACP composer's too, a file's path's; another
+-- host's chat keeps the scope it was opened in.
 function M.tag(buf, current, current_scope)
   if not scoped(buf) then
     return
@@ -104,7 +104,7 @@ function M.tag(buf, current, current_scope)
   if not vim.b[buf].isovim_ws then
     vim.b[buf].isovim_ws = vim.b[buf].isovim_id or workspace_of_path(vim.api.nvim_buf_get_name(buf), current, true) or current or ""
   end
-  local chat = vim.b[buf].isovim_id
+  local chat = vim.b[buf].isovim_id or (vim.b[buf].isovim_composer and vim.b[buf].isovim_ws)
   if chat then
     vim.b[buf].isovim_scope = M.of_agent(chat, vim.b[buf].isovim_agent or "main")
   elseif not vim.b[buf].isovim_scope then

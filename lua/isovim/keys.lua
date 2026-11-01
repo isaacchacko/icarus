@@ -294,6 +294,22 @@ function M.previous_agent()
   toast("No other agent yet")
 end
 
+-- The repo (or Root, General, Terminals) you were in before this one, at the agent you last had open
+-- there; again flips back. A repo whose agents are all gone is skipped.
+function M.previous_repo()
+  local here = current_scope()
+  local scopes = {}
+  for _, entry in ipairs(M.agents()) do
+    scopes[entry.scope] = true
+  end
+  for _, name in ipairs(isovim().recent_scopes) do
+    if name ~= here and (scopes[name] or name == scope.GENERAL or name == scope.TERMINALS) then
+      return M.select_scope(name)
+    end
+  end
+  toast("No other repo yet")
+end
+
 -- The prompt queue of the ACP agent whose chat (or composer) you're in, else the one on screen.
 function M.prompt_queue()
   local chat_mod = require("isovim.acp.chat")
@@ -377,6 +393,7 @@ M.GROUP = {
   { "w", M.workers, "a worker in the repo" },
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
+  { "p", M.previous_repo, "the previous repo (at the agent you last had open there)" },
   { "g", function()
     M.select_scope(scope.GENERAL)
   end, "General (agents in no repo)" },
@@ -432,7 +449,7 @@ M.RETIRED = {
   end, "<leader><leader> or <leader>ia" },
   { "b", function()
     isovim().last_workspace()
-  end, "<leader>ib" },
+  end, "<leader>ip" },
   { "m", on_current("isovim_move"), "m in the sidebar" },
   { "d", function()
     isovim().changes()

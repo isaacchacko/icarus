@@ -19,8 +19,9 @@ M.show_ports = false -- rows show the ports their agents and terminals listen on
 M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
 M.recent = {} ---@type string[] workspace ids, most recently selected first
-M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib)
+M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib, <leader>ip)
 M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
+M.recent_scopes = {} ---@type string[] the scopes current_scope was, most recent first (<leader>ip)
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
 M.inbox_collapsed = false -- the sidebar's Inbox shows only its title
 M.terminals_collapsed = false -- the sidebar's Terminals shows only its title
@@ -39,6 +40,7 @@ function M.remember(key, value)
     explorer_roots = M.explorer_roots,
     recent = M.recent,
     recent_agents = M.recent_agents,
+    recent_scopes = M.recent_scopes,
     expanded = M.expanded,
     inbox_collapsed = M.inbox_collapsed,
     terminals_collapsed = M.terminals_collapsed,
@@ -76,9 +78,20 @@ local function scope_for(id)
   return of_buf or (id and scope.of_workspace(id)) or scope.GENERAL
 end
 
+-- Every change of the current scope goes through here, so <leader>ip knows the one before. Moving
+-- between agents in the same repo leaves the history as it is.
+local function enter_scope(name)
+  M.current_scope = name
+  if M.recent_scopes[1] ~= name then
+    M.remember("recent_scopes", vim.list_extend({ name }, vim.tbl_filter(function(other)
+      return other ~= name
+    end, vim.list_slice(M.recent_scopes, 1, 20))))
+  end
+end
+
 -- Lists only the scope's buffers (isovim.scope), leaving the splits as they are.
 function M.set_scope(name)
-  M.current_scope = name
+  enter_scope(name)
   scope.list(M.current, name)
 end
 
@@ -96,7 +109,7 @@ local function select(id)
   -- The terminal's tab or window title says which workspace isovim is on.
   vim.o.title = true
   vim.o.titlestring = id and ("isovim · " .. store.name(id)) or "isovim"
-  M.current_scope = scope_for(id)
+  enter_scope(scope_for(id))
   scope.apply(id, M.current_scope, is_sidebar)
   if switching and id then
     local buf = vim.api.nvim_get_current_buf()
@@ -328,6 +341,10 @@ function M.open(ws, agent, win)
   enter_dir(ws)
   win = win or main_win()
   vim.api.nvim_set_current_win(win)
+  local key = ws .. "/" .. agent
+  M.recent_agents = vim.list_extend({ key }, vim.tbl_filter(function(other)
+    return other ~= key
+  end, vim.list_slice(M.recent_agents, 1, 50)))
   -- An ACP agent's chat is drawn from its journal, with a composer below it (isovim.acp.chat).
   if spec.acp then
     local acp_chat = require("isovim.acp.chat")
@@ -355,10 +372,6 @@ function M.open(ws, agent, win)
     map_chat_keys(buf)
   end
   status.mark_seen(ws, agent)
-  local key = ws .. "/" .. agent
-  M.recent_agents = vim.list_extend({ key }, vim.tbl_filter(function(other)
-    return other ~= key
-  end, vim.list_slice(M.recent_agents, 1, 50)))
   select(ws)
   -- The workspace's splits may have come back around it; the chat opened is the one to focus.
   local shown = vim.fn.bufwinid(buf)
@@ -637,6 +650,7 @@ function M.setup(opts)
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
   M.recent_agents = session.recent_agents or {}
+  M.recent_scopes = session.recent_scopes or {}
   M.expanded = session.expanded or {}
   M.inbox_collapsed = session.inbox_collapsed or false
   M.terminals_collapsed = session.terminals_collapsed or false
@@ -804,7 +818,9 @@ function M.setup(opts)
   end
 
   enter_dir(M.current)
-  M.current_scope = M.current_scope or (M.current and scope.of_workspace(M.current)) or scope.GENERAL
+  -- A hot reload stays in the scope it was in (Terminals, or Root on the root's chat, aren't the
+  -- workspace's); a start takes the workspace's.
+  enter_scope(M.current_scope or (reloading and M.recent_scopes[1]) or (M.current and scope.of_workspace(M.current)) or scope.GENERAL)
   scope.apply(M.current, M.current_scope, is_sidebar)
   notify_changes(true)
   -- Files agents edit reload in their buffers (autoread) as an agent's state moves and, while one

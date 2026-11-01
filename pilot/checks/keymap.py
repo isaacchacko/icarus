@@ -1,7 +1,7 @@
 """The keymap: LazyVim's global keys turned to repos (<leader><leader> picks a repo or Root, General,
 Terminals; <leader>ff, <leader>/ with transcripts, <leader>, scoped to the repo, <leader>fr recent
 agents), the <leader>i group (needs-you, the Inbox, router and roots by role, worker and agent
-pickers, the previous agent, General, Terminals, spawn, terminal, hosts, root mode), the sidebar's s
+pickers, the previous agent, the previous repo (and back, across a hot reload), General, Terminals, spawn, terminal, hosts, root mode), the sidebar's s
 spawn, x (root mode), S and its retiring a/A/b/T, the retiring <leader>a keys, buffers scoped by repo,
 and the help. Keys are pressed in the pilot's own TUI.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/keymap.py"""
@@ -137,7 +137,7 @@ try:
         " out['<leader>e'] = vim.fn.maparg('<leader>e', 'n', false, true).desc or '' return out"
     )
     others = {lhs: desc for lhs, desc in maps.items() if not desc.startswith("isovim: ")}
-    check(not others and len(maps) == 28, f"{len(maps)} keys, all isovim's", others)
+    check(not others and len(maps) == 29, f"{len(maps)} keys, all isovim's", others)
     group = lua("local ok, config = pcall(require, 'which-key.config') if not ok then return 'no which-key' end"
                 " for _, m in ipairs(config.mappings or {}) do if m.lhs == '<leader>i' or m[1] == '<leader>i' then return m.desc end end return ''")
     check(group == "isovim", "which-key group isovim under <leader>i", group)
@@ -382,7 +382,78 @@ try:
     iso.keys("T")
     check(True, "sidebar x, S, a, T")
 
+    # <leader>ip: the repo you were in before, at the agent you last had open there; again flips back.
+    # Moving between agents in one repo isn't a repo change; Root, General and Terminals count too.
+    def focused():
+        return lua("local b = vim.api.nvim_get_current_buf() local w = vim.b[b].isovim_id or vim.b[b].isovim_ws"
+                   " return w and vim.b[b].isovim_agent and (w .. '/' .. vim.b[b].isovim_agent) or ''")
+
+    def visit(address):
+        lua("require('isovim').open(...)", *address.rsplit("/", 1))
+        iso.wait(lambda: focused() == address, f"{address} open")
+
+    def previous_repo(address, want):
+        leader("i", "p")
+        iso.wait(lambda: scope() == want and (address is None or focused() == address), f"<leader>ip: {want} ({address})")
+
+    def pick_terminals():
+        leader("Space")
+        iso.wait(picker, "the repo picker")
+        iso.type("Terminals")
+        iso.keys("Enter")
+        iso.wait(lambda: scope() == "terminals", "Terminals picked")
+
+    a0, web1, web2 = "acme/api/a0", f"{ws['web1']}/main", f"{ws['web2']}/main"
+    notes = f"{ws['notes']}/main"
+    lua("vim.cmd.stopinsert()")
+    iso.keys("Escape")
+    # a0 (ACP) is acme/api's agent last open, though a1 was spawned after it and api1 is a terminal chat.
+    visit(a0)
+    visit(web1)
+    visit(web2)
+    recent = lambda: lua("return require('isovim').recent_scopes")  # noqa: E731
+    check(recent()[:2] == ["acme/web", "acme/api"], "two agents in one repo are one entry in the repo history", recent())
+    previous_repo(a0, "acme/api")
+    check(True, "<leader>ip: the previous repo, at its agent last open (an ACP one)")
+    previous_repo(web2, "acme/web")
+    check(True, "<leader>ip again: back to web2, not web1")
+    previous_repo(a0, "acme/api")
+    # The host root is root/a0 since x on the host Inbox spawned it.
+    leader("i", "H")
+    iso.wait(lambda: scope() == "root" and focused(), "<leader>iH: the root")
+    host_root = focused()
+    previous_repo(a0, "acme/api")
+    previous_repo(host_root, "root")
+    check(True, "<leader>ip between a repo and Root")
+    leader("i", "g")
+    iso.wait(lambda: focused() == notes, "<leader>ig: General")
+    previous_repo(host_root, "root")
+    previous_repo(notes, "general")
+    check(True, "<leader>ip between Root and General")
+    pick_terminals()
+    previous_repo(notes, "general")
+    previous_repo(None, "terminals")
+    check(lua("return vim.b.isovim_sidebar") == "terminals", "<leader>ip back to Terminals: the Terminals window",
+          lua("return vim.b.isovim_sidebar"))
+    previous_repo(notes, "general")
+    check(not any(r.count(n) > 1 for r in [recent()] for n in r), "each scope once in the history", recent())
+    # A hot reload keeps the history and the scope it was in, Terminals included.
+    visit(a0)
+    visit(web2)
+    lua("require('isovim.reload').reload()")
+    check(scope() == "acme/web" and recent()[:2] == ["acme/web", "acme/api"], "a hot reload keeps the repo and its history",
+          [scope(), recent()])
+    previous_repo(a0, "acme/api")
+    previous_repo(web2, "acme/web")
+    check(True, "<leader>ip after a hot reload: acme/api's a0, then back to web2")
+    pick_terminals()
+    lua("require('isovim.reload').reload()")
+    check(scope() == "terminals", "a hot reload in Terminals stays in Terminals", scope())
+    previous_repo(web2, "acme/web")
+    check(True, "<leader>ip from Terminals after a reload: web2")
+
     # The help: the global keys, the <leader>i group, the retiring keys.
+    iso.focus_sidebar()
     iso.keys("?")
     help_lines = iso.wait(
         lambda: lua(
@@ -403,8 +474,10 @@ try:
     check("  s " in host_list and "  x " in host_list and "  a " not in host_list and "  T " not in host_list, "the host list's keys: s and x, no a or T", host_list)
     check("<leader><leader>" in section("Anywhere") and "<leader>ff" in section("Anywhere"), "the global keys", section("Anywhere"))
     group_help = section("<leader>i")
-    check(all(f"<leader>i{k}" in group_help for k in "niIhrRHwabgTstxjquf") and "not yet" not in group_help, "the <leader>i group", group_help)
+    check(all(f"<leader>i{k}" in group_help for k in "niIhrRHwabpgTstxjquf") and "not yet" not in group_help, "the <leader>i group", group_help)
     check("<leader>aj" in section("Retiring") and "<leader>in" in section("Retiring"), "the retiring keys", section("Retiring"))
+    retiring_b = [l for l in section("Retiring").splitlines() if l.lstrip().startswith(("b ", "<leader>ab "))]
+    check(len(retiring_b) == 2 and all("<leader>ip" in l for l in retiring_b), "b and <leader>ab point at <leader>ip", retiring_b)
     iso.screenshot("help")
     iso.keys("G")
     iso.screenshot("help-leader")

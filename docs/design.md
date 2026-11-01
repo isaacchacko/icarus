@@ -255,6 +255,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `H` | the host root |
 | `w` / `a` | pick a worker / pick any agent |
 | `b` | the previous agent |
+| `p` | the previous repo, at the agent last open there |
 | `g` / `T` | general / terminals |
 | `s` / `t` | spawn / new terminal |
 | `x` | root mode for this repo |

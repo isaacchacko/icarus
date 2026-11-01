@@ -1397,7 +1397,7 @@ local LIST_KEYS = {
 local RETIRED_KEYS = {
   { "a", "isovim_add", "s spawns", legacy = true },
   { "A", "isovim_add_agent", "s spawns", legacy = true },
-  { "b", "isovim_last_workspace", "<leader>ib" },
+  { "b", "isovim_last_workspace", "<leader>ip" },
   { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
 }
 local INBOX_KEYS = {
