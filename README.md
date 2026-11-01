@@ -112,7 +112,7 @@ Everything lives in `~/.isovim/`:
 
 - Other machines' agents show in the sidebar one host at a time (`<` / `>`), and the top Inbox counts what waits on you there.
 - `iso browser` runs one Chrome per host that agents drive over CDP, with your logins, without taking your focus.
-- Edit isovim's source and the running app picks it up.
+- Edit isovim's source, or pull it, and the running app picks it up: every file under `lua/isovim/` (`acp/` and `cli/` too) hot reloads, and the chats, composers, surface views and sidebar already open switch to the new code, keeping their scroll, text and opened tool calls. A file that doesn't compile keeps the old code, and the toast says why. `starter/` (the LazyVim plugin specs) is read at startup, so the toast says to restart for it, but `config/keymaps.lua` runs again. The agents' supervisors keep their code until the agent restarts (`R` in the sidebar).
 
 ### Cutover
 

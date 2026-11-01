@@ -914,7 +914,6 @@ end
 -- The spinner's frames, as Claude's.
 local FRAMES = { "·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢" }
 local frame = 1
-local spinner ---@type uv.uv_timer_t?
 
 -- What the bar above the composer says, as {text, hl} parts: while the agent works, Claude's
 -- spinner line (its glyph, the turn's verb, how long, about how many tokens, how to interrupt).
@@ -988,8 +987,10 @@ update_bar = function(chat)
   if M.decorate_composer then
     M.decorate_composer(chat)
   end
-  if any_busy() and not spinner then
-    spinner = vim.uv.new_timer()
+  -- In _G, so a hot reload can stop the one the old code started.
+  if any_busy() and not _G.isovim_acp_spinner then
+    local spinner = vim.uv.new_timer()
+    _G.isovim_acp_spinner = spinner
     spinner:start(100, 100, vim.schedule_wrap(function()
       frame = frame % #FRAMES + 1
       local busy = false
@@ -999,10 +1000,9 @@ update_bar = function(chat)
           update_bar(each)
         end
       end
-      if not busy and spinner then
-        spinner:stop()
+      if not busy and not spinner:is_closing() then
         spinner:close()
-        spinner = nil
+        _G.isovim_acp_spinner = nil
       end
     end))
   end
@@ -1558,10 +1558,14 @@ local function composer_window(win)
   wo.breakindent = false
 end
 
-local function make(ws, agent)
+-- The chat's autocmds, so a hot reload can take them off its buffers.
+local GROUP = vim.api.nvim_create_augroup("isovim_acp_chat", { clear = false })
+
+-- A new chat, or with old (a hot reload) the same chat made again on old's buffers and drawn again.
+local function make(ws, agent, old)
   local spec = store.agent(ws, agent) or {}
   local name = (spec.name or agent)
-  local buf = scratch(("isovim-acp://%s/%s · %s"):format(ws, agent, name))
+  local buf = old and old.buf or scratch(("isovim-acp://%s/%s · %s"):format(ws, agent, name))
   vim.bo[buf].modifiable = false
   vim.bo[buf].filetype = "isovim_acp"
   -- Wrapped lines line up under the text after their glyph.
@@ -1573,7 +1577,7 @@ local function make(ws, agent)
   -- on a line it passes through), and it lags a chat that follows its end. No indent guides.
   vim.b[buf].snacks_scroll, vim.b[buf].snacks_indent = false, false
 
-  local composer = scratch(("isovim-acp://%s/%s/composer"):format(ws, agent))
+  local composer = old and old.composer or scratch(("isovim-acp://%s/%s/composer"):format(ws, agent))
   vim.bo[composer].filetype = "isovim_composer"
   vim.b[composer].isovim_agent = agent
   -- Its workspace's, so it comes and goes with the chat when you switch workspaces.
@@ -1586,8 +1590,12 @@ local function make(ws, agent)
   local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, seq = 0,
     tail = 0, fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
     kind = spec.kind or "claude" }
+  if old then
+    reset(chat)
+  end
   -- Window options follow the buffer into any window that shows it (a layout rebuilt, :b).
   vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = GROUP,
     buffer = buf,
     callback = function()
       chat_window(vim.api.nvim_get_current_win())
@@ -1595,6 +1603,7 @@ local function make(ws, agent)
   })
   -- Back at the bottom: nothing unseen.
   vim.api.nvim_create_autocmd({ "CursorMoved", "WinScrolled" }, {
+    group = GROUP,
     buffer = buf,
     callback = function()
       if chat.unseen and #followers(buf) > 0 then
@@ -1604,6 +1613,7 @@ local function make(ws, agent)
     end,
   })
   vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = GROUP,
     buffer = composer,
     callback = function()
       composer_window(vim.api.nvim_get_current_win())
@@ -1611,6 +1621,7 @@ local function make(ws, agent)
     end,
   })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    group = GROUP,
     buffer = composer,
     callback = function()
       decorate_composer(chat)
@@ -1652,6 +1663,7 @@ local function make(ws, agent)
     end
   end
   vim.api.nvim_create_autocmd("BufWipeout", {
+    group = GROUP,
     buffer = buf,
     once = true,
     callback = function()
@@ -1792,6 +1804,73 @@ function M.fork_at_cursor()
     return say("fork: no message at or above the cursor")
   end
   M.fork(chat, info and info.seq or nil)
+end
+
+-- The tool calls and thoughts drawn in the chat, top to bottom.
+local function placed(chat)
+  local calls = vim.tbl_filter(function(call)
+    return call.mark ~= nil
+  end, vim.tbl_values(chat.tools or {}))
+  local function row(call)
+    return vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1] or -1
+  end
+  table.sort(calls, function(a, b)
+    return row(a) < row(b)
+  end)
+  return calls
+end
+
+-- After a hot reload each open chat is made again by the new code on its own buffers (its keys,
+-- autocmds and drawing then run it), drawn again from its journal. What the journal doesn't hold
+-- is kept: where each window was scrolled, the composer's text, the tool calls you opened or
+-- collapsed, a rewind you're editing. Autocmds of an isovim from before GROUP had none.
+function M.rebind()
+  local spinner = _G.isovim_acp_spinner
+  if spinner and not spinner:is_closing() then
+    spinner:close()
+  end
+  _G.isovim_acp_spinner = nil
+  for k, old in pairs(chats) do
+    if vim.api.nvim_buf_is_valid(old.buf) and vim.api.nvim_buf_is_valid(old.composer) then
+      local views, opened = {}, {}
+      for _, win in ipairs(vim.fn.win_findbuf(old.buf)) do
+        views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+      end
+      for i, call in ipairs(placed(old)) do
+        opened[i] = call.open
+      end
+      pcall(old.stop)
+      for _, buf in ipairs({ old.buf, old.composer }) do
+        for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
+          if au.group == nil or au.group == GROUP then
+            vim.api.nvim_del_autocmd(au.id)
+          end
+        end
+        for _, mode in ipairs({ "n", "i" }) do
+          for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+            if vim.startswith(map.desc or "", "isovim: ") then
+              vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)
+            end
+          end
+        end
+      end
+      local chat = make(old.ws, old.agent, old)
+      chat.rewind, chat.recall, chat.unseen = old.rewind, old.recall, old.unseen
+      for i, call in ipairs(placed(chat)) do
+        if opened[i] ~= nil and call.open ~= opened[i] then
+          call.open = opened[i]
+          draw_tool(chat, call)
+        end
+      end
+      chats[k] = chat
+      for win, view in pairs(views) do
+        vim.api.nvim_win_call(win, function()
+          vim.fn.winrestview(view)
+        end)
+      end
+      update_bar(chat)
+    end
+  end
 end
 
 -- The agent went away: its chat and composer go too.

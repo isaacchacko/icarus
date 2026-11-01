@@ -295,6 +295,30 @@ host unreachable) says why and moves none. Once they're there the list shows tha
 repo. On an agent's row it moves that agent alone, like every other row key acting on its row; on
 another host's agent it brings it here.
 
+## Hot reload
+
+The TUI watches its own source (`isovim.reload`): `lua/isovim/` and every directory under it, and
+`starter/`. On macOS one recursive watcher covers each; on Linux, where inotify watches one directory,
+each directory has its own and one made later (a pull's) is watched as it appears.
+- **Hot reloads:** any `.lua` under `lua/isovim/`, `acp/` and `cli/` included, and `reload.lua`
+  itself. Every isovim module is unloaded and `setup` runs again. What's on screen takes the new
+  code: an open chat is made again on its own buffers and drawn again from its journal, keeping
+  each window's scroll, the composer's text, the tool calls and thoughts you opened or collapsed and
+  a rewind you're editing; surface views and the sidebar re-bind their keys and redraw; timers call
+  through `require`, and the ones that hold a closure (the migrate timer, the chat's spinner) are
+  replaced. `starter/lua/config/keymaps.lua` runs again.
+- **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim
+  reads once at startup; a changed `lazy-lock.json` also needs `:Lazy restore`. The toast says so.
+- **Needs an agent restart:** the agents' supervisors (`nvim -l agent_host.lua`: `acp/host.lua`,
+  `acp/client.lua`, `acp/adapter.lua` and the rest they load) keep the code they started with until
+  the agent restarts (`R` in the sidebar). The toast names such files.
+
+Events are taken together (200ms after the last, and not while git holds its index lock), so a save
+or a `git pull` of many files is one reload. Changed files are compiled first: one that doesn't, or
+a module that fails as it loads, keeps the old code, and the toast gives the error. The toast names
+the changed files (or how many, past four). A TUI that started on a `reload.lua` from before this
+needs one restart to get it.
+
 ## Cutover
 
 v0 starts fresh rather than migrating.

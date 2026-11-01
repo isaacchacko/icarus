@@ -636,6 +636,11 @@ end
 
 function M.setup(opts)
   local reloading = opts and opts.reload
+  -- The migrate timer's closure is the old code's: M.migrate starts it again if it's still needed.
+  if reloading and _G.isovim_migrate_timer then
+    _G.isovim_migrate_timer:close()
+    _G.isovim_migrate_timer = nil
+  end
   M.migrate()
   local session = store.read_session()
   session.current = session.current and store.canon(session.current)
@@ -894,15 +899,22 @@ function M.setup(opts)
   require("isovim.lifecycle").start_timer()
   -- The role prompt files, on first run (and any missing one after): never over yours.
   pcall(require("isovim.config").seed_prompts)
+  -- The new isovim.reload's watchers replace the old one's.
+  require("isovim.reload").watch()
   if reloading then
     for _, buf in ipairs(chat_bufs()) do
       map_chat_keys(buf)
       name_chat(buf)
     end
+    if next(_G.isovim_acp_chats or {}) then
+      require("isovim.acp.chat").rebind()
+    end
+    if next(_G.isovim_surface_views or {}) then
+      require("isovim.surface_view").rebind()
+    end
     sidebar.reopen()
     return
   end
-  require("isovim.reload").watch()
   if vim.fn.argc() == 0 then
     sidebar.open()
     vim.schedule(M.resume)

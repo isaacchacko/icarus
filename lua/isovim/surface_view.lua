@@ -39,8 +39,9 @@ local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 ---@field split? boolean question: its window was made for it, so q closes it
 ---@field prev? integer question: the buffer its window showed before, which q brings back
 
----@type table<string, isovim.SurfaceView> by <repo>/<name>
-M.views = {}
+-- In _G, so a hot reload re-binds the views the old code opened.
+_G.isovim_surface_views = _G.isovim_surface_views or {} ---@type table<string, isovim.SurfaceView> by <repo>/<name>
+M.views = _G.isovim_surface_views
 
 local function key(repo, name)
   return repo .. "/" .. name
@@ -413,30 +414,14 @@ local function refresh(view, entry)
   draw(view)
 end
 
-local function make(entry)
-  local id = key(entry.repo, entry.name)
-  local view = M.views[id]
-  if view and vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
-    return view
-  end
-  local question = entry.type == "question"
-  view = { repo = entry.repo, name = entry.name, kind = question and "question" or "markdown", chosen = {} }
-  if question then
-    view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
-    vim.b[view.buf].completion = false
-  else
-    view.buf = scratch(("isovim-surface://%s"):format(id), "markdown")
-  end
-  vim.b[view.buf].isovim_surface = id
-  view.input = scratch(("isovim-surface://%s/input"):format(id), "isovim_surface_input")
-  vim.b[view.input].isovim_surface_input = id
-  vim.b[view.input].completion = false
+-- The keys of the view and its input box.
+local function bind(view)
   local function map(modes, lhs, fn, desc)
     vim.keymap.set(modes, lhs, fn, { buffer = view.input, nowait = true, desc = "isovim: " .. desc })
   end
   map({ "n", "i" }, "<CR>", function()
     M.submit(view)
-  end, question and "send as your own answer" or "send to the repo's router")
+  end, view.kind == "question" and "send as your own answer" or "send to the repo's router")
   map("i", "<S-CR>", "<CR>", "new line")
   map("i", "<C-j>", "<CR>", "new line")
   map({ "n", "i" }, "<C-k>", function()
@@ -446,7 +431,7 @@ local function make(entry)
       vim.api.nvim_set_current_win(win)
     end
   end, "go to the surface")
-  if question then
+  if view.kind == "question" then
     local function on(lhs, fn, desc)
       vim.keymap.set("n", lhs, fn, { buffer = view.buf, nowait = true, desc = "isovim: " .. desc })
     end
@@ -493,6 +478,27 @@ local function make(entry)
       end, { buffer = view.buf, nowait = true, desc = "isovim: type to the repo's router" })
     end
   end
+end
+
+local function make(entry)
+  local id = key(entry.repo, entry.name)
+  local view = M.views[id]
+  if view and vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
+    return view
+  end
+  local question = entry.type == "question"
+  view = { repo = entry.repo, name = entry.name, kind = question and "question" or "markdown", chosen = {} }
+  if question then
+    view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
+    vim.b[view.buf].completion = false
+  else
+    view.buf = scratch(("isovim-surface://%s"):format(id), "markdown")
+  end
+  vim.b[view.buf].isovim_surface = id
+  view.input = scratch(("isovim-surface://%s/input"):format(id), "isovim_surface_input")
+  vim.b[view.input].isovim_surface_input = id
+  vim.b[view.input].completion = false
+  bind(view)
   M.views[id] = view
   return view
 end
@@ -614,6 +620,40 @@ function M.open(entry)
     end)
   end
   return view
+end
+
+-- After a hot reload the open views take the new keys and are drawn again by the new code, each
+-- window kept where it was scrolled.
+function M.rebind()
+  for _, view in pairs(M.views) do
+    if vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
+      for _, buf in ipairs({ view.buf, view.input }) do
+        for _, mode in ipairs({ "n", "i" }) do
+          for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+            if vim.startswith(map.desc or "", "isovim: ") then
+              vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)
+            end
+          end
+        end
+      end
+      bind(view)
+      local views = {}
+      for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
+        views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+      end
+      local entry = surfaces.get(view.repo, view.name)
+      if view.kind == "question" then
+        draw(view)
+      elseif entry then
+        set_lines(view.buf, M.lines(entry))
+      end
+      for win, saved in pairs(views) do
+        vim.api.nvim_win_call(win, function()
+          vim.fn.winrestview(saved)
+        end)
+      end
+    end
+  end
 end
 
 -- A rescan of repo changed its surfaces: open views redraw, a question answered elsewhere shows its

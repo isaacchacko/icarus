@@ -140,6 +140,8 @@ class Iso:
         (self.tmp / "owner.pid").write_text(str(os.getpid()))
         WORLDS.append(self)
         self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
+        # The isovim it runs: a check that edits the source sets a copy, so no other isovim reloads.
+        self.repo = REPO
         # Never the caller's isovim identity: a pilot run from inside an agent would act as that agent.
         # Nor the Claude Code session it may run in: CLAUDECODE, CLAUDE_CODE_* (its messaging socket
         # among them), CLAUDE_PID and TMUX_PANE would reach real agents. A login or provider set in
@@ -197,7 +199,7 @@ class Iso:
     def start(self):
         """A pilot that fails to come up is stopped, so its TUI doesn't keep running headless."""
         try:
-            self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(REPO / "bin" / "iso"))
+            self._tmux_ui("-f", "/dev/null", "new-session", "-d", "-x", str(self.cols), "-y", str(self.rows), str(self.repo / "bin" / "iso"))
             for option in (("escape-time", "0"), ("focus-events", "on"), ("default-terminal", "tmux-256color")):
                 self._tmux_ui("set-option", "-g", *option)
             self.wait(lambda: Path(self.env["ISOVIM_SOCK"]).exists(), "TUI socket")
@@ -282,7 +284,7 @@ class Iso:
         return self.nvim.exec_lua(code, *args)
 
     def cli(self, *args, check=True):
-        result = subprocess.run([str(REPO / "bin" / "iso"), *args], env=self.env, capture_output=True, text=True)
+        result = subprocess.run([str(self.repo / "bin" / "iso"), *args], env=self.env, capture_output=True, text=True)
         if check and result.returncode != 0:
             raise AssertionError(f"iso {' '.join(args)} failed: {result.stderr}")
         return result.stdout.strip()

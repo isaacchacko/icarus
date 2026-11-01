@@ -37,6 +37,9 @@ require("lazy").setup({
     enabled = false, -- versions are pinned in lazy-lock.json
     notify = false, -- notify on update
   }, -- automatically check for plugin updates
+  -- Its "Reloading..." re-reads the specs but applies nothing to loaded plugins; isovim.reload
+  -- says when a change here needs a restart.
+  change_detection = { enabled = false },
   performance = {
     rtp = {
       -- disable some rtp plugins
