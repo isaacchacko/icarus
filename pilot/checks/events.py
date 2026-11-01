@@ -5,6 +5,7 @@ loses nothing; --since reads back. Prints how much CPU idle listeners used.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/events.py"""
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -29,7 +30,11 @@ class Listener:
         return [event["topic"] for event in self.lines]
 
     def cpu(self):
-        """CPU seconds used so far, from ps's TIME (m:ss.cc)."""
+        """CPU seconds used so far: /proc on Linux, ps's TIME (m:ss.cc) on macOS."""
+        stat = Path(f"/proc/{self.proc.pid}/stat")
+        if stat.exists():
+            fields = stat.read_text().rsplit(")", 1)[1].split()
+            return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
         out = subprocess.run(["ps", "-o", "time=", "-p", str(self.proc.pid)], capture_output=True, text=True).stdout.strip()
         minutes, seconds = out.split(":")
         return int(minutes) * 60 + float(seconds)
