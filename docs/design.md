@@ -15,8 +15,8 @@ gets. It's a personal tool, not built for teams.
 | **pseudo-repo** | `root` (the host root, pinned first), `general` (agents with no repo, and files outside every repo), `terminals` |
 | **agent** | one ACP session run by a supervisor, addressed `<owner>/<repo>/aN` |
 | **role** | `worker` < `router` < `repo-root` < `root` |
-| **surface** | a file in a repo's `iso/` that shows you something; some take an answer |
-| **Inbox** | the surfaces waiting on you |
+| **surface** | an agent's structured output, a file in a repo's `iso/` that isovim draws in a TUI buffer (a question, markdown, the Task Board, a file or folder, a chat); some take an answer |
+| **Inbox** | the surfaces that need you (`needs_you`): an unanswered question, a raised one, unread markdown, a chat not yet opened. Every other surface lists as a plain row under its repo |
 
 ## On disk
 
@@ -267,14 +267,17 @@ one tab, isovim, in every scope.
 ```
 S (7) - swarming            ← style meter: live agents on this host
 ‹ macbook ›                 ← the host you're viewing (< >)
-Inbox 2                     ← the shown host's: every surface waiting on you
-  app - ? a0 asks: merge?   ← its repo's glyph and name, then the surface
-  isovim - ? mini-animate …
+Inbox 2                     ← the shown host's: every surface that needs you
+├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
+└─  isovim - ? mini-animate …
 ♛ root  ⏺                   ← the host root, with the crown
-  Inbox                     ← the root's surfaces (Task Board, markdown, files, questions)
 ▾ isovim ●             2    ← repo header in its color; opens the router; at the right, how
                                many of its agents run (the working color while any works)
-  Inbox                     ← this repo's surfaces
+     Task Board ◐ 2         ← surfaces that need nothing from you, plain, the Task Board first
+     the plan                 (read markdown, files, answered questions)
+  ▾ Inbox 2                 ← the ones that need you; gone when none does
+  ├─ ? merge the fix?
+  └─ ✎ review notes
     router · rework vocab
     a3 · tab line fix        (workers; teams behind them are counted, not listed)
 ▾  general                 ← fa-globe: agents in no repo
@@ -296,7 +299,10 @@ its color and short name (root's or general's for theirs), then the surface's ma
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
 surfaces are reached by showing that host.
 
-Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
+Every Inbox shows only the surfaces that need you, under dim tree guides (`├─`, `└─` for the last);
+the rest of a repo's (or the root's) surfaces list as plain rows under its header, above its agents,
+the Task Board first, and a surface moves there from the Inbox once it's dealt with. Each surface
+type has its own row format. In root mode, an Inbox
 shows a "root mode" marker beside its count; a question its root is deciding says "root deciding",
 quietly, and one it raised to you shows its why after "↑".
 

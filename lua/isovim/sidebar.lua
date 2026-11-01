@@ -129,7 +129,7 @@ local KINDS = {
   waiting = {
     format = function(item, width)
       local mark = item.mark or { glyph = " ", hl = "Comment" }
-      local row = { { " " }, { mark.glyph, mark.hl }, { " " }, { item.label, mark.hl }, { " - ", "Comment" } }
+      local row = { { item.guide or " ", "NonText" }, { mark.glyph, mark.hl }, { " " }, { item.label, mark.hl }, { " - ", "Comment" } }
       local chunks = M.surface_chunks(item.surface)
       vim.list_extend(row, vim.list_slice(chunks, 1, 3))
       for _, chunk in ipairs(chunks) do
@@ -161,8 +161,11 @@ local KINDS = {
   },
   -- A surface: one format per type (markdown, question, file, folder, chat, the Task Board).
   surface = {
-    format = function(item)
-      return vim.list_extend({ { ("  "):rep(item.depth + 1) } }, M.surface_chunks(item.surface))
+    format = function(item, width)
+      -- In an Inbox, under a tree guide; else indented as its group's agents are.
+      local lead = item.guide and { { "  " }, { item.guide, "NonText" } } or { { ("  "):rep(item.depth + 1) } }
+      local row = vim.list_extend(lead, M.surface_chunks(item.surface))
+      return width and M.fit(row, width) or row
     end,
     open = function(item)
       if item.host then
@@ -697,6 +700,28 @@ local function surface_rows(items, base, list, depth)
   end
 end
 
+-- A group's surfaces, right under its header: the ones that need nothing from you as plain rows, the
+-- Task Board first, then its Inbox, the ones that need you (needs_you) under tree guides. With none
+-- needing you there's no Inbox row. A surface moves from the Inbox to the plain rows once dealt with.
+local function group_surface_rows(items, base, host, key, list, root_mode)
+  local boards, plain, needing = {}, {}, {}
+  for _, entry in ipairs(list) do
+    table.insert(entry.needs_you and needing or entry.type == "tasks" and boards or plain, entry)
+  end
+  for _, entry in ipairs(vim.list_extend(boards, plain)) do
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 1, group_key = key })
+  end
+  if #needing == 0 then
+    return
+  end
+  local collapsed = is_collapsed(host, "repo_inbox", key)
+  items[#items + 1] = vim.tbl_extend("force", base, { kind = "repo_inbox", repo_key = key, count = #needing, root_mode = root_mode, collapsed = collapsed })
+  for i, entry in ipairs(collapsed and {} or needing) do
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 2,
+      guide = i == #needing and "└─ " or "├─ ", in_inbox = true })
+  end
+end
+
 -- One host's list, its groups, and its Inbox for the list's top (a row per surface waiting on you). host/ssh are nil for this host. surfaces_by_key nil: no surfaces
 -- module (or the host hasn't answered).
 ---@return table[] items, table[] inbox
@@ -748,11 +773,12 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     end)
     local collapsed = is_collapsed(host, "inbox")
     inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = #waiting_on, root_mode = has_root, collapsed = collapsed })
-    for _, w in ipairs(collapsed and {} or waiting_on) do
+    for i, w in ipairs(collapsed and {} or waiting_on) do
       local key = w.key
       local mark = key == ROOT_KEY and { icons.get("root") } or key == GENERAL_KEY and { icons.get("general") } or nil
       inbox[#inbox + 1] = vim.tbl_extend("force", base_host, {
         kind = "waiting",
+        guide = i == #waiting_on and "└─ " or "├─ ",
         surface = w.entry,
         name = w.entry.name,
         repo_key = key,
@@ -770,17 +796,12 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
           running_mark = i == 1 and running_mark(g.agents) or nil })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
-      -- Its Inbox, as a repo's: all its surfaces (the Task Board, markdown, files, questions), while
-      -- the host's Inbox keeps only those that need you.
+      -- Its surfaces, as a repo's.
       if #list > 0 then
         if #agents == 0 then
           items[#items + 1] = { kind = "hint", text = icons.get("root") .. " root (none here now)" }
         end
-        local inbox_collapsed = is_collapsed(host, "repo_inbox", ROOT_KEY)
-        items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "repo_inbox", repo_key = ROOT_KEY, count = waiting(list), root_mode = has_root, collapsed = inbox_collapsed })
-        if not inbox_collapsed then
-          surface_rows(items, base_host, list, 2)
-        end
+        group_surface_rows(items, base_host, host, ROOT_KEY, list, has_root)
       end
     -- General shows on this host even when empty, so s on it spawns a general/aN.
     elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
@@ -803,14 +824,10 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       })
       if not collapsed then
         if surfaces_by_key and #list > 0 then
-          local inbox_collapsed = is_collapsed(host, "repo_inbox", g.key)
           local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
             return entry.role == "repo-root"
           end))
-          items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "repo_inbox", repo_key = g.key, count = waiting(list), root_mode = root_mode, collapsed = inbox_collapsed })
-          if not inbox_collapsed then
-            surface_rows(items, base_host, list, 2)
-          end
+          group_surface_rows(items, base_host, host, g.key, list, root_mode)
         end
         if not host and isovim.show_prs then
           local any = false
@@ -2130,7 +2147,7 @@ M.actions = {
     elseif item.kind == "terminals" or item.kind == "terminal" then
       set_collapsed(host, "terminals", nil, item.kind ~= "terminals" or not item.collapsed)
       keep = { kind = "terminals", host = host }
-    elseif item.kind == "repo_inbox" or item.kind == "surface" then
+    elseif item.kind == "repo_inbox" or (item.kind == "surface" and item.in_inbox) then
       set_collapsed(host, "repo_inbox", item.repo_key, item.kind == "surface" or not item.collapsed)
       keep = { kind = "repo_inbox", host = host, repo_key = item.repo_key }
     elseif item.kind == "repo" then
