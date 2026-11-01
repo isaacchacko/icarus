@@ -317,7 +317,7 @@ function M.start(ws, agent, dir)
     tmux({ "set-option", "-g", "set-titles-string", "#{?alternate_on," .. M.fullscreen_title .. ",isovim}" })
     -- Claude warns without focus events.
     tmux({ "set-option", "-g", "focus-events", "on" })
-    events.publish(events.agent_topic(ws, agent.id, "spawned"),
+    events.publish_agent(ws, agent.id, "spawned",
       { kind = agent.kind, name = agent.name, role = store.role(agent), parent = agent.parent })
   end
   return result
@@ -332,7 +332,7 @@ function M.stop(ws, agent)
   vim.fn.mkdir(store.run_dir(ws), "p")
   vim.fn.writefile({}, M.stopped_file(ws, agent))
   if tmux({ "kill-session", "-t", "=" .. session(ws, agent) }).code == 0 then
-    events.publish(events.agent_topic(ws, agent, "exited"), { reason = "stopped" })
+    events.publish_agent(ws, agent, "exited", { reason = "stopped" })
   else
     os.remove(M.stopped_file(ws, agent))
   end

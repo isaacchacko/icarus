@@ -1,7 +1,11 @@
 """The event bus and `iso listen`: agents' status changes, spawn and exit, promotion and messages reach
 listeners as JSON lines, with the TUI closed and open; * and ** patterns pick topics; --once ends on the
 first match; many listeners follow at once; idle listeners use no CPU; the log moving aside at 1 MiB
-loses nothing; --since reads back. Prints how much CPU idle listeners used.
+loses nothing; --since reads back. Topic parts are encoded ("%" as %25, then "." as %2E): a new-layout
+agent in a repo with a dot in its name, and a PR in one, publish encoded topics from Lua and from
+iso-hook alike, with the raw address or repo in the details; patterns match the encoded topic as
+written; completion offers encoded forms; a "%" reads back exactly. Prints how much CPU idle
+listeners used.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/events.py"""
 
 import json
@@ -11,6 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from iso import REPO, Iso  # noqa: E402
@@ -78,6 +83,7 @@ try:
     states = [e["state"] for e in statuses.lines]
     assert states == ["ready", "working", "checking", "idle"], states
     assert set(statuses.topics()) == {f"agent.{agent}.status"}, statuses.topics()
+    assert {e["addr"] for e in statuses.lines} == {agent}, statuses.lines
 
     iso.cli("role", agent, "router")
     iso.wait(lambda: has(lifecycle, f"agent.{agent}.promoted", role="router", previous="worker"), "promoted")
@@ -92,6 +98,42 @@ try:
     iso.cli("send", shell, "exit")
     iso.wait(lambda: has(lifecycle, f"agent.{shell}.exited", reason="ended"), "terminal ended")
     iso.wait(lambda: has(statuses, f"agent.{shell}.status", state="exited"), "terminal exited state")
+
+    # A new-layout agent in a repo with a dot in its name: its address stays one part, "." as %2E.
+    site = iso.tmp / "src" / "site.com"
+    site.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(site)], check=True)
+    subprocess.run(["git", "-C", str(site), "remote", "add", "origin", "git@github.com:Owner/site.com.git"], check=True)
+    dot = "owner/site%2Ecom/a0"
+    dotted = listen(f"agent.{dot}.**")
+    dotted_msg = listen(f"msg.{dot}")
+    # Patterns aren't decoded: the raw address, or a split at its dot, matches nothing. And * and **
+    # are whole parts, never globbed inside one, so a repo's prefix with /** is a literal part.
+    unencoded = listen("agent.owner/site.com/a0.status", "agent.*.com/a0.*", "agent.**.com/**", "agent.owner/site%2Ecom/**")
+    time.sleep(1.5)
+    v2 = iso.cli("agent", str(site), "claude", "--v2", "--name", "dot")
+    assert v2 == "owner/site.com/a0", v2
+    iso.wait(lambda: has(dotted, f"agent.{dot}.spawned", addr=v2, kind="claude"), "v2 spawned, encoded")
+    iso.wait(lambda: has(statuses, f"agent.{dot}.status", addr=v2, state="ready"), "agent.*.status takes the address as one part")
+    iso.cli("send", v2, "hello")
+    iso.wait(lambda: has(dotted_msg, f"msg.{dot}", addr=v2, text="hello"), "v2 message, encoded")
+    # Its states come from iso-hook, which encodes the same way.
+    iso.wait(lambda: has(dotted, f"agent.{dot}.status", addr=v2, state="idle", previous="checking"), "v2 idle from the hook")
+    assert all(t.split(".")[:2] == ["agent", dot] and t.count(".") == 2 for t in dotted.topics()), dotted.topics()
+    assert {e["addr"] for e in dotted.lines} == {v2}, dotted.lines
+    assert not unencoded.lines, unencoded.lines
+
+    # "%" is escaped before ".", so a part with both reads back exactly. iso-hook, as for an agent with that address.
+    odd = "o/50%.x%2E/a1"
+    odd_topic = "agent.o/50%25%2Ex%252E/a1.status"
+    odd_listener = listen(odd_topic)
+    time.sleep(1.5)
+    odd_state = iso.tmp / "home" / "run" / "odd" / "a1.state"
+    odd_state.parent.mkdir(parents=True)
+    subprocess.run([str(REPO / "bin" / "iso-hook"), "interrupt"],
+                   env={**iso.env, "ISOVIM_STATE": str(odd_state), "ISOVIM_ADDR": odd}, check=True)
+    iso.wait(lambda: has(odd_listener, odd_topic, addr=odd, state="idle"), "a % address, encoded by the hook")
+    assert unquote(odd_topic.split(".")[1]) == odd
 
     seen = everything.topics()
     for listener in crowd:
@@ -132,6 +174,8 @@ try:
     iso.env["PATH"] = f"{fake_gh.parent}:{iso.env['PATH']}"
     iso.env["FAKE_GH_PR"] = str(iso.tmp / "pr.json")
     iso.start()
+    # Lua's encoding is the hook's.
+    assert iso.lua("return require('isovim.events').topic('agent', ..., 'status')", odd) == odd_topic
     tui_lifecycle = listen("agent.*.*")
     pr_events = listen("pr.**")
     time.sleep(1.5)
@@ -150,32 +194,35 @@ try:
     iso.wait(lambda: has(tui_lifecycle, f"agent.{term}.exited", reason="ended"), "TUI terminal ended")
     iso.wait(lambda: iso.lua("return require('isovim.store').agent(...) == nil", *term.split("/")), "the exited terminal is dropped")
 
-    # PRs: what changed between two fetches.
+    # PRs: what changed between two fetches, in a repo with a dot in its name.
     def pr(checks, review):
         (iso.tmp / "pr.json").write_text(json.dumps({
-            "number": 7, "title": "Seven", "state": "OPEN", "isDraft": False, "url": "https://github.com/o/r/pull/7",
+            "number": 7, "title": "Seven", "state": "OPEN", "isDraft": False, "url": "https://github.com/o/site.com/pull/7",
             "statusCheckRollup": checks, "reviewDecision": review}))
     pr([{"status": "IN_PROGRESS"}], "REVIEW_REQUIRED")
-    iso.cli("pr", ws, "o/r#7")
+    iso.cli("pr", ws, "o/site.com#7")
     refetch = ("local ws = ...; local file = require('isovim.store').run_dir(ws) .. '/prs.json';"
                " if vim.fn.filereadable(file) == 1 then local c = vim.json.decode(table.concat(vim.fn.readfile(file)));"
                " c.fetched = 0; vim.fn.writefile({ vim.json.encode(c) }, file) end;"
                " require('isovim.prs').list(ws, function() end)")
     iso.lua(refetch, ws)
-    iso.wait(lambda: has(pr_events, "pr.o/r.7.ci", checks="pending"), "first fetch")
-    assert has(pr_events, "pr.o/r.7.state", state="OPEN", previous=None, ws=ws, title="Seven"), pr_events.lines
-    assert has(pr_events, "pr.o/r.7.review", review="REVIEW_REQUIRED"), pr_events.lines
+    iso.wait(lambda: has(pr_events, "pr.o/site%2Ecom.7.ci", checks="pending"), "first fetch")
+    assert has(pr_events, "pr.o/site%2Ecom.7.state", state="OPEN", previous=None, ws=ws, title="Seven"), pr_events.lines
+    assert has(pr_events, "pr.o/site%2Ecom.7.review", review="REVIEW_REQUIRED"), pr_events.lines
+    assert {(e["repo"], e["number"]) for e in pr_events.lines} == {("o/site.com", 7)}, pr_events.lines
     pr([{"status": "COMPLETED", "conclusion": "SUCCESS"}], "APPROVED")
     seen = len(pr_events.lines)
     iso.lua(refetch, ws)
-    iso.wait(lambda: has(pr_events, "pr.o/r.7.review", review="APPROVED", previous="REVIEW_REQUIRED"), "approved")
-    assert has(pr_events, "pr.o/r.7.ci", checks="pass", previous="pending"), pr_events.lines
-    assert [e["topic"] for e in pr_events.lines[seen:]] .count("pr.o/r.7.state") == 0, "state didn't change"
+    iso.wait(lambda: has(pr_events, "pr.o/site%2Ecom.7.review", review="APPROVED", previous="REVIEW_REQUIRED"), "approved")
+    assert has(pr_events, "pr.o/site%2Ecom.7.ci", checks="pass", previous="pending"), pr_events.lines
+    assert [e["topic"] for e in pr_events.lines[seen:]] .count("pr.o/site%2Ecom.7.state") == 0, "state didn't change"
 
-    # Completion offers topics, agents and PRs.
+    # Completion offers topics, agents and PRs, encoded.
     offered = iso.cli("__complete", "listen", "").split("\n")
     values = {line.split("\t")[0] for line in offered[:-1]}
-    assert {"agent.*.status", "msg.*", "**", f"agent.{cee}.*", f"msg.{cee}", "pr.o/r.7.*"} <= values, values
+    assert {"agent.*.status", "msg.*", "**", f"agent.{cee}.*", f"msg.{cee}", f"agent.{dot}.*", f"msg.{dot}",
+            "pr.o/site%2Ecom.7.*"} <= values, values
+    assert not any("site.com" in value for value in values), values
 
     # --since reads back, through the moved-aside log too.
     back = listen("agent.*.promoted", "--since", "1h", "--once")

@@ -43,8 +43,9 @@ local function deliver(query, text, kind)
   if result.code ~= 0 then
     fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
   end
-  require("isovim.events").publish("msg." .. ws.id .. "/" .. agent.id,
-    { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
+  local events, addr = require("isovim.events"), ws.id .. "/" .. agent.id
+  events.publish(events.topic("msg", addr),
+    { addr = addr, from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
   if panes.reports(agent.kind) then
     await(ws.id, agent.id, 10, function(state)
       return state == "working" or state == "attention"

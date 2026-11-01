@@ -37,7 +37,7 @@ function M.set_state(ws, agent, state)
     file:close()
   end
   if state ~= previous then
-    events.publish(events.agent_topic(ws, agent, "status"), { state = state, previous = previous or vim.NIL })
+    events.publish_agent(ws, agent, "status", { state = state, previous = previous or vim.NIL })
   end
 end
 

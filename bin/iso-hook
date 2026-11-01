@@ -39,14 +39,22 @@ publish() {
   printf '{"topic":"%s","time":%s,%s}\n' "$1" "${now/,/.}" "$2" >>"$log"
 }
 
-# Every state the hooks write goes through here; a change is published as agent.<addr>.status.
+# One part of a topic as isovim.events.encode writes it: "%" as %25, then "." as %2E.
+encode() {
+  local value="${1//\%/%25}"
+  printf %s "${value//./%2E}"
+}
+
+# Every state the hooks write goes through here; a change is published as agent.<addr>.status, the
+# address encoded in the topic and raw in the details.
 set_state() {
-  local previous=""
+  local previous="" addr
   IFS= read -r previous 2>/dev/null <"$ISOVIM_STATE"
   printf %s "$1" >"$ISOVIM_STATE"
   [ "$previous" = "$1" ] && return
   [ -n "$previous" ] && previous="\"$previous\"" || previous=null
-  publish "agent.$(address).status" "\"state\":\"$1\",\"previous\":$previous"
+  addr="$(address)"
+  publish "agent.$(encode "$addr").status" "\"addr\":\"$addr\",\"state\":\"$1\",\"previous\":$previous"
 }
 
 # The open TUI notifies on its own, knowing whether the chat is on screen.

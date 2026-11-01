@@ -4,13 +4,18 @@
 -- FSEvents or inotify, through libuv) and reads only the bytes added since it last looked: nothing
 -- runs while nothing happens. Past 1 MiB the log moves to events.jsonl.1 and a new one starts.
 --
--- Topics are dot-separated parts; an address (<ws>/<agent>) or a repo (<owner>/<repo>) is one part:
---   agent.<addr>.status    its hooks wrote a new state      {state, previous}
---   agent.<addr>.spawned   its program started              {kind, name, role, parent}
---   agent.<addr>.exited    its program ended                {reason: stopped|ended}
---   agent.<addr>.promoted  its role changed                 {role, previous}
---   msg.<addr>             a message was typed into it      {from, kind, id, text}
---   pr.<repo>.<n>.state|ci|review   a registered PR changed   {url, ws, title, ..., previous}
+-- Topics are dot-separated parts; an address (<ws>/<agent>, <owner>/<repo>/aN) or a repo
+-- (<owner>/<repo>) is one part:
+--   agent.<addr>.status    its hooks wrote a new state      {addr, state, previous}
+--   agent.<addr>.spawned   its program started              {addr, kind, name, role, parent}
+--   agent.<addr>.exited    its program ended                {addr, reason: stopped|ended}
+--   agent.<addr>.promoted  its role changed                 {addr, role, previous}
+--   msg.<addr>             a message was typed into it      {addr, from, kind, id, text}
+--   pr.<repo>.<n>.state|ci|review   a registered PR changed   {repo, number, url, ws, title, ..., previous}
+-- Inside a part "%" is written %25 and then "." %2E (M.encode), so agent owner/site.com/a3's status
+-- is agent.owner/site%2Ecom/a3.status. Every publisher builds its topic with M.topic, which encodes
+-- each part (bin/iso-hook escapes the same way); patterns are matched against the encoded topic as
+-- given, never decoded, and the details carry addr and repo raw.
 -- Surfaces (surface.*), the root's decisions (root.*) and other hosts (host.*, <host>: prefixes)
 -- publish here too once they exist.
 local store = require("isovim.store")
@@ -39,8 +44,14 @@ local function now()
   return sec + math.floor(usec / 1000) / 1000
 end
 
-function M.agent_topic(ws, agent, what)
-  return ("agent.%s/%s.%s"):format(ws, agent, what)
+-- One part of a topic, as it's written: "%" as %25, then "." as %2E.
+function M.encode(value)
+  return (tostring(value):gsub("%%", "%%25"):gsub("%.", "%%2E"))
+end
+
+-- A topic from its parts, each encoded: topic("pr", "o/site.com", 7, "ci") is pr.o/site%2Ecom.7.ci.
+function M.topic(...)
+  return table.concat(vim.tbl_map(M.encode, { ... }), ".")
 end
 
 -- Appends the event in one write, so lines from concurrent publishers never interleave. Uses only
@@ -64,6 +75,13 @@ function M.publish(topic, details)
     vim.uv.fs_write(fd, line .. "\n")
     vim.uv.fs_close(fd)
   end
+end
+
+-- An agent's event, agent.<addr>.<what>, its details carrying the raw address.
+---@param details? table
+function M.publish_agent(ws, agent, what, details)
+  local addr = ws .. "/" .. agent
+  M.publish(M.topic("agent", addr, what), vim.tbl_extend("force", { addr = addr }, details or {}))
 end
 
 -- Whether a topic matches a pattern: parts split on ".", * is any one part, ** any number of them.

@@ -325,7 +325,9 @@ M.list = {
                                      line {topic, time, ...} as it happens, until killed (made
                                      for a Monitor); --once exits after the first. Topics:
                                      agent.<agent>.status|spawned|exited|promoted, msg.<agent>,
-                                     pr.<owner/repo>.<n>.state|ci|review. In a pattern * is any
+                                     pr.<owner/repo>.<n>.state|ci|review. In a part "%" is
+                                     written %25 and "." %2E (agent.owner/site%2Ecom/a3.status),
+                                     and patterns match it as written. In a pattern * is any
                                      one dot-separated part, ** any number (quote them). --since
                                      starts from a time (epoch seconds, or 90s, 10m, 2h, 1d ago)]=],
   },

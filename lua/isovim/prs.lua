@@ -57,7 +57,8 @@ local function read_cache(ws)
   return decoded and type(cache) == "table" and cache or { fetched = 0, prs = {} }
 end
 
--- What changed since the last fetch goes on the event bus as pr.<owner>/<repo>.<n>.state|ci|review;
+-- What changed since the last fetch goes on the event bus as pr.<owner>/<repo>.<n>.state|ci|review
+-- (events.topic encodes the parts);
 -- a PR seen for the first time reports what it has.
 ---@param pr isovim.Pr
 ---@param old isovim.Pr|{}
@@ -67,16 +68,17 @@ local function publish_changes(ws, pr, old)
     return
   end
   local events = require("isovim.events")
-  local topic = ("pr.%s.%s."):format(repo, number)
-  local about = { url = pr.url, ws = ws, title = pr.title }
+  local about = { repo = repo, number = tonumber(number), url = pr.url, ws = ws, title = pr.title }
   if pr.state ~= old.state or pr.isDraft ~= old.isDraft then
-    events.publish(topic .. "state", vim.tbl_extend("force", about, { state = pr.state, draft = pr.isDraft, previous = old.state }))
+    events.publish(events.topic("pr", repo, number, "state"),
+      vim.tbl_extend("force", about, { state = pr.state, draft = pr.isDraft, previous = old.state }))
   end
   if pr.checks ~= old.checks then
-    events.publish(topic .. "ci", vim.tbl_extend("force", about, { checks = pr.checks, previous = old.checks }))
+    events.publish(events.topic("pr", repo, number, "ci"), vim.tbl_extend("force", about, { checks = pr.checks, previous = old.checks }))
   end
   if pr.review ~= old.review then
-    events.publish(topic .. "review", vim.tbl_extend("force", about, { review = pr.review, previous = old.review }))
+    events.publish(events.topic("pr", repo, number, "review"),
+      vim.tbl_extend("force", about, { review = pr.review, previous = old.review }))
   end
 end
 

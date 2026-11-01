@@ -201,8 +201,8 @@ local function send_as(from, ws, agent, text)
   if result.code ~= 0 then
     fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
   end
-  require("isovim.events").publish("msg." .. ws.id .. "/" .. agent.id,
-    { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
+  local events, addr = require("isovim.events"), ws.id .. "/" .. agent.id
+  events.publish(events.topic("msg", addr), { addr = addr, from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
 end
 
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no
@@ -304,7 +304,7 @@ local function fork_root(ws, agent, promoter, reason)
   end
   store.update_agent(id, fork.id, { fork_of = session })
   local events = require("isovim.events")
-  events.publish(events.agent_topic(id, fork.id, "promoted"), { role = "root", previous = "router", fork_of = ws.id .. "/" .. agent.id })
+  events.publish_agent(id, fork.id, "promoted", { role = "root", previous = "router", fork_of = ws.id .. "/" .. agent.id })
   local root_ws = c.resolve(id)
   local text = ("You are a fork of the router %s/%s, made the root by %s%s. %s/%s stays the router; you have no parent.")
     :format(ws.id, agent.id, promoter, reason ~= "" and (": " .. reason) or "", ws.id, agent.id)

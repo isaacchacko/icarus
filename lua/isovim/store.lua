@@ -737,7 +737,7 @@ function M.set_role(ws, id, role)
   end)
   if previous and previous ~= role then
     local events = require("isovim.events")
-    events.publish(events.agent_topic(ws, id, "promoted"), { role = role, previous = previous })
+    events.publish_agent(ws, id, "promoted", { role = role, previous = previous })
   end
 end
 

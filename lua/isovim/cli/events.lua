@@ -51,7 +51,7 @@ function commands.closed(args)
   if spec and (spec.kind == "terminal" or spec.kind == "command") then
     status.set_state(ws, agent, "exited")
   end
-  events.publish(events.agent_topic(ws, agent, "exited"), { reason = "ended" })
+  events.publish_agent(ws, agent, "exited", { reason = "ended" })
 end
 
 return commands
