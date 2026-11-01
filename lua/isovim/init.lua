@@ -20,6 +20,7 @@ M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
 M.recent = {} ---@type string[] workspace ids, most recently selected first (<leader>aw)
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
+M.inbox_collapsed = false -- the sidebar's Inbox shows only its title
 
 -- Persisted so a hot reload picks up where the old code left off.
 function M.remember(key, value)
@@ -34,13 +35,17 @@ function M.remember(key, value)
     explorer_roots = M.explorer_roots,
     recent = M.recent,
     expanded = M.expanded,
+    inbox_collapsed = M.inbox_collapsed,
   })
 end
 
--- The sidebar is a non-floating snacks_layout_box holding floating picker windows.
+-- The sidebar's column flags its buffers. The explorer in its place is a snacks_layout_box split
+-- holding floating picker windows; floats count as sidebar too.
 local function is_sidebar(win)
-  local ft = vim.bo[vim.api.nvim_win_get_buf(win)].filetype
-  return (ft:match("^snacks_") and ft ~= "snacks_dashboard") or vim.api.nvim_win_get_config(win).relative ~= ""
+  local buf = vim.api.nvim_win_get_buf(win)
+  return vim.b[buf].isovim_sidebar ~= nil
+    or vim.bo[buf].filetype == "snacks_layout_box"
+    or vim.api.nvim_win_get_config(win).relative ~= ""
 end
 
 -- Pickers, grep and :e work in the workspace's project, as in a normal nvim session there; with
@@ -112,13 +117,10 @@ local function chat_buf(ws, agent)
   return live, stale
 end
 
--- Whichever the sidebar is showing: Workspaces or the explorer.
+-- Whichever the sidebar is showing: the host list or the explorer.
 local function focus_sidebar()
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1] or Snacks.picker.get({ source = "explorer" })[1]
-  if sidebar then
-    vim.cmd.stopinsert()
-    sidebar:focus("list")
-  end
+  vim.cmd.stopinsert()
+  require("isovim.sidebar").focus()
 end
 
 -- Claude runs no hook when Esc interrupts it, so its spinner would spin on until the next prompt.
@@ -232,8 +234,9 @@ end
 local CHAT_NORMAL_KEYS = {
   { "gf", open_mentioned, "open file(:line) beside the chat" },
   { "gF", open_mentioned, "same as gf" },
+  { "<C-h>", focus_sidebar, "go to the sidebar" },
 }
-M.chat_keys, M.chat_normal_keys = CHAT_KEYS, CHAT_NORMAL_KEYS
+M.chat_keys, M.chat_normal_keys, M.open_beside = CHAT_KEYS, CHAT_NORMAL_KEYS, open_beside
 
 local function map_chat_keys(buf)
   for _, key in ipairs(CHAT_NORMAL_KEYS) do
@@ -507,6 +510,7 @@ function M.setup(opts)
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
   M.expanded = session.expanded or {}
+  M.inbox_collapsed = session.inbox_collapsed or false
 
   local sidebar = require("isovim.sidebar")
   icons.setup()
@@ -521,7 +525,7 @@ function M.setup(opts)
         Snacks.notify.warn("No workspace selected")
         return
       end
-      sidebar.actions[action](nil, { ws = M.current, ws_name = store.name(M.current), kind = "workspace" })
+      sidebar.actions[action]({ ws = M.current, ws_name = store.name(M.current), kind = "workspace" })
     end
   end
   for lhs, map in pairs({
@@ -724,10 +728,7 @@ function M.setup(opts)
     if ticks % 10 == 0 then
       reload_files()
     end
-    local picker = Snacks.picker.get({ source = "isovim" })[1]
-    if picker then
-      picker.list:update({ force = true })
-    else
+    if not sidebar.redraw() then
       status.animate(false)
     end
   end)

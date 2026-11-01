@@ -1,4 +1,5 @@
--- The Workspaces picker, its Inbox, and the file explorer that can take its place.
+-- The sidebar: a column of windows (the title, the Inbox, one host's workspaces and agents, a
+-- footer), and the file explorer that can take its place.
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
@@ -44,16 +45,6 @@ local KINDS = {
     end,
     id = {},
   },
-  -- A divider: what follows is on that machine.
-  host = {
-    format = function(item)
-      if item.down then
-        return { { "── ", "Comment" }, { icons.get("host"), "Comment" }, { " " .. item.host .. " unreachable ", "Comment" }, { ("─"):rep(40), "Comment" } }
-      end
-      return { { "── ", "Comment" }, { icons.get("host") }, { " " }, { item.host, "Title" }, { " " .. ("─"):rep(40), "Comment" } }
-    end,
-    id = { "host" },
-  },
   workspace = {
     format = function(item)
       local folder, folder_hl = icons.get(item.ws == isovim.current and "workspace_current" or "workspace")
@@ -74,7 +65,7 @@ local KINDS = {
         isovim.open(item.ws)
       end
     end,
-    delete = function(_, item)
+    delete = function(item)
       Snacks.picker.util.confirm("Archive " .. item.ws_name .. "?", function()
         panes.stop_all(item.ws)
         local ok, err, note = store.archive_workspace(item.ws)
@@ -136,7 +127,7 @@ local KINDS = {
         isovim.open(item.ws, item.agent)
       end
     end,
-    delete = function(_, item)
+    delete = function(item)
       Snacks.picker.util.confirm(("Remove %s from %s?"):format(item.name, item.ws_name), function()
         isovim.remove_agent(item.ws, item.agent)
       end)
@@ -158,7 +149,7 @@ local KINDS = {
     open = function(item)
       isovim.reveal(item.ws, item.path)
     end,
-    delete = function(_, item)
+    delete = function(item)
       store.unpin(item.ws, item.path)
       M.refresh()
     end,
@@ -199,14 +190,146 @@ local function most_urgent(agents)
   return found
 end
 
--- Rows: each workspace with its agents, or its PRs while P is on; a collapsed workspace (the default)
--- only its own row. Hidden agents show only while show_hidden is on. Agents waiting on you
--- (attention) also go to M.queue, the Inbox.
-local function sidebar_items()
+-- An agent's tasks, in tree order: each one's subtasks right under it.
+local function add_tasks(items, base, agent)
+  if not isovim.show_tasks then
+    return
+  end
+  local tasks = agent.tasks or {}
+  local function under(parent, depth)
+    for _, task in ipairs(tasks) do
+      if task.parent == parent then
+        items[#items + 1] = vim.tbl_extend("force", base, {
+          kind = "task",
+          agent = agent.id,
+          name = agent.name,
+          task = task,
+          task_id = task.id,
+          depth = depth,
+        })
+        under(task.id, depth + 1)
+      end
+    end
+  end
+  under(nil, 0)
+end
+
+-- This host's rows: each workspace with its agents, or its PRs while P is on; a collapsed workspace
+-- (the default) only its own row.
+local function local_rows(workspaces)
+  local titles = panes.titles()
+  local items = {}
+  for _, ws in ipairs(workspaces) do
+    local base = { ws = ws.id, ws_name = ws.name }
+    local added, removed = diffstat.get(ws.dir, M.refresh)
+    local row = { kind = "workspace", running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents) }
+    items[#items + 1] = vim.tbl_extend("force", base, row)
+    local open = isovim.expanded[ws.id]
+    if open and isovim.show_prs then
+      local list = prs.list(ws.id, M.refresh)
+      for _, pr in ipairs(list) do
+        items[#items + 1] = vim.tbl_extend("force", base, { kind = "pr", pr = pr, url = pr.url })
+      end
+      if #list == 0 then
+        items[#items + 1] = vim.tbl_extend("force", base, { kind = "empty" })
+      end
+    elseif open then
+      for _, agent in ipairs(ws.agents) do
+        items[#items + 1] = vim.tbl_extend("force", base, {
+          kind = "agent",
+          agent = agent.id,
+          name = agent.name,
+          agent_kind = agent.kind,
+          status = agent.status,
+          running = agent.running,
+          hidden = agent.hidden,
+          subtitle = agent.running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
+          ports = agent.running and require("isovim.ports").of(ws.id, agent.id) or nil,
+        })
+        add_tasks(items, base, agent)
+      end
+      for _, entry in ipairs(store.pinned(ws.id)) do
+        items[#items + 1] = vim.tbl_extend("force", base, {
+          kind = "path",
+          path = entry.path,
+          label = entry.label or short_path(ws.id, entry.path),
+          is_dir = vim.fn.isdirectory(entry.path) == 1,
+        })
+      end
+    end
+  end
+  if #workspaces == 0 then
+    items[1] = { kind = "hint", text = "no workspaces · a new · ? keys" }
+  end
+  return items
+end
+
+-- Another host's agent, from its row in that host's `iso ls`.
+local function remote_agent(row)
+  local state = row.status ~= "idle" and row.status ~= "stopped" and row.status or nil
+  return { id = row.id, name = row.agent, kind = row.kind, status = state, running = row.status ~= "stopped", hidden = row.hidden, doing = row.doing, tasks = row.tasks }
+end
+
+-- Another host's rows, by workspace, as its `iso ls` lists them.
+local function remote_rows(name, ssh, rows)
+  local items = {}
+  local by_ws, order = {}, {}
+  for _, row in ipairs(rows) do
+    local ws_id = row.id:match("^[^/]+")
+    local agent = remote_agent(row)
+    if not by_ws[ws_id] then
+      by_ws[ws_id] = { name = row.workspace, agents = {} }
+      order[#order + 1] = ws_id
+    end
+    if not agent.hidden or isovim.show_hidden then
+      table.insert(by_ws[ws_id].agents, agent)
+      by_ws[ws_id].running = by_ws[ws_id].running or agent.running
+    end
+  end
+  for _, ws_id in ipairs(order) do
+    local ws = by_ws[ws_id]
+    local base = { host = name, ssh = ssh, ws = name .. ":" .. ws_id, ws_name = ws.name, remote_ws = ws_id }
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", running = ws.running, status = most_urgent(ws.agents) })
+    for _, agent in ipairs(isovim.expanded[base.ws] and ws.agents or {}) do
+      items[#items + 1] = vim.tbl_extend("force", base, {
+        kind = "agent",
+        agent = agent.id,
+        name = agent.name,
+        agent_kind = agent.kind,
+        status = agent.status,
+        running = agent.running,
+        hidden = agent.hidden,
+        subtitle = agent.doing,
+      })
+      add_tasks(items, base, agent)
+    end
+  end
+  if #order == 0 then
+    items[1] = { kind = "hint", text = "no agents" }
+  end
+  return items
+end
+
+-- The hosts the list can show: this one first, then the others by name.
+local function hosts()
+  local names = vim.tbl_keys(remote.peers())
+  table.sort(names)
+  return vim.list_extend({ remote.self() }, names)
+end
+
+-- The other host the list shows, or nil for this one. In vim.g, so a hot reload keeps it.
+local function shown_host()
+  local name = vim.g.isovim_sidebar_host
+  return name and remote.peers()[name] and name or nil
+end
+
+-- Every host's agents waiting on you go to M.queue, the Inbox, this host's first; the rows returned
+-- are the shown host's. Hidden agents show only while show_hidden is on.
+local function collect()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()
-  local titles = panes.titles()
   local workspaces = store.list()
+  local shown = shown_host()
   local queue = {}
   local working = false
   for _, ws in ipairs(workspaces) do
@@ -220,7 +343,7 @@ local function sidebar_items()
       if not agent.hidden or isovim.show_hidden then
         ws.agents[#ws.agents + 1] = agent
         ws.running = ws.running or agent.running
-        working = working or agent.status == "working"
+        working = working or (not shown and agent.status == "working")
       end
       if M.needs_you(agent) then
         queue[#queue + 1] =
@@ -228,152 +351,181 @@ local function sidebar_items()
       end
     end
   end
-  -- The other hosts' agents, by host then workspace, as their `iso ls` lists them.
-  local hosts = {}
-  for name, host in pairs(remote.peers()) do
-    local rows = remote.list(name, host, M.refresh)
+  local items
+  local peers = remote.peers()
+  for _, name in ipairs(vim.list_slice(hosts(), 2)) do
+    local ssh = peers[name]
+    local rows = remote.list(name, ssh, M.refresh)
     if rows then
       isovim.notify_remote(name, rows)
     end
-    if remote.down(name) then
-      hosts[#hosts + 1] = { name = name, ssh = host, order = {}, by_ws = {}, down = true }
-    elseif rows and #rows > 0 then
-      local by_ws, order = {}, {}
-      for _, row in ipairs(rows) do
-        local ws_id = row.id:match("^[^/]+")
-        local state = row.status ~= "idle" and row.status ~= "stopped" and row.status or nil
-        local agent = { id = row.id, name = row.agent, kind = row.kind, status = state, running = row.status ~= "stopped", hidden = row.hidden, doing = row.doing, tasks = row.tasks }
-        if not by_ws[ws_id] then
-          by_ws[ws_id] = { name = row.workspace, agents = {} }
-          order[#order + 1] = ws_id
-        end
-        if not agent.hidden or isovim.show_hidden then
-          table.insert(by_ws[ws_id].agents, agent)
-          by_ws[ws_id].running = by_ws[ws_id].running or agent.running
-        end
-        if M.needs_you(agent) then
-          queue[#queue + 1] = { host = name, ssh = host, agent = row.id, ws_name = name .. ":" .. row.workspace, name = row.agent, kind = row.kind, status = state }
-        end
+    for _, row in ipairs(rows or {}) do
+      local agent = remote_agent(row)
+      if M.needs_you(agent) then
+        queue[#queue + 1] = { host = name, ssh = ssh, agent = row.id, ws_name = name .. ":" .. row.workspace, name = row.agent, kind = row.kind, status = agent.status }
       end
-      hosts[#hosts + 1] = { name = name, ssh = host, order = order, by_ws = by_ws }
+      working = working or (name == shown and agent.status == "working")
+    end
+    if name == shown then
+      if remote.down(name) then
+        items = { { kind = "hint", text = "unreachable" } }
+      else
+        items = rows and remote_rows(name, ssh, rows) or { { kind = "hint", text = "asking…" } }
+      end
     end
   end
-  table.sort(hosts, function(a, b)
-    return a.name < b.name
-  end)
 
   status.animate(working)
   table.sort(workspaces, function(a, b)
     return a[isovim.sort] > b[isovim.sort]
   end)
-  table.sort(queue, function(a, b)
-    return (a.status == "attention" and 0 or 1) < (b.status == "attention" and 0 or 1)
-  end)
   M.queue = queue
-
-  local items = {}
-  -- An agent's tasks, in tree order: each one's subtasks right under it.
-  local function add_tasks(base, agent)
-    if not isovim.show_tasks then
-      return
-    end
-    local tasks = agent.tasks or {}
-    local function under(parent, depth)
-      for _, task in ipairs(tasks) do
-        if task.parent == parent then
-          items[#items + 1] = vim.tbl_extend("force", base, {
-            kind = "task",
-            text = base.ws_name .. " " .. agent.name .. " " .. task.title,
-            agent = agent.id,
-            name = agent.name,
-            task = task,
-            task_id = task.id,
-            depth = depth,
-          })
-          under(task.id, depth + 1)
-        end
-      end
-    end
-    under(nil, 0)
-  end
-  for _, ws in ipairs(workspaces) do
-    local base = { ws = ws.id, ws_name = ws.name }
-    local added, removed = diffstat.get(ws.dir, M.refresh)
-    local row = { kind = "workspace", text = ws.name, running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents) }
-    items[#items + 1] = vim.tbl_extend("force", base, row)
-    local open = isovim.expanded[ws.id]
-    if open and isovim.show_prs then
-      local list = prs.list(ws.id, M.refresh)
-      for _, pr in ipairs(list) do
-        local text = ws.name .. " " .. (pr.title or pr.url)
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "pr", text = text, pr = pr, url = pr.url })
-      end
-      if #list == 0 then
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "empty", text = ws.name .. " no PRs yet" })
-      end
-    elseif open then
-      for _, agent in ipairs(ws.agents) do
-        items[#items + 1] = vim.tbl_extend("force", base, {
-          kind = "agent",
-          text = ws.name .. " " .. agent.name,
-          agent = agent.id,
-          name = agent.name,
-          agent_kind = agent.kind,
-          status = agent.status,
-          running = agent.running,
-          hidden = agent.hidden,
-          subtitle = agent.running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
-          ports = agent.running and require("isovim.ports").of(ws.id, agent.id) or nil,
-        })
-        add_tasks(base, agent)
-      end
-      for _, entry in ipairs(store.pinned(ws.id)) do
-        items[#items + 1] = vim.tbl_extend("force", base, {
-          kind = "path",
-          text = ws.name .. " " .. (entry.label or entry.path),
-          path = entry.path,
-          label = entry.label or short_path(ws.id, entry.path),
-          is_dir = vim.fn.isdirectory(entry.path) == 1,
-        })
-      end
-    end
-  end
-  if #workspaces == 0 then
-    items[#items + 1] = { kind = "hint", text = "no workspaces · a new · ? keys" }
-  end
-  if not isovim.show_prs then
-    for _, host in ipairs(hosts) do
-      items[#items + 1] = { kind = "host", text = host.name, host = host.name, ws = "@" .. host.name, down = host.down }
-      for _, ws_id in ipairs(host.order) do
-        local ws = host.by_ws[ws_id]
-        local base = { host = host.name, ssh = host.ssh, ws = host.name .. ":" .. ws_id, ws_name = ws.name, remote_ws = ws_id }
-        local text = host.name .. " " .. ws.name
-        items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", text = text, running = ws.running, status = most_urgent(ws.agents) })
-        for _, agent in ipairs(isovim.expanded[base.ws] and ws.agents or {}) do
-          items[#items + 1] = vim.tbl_extend("force", base, {
-            kind = "agent",
-            text = host.name .. " " .. ws.name .. " " .. agent.name,
-            agent = agent.id,
-            name = agent.name,
-            agent_kind = agent.kind,
-            status = agent.status,
-            running = agent.running,
-            hidden = agent.hidden,
-            subtitle = agent.doing,
-          })
-          add_tasks(base, agent)
-        end
-      end
-    end
-  end
-  return items
+  return items or local_rows(workspaces)
 end
 
-local function row_of(picker, item)
-  for i = 1, picker.list:count() do
-    local row = picker.list:get(i)
+-- The column's windows by role (title, inbox, list, footer), found by their buffers' b:isovim_sidebar.
+local function windows()
+  local wins = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local role = vim.b[vim.api.nvim_win_get_buf(win)].isovim_sidebar
+    if role then
+      wins[role] = win
+    end
+  end
+  return wins
+end
+
+local ns = vim.api.nvim_create_namespace("isovim_sidebar")
+
+-- Each line is a list of {text, highlight} chunks. Cursors stay on their line numbers.
+local function draw(win, chunk_lines)
+  local buf = vim.api.nvim_win_get_buf(win)
+  local lines, marks = {}, {}
+  for i, chunks in ipairs(chunk_lines) do
+    local text, col = {}, 0
+    for _, chunk in ipairs(chunks) do
+      text[#text + 1] = chunk[1]
+      if chunk[2] then
+        marks[#marks + 1] = { i - 1, col, col + #chunk[1], chunk[2] }
+      end
+      col = col + #chunk[1]
+    end
+    lines[i] = table.concat(text)
+  end
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  for _, mark in ipairs(marks) do
+    vim.api.nvim_buf_set_extmark(buf, ns, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
+  end
+  vim.api.nvim_win_set_cursor(win, { math.max(1, math.min(cursor[1], #lines)), 0 })
+end
+
+local function set_height(win, height)
+  if vim.api.nvim_win_get_height(win) ~= height then
+    vim.api.nvim_win_set_height(win, height)
+  end
+end
+
+-- What each window's lines stand for, line by line: the actions take the one under the cursor.
+local rows = { list = {}, inbox = {}, footer = {} }
+
+-- H, P, L and T show in the title as badges while they're on.
+local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "L" }, { "show_tasks", "T" } }
+
+local function title_line(width)
+  local badges = {}
+  for _, toggle in ipairs(TOGGLES) do
+    if isovim[toggle[1]] then
+      vim.list_extend(badges, { { " " }, { " " .. toggle[2] .. " ", "DiagnosticVirtualTextInfo" } })
+    end
+  end
+  local line = { { " ISOVIM", "Title" }, { (" "):rep(width - 8 - #badges * 2) } }
+  return vim.list_extend(line, badges)
+end
+
+-- The Inbox: what waits on you on every host, under a title with the count. Collapsed, only the title.
+local function inbox_lines()
+  local count = #M.queue
+  local lines = {
+    { { isovim.inbox_collapsed and "▸ " or "▾ ", "Comment" }, { "Inbox", "Title" }, { " " .. count, count > 0 and "DiagnosticWarn" or "Comment" } },
+  }
+  rows.inbox = { { kind = "inbox" } }
+  for _, entry in ipairs(isovim.inbox_collapsed and {} or M.queue) do
+    local icon, hl = status.icon(entry.status)
+    local kind_icon, kind_hl = icons.get(entry.kind)
+    lines[#lines + 1] = { { "  " }, { icon, hl }, { " " }, { kind_icon, kind_hl }, { (" %s · %s"):format(entry.ws_name, entry.name) } }
+    rows.inbox[#rows.inbox + 1] = entry
+  end
+  return lines
+end
+
+-- The shown host's name, with ‹ › when < and > have others to show.
+local function host_bar()
+  local name = shown_host() or remote.self()
+  local bar = "%#Title# " .. icons.get("host") .. " " .. name:gsub("%%", "%%%%")
+  if #hosts() > 1 then
+    bar = "%#Comment# ‹" .. bar .. "%#Comment# ›"
+  end
+  return bar
+end
+
+local usage = {} ---@type table<string, {cpu: number, used: number, total: number}|"busy"|false>
+local version
+
+local function footer_lines()
+  local host = shown_host() or remote.self()
+  local measured = usage[host]
+  local first = { { "  cpu, ram: press u", "Comment" } }
+  if measured == "busy" then
+    first = { { "  measuring " .. host .. "…", "Comment" } }
+  elseif measured == false then
+    first = { { "  couldn't measure " .. host, "DiagnosticWarn" } }
+  elseif measured then
+    first = {
+      { "  cpu " },
+      { ("%d%%"):format(measured.cpu), measured.cpu >= 80 and "DiagnosticWarn" or "Special" },
+      { "  ram " },
+      { ("%.1f/%.0fG"):format(measured.used / 2 ^ 30, measured.total / 2 ^ 30), measured.used / measured.total >= 0.9 and "DiagnosticWarn" or "Special" },
+      { "  " .. host, "Comment" },
+    }
+  end
+  rows.footer = { { kind = "usage" }, { kind = "settings" }, { kind = "about" } }
+  return {
+    first,
+    { { "  " }, { "\u{f013}", "Special" }, { " Settings" } }, -- fa-cog
+    { { ("  isovim %s · agents first, in nvim"):format(version or ""), "Comment" } },
+  }
+end
+
+local function render(wins)
+  if wins.title then
+    draw(wins.title, { title_line(vim.api.nvim_win_get_width(wins.title)) })
+    set_height(wins.title, 1)
+  end
+  if wins.inbox then
+    local lines = inbox_lines()
+    draw(wins.inbox, lines)
+    set_height(wins.inbox, math.min(#lines, 11))
+  end
+  if wins.list then
+    draw(wins.list, vim.tbl_map(function(item)
+      return KINDS[item.kind].format(item)
+    end, rows.list))
+    vim.wo[wins.list].winbar = host_bar()
+  end
+  if wins.footer then
+    draw(wins.footer, footer_lines())
+    set_height(wins.footer, 3)
+  end
+end
+
+local function line_of(list, item, fields)
+  for i, row in ipairs(list) do
     local same = row.kind == item.kind
-    for _, field in ipairs(KINDS[item.kind].id) do
+    for _, field in ipairs(fields or KINDS[item.kind].id) do
       same = same and row[field] == item[field]
     end
     if same then
@@ -382,126 +534,111 @@ local function row_of(picker, item)
   end
 end
 
--- The sidebar's cursor sits on what you're looking at: the agent in the focused window, or else the
--- current workspace. Left alone while you're moving around the sidebar yourself.
-local function follow(picker)
-  if picker.closed or isovim.is_sidebar(vim.api.nvim_get_current_win()) then
+-- The list's cursor sits on what you're looking at: the agent in the focused window, or else the
+-- current workspace. Left alone while you're moving around the sidebar yourself, or looking at
+-- another host.
+function M.follow()
+  local list = windows().list
+  if not list or shown_host() or isovim.is_sidebar(vim.api.nvim_get_current_win()) then
     return
   end
   local shown = vim.api.nvim_get_current_buf()
   local agent = vim.b[shown].isovim_id == isovim.current and vim.b[shown].isovim_agent
-  local target = agent and row_of(picker, { kind = "agent", ws = isovim.current, agent = agent })
-    or row_of(picker, { kind = "workspace", ws = isovim.current })
+  local target = agent and line_of(rows.list, { kind = "agent", ws = isovim.current, agent = agent })
+    or line_of(rows.list, { kind = "workspace", ws = isovim.current })
   if target then
-    picker.list:view(target)
+    vim.api.nvim_win_set_cursor(list, { target, 0 })
   end
 end
 
-local queue_ns = vim.api.nvim_create_namespace("isovim_queue")
+-- Set by an action that wants the cursor on another row once the list redraws.
+local keep
 
--- The Inbox is the picker's preview window: rendered from M.queue whatever the
--- list's cursor is on, and hidden while the queue is empty.
-local function render_queue(preview)
-  local lines, marks = {}, {}
-  for i, entry in ipairs(M.queue) do
-    local icon, hl = status.icon(entry.status)
-    local kind_icon, kind_hl = icons.get(entry.kind)
-    lines[i] = (" %s %s %s · %s"):format(icon, kind_icon, entry.ws_name, entry.name)
-    marks[i] = { { 1, #icon, hl }, { 2 + #icon, #kind_icon, kind_hl } }
-  end
-  preview:set_lines(lines)
-  vim.api.nvim_buf_clear_namespace(preview.win.buf, queue_ns, 0, -1)
-  for i, row in ipairs(marks) do
-    for _, mark in ipairs(row) do
-      local col, len, hl = unpack(mark)
-      vim.api.nvim_buf_set_extmark(preview.win.buf, queue_ns, i - 1, col, { end_col = col + len, hl_group = hl })
-    end
-  end
-  preview:wo({ cursorline = true, number = false, relativenumber = false, signcolumn = "no", statuscolumn = "", foldcolumn = "0" })
-end
-
--- The pane is as tall as the queue, so it never shows empty rows.
-local function size_queue(picker)
-  local function find(box)
-    if box.win == "preview" then
-      return box
-    end
-    for _, child in ipairs(box) do
-      local found = type(child) == "table" and find(child)
-      if found then
-        return found
-      end
-    end
-  end
-  local box = find(picker.layout.opts.layout)
-  local height = math.min(#M.queue, 10)
-  if box and box.height ~= height then
-    box.height = height
-    picker.layout:update()
-  end
-end
-
-local function update_queue(picker)
-  if picker.closed then
+-- Rows can shift (activity sort, the Inbox, subtitles), so a cursor keeps its row's item, not its
+-- line number.
+local function refresh_now()
+  local wins = windows()
+  if not wins.list then
     return
   end
-  local want = #M.queue > 0
-  if want then
-    size_queue(picker)
+  local before = keep or rows.list[vim.api.nvim_win_get_cursor(wins.list)[1]]
+  local queued = wins.inbox and rows.inbox[vim.api.nvim_win_get_cursor(wins.inbox)[1]]
+  keep = nil
+  rows.list = collect()
+  render(wins)
+  local inbox_line = queued and line_of(rows.inbox, queued, { "host", "ws", "agent" })
+  if inbox_line then
+    vim.api.nvim_win_set_cursor(wins.inbox, { inbox_line, 0 })
   end
-  if picker.layout:is_hidden("preview") == want then
-    picker:toggle("preview", { enable = want })
+  if not isovim.is_sidebar(vim.api.nvim_get_current_win()) or not before then
+    return M.follow()
   end
-  if want and picker.preview.win:valid() then
-    render_queue(picker.preview)
+  local line = line_of(rows.list, before)
+  if line then
+    vim.api.nvim_win_set_cursor(wins.list, { line, 0 })
   end
 end
 
--- Rows can shift (activity sort, the queue, subtitles), so the cursor keeps its item, not its row number.
--- Rebuilding the list resets the cursor to row 1 until the finder is done; a target holds the view
--- where it is meanwhile. Bursts of refreshes (the poll, hooks, PR updates) run once.
-local function refresh(picker)
-  if picker.isovim_refresh_pending then
+-- Bursts of refreshes (the poll, hooks, PR updates) run once.
+local pending = false
+function M.refresh()
+  if pending or not windows().list then
     return
   end
-  picker.isovim_refresh_pending = true
+  pending = true
   vim.defer_fn(function()
-    picker.isovim_refresh_pending = nil
-    if picker.closed then
-      return
-    end
-    -- A sidebar reopened by a hot reload has no cursor yet: it lands on the item the old one had.
-    local before = picker.isovim_keep or picker.list:current()
-    picker.isovim_keep = nil
-    picker.list:set_target(picker.list.cursor, picker.list.top, { force = true })
-    picker:find({
-      refresh = true,
-      on_done = function()
-        update_queue(picker)
-        if not isovim.is_sidebar(vim.api.nvim_get_current_win()) or not before then
-          return follow(picker)
-        end
-        local i = row_of(picker, before)
-        if i then
-          picker.list:view(i)
-        end
-      end,
-    })
+    pending = false
+    refresh_now()
   end, 30)
 end
 
-function M.refresh()
-  local picker = Snacks.picker.get({ source = "isovim" })[1]
-  if picker then
-    refresh(picker)
+-- Redraws without rebuilding the rows, for the spinners. False when the column isn't open.
+function M.redraw()
+  local wins = windows()
+  if wins.list then
+    render(wins)
   end
+  return wins.list ~= nil
 end
 
-function M.follow()
-  local picker = Snacks.picker.get({ source = "isovim" })[1]
-  if picker then
-    follow(picker)
+-- CPU (percent busy over a second) and RAM in use and in all (bytes), on macOS or Linux.
+local USAGE = [[
+if [ "$(uname)" = Darwin ]; then
+  cpu=$(top -l 2 -n 0 -s 1 | awk '/^CPU usage/ { u = $3 + $5 } END { print u }')
+  page=$(sysctl -n hw.pagesize)
+  used=$(vm_stat | awk -v page="$page" '/Pages active|Pages wired|occupied by compressor/ { gsub(/\./, "", $NF); n += $NF } END { printf "%.0f", n * page }')
+  total=$(sysctl -n hw.memsize)
+else
+  read -r _ a b c d e f g h _ < /proc/stat
+  busy=$((a + b + c + f + g + h)) all=$((a + b + c + d + e + f + g + h))
+  sleep 1
+  read -r _ a b c d e f g h _ < /proc/stat
+  cpu=$((100 * (a + b + c + f + g + h - busy) / (a + b + c + d + e + f + g + h - all)))
+  used=$(awk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } END { printf "%.0f", (t - a) * 1024 }' /proc/meminfo)
+  total=$(awk '/^MemTotal/ { printf "%.0f", $2 * 1024 }' /proc/meminfo)
+fi
+echo "$cpu $used $total"
+]]
+
+-- Only when asked (u): another host's is measured over ssh.
+local function measure()
+  local host = shown_host()
+  local name = host or remote.self()
+  if usage[name] == "busy" then
+    return
   end
+  local cmd = { "sh", "-c", USAGE }
+  if host then
+    local remote_cmd = vim.fn.shellescape("sh -c " .. vim.fn.shellescape(USAGE))
+    cmd = { "bash", "-c", ("%s %s %s"):format(remote.ssh, vim.fn.shellescape(remote.peers()[host]), remote_cmd) }
+  end
+  usage[name] = "busy"
+  M.redraw()
+  vim.system(cmd, { text = true, timeout = 15000 }, vim.schedule_wrap(function(result)
+    local cpu, used, total = (result.stdout or ""):match("([%d.]+) (%d+) (%d+)")
+    usage[name] = cpu and { cpu = tonumber(cpu), used = tonumber(used), total = tonumber(total) } or false
+    M.redraw()
+  end))
 end
 
 local function add_agent(ws, spec)
@@ -510,7 +647,16 @@ local function add_agent(ws, spec)
   isovim.refresh()
 end
 
--- {key, action, description}: the sidebar list's and the Inbox's keys, which `?` lists.
+-- {key, action, description}: each window's keys, which `?` lists. COLUMN_KEYS work in all of them.
+local COLUMN_KEYS = {
+  { "<c-j>", "isovim_window_down", "to the window below" },
+  { "<c-k>", "isovim_window_up", "to the window above" },
+  { "<c-l>", "isovim_focus_chat", "to the chat" },
+  { "<", "isovim_prev_host", "the host list shows the previous host" },
+  { ">", "isovim_next_host", "the host list shows the next host" },
+  { "u", "isovim_usage", "measure the shown host's CPU and RAM (in the footer)" },
+  { "?", "isovim_help", "this help" },
+}
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent or PR; a pinned file beside the chat, a folder in the explorer" },
   { "<Tab>", "isovim_toggle_expand", "expand or collapse the workspace" },
@@ -532,24 +678,22 @@ local LIST_KEYS = {
   { "P", "isovim_toggle_prs", "agents or PRs" },
   { "b", "isovim_last_workspace", "back to the last workspace" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
-  { "<c-k>", "isovim_focus_queue", "into Inbox" },
-  { "<c-l>", "isovim_focus_chat", "to the chat" },
-  { "?", "isovim_help", "this help" },
 }
-local QUEUE_KEYS = {
-  { "<cr>", "isovim_open_queued", "open that agent" },
-  { "<c-j>", "isovim_focus_list", "back to the list" },
-  { "<c-l>", "isovim_focus_chat", "to the chat" },
+local INBOX_KEYS = {
+  { "<cr>", "isovim_open_queued", "open that agent; on the title, collapse or expand the Inbox" },
+  { "<Tab>", "isovim_toggle_inbox", "collapse or expand the Inbox" },
 }
+local FOOTER_KEYS = {
+  { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json beside the chat; on cpu, ram, measure them" },
+}
+local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, footer = FOOTER_KEYS }
 
-local function keys_of(spec)
-  local keys = {}
-  for _, key in ipairs(spec) do
-    if key[1] ~= "<cr>" or key[2] ~= "isovim_open" then
-      keys[key[1]] = key[2]
-    end
+local function map_keys(buf, role)
+  for _, key in ipairs(vim.list_extend(vim.list_extend({}, COLUMN_KEYS), ROLE_KEYS[role] or {})) do
+    vim.keymap.set("n", key[1], function()
+      M.actions[key[2]]((rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]])
+    end, { buffer = buf, nowait = true, desc = "isovim: " .. key[3] })
   end
-  return keys
 end
 
 -- A float listing every isovim key, built from the tables above, the chats' and the live <leader> maps.
@@ -562,8 +706,10 @@ function M.help()
     end
     lines[#lines + 1] = ""
   end
-  section("Sidebar", LIST_KEYS)
-  section("Inbox", QUEUE_KEYS)
+  section("Sidebar (any of its windows)", COLUMN_KEYS)
+  section("Host list", LIST_KEYS)
+  section("Inbox", INBOX_KEYS)
+  section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
   local leader = {}
@@ -584,43 +730,87 @@ function M.help()
     title_pos = "center",
     border = "rounded",
     width = 64,
-    height = #lines,
+    height = math.min(#lines, vim.o.lines - 4),
     wo = { wrap = false, conceallevel = 2 },
     keys = { q = "close", ["?"] = "close" },
   })
 end
 
--- H, P and L show in the sidebar's title as badges, like the explorer's hidden-files toggle:
--- snacks draws a badge for each `toggles` entry whose picker option is on.
-local TOGGLES = { isovim_hidden = "h", isovim_prs = "p", isovim_ports = "l", isovim_tasks = "t" }
-
-local function toggle(option, badge)
-  return function(picker)
+local function toggle(option)
+  return function()
     isovim.remember(option, not isovim[option])
-    picker.opts[badge] = isovim[option]
-    picker:update_titles()
-    refresh(picker)
+    M.refresh()
   end
 end
 
+-- C-j and C-k step through the Inbox, the list and the footer; the title is no stop.
+local STOPS = { "inbox", "list", "footer" }
+local function step_window(by)
+  local at = 0
+  for i, role in ipairs(STOPS) do
+    if role == vim.b.isovim_sidebar then
+      at = i
+    end
+  end
+  local target = STOPS[at + by] and windows()[STOPS[at + by]]
+  if target then
+    vim.api.nvim_set_current_win(target)
+  end
+end
+
+local function step_host(by)
+  local all = hosts()
+  local at = 1
+  for i, name in ipairs(all) do
+    if name == (shown_host() or remote.self()) then
+      at = i
+    end
+  end
+  local name = all[(at - 1 + by) % #all + 1]
+  vim.g.isovim_sidebar_host = name ~= remote.self() and name or nil
+  if shown_host() then
+    remote.invalidate(name)
+  end
+  vim.api.nvim_win_set_cursor(windows().list, { 1, 0 })
+  refresh_now()
+end
+
 M.actions = {
-  isovim_open = function(_, item)
+  isovim_open = function(item)
     return item and KINDS[item.kind].open and KINDS[item.kind].open(item)
   end,
-  isovim_open_queued = function(picker)
-    local entry = M.queue[vim.api.nvim_win_get_cursor(picker.preview.win.win)[1]]
+  isovim_open_queued = function(entry)
+    if entry and entry.kind == "inbox" then
+      return M.actions.isovim_toggle_inbox()
+    end
     return entry and KINDS.agent.open(entry)
   end,
-  isovim_focus_queue = function(picker)
-    if not picker.layout:is_hidden("preview") then
-      picker:focus("preview")
+  isovim_toggle_inbox = function()
+    isovim.remember("inbox_collapsed", not isovim.inbox_collapsed)
+    refresh_now()
+  end,
+  isovim_open_footer = function(row)
+    if row and row.kind == "settings" then
+      isovim.open_beside(isovim.main_win(), require("isovim.config").path)
+    elseif row and row.kind == "usage" then
+      measure()
     end
   end,
-  isovim_focus_list = function(picker)
-    picker:focus("list")
+  isovim_usage = measure,
+  isovim_window_down = function()
+    step_window(1)
   end,
-  isovim_toggle_prs = toggle("show_prs", "isovim_prs"),
-  isovim_add = function(picker)
+  isovim_window_up = function()
+    step_window(-1)
+  end,
+  isovim_next_host = function()
+    step_host(1)
+  end,
+  isovim_prev_host = function()
+    step_host(-1)
+  end,
+  isovim_toggle_prs = toggle("show_prs"),
+  isovim_add = function()
     vim.ui.input({ prompt = "New workspace: " }, function(name)
       if not name or name == "" then
         return
@@ -700,7 +890,7 @@ M.actions = {
       end)
     end)
   end,
-  isovim_add_agent = function(_, item)
+  isovim_add_agent = function(item)
     if not item or not item.ws then
       return
     end
@@ -719,28 +909,30 @@ M.actions = {
       end
     end)
   end,
-  isovim_find = isovim.find,
-  isovim_open_port = function(_, item)
+  isovim_find = function()
+    isovim.find()
+  end,
+  isovim_open_port = function(item)
     if item and item.kind == "pr" then
       vim.ui.open(item.pr.url)
     elseif item and item.ws and not item.host then
       isovim.open_port(item.ws, item.agent)
     end
   end,
-  isovim_changes = function(_, item)
+  isovim_changes = function(item)
     if item and item.kind == "pr" then
       vim.ui.open(item.pr.url .. "/files")
     elseif item and item.ws and not item.host then
       isovim.changes(item.ws)
     end
   end,
-  isovim_yank_url = function(_, item)
+  isovim_yank_url = function(item)
     if item and item.kind == "pr" then
       vim.fn.setreg("+", item.pr.url)
       vim.notify("Copied " .. item.pr.url)
     end
   end,
-  isovim_restart = function(_, item)
+  isovim_restart = function(item)
     if item and item.agent and not item.host then
       Snacks.picker.util.confirm(("Restart %s?"):format(item.name), function()
         isovim.restart(item.ws, item.agent)
@@ -749,13 +941,13 @@ M.actions = {
     end
   end,
   -- t opens a new terminal in the workspace under the cursor; it outlives the TUI like the agents.
-  isovim_terminal = function(_, item)
+  isovim_terminal = function(item)
     local ws = item and item.ws or isovim.current
     if ws then
       add_agent(ws, { kind = "terminal" })
     end
   end,
-  isovim_rename = function(picker, item)
+  isovim_rename = function(item)
     if not item or not item.ws then
       return
     end
@@ -775,11 +967,11 @@ M.actions = {
       end
     end)
   end,
-  isovim_delete = function(picker, item)
-    return item and KINDS[item.kind].delete and KINDS[item.kind].delete(picker, item)
+  isovim_delete = function(item)
+    return item and KINDS[item.kind].delete and KINDS[item.kind].delete(item)
   end,
   -- m moves the workspace to another host; its agents resume there (iso move).
-  isovim_move = function(picker, item)
+  isovim_move = function(item)
     if not item or not item.ws then
       return
     elseif item.host then
@@ -819,106 +1011,140 @@ M.actions = {
     end)
   end,
   -- From an agent or pin row it collapses that row's workspace, and the cursor goes up to it.
-  isovim_toggle_expand = function(picker, item)
-    if not item or not item.ws or item.kind == "host" then
+  isovim_toggle_expand = function(item)
+    if not item or not item.ws then
       return
     end
     isovim.expanded[item.ws] = not isovim.expanded[item.ws] or nil
     isovim.remember("expanded", isovim.expanded)
-    picker.isovim_keep = { kind = "workspace", ws = item.ws }
-    refresh(picker)
+    keep = { kind = "workspace", ws = item.ws }
+    refresh_now()
   end,
-  isovim_toggle_hidden = toggle("show_hidden", "isovim_hidden"),
-  isovim_toggle_ports = toggle("show_ports", "isovim_ports"),
-  isovim_toggle_tasks = toggle("show_tasks", "isovim_tasks"),
+  isovim_toggle_hidden = toggle("show_hidden"),
+  isovim_toggle_ports = toggle("show_ports"),
+  isovim_toggle_tasks = toggle("show_tasks"),
   isovim_explorer = function()
     M.show_explorer()
   end,
   isovim_focus_chat = function()
     vim.api.nvim_set_current_win(isovim.main_win())
   end,
-  isovim_last_workspace = isovim.last_workspace,
-  isovim_help = M.help,
-  isovim_sort = function(picker)
+  isovim_last_workspace = function()
+    isovim.last_workspace()
+  end,
+  isovim_help = function()
+    M.help()
+  end,
+  isovim_sort = function()
     isovim.remember("sort", isovim.sort == "created" and "active" or "created")
     Snacks.notify.info("Sorted by " .. (isovim.sort == "created" and "creation time" or "recent activity"))
-    refresh(picker)
+    M.refresh()
   end,
 }
 
 -- Another host's rows only open; changing them is that host's business.
 for _, name in ipairs({ "isovim_add_agent", "isovim_terminal", "isovim_rename", "isovim_delete" }) do
   local action = M.actions[name]
-  M.actions[name] = function(picker, item)
+  M.actions[name] = function(item)
     if item and item.host then
       return Snacks.notify.info(("That's on %s; change it there"):format(item.host), { title = "isovim" })
     end
-    return action(picker, item)
+    return action(item)
   end
 end
 
----@param opts? {enter?: boolean}
-function M.open(opts)
-  return Snacks.picker.pick({
-    source = "isovim",
-    enter = not opts or opts.enter ~= false,
-    title = "Workspaces",
-    toggles = TOGGLES,
-    isovim_hidden = isovim.show_hidden,
-    isovim_prs = isovim.show_prs,
-    isovim_ports = isovim.show_ports,
-    isovim_tasks = isovim.show_tasks,
-    finder = sidebar_items,
-    format = function(item)
-      return KINDS[item.kind].format(item)
-    end,
-    focus = "list",
-    show_empty = true,
-    auto_close = false,
-    jump = { close = false },
-    layout = {
-      layout = {
-        backdrop = false,
-        width = 40,
-        min_width = 40,
-        height = 0,
-        position = "left",
-        border = "none",
-        box = "vertical",
-        { win = "input", height = 1, border = true, title = "{title} {live} {flags}", title_pos = "center" },
-        { win = "preview", title = "Inbox", title_pos = "center", height = 6, border = true },
-        { win = "list", border = "none" },
-      },
-    },
-    preview = function(ctx)
-      render_queue(ctx.preview)
-    end,
-    matcher = { sort_empty = false },
-    confirm = "isovim_open",
-    actions = M.actions,
-    on_show = refresh,
-    win = {
-      list = {
-        keys = keys_of(LIST_KEYS),
-      },
-      preview = {
-        keys = keys_of(QUEUE_KEYS),
-      },
-    },
-  })
+-- What every window of the column sets: read-only, nothing in the margins, its width and buffer fixed.
+local WINDOW_OPTIONS = {
+  number = false,
+  relativenumber = false,
+  signcolumn = "no",
+  statuscolumn = "",
+  foldcolumn = "0",
+  wrap = false,
+  list = false,
+  spell = false,
+  winbar = "",
+  fillchars = "eob: ",
+  winfixwidth = true,
+  winfixbuf = true,
+}
+
+local function column_buffer(role)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].filetype = "isovim_sidebar"
+  vim.b[buf].isovim_sidebar = role
+  map_keys(buf, role)
+  -- The list's cursor shows what you're on wherever you are; the Inbox's and footer's only in them.
+  if role == "inbox" or role == "footer" then
+    vim.api.nvim_create_autocmd({ "WinEnter", "WinLeave" }, {
+      buffer = buf,
+      callback = function(ev)
+        vim.wo.cursorline = ev.event == "WinEnter"
+      end,
+    })
+  end
+  return buf
 end
 
--- The sidebar shows Workspaces (W) or a file explorer rooted at the current workspace (E).
+-- The column on the left, top to bottom: the title, the Inbox, the host list and the footer. Only
+-- the host list changes height with the screen.
+---@param opts? {enter?: boolean}
+function M.open(opts)
+  local wins = windows()
+  if not wins.list then
+    wins.list = vim.api.nvim_open_win(column_buffer("list"), false, { split = "left", win = -1, width = 40 })
+    wins.title = vim.api.nvim_open_win(column_buffer("title"), false, { split = "above", win = wins.list, height = 1 })
+    wins.inbox = vim.api.nvim_open_win(column_buffer("inbox"), false, { split = "above", win = wins.list, height = 1 })
+    wins.footer = vim.api.nvim_open_win(column_buffer("footer"), false, { split = "below", win = wins.list, height = 3 })
+    for role, win in pairs(wins) do
+      for option, value in pairs(WINDOW_OPTIONS) do
+        vim.wo[win][option] = value
+      end
+      vim.wo[win].winfixheight = role ~= "list"
+      vim.wo[win].cursorline = role == "list"
+    end
+  end
+  if not version then
+    vim.system({ "git", "-C", vim.fs.dirname(panes.bin), "rev-parse", "--short", "HEAD" }, { text = true }, vim.schedule_wrap(function(result)
+      version = result.code == 0 and vim.trim(result.stdout) or "?"
+      M.redraw()
+    end))
+  end
+  refresh_now()
+  if not opts or opts.enter ~= false then
+    vim.api.nvim_set_current_win(wins.list)
+  end
+end
+
+function M.close()
+  for _, win in pairs(windows()) do
+    pcall(vim.api.nvim_win_close, win, true)
+  end
+end
+
+-- Into the sidebar: the host list, or the explorer in its place.
+function M.focus()
+  local explorer = Snacks.picker.get({ source = "explorer" })[1]
+  local list = windows().list
+  if explorer then
+    explorer:focus("list")
+  elseif list then
+    vim.api.nvim_set_current_win(list)
+  end
+end
+
+-- The sidebar shows the column (W) or a file explorer rooted at the current workspace (E).
 -- Opening is deferred a tick: snacks errors if a picker opens while the closed one is still resizing.
 ---@param opts? {cwd?: string, reveal?: string, enter?: boolean} reveal: a file to select once it's open
 function M.show_explorer(opts)
   opts = opts or {}
   M.view = "explorer"
-  for _, source in ipairs({ "isovim", "explorer" }) do
-    local open = Snacks.picker.get({ source = source })[1]
-    if open then
-      open:close()
-    end
+  M.close()
+  local open = Snacks.picker.get({ source = "explorer" })[1]
+  if open then
+    open:close()
   end
   vim.schedule(function()
     -- Each workspace's explorer reopens where it was left: its root (a jump, <BS>, .) and the item
@@ -959,24 +1185,26 @@ function M.show_workspaces()
   vim.schedule(M.open)
 end
 
--- Focuses the sidebar (Workspaces or the file explorer), or closes it when already there.
+-- Focuses the sidebar (the column or the file explorer), or closes it when already there.
 -- Reopening shows the view it had.
 function M.toggle()
-  local sidebar = Snacks.picker.get({ source = "isovim" })[1] or Snacks.picker.get({ source = "explorer" })[1]
-  if not sidebar then
+  local explorer = Snacks.picker.get({ source = "explorer" })[1]
+  if not explorer and not windows().list then
     if M.view == "explorer" then
       M.show_explorer()
     else
       M.open()
     end
-  elseif isovim.is_sidebar(vim.api.nvim_get_current_win()) then
-    sidebar:close()
+  elseif not isovim.is_sidebar(vim.api.nvim_get_current_win()) then
+    M.focus()
+  elseif explorer then
+    explorer:close()
   else
-    sidebar:focus("list")
+    M.close()
   end
 end
 
--- The sidebar's file explorer, focused; from inside it, back to Workspaces. LazyVim's own explorer
+-- The sidebar's file explorer, focused; from inside it, back to the column. LazyVim's own explorer
 -- keys come here too, rather than opening a second explorer beside the sidebar.
 function M.files()
   local explorer = Snacks.picker.get({ source = "explorer" })[1]
@@ -989,10 +1217,18 @@ function M.files()
   end
 end
 
--- After a hot reload the open sidebar's actions still point at the old code, in either view; the
--- explorer's W would bring back an old Workspaces. Reopening it must not move the cursor: put back
--- the window and mode (terminal/insert) the reload interrupted.
+-- After a hot reload the sidebar's keys and the explorer's actions still point at the old code.
+-- The column keeps its windows and takes the new keys. The explorer reopens (its W would bring
+-- back the old column), and so does the picker an isovim from before the column had; reopening
+-- must not move the cursor: put back the window and mode (terminal/insert) the reload interrupted.
 function M.reopen()
+  local wins = windows()
+  for role, win in pairs(wins) do
+    map_keys(vim.api.nvim_win_get_buf(win), role)
+  end
+  if wins.list then
+    return M.refresh()
+  end
   local sidebar = Snacks.picker.get({ source = "isovim" })[1] or Snacks.picker.get({ source = "explorer" })[1]
   if not sidebar then
     return
@@ -1003,7 +1239,6 @@ function M.reopen()
   local in_sidebar = ft:match("^snacks_picker") ~= nil or ft == "snacks_layout_box"
   local typing = vim.api.nvim_get_mode().mode:match("^[ti]") ~= nil
   local explorer = sidebar.opts.source == "explorer"
-  local keep = not explorer and sidebar.list:current() or nil
   sidebar:close()
   local function put_back_cursor()
     if not in_sidebar and vim.api.nvim_win_is_valid(win) then
@@ -1020,7 +1255,7 @@ function M.reopen()
       M.show_explorer({ enter = in_sidebar })
       vim.schedule(put_back_cursor)
     else
-      M.open({ enter = in_sidebar }).isovim_keep = keep
+      M.open({ enter = in_sidebar })
       put_back_cursor()
     end
   end)

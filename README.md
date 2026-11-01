@@ -38,6 +38,8 @@ In the sidebar, `?` lists every key. The ones to start with:
 | `d` | remove the agent or pin, or archive the workspace |
 | `P` / `H` / `L` / `T` | PRs, hidden agents, ports, tasks |
 | `E` / `W` | files / back to workspaces |
+| `<` / `>` | the previous / next host's workspaces |
+| `Ctrl-j` / `Ctrl-k` | between the Inbox, the workspaces and the footer |
 | `<leader>e` | focus or close the sidebar |
 | `Ctrl-h` / `Ctrl-l` | between the sidebar and the chat |
 
@@ -59,7 +61,7 @@ In the sidebar, `?` lists every key. The ones to start with:
 
 ### Other hosts
 
-Agents on your other machines show in the sidebar, and `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
+Agents on your other machines show in the sidebar, one host at a time (`<` / `>`); the Inbox lists what waits on you on all of them. `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
 
 ### A browser for agents
 

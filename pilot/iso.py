@@ -60,7 +60,7 @@ class Iso:
                 self._tmux_ui("set-option", "-g", *option)
             self.wait(lambda: Path(self.env["ISOVIM_SOCK"]).exists(), "TUI socket")
             self.nvim = pynvim.attach("socket", path=self.env["ISOVIM_SOCK"])
-            self.wait(lambda: self.lua("return Snacks and Snacks.picker.get({source='isovim'})[1] ~= nil"), "sidebar")
+            self.wait(lambda: self.sidebar_win(), "sidebar")
         except BaseException:
             self.stop()
             raise
@@ -126,12 +126,18 @@ class Iso:
         OUT.mkdir(exist_ok=True)
         return screenshot.render(ansi, OUT / f"{self.name}-{label}.png", self.cols, self.rows)
 
-    def sidebar(self):
-        """Non-empty sidebar rows, e.g. ["⠋ alpha", "● beta"]."""
-        rows = self.lua(
-            "local p = Snacks.picker.get({source='isovim'})[1]"
-            " return p and vim.api.nvim_buf_get_lines(p.list.win.buf, 0, -1, false) or {}"
+    def sidebar_win(self, role="list"):
+        """The sidebar column's window: title, inbox, list (the host list) or footer."""
+        return self.lua(
+            "for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
+            " if vim.b[vim.api.nvim_win_get_buf(w)].isovim_sidebar == ... then return w end end",
+            role,
         )
+
+    def sidebar(self, role="list"):
+        """Non-empty rows of a sidebar window (the host list by default), e.g. ["⠋ alpha", "● beta"]."""
+        win = self.sidebar_win(role)
+        rows = self.lua("return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(...), 0, -1, false)", win) if win else []
         return [row.strip() for row in rows if row.strip()]
 
     def tabs(self):
@@ -158,7 +164,7 @@ class Iso:
         return log.read_text().splitlines() if log.exists() else []
 
     def focus_sidebar(self):
-        self.lua("vim.api.nvim_set_current_win(Snacks.picker.get({source='isovim'})[1].list.win.win)")
+        self.lua("vim.api.nvim_set_current_win(...)", self.sidebar_win())
 
     def workspace_id(self, name):
         rows = json.loads(self.cli("ls", "--json"))
