@@ -314,7 +314,7 @@ end
 -- repos and the pseudo-repos, terminals, pinned paths), not titles or hints. A surface in a repo's
 -- Inbox is the host Inbox's item already.
 local function jumpable(row)
-  local kinds = { waiting = true, agent = true, surface = true, repo = true, terminals = true, terminal = true, path = true }
+  local kinds = { waiting = true, agent = true, surface = true, repo = true, terminals = true, terminal = true, path = true, pr = true }
   return kinds[row.kind] and not row.in_inbox
 end
 
@@ -345,6 +345,16 @@ local function jump_items(hidden)
   end
   local items = {}
   local rows = require("isovim.sidebar").all_rows(hidden)
+  -- And every PR registered here, each opening its own view, after the list's rows.
+  local surfaces = require("isovim.surfaces")
+  for _, key in ipairs(surfaces.repos()) do
+    local board = surfaces.prs_entry(key)
+    for _, group in ipairs({ "open", "draft", "merged", "closed" }) do
+      for _, pr in ipairs(board and board.groups[group] or {}) do
+        rows[#rows + 1] = { kind = "pr", repo_key = key, group_key = key, pr = pr, url = pr.url }
+      end
+    end
+  end
   for i, row in ipairs(rows) do
     if jumpable(row) then
       local chunks = jump_chunks(row)

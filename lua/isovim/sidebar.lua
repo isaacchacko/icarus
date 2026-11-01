@@ -50,6 +50,18 @@ local TASK_GLYPHS = {
 M.task_glyphs = TASK_GLYPHS
 
 local KINDS = {
+  -- A registered PR, in the jump (<leader><leader>): Enter opens its own view (isovim.pr_view).
+  pr = {
+    format = function(item)
+      local icon, hl = require("isovim.prs").icon(item.pr)
+      local label = item.pr.number and ("#%d %s"):format(item.pr.number, item.pr.title or "") or item.pr.url
+      return { { icon, hl }, { " " }, { label } }
+    end,
+    open = function(item)
+      require("isovim.pr_view").open(item.repo_key, item.pr.url)
+    end,
+    id = { "repo_key", "url" },
+  },
   hint = {
     format = function(item)
       return { { "  " .. item.text, "Comment" } }
@@ -1566,6 +1578,9 @@ function M.help()
   section("PRs surface (on a PR's line)", vim.tbl_map(function(key)
     return { key[1], key[2] }
   end, require("isovim.surface_view").prs_keys))
+  section("PR view (one PR, read-only)", vim.tbl_map(function(key)
+    return { key[1], key[2] }
+  end, require("isovim.pr_view").keys))
   -- The live maps, so a key set elsewhere (the chat's own, LazyVim's ctrl+/) shows as it is; the
   -- <leader>i group under its own heading.
   local leader, group = {}, {}

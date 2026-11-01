@@ -33,9 +33,12 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 
--- The PRs surface's keys on a PR's line, for its view and ? help: {lhs, what, fn(pr)}.
+-- The PRs surface's keys on a PR's line, for its view and ? help: {lhs, what, fn(pr, view)}.
 M.prs_keys = {
-  { "<CR>", "open the PR in the browser", function(pr)
+  { "<CR>", "open the PR as its own view (isovim.pr_view)", function(pr, view)
+    require("isovim.pr_view").open(view.repo, pr.url)
+  end },
+  { "o", "open the PR in the browser", function(pr)
     vim.ui.open(pr.url)
   end },
   { "y", "copy the PR's URL", function(pr)
@@ -734,7 +737,7 @@ local function bind(view)
       vim.keymap.set("n", key[1], function()
         local pr = (view.pr_rows or {})[vim.api.nvim_win_get_cursor(0)[1]]
         if pr then
-          key[3](pr)
+          key[3](pr, view)
         end
       end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
     end

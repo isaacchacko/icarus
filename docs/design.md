@@ -265,7 +265,19 @@ one tab, isovim, in every scope.
   and `N` replace it with the next or previous question waiting on you in the Inbox's order (round
   past the end; one a root is deciding isn't waiting on you). An
   agent's permission request (Allow / Deny) is one of these too.
-- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. The sidebar's
+- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. `<CR>` on a PR
+  there (or picking it in `<leader><leader>`) opens its own view (`isovim_pr`, isovim.pr_view), a tab:
+  its header (#n and title; state, author, base ← head, the agent that registered it, age,
+  mergeable or conflicts), its description drawn as the chat draws an agent's markdown (tables
+  too), its checks with their glyph and duration (`<CR>` on a failed one opens `gh run view
+  --log-failed` as a tab), its reviews and comments and the inline threads by file:line with their
+  replies (resolved ones folded), and its files with their +/- counts (`<CR>` opens that file's
+  part of `gh pr diff` as a diff buffer tab, `c` the whole diff). Each section folds (`za`); `o` opens
+  it in the browser, `y` copies its URL, `a` opens the registering agent's chat, `r` fetches again.
+  It's read-only: approving, merging and commenting are the browser's. gh runs in the background
+  (gh pr view, and gh api graphql for the threads), cached under `run/<repo>/pr-<n>.json`; the view
+  draws from the cache at once with "refreshing…" in its header, says when gh gave nothing, and
+  fetches again on a `pr.<repo>.<n>.ci|review|state` event. The sidebar's
   P toggle, which swapped a repo's agents for its PRs, is gone with the PR rows and their `y`.
 
 ## The sidebar
