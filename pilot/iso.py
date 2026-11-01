@@ -34,6 +34,8 @@ class Iso:
         self.env = {
             **os.environ,
             "ISOVIM_HOME": str(self.tmp / "home"),
+            # Never the real ~/iso: a pilot that cleans up work must only see its own.
+            "ISOVIM_WORK": str(self.tmp / "work"),
             "ISOVIM_TMUX_SOCKET": f"isot-panes-{os.getpid()}-{name}"[:60],
             "ISOVIM_SOCK": str(self.tmp / "s"),
             "ISOVIM_AGENT_CMD": str(REPO / "pilot" / "fake-agent"),

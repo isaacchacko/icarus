@@ -8,6 +8,8 @@ M.session_file = M.root .. "/session.json"
 M.lock_file = M.root .. "/isovim.lock"
 -- Unix sockets cap paths near 104 bytes, so tests with a deep ISOVIM_HOME set ISOVIM_SOCK.
 M.socket = vim.env.ISOVIM_SOCK or M.root .. "/nvim.sock"
+-- Where agents' work will live (~/iso/<owner>-<repo>/...); pilots point it into their tmp dir.
+M.work = vim.env.ISOVIM_WORK or vim.fs.normalize("~/iso")
 
 local META = ".isovim.json"
 
