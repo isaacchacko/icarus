@@ -126,6 +126,7 @@ end
 ---@field seeding boolean drop output until the screen it follows has been drawn
 ---@field size? string
 ---@field seeded_width? integer the width the terminal last got the pane's history at
+---@field fullscreen? boolean the pane is on the alternate screen
 
 -- Global so a hot reload keeps the live chats.
 _G.isovim_streams = _G.isovim_streams or {}
@@ -172,6 +173,7 @@ local function seed(buf)
         for i, flag in ipairs(FLAGS) do
           pane[flag] = values[i]
         end
+        stream.fullscreen = pane.alternate_on == "1"
       end
     end,
     function(lines)
@@ -201,6 +203,19 @@ local function fit(buf)
   end
 end
 
+-- Whether the screen is alternate after this output: its last switch (1049, 1047 or 47), if any.
+local function alternate_switch(out, fullscreen)
+  local last = 0
+  for _, mode in ipairs({ "1049", "1047", "47" }) do
+    for at, set in out:gmatch("()\27%[%?" .. mode .. "([hl])") do
+      if at > last then
+        last, fullscreen = at, set == "h"
+      end
+    end
+  end
+  return fullscreen
+end
+
 local function on_line(buf, line)
   local stream = streams[buf]
   if stream.block then
@@ -225,8 +240,10 @@ local function on_line(buf, line)
   end
   local data = line:match("^%%output %%%d+ (.*)$")
   if data then
+    local out = terminal_output(data)
+    stream.fullscreen = alternate_switch(out, stream.fullscreen)
     if not stream.seeding then
-      vim.api.nvim_chan_send(stream.term, terminal_output(data))
+      vim.api.nvim_chan_send(stream.term, out)
     end
   elseif line:match("^%%begin %d+ %d+ 1$") then
     stream.block = {}
@@ -324,6 +341,12 @@ function M.check(buf)
       end
     end,
   })
+end
+
+-- A full-screen program (Claude's ctrl+g editor, vim, htop) owns the pane: it's on the alternate screen.
+---@return boolean
+function M.fullscreen(buf)
+  return streams[buf] ~= nil and streams[buf].fullscreen == true
 end
 
 ---@return boolean

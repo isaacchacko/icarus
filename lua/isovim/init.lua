@@ -138,8 +138,9 @@ local function watch_interrupt(ws, agent)
   vim.defer_fn(check, 300)
 end
 
--- Esc leaves the chat like any other mode, to scroll and search it; ctrl+q (unbound in Claude Code)
--- sends Claude its Esc. ctrl+h goes to the sidebar; ctrl+l to a split on the right, if any.
+-- Esc leaves the chat like any other mode, to scroll and search it, unless a full-screen program has
+-- the pane; ctrl+q (unbound in Claude Code) sends Claude its Esc. ctrl+h goes to the sidebar; ctrl+l
+-- to a split on the right, if any.
 -- The terminal flattens shift+enter to enter, so it goes as meta+enter, Claude's other newline.
 -- A prompt (new workspace, rename, ...) without focus is a float no key can reach: cancel it.
 local function close_stray_prompts()
@@ -155,11 +156,15 @@ end
 local CHAT_KEYS = {
   {
     "<Esc>",
-    function()
+    function(buf)
       close_stray_prompts()
+      -- A full-screen program (Claude's ctrl+g editor) needs its Esc and has no scrollback to read.
+      if stream.fullscreen(buf) then
+        return stream.send(buf, "\27")
+      end
       vim.cmd.stopinsert()
     end,
-    "leave the chat to normal mode (and drop any stray prompt)",
+    "leave the chat to normal mode, or Esc to a full-screen program in it (and drop any stray prompt)",
   },
   {
     "<C-q>",

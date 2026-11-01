@@ -221,6 +221,8 @@ function M.trust(dir)
   os.rename(tmp, M.claude_json)
 end
 
+local HOST_NVIM_ENV = { "NVIM", "NVIM_APPNAME", "MYVIMRC", "VIMRUNTIME", "NVIM_LOG_FILE" }
+
 ---@param agent isovim.Agent
 function M.start(ws, agent, dir)
   if agent.kind == "claude" then
@@ -242,6 +244,11 @@ function M.start(ws, agent, dir)
   }
   -- Set in the same call so even the server's first pane keeps a long scrollback for isovim.stream to replay.
   local args = { "set-option", "-g", "history-limit", "100000", ";" }
+  -- The server copies the env of whoever started it, an isovim nvim: an agent's nvim (Claude's
+  -- ctrl+g editor) would boot isovim's config instead of your own.
+  for _, name in ipairs(HOST_NVIM_ENV) do
+    vim.list_extend(args, { "set-environment", "-g", "-u", name, ";" })
+  end
   vim.list_extend(args, { "new-session", "-d", "-s", session(ws, agent.id), "-c", dir })
   vim.list_extend(args, env)
   local result = tmux(vim.list_extend(args, M.agent_cmd(ws, agent, dir)))
