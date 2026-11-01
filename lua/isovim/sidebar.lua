@@ -20,8 +20,14 @@ M.queue = {} ---@type table[] the top Inbox: other hosts' surfaces waiting on yo
 M.local_groups = {} ---@type table<string, table> this host's groups by key, from the last refresh
 
 -- Only what waits on you: a raised decision or a question. A finished turn (the green dot) doesn't.
+-- A hidden agent's counts too: hiding an agent never hides what needs you.
 function M.needs_you(agent)
-  return not agent.hidden and agent.status == "attention"
+  return agent.status == "attention"
+end
+
+-- Whether the list shows the agent: hidden ones only while H shows them, or while they need you.
+local function listed(agent)
+  return not agent.hidden or isovim.show_hidden or agent.status == "attention"
 end
 
 -- A path as the sidebar names it: relative to the workspace's project dir when inside it.
@@ -681,9 +687,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     end
   end
   for _, g in ipairs(groups) do
-    local agents = vim.tbl_filter(function(entry)
-      return not entry.hidden or isovim.show_hidden
-    end, g.agents)
+    local agents = vim.tbl_filter(listed, g.agents)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
     if g.kind == "root" then
       for i, entry in ipairs(agents) do
@@ -937,7 +941,7 @@ M.is_live = is_live
 
 -- The other hosts' surfaces waiting on you go to M.queue, the top Inbox; the rows returned are the
 -- shown host's (its Inbox, root, repos, general), its terminals in M.terminals. Hidden agents show
--- only while show_hidden is on.
+-- only while show_hidden is on or while they need you; a hint counts the rest.
 local function collect()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()
@@ -946,6 +950,7 @@ local function collect()
   local queue = {}
   local working = false
   local live = 0
+  local hidden = 0
   for _, ws in ipairs(workspaces) do
     local running = sessions[ws.id] or {}
     ws.active = ws.modified
@@ -959,7 +964,10 @@ local function collect()
       end
       agent.status = status.get(ws.id, agent.id)
       ws.active = math.max(ws.active, running[agent.id] or 0)
-      if not agent.hidden or isovim.show_hidden then
+      if not listed(agent) and not is_terminal(agent) then
+        hidden = hidden + 1
+      end
+      if listed(agent) then
         if is_terminal(agent) then
           ws.terminals[#ws.terminals + 1] = agent
         else
@@ -1012,7 +1020,12 @@ local function collect()
     return items
   end
   local entries, extra = local_entries(workspaces)
-  return host_rows(nil, nil, entries, local_surfaces(), extra)
+  local rows = host_rows(nil, nil, entries, local_surfaces(), extra)
+  -- So you know they're there.
+  if hidden > 0 then
+    rows[#rows + 1] = { kind = "hint", text = ("%d hidden · H"):format(hidden) }
+  end
+  return rows
 end
 
 -- The column's windows by role (inbox, list, terminals, footer), found by their buffers' b:isovim_sidebar.

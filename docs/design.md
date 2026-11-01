@@ -187,6 +187,11 @@ box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-yo
 
 - **Starting role:** every agent starts as a worker. An agent spawns only roles at or below its own, and
   the limits hold: one router per repo per host, one repo-root per repo, one root per host.
+- **A router's workers start hidden** (`iso router spawn --shown` for one the user should see): the
+  sidebar, its team counts and the pickers leave them out until `H` shows them (persisted), and a
+  hint at the list's end counts them (`3 hidden · H`). One that needs the user (a raised decision)
+  still shows and notifies, and its surfaces are in the Inbox as anyone's. The user's spawns, and
+  workers' and roots', show.
 - **Promotion** is done by agents (themselves or another), one way only:
   - worker → router: in a repo with no router on this host.
   - worker or router → repo-root, and any of those → root: only if that level is empty.

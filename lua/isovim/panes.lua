@@ -220,7 +220,8 @@ local V0 = {
       .. "parent and no router, end your turn on the question in your own chat. `iso task`, `iso pin` and "
       .. "`iso ask` are retired: all three are now a message to your parent.",
     router = "As the router you are your repo's one interface to the user on this host: they see what you "
-      .. "put in front of them, and little else. Run the work through workers (`iso router spawn`), keep "
+      .. "put in front of them, and little else. Run the work through workers (`iso router spawn`; they start "
+      .. "hidden from the user's sidebar until they press H, so `--shown` one they should see), keep "
       .. "them moving, and bring the user only what needs them, as surfaces: files in your repo's iso/ "
       .. "(~/.iso/<owner>/<repo>/iso/), which only you write and isovim shows in the repo's Inbox. "
       .. "`iso router surface question '<json>'|<file>|-` asks, with {question, options: [{label, "

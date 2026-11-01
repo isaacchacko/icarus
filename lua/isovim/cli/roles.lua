@@ -279,6 +279,7 @@ function M.spawn(args)
   flag(args, "--acp")
   local kind = option(args, "--kind", "claude")
   local name = option(args, "--name")
+  local shown = flag(args, "--shown")
   local prompt = vim.trim(table.concat(args, " "))
   if not RANK[role] then
     fail("--role is one of " .. table.concat(commands.roles, ", "))
@@ -318,12 +319,15 @@ function M.spawn(args)
   if read_only and key and store.is_pseudo(key) then
     fail("a read-only agent works in its repo's base clone: spawn it with --repo and a git repo")
   end
+  -- A router's workers start hidden (H in the sidebar shows them), unless it passes --shown; the
+  -- user's spawns, and workers' and roots', show.
+  local hidden = (address and mine == "router" and not shown) or nil
   if not name then
     name = prompt ~= "" and table.concat(vim.list_slice(vim.split(prompt, "%s+"), 1, 4), " "):sub(1, 30) or role
   end
   if key then
     spawn_acp(key, dir, { kind = kind, name = name, prompt = prompt ~= "" and prompt or nil, role = role,
-      parent = not ROOTS[role] and address or nil, read_only = read_only or nil })
+      parent = not ROOTS[role] and address or nil, read_only = read_only or nil, hidden = hidden })
     c.tui("require('isovim').refresh()")
     return
   end
@@ -333,6 +337,7 @@ function M.spawn(args)
     role = role ~= "worker" and role or nil,
     parent = not ROOTS[role] and address or nil,
     read_only = read_only or nil,
+    hidden = hidden,
   })
   local ws = c.resolve(id)
   c.ensure_running(ws, store.agent(id, "main"))

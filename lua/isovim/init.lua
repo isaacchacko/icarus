@@ -477,15 +477,15 @@ local function notify(message, level)
   end
 end
 
--- Notifies when an agent off screen finishes or needs you. Hidden agents never notify. The first
--- pass after setup only records, so reloads stay quiet.
+-- Notifies when an agent off screen finishes or needs you. A hidden agent notifies only when it
+-- needs you. The first pass after setup only records, so reloads stay quiet.
 local function notify_changes(quiet)
   M.mark_visible_seen()
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       local key = ws.id .. "/" .. agent.id
       local now = status.get(ws.id, agent.id)
-      if not quiet and not agent.hidden and now ~= notified[key] and (now == "unread" or now == "attention") then
+      if not quiet and now ~= notified[key] and (now == "attention" or (now == "unread" and not agent.hidden)) then
         local message = ("%s · %s %s"):format(ws.name, agent.name, now == "attention" and "needs you" or "finished")
         notify(message, now == "attention" and "warn" or "info")
       end
@@ -503,7 +503,7 @@ function M.notify_remote(host, rows)
   remote_notified[host] = seen
   for _, row in ipairs(rows) do
     local now = (row.status == "unread" or row.status == "attention") and row.status or false
-    if not first and not row.hidden and now and seen[row.id] ~= now then
+    if not first and now and seen[row.id] ~= now and (now == "attention" or not row.hidden) then
       local message = ("%s · %s · %s %s"):format(host, row.workspace, row.agent, now == "attention" and "needs you" or "finished")
       notify(message, now == "attention" and "warn" or "info")
     end

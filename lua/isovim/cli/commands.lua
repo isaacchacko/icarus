@@ -79,7 +79,7 @@ M.list = {
   { name = "spawn", module = "roles",
     args = { "<text>..." },
     flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>",
-      ["--kind"] = "claude|codex" },
+      ["--kind"] = "claude|codex", ["--shown"] = false },
     audience = "user",
     summary = "start an agent over ACP (claude, or codex), the repo's next aN",
     help = [=[
@@ -93,7 +93,9 @@ M.list = {
                                      An agent's spawn is its child, of a role no higher than
                                      its own; one router per repo here, one repo-root per repo,
                                      one root per host. --read-only runs it in the repo's base
-                                     clone, fetched first, and refuses its edits]=],
+                                     clone, fetched first, and refuses its edits. A router's
+                                     spawn starts hidden (H in the sidebar shows it) unless
+                                     --shown]=],
   },
   { name = "new", module = "workspaces",
     retired = "iso spawn starts an agent, in a repo with --repo",
