@@ -1032,6 +1032,9 @@ local function draw(win, chunk_lines)
   for i, chunks in ipairs(chunk_lines) do
     local text, col = {}, 0
     for _, chunk in ipairs(chunks) do
+      -- A row is one line: a title or question with a newline in it (an agent's summary, a
+      -- surface's question) would make nvim_buf_set_lines refuse the whole sidebar.
+      chunk = { (tostring(chunk[1] or "")):gsub("[\r\n]+", " "), chunk[2] }
       text[#text + 1] = chunk[1]
       if chunk[2] then
         marks[#marks + 1] = { i - 1, col, col + #chunk[1], chunk[2] }
