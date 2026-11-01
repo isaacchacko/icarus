@@ -168,7 +168,7 @@ end
 function commands.pr(args)
   local ws = resolve(args[1])
   local url = args[2] and prs.normalize(args[2]) or fail("usage: iso pr <ws> <pr url|owner/repo#n>")
-  store.add_pr(ws.id, url)
+  store.add_pr(ws.id, url, caller_address())
   tui("require('isovim').refresh()")
 end
 

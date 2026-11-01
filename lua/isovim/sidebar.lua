@@ -5,7 +5,6 @@
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 local status = require("isovim.status")
-local prs = require("isovim.prs")
 local icons = require("isovim.icons")
 local diffstat = require("isovim.diffstat")
 local remote = require("isovim.remote")
@@ -268,25 +267,6 @@ local KINDS = {
     end,
     id = { "ws", "path" },
   },
-  pr = {
-    format = function(item)
-      local icon, hl = prs.icon(item.pr)
-      local label = item.pr.number and ("#%d %s"):format(item.pr.number, item.pr.title) or item.pr.url
-      -- The CI mark before the title, which the sidebar's width often cuts.
-      local row = vim.list_extend({ { "  " }, { icon, hl } }, prs.marks(item.pr))
-      return vim.list_extend(row, { { " " }, { label, item.pr.state ~= "OPEN" and "Comment" or nil } })
-    end,
-    open = function(item)
-      vim.ui.open(item.pr.url)
-    end,
-    id = { "ws", "url" },
-  },
-  empty = {
-    format = function()
-      return { { "    no PRs yet", "Comment" } }
-    end,
-    id = { "ws" },
-  },
 }
 KINDS.task.open = KINDS.agent.open
 KINDS.waiting.open = KINDS.surface.open
@@ -308,6 +288,7 @@ local SURFACE_GLYPHS = {
   question = { "?", "DiagnosticWarn" },
   chat = { "●", "DiagnosticOk" },
   tasks = { "\u{f0ae}", "Special" }, -- fa-tasks
+  prs = { "\u{f407}", "Special" }, -- oct-git-pull-request
   broken = { "\u{f071}", "DiagnosticError" }, -- fa-warning
 }
 
@@ -354,6 +335,13 @@ function M.surface_chunks(entry)
         -- would cover the count.
         vim.list_extend(row, { { "  " .. task_glyph .. " ", task_hl }, { tostring(n), "Comment" } })
       end
+    end
+  elseif kind == "prs" then
+    -- In the Inbox, how many wait on you; else how many it lists.
+    if entry.needs_you then
+      row[#row + 1] = { ("  %d waiting on you"):format(entry.waiting), "DiagnosticWarn" }
+    else
+      row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
     end
   elseif (kind == "file" or kind == "folder") and entry.exists == false then
     row[#row + 1] = { "  missing", "DiagnosticWarn" }
@@ -706,8 +694,12 @@ end
 local function group_surface_rows(items, base, host, key, list, root_mode)
   local boards, plain, needing = {}, {}, {}
   for _, entry in ipairs(list) do
-    table.insert(entry.needs_you and needing or entry.type == "tasks" and boards or plain, entry)
+    table.insert(entry.needs_you and needing or (entry.type == "tasks" or entry.type == "prs") and boards or plain, entry)
   end
+  -- The Task Board, then the PRs.
+  table.sort(boards, function(a, b)
+    return a.type == "tasks" and b.type ~= "tasks"
+  end)
   for _, entry in ipairs(vim.list_extend(boards, plain)) do
     items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = 1, group_key = key })
   end
@@ -829,37 +821,24 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
           end))
           group_surface_rows(items, base_host, host, g.key, list, root_mode)
         end
-        if not host and isovim.show_prs then
-          local any = false
-          for _, ws in ipairs(extra and extra.workspaces_of[g.key] or {}) do
-            for _, pr in ipairs(prs.list(ws.id, M.refresh)) do
-              any = true
-              items[#items + 1] = { kind = "pr", group_key = g.key, ws = ws.id, ws_name = ws.name, pr = pr, url = pr.url }
-            end
-          end
-          if not any then
-            items[#items + 1] = { kind = "empty", group_key = g.key, ws = g.key }
-          end
-        else
-          if g.kind == "general" and #agents == 0 and not host then
-            items[#items + 1] = { kind = "hint", text = "no agents · s spawn" .. (#entries == 0 and " · ? keys" or ""), repo_key = GENERAL_KEY }
-          end
-          for _, entry in ipairs(listed_agents(agents)) do
-            entry.group_key = g.key
-            items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = g.key })
-            add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
-          end
-          for _, ws in ipairs(not host and extra and extra.workspaces_of[g.key] or {}) do
-            for _, pin in ipairs(store.pinned(ws.id)) do
-              items[#items + 1] = {
-                kind = "path", group_key = g.key,
-                ws = ws.id,
-                ws_name = ws.name,
-                path = pin.path,
-                label = pin.label or short_path(ws.id, pin.path),
-                is_dir = vim.fn.isdirectory(pin.path) == 1,
-              }
-            end
+        if g.kind == "general" and #agents == 0 and not host then
+          items[#items + 1] = { kind = "hint", text = "no agents · s spawn" .. (#entries == 0 and " · ? keys" or ""), repo_key = GENERAL_KEY }
+        end
+        for _, entry in ipairs(listed_agents(agents)) do
+          entry.group_key = g.key
+          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = g.key })
+          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+        end
+        for _, ws in ipairs(not host and extra and extra.workspaces_of[g.key] or {}) do
+          for _, pin in ipairs(store.pinned(ws.id)) do
+            items[#items + 1] = {
+              kind = "path", group_key = g.key,
+              ws = ws.id,
+              ws_name = ws.name,
+              path = pin.path,
+              label = pin.label or short_path(ws.id, pin.path),
+              is_dir = vim.fn.isdirectory(pin.path) == 1,
+            }
           end
         end
       end
@@ -1190,8 +1169,8 @@ end
 -- What each window's lines stand for, line by line: the actions take the one under the cursor.
 local rows = { list = {}, footer = {} }
 
--- H, P, L and T show in the title as badges while they're on.
-local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "L" }, { "show_tasks", "T" } }
+-- H, L and T show in the title as badges while they're on.
+local TOGGLES = { { "show_hidden", "H" }, { "show_ports", "L" }, { "show_tasks", "T" } }
 
 -- The column's title sits in the tab line, over the column (bufferline's offset for the sidebar's
 -- filetype), so the column runs the screen's full height: the style meter, then the badges at the
@@ -1400,6 +1379,10 @@ local function refresh_now()
   rows.list = collect()
   render(wins)
   require("isovim.landing").refresh()
+  -- The PRs surfaces open follow the PRs' cache.
+  if package.loaded["isovim.surface_view"] then
+    require("isovim.surface_view").refresh_prs()
+  end
   -- The tab bar tidied: windows marked, no stray [No Name] tab (isovim.tabs).
   require("isovim.tabs").sync()
   if not isovim.is_sidebar(vim.api.nvim_get_current_win()) or not before then
@@ -1517,13 +1500,11 @@ local LIST_KEYS = {
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's; on a PR, the PR" },
-  { "y", "isovim_yank_url", "copy the PR's URL" },
-  { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
+  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's" },
+  { "c", "isovim_changes", "its changes since its base" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
   { "S", "isovim_sort", "sort by creation or by recent activity" },
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
-  { "P", "isovim_toggle_prs", "agents or PRs" },
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
 }
@@ -1581,6 +1562,9 @@ function M.help()
   section("ACP chat", acp_keys.chat)
   section("Prompt queue (under the chat, while prompts wait)", acp_keys.queue)
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
+  section("PRs surface (on a PR's line)", vim.tbl_map(function(key)
+    return { key[1], key[2] }
+  end, require("isovim.surface_view").prs_keys))
   -- The live maps, so a key set elsewhere (the chat's own, LazyVim's ctrl+/) shows as it is; the
   -- <leader>i group under its own heading.
   local leader, group = {}, {}
@@ -1941,7 +1925,6 @@ M.actions = {
   isovim_prev_host = function()
     step_host(-1)
   end,
-  isovim_toggle_prs = toggle("show_prs"),
   isovim_add = function()
     if M.refuse_legacy("New workspaces were retired at the cutover: s spawns an agent in its repo") then
       return
@@ -2010,23 +1993,13 @@ M.actions = {
     isovim.find()
   end,
   isovim_open_port = function(item)
-    if item and item.kind == "pr" then
-      vim.ui.open(item.pr.url)
-    elseif item and item.ws and not item.host then
+    if item and item.ws and not item.host then
       isovim.open_port(item.ws, item.agent)
     end
   end,
   isovim_changes = function(item)
-    if item and item.kind == "pr" then
-      vim.ui.open(item.pr.url .. "/files")
-    elseif item and item.ws and not item.host then
+    if item and item.ws and not item.host then
       isovim.changes(item.ws)
-    end
-  end,
-  isovim_yank_url = function(item)
-    if item and item.kind == "pr" then
-      vim.fn.setreg("+", item.pr.url)
-      vim.notify("Copied " .. item.pr.url)
     end
   end,
   isovim_restart = function(item)

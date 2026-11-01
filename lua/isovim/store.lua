@@ -1019,6 +1019,13 @@ function M.prs(ws)
   return (read_meta(M.path(ws)) or {}).prs or {}
 end
 
+-- Who registered each of the workspace's PRs, and when: url -> {by?: "<ws>/<agent>", at: epoch}.
+-- Missing for one registered before isovim kept it, or found by itself (autopr, discover).
+---@return table<string, {by?: string, at?: number}>
+function M.pr_info(ws)
+  return (read_meta(M.path(ws)) or {}).pr_info or {}
+end
+
 -- Files and folders an agent pinned for you (`iso pin`), shown under the workspace.
 -- Kept relative to ~, like the project dir, so they mean the same on every host.
 ---@return {path: string, label?: string, auto?: boolean}[]
@@ -1073,7 +1080,8 @@ function M.unpin(ws, path)
 end
 
 ---@return boolean added false when it was already there
-function M.add_pr(ws, url)
+---@param by? string the agent that registered it, "<ws>/<agent>"
+function M.add_pr(ws, url, by)
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}
   meta.prs = meta.prs or {}
@@ -1081,6 +1089,8 @@ function M.add_pr(ws, url)
     return false
   end
   meta.prs[#meta.prs + 1] = url
+  meta.pr_info = meta.pr_info or {}
+  meta.pr_info[url] = { by = by, at = os.time() }
   write_meta(dir, meta)
   return true
 end

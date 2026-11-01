@@ -255,6 +255,7 @@ one tab, isovim, in every scope.
 | file / folder | `iso router surface file\|folder <path>` | the file as a tab in the main window; the folder as the explorer's root |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
 | Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed, alone in its window with no input box; one that doesn't parse shown as it is and marked broken |
+| PRs | isovim, for a repo (or the root) with PRs registered by `iso <role> pr` (which keeps who registered each and when) | drawn by isovim (`isovim_prs`) from the PRs' cache, never waiting on gh: grouped Open, Draft, Merged today, Closed, a merged or closed one gone a day after; a line each with its CI glyph, `#n` and title, its review (approved, changes requested, review required), the agent that registered it and its age. `<CR>` opens the PR in the browser, `y` copies its URL, `c` opens its Files changed, `a` the agent's chat. A plain row after the Task Board with how many it lists; in the Inbox, with how many, while a PR waits on you (open, not a draft, CI green, no changes requested) |
 
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
 - A question opens as a tab in the main window like a markdown surface, never as a popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
@@ -264,7 +265,8 @@ one tab, isovim, in every scope.
   and `N` replace it with the next or previous question waiting on you in the Inbox's order (round
   past the end; one a root is deciding isn't waiting on you). An
   agent's permission request (Allow / Deny) is one of these too.
-- PRs appear only when the router registers them (`iso router pr`).
+- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. The sidebar's
+  P toggle, which swapped a repo's agents for its PRs, is gone with the PR rows and their `y`.
 
 ## The sidebar
 
@@ -490,9 +492,9 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `s` / `t` | spawn / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |
 | `x` | root mode |
-| `o` / `y` / `c` | open the port / copy the PR URL / changes |
+| `o` / `c` | open the port / changes |
 | `u` | measure CPU/RAM |
-| `H` / `P` / `L` | toggles |
+| `H` / `L` | toggles |
 | `?` | help |
 
 `m` sends the row under the cursor to a host picked from the peers (this one left out), by `iso move`.

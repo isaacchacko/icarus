@@ -15,7 +15,6 @@ local M = {}
 M.current = nil ---@type string? id of the workspace last focused
 M.sort = "created" ---@type "created"|"active"
 M.show_hidden = false
-M.show_prs = false -- every workspace lists its PRs instead of its agents
 M.show_ports = false -- rows show the ports their agents and terminals listen on
 M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
@@ -33,7 +32,6 @@ function M.remember(key, value)
     current = M.current,
     sort = M.sort,
     show_hidden = M.show_hidden,
-    show_prs = M.show_prs,
     show_ports = M.show_ports,
     show_tasks = M.show_tasks,
     explorer_roots = M.explorer_roots,
@@ -666,7 +664,6 @@ function M.setup(opts)
   end
   M.sort = session.sort or M.sort
   M.show_hidden = session.show_hidden or false
-  M.show_prs = session.show_prs or false
   M.show_ports = session.show_ports or false
   M.show_tasks = session.show_tasks or false
   M.explorer_roots = session.explorer_roots or {}

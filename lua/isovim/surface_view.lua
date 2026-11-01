@@ -33,10 +33,32 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 
+-- The PRs surface's keys on a PR's line, for its view and ? help: {lhs, what, fn(pr)}.
+M.prs_keys = {
+  { "<CR>", "open the PR in the browser", function(pr)
+    vim.ui.open(pr.url)
+  end },
+  { "y", "copy the PR's URL", function(pr)
+    vim.fn.setreg("+", pr.url)
+    vim.notify("Copied " .. pr.url)
+  end },
+  { "c", "the PR's Files changed", function(pr)
+    vim.ui.open(pr.url .. "/files")
+  end },
+  { "a", "the chat of the agent that registered it", function(pr)
+    local ws, agent = (pr.by or ""):match("^(.*)/([^/]+)$")
+    if not ws then
+      return vim.notify("isovim: no agent registered " .. pr.url, vim.log.levels.WARN)
+    end
+    require("isovim").open(ws, agent)
+  end },
+}
+
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"tasks"|"question"
+---@field kind "markdown"|"tasks"|"prs"|"question"
+---@field pr_rows? table<integer, isovim.Pr> prs: the PR each line is, for its keys
 ---@field buf integer the rendered view
 ---@field input integer the input box
 ---@field under? integer the window the input box was opened under
@@ -161,13 +183,103 @@ local function board(entry)
   return lines, marks
 end
 
+local PR_GROUPS = { { "open", "Open" }, { "draft", "Draft" }, { "merged", "Merged today" }, { "closed", "Closed" } }
+local CI = { pass = { "✓", "DiagnosticOk" }, fail = { "✗", "DiagnosticError" }, pending = { "●", "DiagnosticWarn" } }
+local REVIEW = {
+  APPROVED = { "approved", "DiagnosticOk" },
+  CHANGES_REQUESTED = { "changes requested", "DiagnosticError" },
+  REVIEW_REQUIRED = { "review required", "DiagnosticWarn" },
+}
+
+-- How long ago, in one unit: 5m, 3h, 2d.
+local function age(at)
+  local seconds = math.max(0, os.time() - at)
+  if seconds < 3600 then
+    return ("%dm"):format(math.floor(seconds / 60))
+  elseif seconds < 86400 then
+    return ("%dh"):format(math.floor(seconds / 3600))
+  end
+  return ("%dd"):format(math.floor(seconds / 86400))
+end
+
+-- The PRs surface's lines, highlights and the PR on each line: its title, then each group that has
+-- PRs, a PR a line: its CI (or merged/closed glyph), #n and title, then dim: its review, the agent
+-- that registered it and its age.
+local function prs_board(entry)
+  local prs = require("isovim.prs")
+  local lines, marks, rows = {}, {}, {}
+  local function add(text, hl)
+    lines[#lines + 1] = text
+    if hl then
+      marks[#marks + 1] = { #lines - 1, 0, #text, hl }
+    end
+  end
+  add("PRs", "Title")
+  local repo = "  " .. entry.repo
+  marks[#marks + 1] = { 0, #lines[1], #lines[1] + #repo, "Comment" }
+  lines[1] = lines[1] .. repo
+  for _, group in ipairs(PR_GROUPS) do
+    local list = entry.groups and entry.groups[group[1]] or {}
+    if #list > 0 then
+      add("")
+      add(("%s  %d"):format(group[2], #list))
+      marks[#marks + 1] = { #lines - 1, 0, #group[2], "Bold" }
+      marks[#marks + 1] = { #lines - 1, #group[2], #lines[#lines], "Comment" }
+      for _, pr in ipairs(list) do
+        local glyph, hl
+        if pr.state == "MERGED" or pr.state == "CLOSED" then
+          glyph, hl = prs.icon(pr)
+        else
+          glyph, hl = unpack(CI[pr.checks or ""] or { "·", "Comment" })
+        end
+        local line, row = "  " .. glyph .. " ", #lines
+        marks[#marks + 1] = { row, 2, 2 + #glyph, hl }
+        local number = pr.number and ("#%d"):format(pr.number) or ""
+        marks[#marks + 1] = { row, #line, #line + #number, "Comment" }
+        line = line .. number .. (number ~= "" and " " or "") .. (pr.title or pr.url)
+        local review = pr.state == "OPEN" and REVIEW[pr.review or ""]
+        if review then
+          line = line .. "  "
+          marks[#marks + 1] = { row, #line, #line + #review[1], review[2] }
+          line = line .. review[1]
+        end
+        local tail = {}
+        local ws, agent = (pr.by or ""):match("^(.*)/([^/]+)$")
+        if ws then
+          local spec = store.agent(ws, agent)
+          tail[#tail + 1] = spec and spec.name or agent
+        end
+        local since = prs.time(pr.createdAt) or pr.registered
+        if since then
+          tail[#tail + 1] = age(since)
+        end
+        if #tail > 0 then
+          local text = "  " .. table.concat(tail, " · ")
+          marks[#marks + 1] = { row, #line, #line + #text, "Comment" }
+          line = line .. text
+        end
+        add(line)
+        rows[#lines] = pr
+      end
+    end
+  end
+  if #lines == 1 then
+    add("")
+    add("No PRs from the last day.", "Comment")
+  end
+  return lines, marks, rows
+end
+
 -- The lines the view shows for a surface, and their highlights: a markdown surface's body (drawn
--- by render-markdown, so no highlights), the Task Board as board draws it.
+-- by render-markdown, so no highlights), the Task Board as board draws it, the PRs surface as
+-- prs_board does (with the PR on each line).
 ---@param entry isovim.Surface
----@return string[] lines, table[] marks
+---@return string[] lines, table[] marks, table<integer, isovim.Pr>? rows
 function M.render(entry)
   if entry.type == "tasks" then
     return board(entry)
+  elseif entry.type == "prs" then
+    return prs_board(entry)
   end
   local lines = {}
   if entry.error then
@@ -203,7 +315,16 @@ local function tab(view, entry)
   vim.cmd.redrawtabline()
 end
 
-local function set_lines(buf, lines, marks)
+local set_lines
+
+-- A view drawn from its surface: its lines, and for the PRs surface the PR on each.
+local function draw_surface(view, entry)
+  local lines, marks, rows = M.render(entry)
+  view.pr_rows = rows
+  set_lines(view.buf, lines, marks)
+end
+
+function set_lines(buf, lines, marks)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
@@ -608,6 +729,15 @@ local function bind(view)
     on("N", function()
       next_question(view, -1)
     end, "the previous question waiting")
+  elseif view.kind == "prs" then
+    for _, key in ipairs(M.prs_keys) do
+      vim.keymap.set("n", key[1], function()
+        local pr = (view.pr_rows or {})[vim.api.nvim_win_get_cursor(0)[1]]
+        if pr then
+          key[3](pr)
+        end
+      end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
+    end
   elseif view.kind == "markdown" then
     for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
       vim.keymap.set("n", lhs, function()
@@ -683,7 +813,8 @@ local function make(entry)
     view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
     vim.b[view.buf].completion = false
   else
-    view.buf = scratch(("isovim-surface://%s"):format(id), entry.type == "tasks" and "isovim_tasks" or "markdown")
+    local filetype = ({ tasks = "isovim_tasks", prs = "isovim_prs" })[entry.type] or "markdown"
+    view.buf = scratch(("isovim-surface://%s"):format(id), filetype)
   end
   vim.b[view.buf].isovim_surface = id
   vim.b[view.buf].isovim_scope = entry.repo
@@ -750,7 +881,7 @@ end
 -- anywhere else), whenever the view comes into a window, by Enter in an Inbox or by its tab.
 function M.dress(view, win)
   local question = view.kind == "question"
-  view_window(win, question, view.kind == "tasks")
+  view_window(win, question, view.kind == "tasks" or view.kind == "prs")
   local boxed = view.kind == "markdown" or (question and view.entry.other and pending(view))
   local input_win = vim.fn.bufwinid(view.input)
   if input_win ~= -1 and (view.under ~= win or not boxed) then
@@ -776,7 +907,7 @@ function M.open(entry)
     view.opened = os.time()
     refresh(view, entry)
   else
-    set_lines(view.buf, M.render(entry))
+    draw_surface(view, entry)
   end
   local win = vim.fn.bufwinid(view.buf)
   if win == -1 then
@@ -800,7 +931,7 @@ function M.open(entry)
     end
     return view
   end
-  if view.kind == "tasks" then
+  if view.kind == "tasks" or view.kind == "prs" then
     return view
   end
   -- render-markdown loads on the first markdown buffer and skips that one (its FileType has gone
@@ -841,7 +972,7 @@ function M.rebind()
       for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
         views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
       end
-      local entry = surfaces.get(view.repo, view.name)
+      local entry = view.kind == "prs" and surfaces.prs_entry(view.repo) or surfaces.get(view.repo, view.name)
       -- One opened before views had tabs gets its own.
       if vim.b[view.buf].isovim_scope == nil then
         vim.b[view.buf].isovim_scope = view.repo
@@ -853,7 +984,7 @@ function M.rebind()
       if view.kind == "question" then
         draw(view)
       elseif entry then
-        set_lines(view.buf, M.render(entry))
+        draw_surface(view, entry)
       end
       for win, saved in pairs(views) do
         vim.api.nvim_win_call(win, function()
@@ -864,11 +995,29 @@ function M.rebind()
   end
 end
 
+-- The PRs surfaces open, drawn again from the PRs' cache: run as the sidebar refreshes, which it
+-- does as a fetch lands, a PR is registered and a pr.* event comes.
+function M.refresh_prs()
+  for _, view in pairs(M.views) do
+    if view.kind == "prs" and vim.api.nvim_buf_is_valid(view.buf) then
+      local entry = surfaces.prs_entry(view.repo)
+      if entry then
+        tab(view, entry)
+        draw_surface(view, entry)
+      else
+        view.pr_rows = nil
+        set_lines(view.buf, { ("%s has no PRs registered."):format(view.repo) })
+      end
+    end
+  end
+end
+
 -- A rescan of repo changed its surfaces: open views redraw, a question answered elsewhere shows its
 -- answer, and one whose surface went says so.
 function M.changed(repo, entries)
   for _, view in pairs(M.views) do
-    if view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
+    -- The PRs surface isn't a file: M.refresh_prs draws it.
+    if view.repo == repo and view.kind ~= "prs" and vim.api.nvim_buf_is_valid(view.buf) then
       local entry = vim.iter(entries):find(function(each)
         return each.name == view.name
       end)
@@ -879,7 +1028,7 @@ function M.changed(repo, entries)
         refresh(view, entry)
       else
         if entry then
-          set_lines(view.buf, M.render(entry))
+          draw_surface(view, entry)
         else
           local gone = ("%s/%s is gone: its router removed it."):format(view.repo, view.name)
           set_lines(view.buf, { vim.bo[view.buf].filetype == "markdown" and "> " .. gone or gone })

@@ -17,6 +17,7 @@
 --                             root, isovim.rootmode), then removed when its asker collects it
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
+-- The PRs surface is isovim's own, no file: M.list adds it for a repo with PRs registered (M.prs_entry).
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
 -- <file>.surface.error beside it (foo.surface's is foo.surface.error) saying why, rewritten as
 -- the reason changes and deleted once it's fixed or gone.
@@ -46,7 +47,7 @@ end
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"question"|"file"|"folder"|"chat"|"broken"
+---@field type "markdown"|"tasks"|"prs"|"question"|"file"|"folder"|"chat"|"broken"
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -907,11 +908,62 @@ end
 
 M.cache = {} ---@type table<string, isovim.Surface[]> per repo, while watching
 
--- A repo's surfaces: the watcher's while M.watch runs, else scanned now.
+local DAY = 24 * 3600
+
+-- The PRs surface: isovim's own, not a router's file, for a repo (or the root) with PRs registered
+-- (iso <role> pr). Each PR as isovim.prs last fetched it, never waiting on the network, with who
+-- registered it, grouped open, draft, merged and closed; one merged or closed over a day ago drops
+-- off. It waits on you while a PR does (isovim.prs.needs_you), with how many.
+---@return isovim.Surface?
+function M.prs_entry(repo)
+  local urls = store.prs(repo)
+  if #urls == 0 then
+    return nil
+  end
+  local prs = require("isovim.prs")
+  local cached, info, now = prs.cached(repo), store.pr_info(repo), os.time()
+  local groups, waiting, shown = { open = {}, draft = {}, merged = {}, closed = {} }, 0, 0
+  for i = #urls, 1, -1 do
+    local pr = vim.tbl_extend("force", { url = urls[i] }, cached[urls[i]] or {})
+    pr.by, pr.registered = (info[urls[i]] or {}).by, (info[urls[i]] or {}).at
+    local group = pr.state == "MERGED" and "merged" or pr.state == "CLOSED" and "closed" or pr.isDraft and "draft" or "open"
+    local ended = prs.time(pr.mergedAt or pr.closedAt)
+    if not ((group == "merged" or group == "closed") and ended and now - ended > DAY) then
+      table.insert(groups[group], pr)
+      shown = shown + 1
+      waiting = waiting + (prs.needs_you(pr) and 1 or 0)
+    end
+  end
+  return {
+    repo = repo,
+    name = "PRs",
+    base = "PRs",
+    type = "prs",
+    title = "PRs",
+    file = M.dir(repo) .. "/.isovim.json",
+    error_file = "",
+    created = 0,
+    needs_you = waiting > 0,
+    waiting = waiting,
+    count = shown,
+    groups = groups,
+    sig = vim.fn.sha256(vim.json.encode({ groups, waiting })),
+  }
+end
+
+-- A repo's surfaces: the watcher's while M.watch runs, else scanned now; and its PRs surface, made
+-- each time from the PRs' cache.
 ---@return isovim.Surface[]
 function M.list(repo)
   repo = canon(repo)
-  return M.cache[repo] or M.scan(repo)
+  local list = M.cache[repo] or M.scan(repo)
+  local board = M.prs_entry(repo)
+  if board and not vim.iter(list):any(function(entry)
+    return entry.name == board.name
+  end) then
+    list = vim.list_extend(vim.list_slice(list), { board })
+  end
+  return list
 end
 
 -- Opens a surface in the TUI: a markdown surface or the Task Board rendered with an input box
@@ -929,7 +981,10 @@ function M.open(entry)
   if entry.error then
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
-  if entry.type == "markdown" or entry.type == "tasks" then
+  if entry.type == "prs" then
+    -- Drawn by isovim, its PRs one a row.
+    require("isovim.surface_view").open(entry)
+  elseif entry.type == "markdown" or entry.type == "tasks" then
     -- Rendered, with an input box to the repo's router under it.
     require("isovim.surface_view").open(entry)
     M.consume(entry)

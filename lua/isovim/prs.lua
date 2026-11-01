@@ -19,6 +19,9 @@ M.on_news = nil
 ---@field checks? "pass"|"fail"|"pending" CI, from the checks' rollup
 ---@field approved? boolean
 ---@field review? "APPROVED"|"CHANGES_REQUESTED"|"REVIEW_REQUIRED"
+---@field createdAt? string ISO 8601, as gh gives it
+---@field mergedAt? string
+---@field closedAt? string
 
 local FAILED = { FAILURE = true, TIMED_OUT = true, CANCELLED = true, ACTION_REQUIRED = true, STARTUP_FAILURE = true, ERROR = true }
 
@@ -109,7 +112,7 @@ local function fetch(ws, urls, on_done)
     on_done()
   end
   for _, url in ipairs(urls) do
-    local fields = "number,title,state,isDraft,url,statusCheckRollup,reviewDecision"
+    local fields = "number,title,state,isDraft,url,statusCheckRollup,reviewDecision,createdAt,mergedAt,closedAt"
     vim.system({ "gh", "pr", "view", url, "--json", fields }, { text = true }, function(result)
       local ok, pr = pcall(vim.json.decode, result.stdout or "")
       if ok and type(pr) == "table" then
@@ -164,6 +167,25 @@ function M.list(ws, on_update)
     list[#list + 1] = cache.prs[urls[i]] or { url = urls[i] }
   end
   return list
+end
+
+-- gh's 2026-11-01T18:04:05Z as epoch seconds; nil for none.
+function M.time(iso)
+  local y, mo, d, h, mi, s = tostring(iso or ""):match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)Z$")
+  if not y then
+    return nil
+  end
+  local utc = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h), min = tonumber(mi), sec = tonumber(s) })
+  -- os.time read it as local time: move it by the offset local time has from UTC.
+  local now = os.time()
+  return utc + os.difftime(now, os.time(os.date("!*t", now)))
+end
+
+-- Whether a PR waits on you: open and ready (not a draft), its CI green and no changes asked for, so
+-- it waits on your review or your merge.
+---@param pr isovim.Pr
+function M.needs_you(pr)
+  return pr.state == "OPEN" and not pr.isDraft and pr.checks == "pass" and pr.review ~= "CHANGES_REQUESTED"
 end
 
 ---@param pr isovim.Pr
