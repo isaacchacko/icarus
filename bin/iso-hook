@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hooks for an agent (wired in panes.lua): record its state in $ISOVIM_STATE for the sidebar, and
-# raise a desktop notification while the isovim TUI is closed, unless the agent is hidden.
+# raise a desktop notification while the isovim TUI is closed, unless the agent is hidden. Each
+# change of state is also published on isovim's event bus (isovim.events).
 # `iso-hook desktop <message>` only notifies; the TUI uses it when it isn't focused.
 
 desktop() {
@@ -14,6 +15,33 @@ desktop() {
   elif command -v notify-send >/dev/null; then
     notify-send isovim "$1" &
   fi
+}
+
+# The agent as events name it, <ws>/<agent> by ids, from its state file run/<ws>/<agent>.state.
+address() {
+  local file="${ISOVIM_STATE%.state}" dir="${ISOVIM_STATE%/*}"
+  printf %s "${dir##*/}/${file##*/}"
+}
+
+# One event on isovim's bus, as isovim.events writes them: a JSON line {topic, time, ...} appended in
+# one write to <ISOVIM_HOME>/events/events.jsonl, which moves to events.jsonl.1 past 1 MiB.
+# $2 is the details, already JSON: "key":value,...
+publish() {
+  local dir="${ISOVIM_STATE%/*/*/*}/events" now="${EPOCHREALTIME:-$(date +%s)}"
+  local log="$dir/events.jsonl"
+  [ -d "$dir" ] || mkdir -p "$dir"
+  [ -n "$(find "$log" -size +2048 2>/dev/null)" ] && mv -f "$log" "$log.1"
+  printf '{"topic":"%s","time":%s,%s}\n' "$1" "${now/,/.}" "$2" >>"$log"
+}
+
+# Every state the hooks write goes through here; a change is published as agent.<addr>.status.
+set_state() {
+  local previous=""
+  IFS= read -r previous 2>/dev/null <"$ISOVIM_STATE"
+  printf %s "$1" >"$ISOVIM_STATE"
+  [ "$previous" = "$1" ] && return
+  [ -n "$previous" ] && previous="\"$previous\"" || previous=null
+  publish "agent.$(address).status" "\"state\":\"$1\",\"previous\":$previous"
 }
 
 # The open TUI notifies on its own, knowing whether the chat is on screen.
@@ -44,13 +72,13 @@ transcript() {
 case "$1" in
 desktop) desktop "$2" ;;
 start)
-  printf ready >"$ISOVIM_STATE"
+  set_state ready
   # Claude and Codex both pass the conversation's id; panes.lua resumes it on restart.
   id="$(jq -r '.session_id // empty' 2>/dev/null)"
   [ -n "$id" ] && printf %s "$id" >"${ISOVIM_STATE%.state}.session"
   ;;
 prompt)
-  printf working >"$ISOVIM_STATE"
+  set_state working
   transcript
   # A stamp in the prompt is checked against isovim's ledger; what's printed here reaches the agent as
   # context it can tell apart from typed text.
@@ -67,7 +95,7 @@ stop)
   # Unread means progress to report, not just a finished turn: until the answer is read, the agent
   # stays "checking" (drawn as working); an answer that only waits on something it started (a build,
   # a server coming up) becomes "waiting" and never notifies.
-  printf checking >"$ISOVIM_STATE"
+  set_state checking
   agent="$(basename "${ISOVIM_STATE%.state}")"
   ws="$(basename "$(dirname "$ISOVIM_STATE")")"
   iso="$(dirname "$0")/iso"
@@ -76,14 +104,14 @@ stop)
     # hook, so look at the pane a moment later.
     sleep 1.5
     if [ -n "$TMUX_PANE" ] && tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null | grep -qE "Would you like to proceed\?|Do you want to proceed\?"; then
-      printf attention >"$ISOVIM_STATE"
+      set_state attention
       notify "needs you"
     else
       "$iso" transcript "$ws/$agent"
       if [ "$("$iso" progress "$ws/$agent")" = waiting ]; then
-        printf waiting >"$ISOVIM_STATE"
+        set_state waiting
       else
-        printf idle >"$ISOVIM_STATE"
+        set_state idle
         notify "finished"
       fi
     fi
@@ -92,16 +120,16 @@ stop)
   ) </dev/null >/dev/null 2>&1 &
   ;;
 ask)
-  printf attention >"$ISOVIM_STATE"
+  set_state attention
   notify "needs you"
   ;;
-interrupt) printf idle >"$ISOVIM_STATE" ;;
-tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && printf working >"$ISOVIM_STATE" ;;
+interrupt) set_state idle ;;
+tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && set_state working ;;
 notification)
   case "$(cat)" in
   *idle_prompt* | *"waiting for your input"*) ;;
   *)
-    printf attention >"$ISOVIM_STATE"
+    set_state attention
     notify "needs you"
     ;;
   esac

@@ -1,4 +1,5 @@
 local store = require("isovim.store")
+local events = require("isovim.events")
 
 local M = {}
 
@@ -255,7 +256,7 @@ function M.start(ws, agent, dir)
     dir = vim.uv.os_homedir()
   end
   vim.fn.mkdir(store.run_dir(ws), "p")
-  -- A terminal's only state is "exited" (below), which must not outlive the shell it was about.
+  -- A terminal's only state is "exited" (iso closed), which must not outlive the shell it was about.
   if agent.kind == "terminal" or agent.kind == "command" then
     os.remove(store.state_file(ws, agent.id))
   end
@@ -280,12 +281,13 @@ function M.start(ws, agent, dir)
   vim.list_extend(args, env)
   local result = tmux(vim.list_extend(args, M.agent_cmd(ws, agent, dir)))
   if result.code == 0 then
-    -- A terminal whose shell exits goes away, as a closed tab would. pane-exited fires only when the
-    -- program ends on its own, not when isovim stops the session.
-    if agent.kind == "terminal" or agent.kind == "command" then
-      local mark = ("printf exited > %s"):format(vim.fn.shellescape(store.state_file(ws, agent.id)))
-      tmux({ "set-hook", "-t", "=" .. session(ws, agent.id) .. ":", "pane-exited", "run-shell " .. vim.fn.shellescape(mark) })
-    end
+    -- An agent whose program ends on its own is published as exited, and a terminal goes away, as a
+    -- closed tab would (iso closed). session-closed fires for sessions isovim stops too, which M.stop
+    -- marks first; pane-exited would fire only for the rest, but tmux 3.7b runs it for the newest
+    -- session alone. tmux stays up with no sessions left, or it would quit before the hook ran.
+    tmux({ "set-option", "-s", "exit-empty", "off" })
+    local closed = ("ISOVIM_HOME=%s %s closed '#{hook_session_name}'"):format(vim.fn.shellescape(store.root), vim.fn.shellescape(M.bin))
+    tmux({ "set-hook", "-g", "session-closed", "run-shell -b " .. vim.fn.shellescape(closed) })
     tmux({ "set-option", "-g", "status", "off" })
     -- An attached client (another host's chat, over ssh) can't see a full-screen program come and go
     -- in the pane: the title tells it.
@@ -293,12 +295,25 @@ function M.start(ws, agent, dir)
     tmux({ "set-option", "-g", "set-titles-string", "#{?alternate_on," .. M.fullscreen_title .. ",isovim}" })
     -- Claude warns without focus events.
     tmux({ "set-option", "-g", "focus-events", "on" })
+    events.publish(events.agent_topic(ws, agent.id, "spawned"),
+      { kind = agent.kind, name = agent.name, role = store.role(agent), parent = agent.parent })
   end
   return result
 end
 
+-- Marks a session isovim stops, for the session-closed hook (iso closed): it didn't end on its own.
+function M.stopped_file(ws, agent)
+  return store.run_dir(ws) .. "/" .. agent .. ".stopped"
+end
+
 function M.stop(ws, agent)
-  tmux({ "kill-session", "-t", "=" .. session(ws, agent) })
+  vim.fn.mkdir(store.run_dir(ws), "p")
+  vim.fn.writefile({}, M.stopped_file(ws, agent))
+  if tmux({ "kill-session", "-t", "=" .. session(ws, agent) }).code == 0 then
+    events.publish(events.agent_topic(ws, agent, "exited"), { reason = "stopped" })
+  else
+    os.remove(M.stopped_file(ws, agent))
+  end
 end
 
 function M.stop_all(ws)

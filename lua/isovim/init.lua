@@ -446,7 +446,7 @@ function M.remove_agent(ws, agent)
   M.refresh()
 end
 
--- Terminals whose shell exited (panes.start's pane-exited hook): gone, with their chats.
+-- Terminals whose shell exited (iso closed, from tmux's session-closed hook): gone, with their chats.
 local function drop_exited()
   local dropped = false
   for _, ws in ipairs(store.list()) do

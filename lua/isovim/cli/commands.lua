@@ -5,13 +5,14 @@
 --   module    isovim.cli.<module> runs it, as the function of the same name; none means bin/iso does
 --   args      its words in order, as usage writes them: <kind>, literal|literal|<kind>, and a last
 --             one ending in ... repeats. Kinds are what Tab offers: ws, archived, agent (this host's),
---             address (an agent here or <host>:<agent>), host, kind, role, command, path, dir, and
---             text and n, which offer nothing
+--             address (an agent here or <host>:<agent>), host, kind, role, command, topic (an
+--             event pattern), path, dir, and text and n, which offer nothing
 --   flags     flag -> the kind of its value, or false for a flag without one
 --   subs      subcommand -> { args, flags }, for a command whose first word picks what it does
 --   help      its lines in `iso help`, verbatim; summary is its one line in completion, when the
 --             help doesn't give one
 --   hidden    not offered by completion
+--   shared    an action every role has too (iso <role> <name>), once commands take a role first
 --   audience  who runs it: nil is anyone (every command until roles); "plumbing" is isovim's own
 --             hooks, hosts and shell completion, which any refusal of agents or users lets through
 local M = {}
@@ -232,6 +233,26 @@ M.list = {
     flags = { ["-n"] = "<n>" },
     help = [=[
        iso peek <agent> [-n lines]   print the last lines of its screen (default 40)]=],
+  },
+  { name = "listen", module = "events",
+    args = { "<topic>..." },
+    flags = { ["--once"] = false, ["--since"] = "<text>" },
+    shared = true,
+    summary = "print the events whose topics match, one JSON line each, as they happen",
+    help = [=[
+       iso listen <pattern...> [--once] [--since t]
+                                     print each event whose topic matches a pattern, one JSON
+                                     line {topic, time, ...} as it happens, until killed (made
+                                     for a Monitor); --once exits after the first. Topics:
+                                     agent.<agent>.status|spawned|exited|promoted, msg.<agent>,
+                                     pr.<owner/repo>.<n>.state|ci|review. In a pattern * is any
+                                     one dot-separated part, ** any number (quote them). --since
+                                     starts from a time (epoch seconds, or 90s, 10m, 2h, 1d ago)]=],
+  },
+  { name = "closed", module = "events",
+    args = { "<text>" },
+    hidden = true,
+    audience = "plumbing",
   },
   { name = "doctor", module = "inspect",
     help = [=[

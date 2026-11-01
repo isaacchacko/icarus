@@ -33,14 +33,18 @@ local function deliver(query, text, kind)
     forward(host, { "send", query, text })
   end
   local ws, agent = resolve_agent(query)
+  local message, stamp = text, nil
   if from then
-    text = root.stamp(kind, from, root.address(ws.id, agent.id), text) .. " " .. text
+    stamp = root.stamp(kind, from, root.address(ws.id, agent.id), text)
+    text = stamp .. " " .. text
   end
   ensure_running(ws, agent)
   local result = panes.send(ws.id, agent.id, text)
   if result.code ~= 0 then
     fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
   end
+  require("isovim.events").publish("msg." .. ws.id .. "/" .. agent.id,
+    { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
   if panes.reports(agent.kind) then
     await(ws.id, agent.id, 10, function(state)
       return state == "working" or state == "attention"

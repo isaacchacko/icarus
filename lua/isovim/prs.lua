@@ -18,6 +18,7 @@ M.on_news = nil
 ---@field isDraft? boolean
 ---@field checks? "pass"|"fail"|"pending" CI, from the checks' rollup
 ---@field approved? boolean
+---@field review? "APPROVED"|"CHANGES_REQUESTED"|"REVIEW_REQUIRED"
 
 local FAILED = { FAILURE = true, TIMED_OUT = true, CANCELLED = true, ACTION_REQUIRED = true, STARTUP_FAILURE = true, ERROR = true }
 
@@ -56,6 +57,29 @@ local function read_cache(ws)
   return decoded and type(cache) == "table" and cache or { fetched = 0, prs = {} }
 end
 
+-- What changed since the last fetch goes on the event bus as pr.<owner>/<repo>.<n>.state|ci|review;
+-- a PR seen for the first time reports what it has.
+---@param pr isovim.Pr
+---@param old isovim.Pr|{}
+local function publish_changes(ws, pr, old)
+  local repo, number = pr.url:match("github%.com/([^/]+/[^/]+)/pull/(%d+)")
+  if not repo then
+    return
+  end
+  local events = require("isovim.events")
+  local topic = ("pr.%s.%s."):format(repo, number)
+  local about = { url = pr.url, ws = ws, title = pr.title }
+  if pr.state ~= old.state or pr.isDraft ~= old.isDraft then
+    events.publish(topic .. "state", vim.tbl_extend("force", about, { state = pr.state, draft = pr.isDraft, previous = old.state }))
+  end
+  if pr.checks ~= old.checks then
+    events.publish(topic .. "ci", vim.tbl_extend("force", about, { checks = pr.checks, previous = old.checks }))
+  end
+  if pr.review ~= old.review then
+    events.publish(topic .. "review", vim.tbl_extend("force", about, { review = pr.review, previous = old.review }))
+  end
+end
+
 -- Looks every PR up in parallel and rewrites the cache; on_done runs on the main loop.
 local function fetch(ws, urls, on_done)
   if fetching[ws] then
@@ -69,6 +93,7 @@ local function fetch(ws, urls, on_done)
     -- News worth a notification: checks that finished, a PR merged.
     for url, pr in pairs(prs) do
       local old = before[url]
+      publish_changes(ws, pr, old or {})
       if old and M.on_news then
         if old.checks == "pending" and (pr.checks == "pass" or pr.checks == "fail") then
           M.on_news(ws, pr, pr.checks == "pass" and "checks passed" or "checks failed")
@@ -87,6 +112,7 @@ local function fetch(ws, urls, on_done)
       local ok, pr = pcall(vim.json.decode, result.stdout or "")
       if ok and type(pr) == "table" then
         pr.checks, pr.approved = checks(pr.statusCheckRollup), pr.reviewDecision == "APPROVED" or nil
+        pr.review = pr.reviewDecision ~= "" and pr.reviewDecision or nil
         pr.statusCheckRollup, pr.reviewDecision = nil, nil
         prs[url] = pr
       end

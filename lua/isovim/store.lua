@@ -531,9 +531,15 @@ function M.set_hidden(ws, id, hidden)
 end
 
 function M.set_role(ws, id, role)
+  local previous
   with_agent(ws, id, function(entry)
+    previous = M.role(entry)
     entry.role = role ~= "worker" and role or nil
   end)
+  if previous and previous ~= role then
+    local events = require("isovim.events")
+    events.publish(events.agent_topic(ws, id, "promoted"), { role = role, previous = previous })
+  end
 end
 
 -- PR URLs the workspace's agents registered with `iso pr`, oldest first.

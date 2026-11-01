@@ -82,6 +82,28 @@ local KINDS = {
       found[#found + 1] = { role }
     end
   end,
+  -- Event patterns: each topic for any agent or PR, and everything about one agent or one PR.
+  topic = function(found)
+    for _, topic in ipairs(require("isovim.events").topics) do
+      found[#found + 1] = { topic[1], topic[2] }
+    end
+    local prs = {}
+    for _, ws in ipairs(store.list()) do
+      for _, agent in ipairs(store.agents(ws.id)) do
+        local address = ws.id .. "/" .. agent.id
+        local about = ws.name .. " · " .. agent.name
+        found[#found + 1] = { "agent." .. address .. ".*", about }
+        found[#found + 1] = { "msg." .. address, "messages to " .. about }
+      end
+      for _, url in ipairs(store.prs(ws.id)) do
+        local repo, number = url:match("github%.com/([^/]+/[^/]+)/pull/(%d+)")
+        if repo and not prs[url] then
+          prs[url] = true
+          found[#found + 1] = { ("pr.%s.%s.*"):format(repo, number), ws.name }
+        end
+      end
+    end
+  end,
   command = function(found)
     for _, entry in ipairs(commands.list) do
       if not entry.hidden then

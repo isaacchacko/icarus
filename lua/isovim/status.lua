@@ -1,5 +1,6 @@
 -- What each agent is doing, from the state file its hooks write (panes.agent_cmd).
 local store = require("isovim.store")
+local events = require("isovim.events")
 
 local M = {}
 
@@ -29,10 +30,14 @@ end
 
 -- For what no hook reports, like Claude being interrupted.
 function M.set_state(ws, agent, state)
+  local previous = M.state(ws, agent)
   local file = io.open(store.state_file(ws, agent), "w")
   if file then
     file:write(state)
     file:close()
+  end
+  if state ~= previous then
+    events.publish(events.agent_topic(ws, agent, "status"), { state = state, previous = previous or vim.NIL })
   end
 end
 
