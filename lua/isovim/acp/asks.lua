@@ -1,5 +1,5 @@
 -- What an ACP agent asks you, as question surfaces in its repo's Inbox (isovim.surfaces), answered
--- there (the Inbox's picker, <leader>in, iso answer) and sent back to the agent by its supervisor
+-- there (the Inbox's question view, <leader>in, iso answer) and sent back to the agent by its supervisor
 -- (isovim.acp.host), which this runs in.
 --
 --   AskUserQuestion: claude-agent-acp asks it as a form elicitation (elicitation/create, which it

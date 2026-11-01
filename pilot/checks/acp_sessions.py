@@ -6,7 +6,7 @@ snapshot taken before its turn; /fork forks the agent whole and <leader>if at th
 cursor, each a new agent whose chat starts with the history up to there; /clear and /new start a
 new session, /resume picks one back from the history picker (or by id), its chat as it was;
 AskUserQuestion (a form elicitation) and a permission request become question surfaces in the
-repo's Inbox, and the answer (iso answer, or the Inbox's picker) reaches the agent; a cancelled
+repo's Inbox, and the answer (iso answer, or the question's buffer) reaches the agent; a cancelled
 turn takes down what it asked.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/acp_sessions.py"""
 
@@ -321,23 +321,29 @@ try:
     iso.wait(lambda: not any(s["name"] in names for s in surfaces()), "the questions leave the Inbox")
     iso.wait(lambda: has("a0", "  ⎿  · Which color? → Blue") and has("a0", "     · Which sizes? → S, L"),
              "the chat shows the answers")
-    # Answered in the TUI: the Inbox's picker, your own words for the first, M for the second.
+    # Answered in the TUI: each question's buffer, your own words in the first's input box, M for the second.
     iso.wait(lambda: state("a0") == "idle", "a0 idle")
     seq = last_seq("a0")
     run("send", a0, "ask")
     iso.wait(lambda: len([s for s in surfaces() if s["name"].startswith("a0-ask-")]) == 2, "two more questions")
-    iso.lua("local picks = { 'Other...', 'M', 'Done' } local select, input = vim.ui.select, vim.ui.input"
-            " vim.ui.select = function(items, _, on_choice) local want = table.remove(picks, 1)"
-            " for _, i in ipairs(items) do if i.label == want then return on_choice(i) end end on_choice(nil) end"
-            " vim.ui.input = function(_, on_confirm) on_confirm('teal please') end"
-            " _G.restore_ui = function() vim.ui.select, vim.ui.input = select, input end")
-    for _ in range(2):
+
+    def open_next():
         iso.lua("for _, s in ipairs(require('isovim.surfaces').scan('acme/app')) do"
                 " if s.type == 'question' and not s.answer then return require('isovim.surfaces').open(s) end end")
+        iso.wait(lambda: iso.lua("return vim.bo.filetype") == "isovim_question", "the question's buffer")
+
+    open_next()
+    iso.keys("i")
+    iso.wait(lambda: iso.lua("return vim.bo.filetype") == "isovim_surface_input", "its input box")
+    iso.type("teal please")
+    iso.keys("Enter")
+    iso.wait(lambda: len([s for s in surfaces() if s["name"].startswith("a0-ask-") and s["needs_you"]]) == 1, "the first answered")
+    open_next()
+    iso.keys("2")
+    iso.keys("s")
     iso.wait(lambda: said_since("a0", 'answer: {"action": "accept", "content": {"question_0_custom": "teal please", "question_1": ["M"]}}', seq),
-             "the picker's answers reach the agent, your words as the custom answer", 10)
-    iso.lua("_G.restore_ui()")
-    check(True, "answered with the Inbox's picker, your own words as the custom answer")
+             "the buffers' answers reach the agent, your words as the custom answer", 10)
+    check(True, "answered in the questions' buffers, your own words as the custom answer")
 
     print("\n# a permission request: allow or deny in the Inbox")
     iso.wait(lambda: state("a0") == "idle", "a0 idle")

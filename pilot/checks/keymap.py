@@ -244,11 +244,12 @@ try:
     iso.wait(lambda: any("Merge web?" in row for row in iso.sidebar()), "the question in web's Inbox")
     open_agent(f"{ws['notes']}/main")
     leader("i", "n")
-    iso.wait(lambda: "Merge web? ─" in iso.screen(), "<leader>in: the waiting question's picker")
+    iso.wait(lambda: lua("return vim.bo.filetype") == "isovim_question" and "Merge web?" in iso.screen(),
+             "<leader>in: the waiting question's buffer")
     check(True, "<leader>in opens the waiting surface first")
-    iso.keys("Escape")
-    iso.keys("Escape")
-    iso.wait(lambda: "Merge web? ─" not in iso.screen(), "the picker closed")
+    iso.keys("q")
+    iso.wait(lambda: "Merge web?" not in "\n".join(lua("return vim.api.nvim_buf_get_lines(0, 0, -1, false)")),
+             "the question's buffer closed")
     open_agent(f"{ws['web1']}/main")
     leader("i", "i")
     iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "list", "the list focused")

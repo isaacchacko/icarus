@@ -9,8 +9,8 @@
 --                   gone from the Inbox once opened, until the router rewrites it)
 --   <name>.surface  JSON with a type, made by iso router surface:
 --                   question  {question, options: [{label, description?}], multi?, other?, created,
---                             answer?: {labels, other?, by, at}}: answered with iso answer or
---                             M.answer, then removed when its asker collects the answer
+--                             by? (who asked), answer?: {labels, other?, by, at}}: answered with
+--                             iso answer or M.answer, then removed when its asker collects the answer
 --                   file      {path}, folder {path}: opens it; its target missing is an error
 --                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
@@ -26,8 +26,8 @@
 -- For the sidebar: M.watch(on_change) once at startup (on_change(repo, entries) after each
 -- rescan that changed something), M.repos() for the repos that have an iso/, M.list(repo) for an
 -- Inbox's rows (isovim.Surface below, sorted by file name; needs_you marks what waits on the user),
--- M.open(entry) on Enter (consumes a chat or consumable markdown, answers a question with a
--- picker), M.answer(entry, {labels, other?} or words) and M.consume(entry) directly.
+-- M.open(entry) on Enter (consumes a chat or consumable markdown, opens a question as a buffer
+-- that answers it), M.answer(entry, {labels, other?} or words) and M.consume(entry) directly.
 local store = require("isovim.store")
 local events = require("isovim.events")
 
@@ -621,11 +621,12 @@ end
 
 -- Asks a question in the repo, or finds it asked already: by name (spec.name, or name), else by
 -- the same question, options, multi and other. A pending question of that name asked differently
--- is reworded in place; an answered one keeps its answer.
+-- is reworded in place; an answered one keeps its answer. by is who asks (<ws>/<agent>), which its
+-- view shows.
 ---@param spec table as M.validate_question takes it
 ---@return isovim.Surface? entry, string how_or_err "asked", "reattached", "reworded", "kept" (answered
 --- before it was asked differently), or what's wrong
-function M.ask(repo, spec, name)
+function M.ask(repo, spec, name, by)
   repo = canon(repo)
   local q, err, asked_name = M.validate_question(spec)
   if not q then
@@ -643,12 +644,12 @@ function M.ask(repo, spec, name)
   if existing and existing.key ~= key and not existing.answer then
     how = "reworded"
     put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised, by = existing.asker })
+      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised, by = existing.asker or by })
   elseif not existing then
     how = "asked"
     name = name or free_name(repo, q.question)
     local ok, why = put(repo, name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = os.time() })
+      other = q.other, created = os.time(), by = by })
     if not ok then
       return nil, why
     end
@@ -879,8 +880,9 @@ function M.list(repo)
 end
 
 -- Opens a surface in the TUI: a markdown surface or the Task Board rendered with an input box
--- under it (isovim.surface_view), a broken one's file, a file or a folder beside the chat; a chat in the chat window; a question as a picker, which answers it. Opening consumes
--- what's consumable.
+-- under it, a question as a buffer that answers it (both isovim.surface_view), a broken one's
+-- file, a file or a folder beside the chat; a chat in the chat window. Opening consumes what's
+-- consumable.
 function M.open(entry)
   local isovim = require("isovim")
   local function reveal(path)
@@ -908,61 +910,10 @@ function M.open(entry)
     if ws then
       isovim.open(ws, id)
     end
-  elseif entry.type == "question" and not entry.answer then
-    M.pick(entry)
+  elseif entry.type == "question" then
+    -- A buffer of its own that answers it, then shows the answer.
+    require("isovim.surface_view").open(entry)
   end
-end
-
--- Answers a question with vim.ui.select: one option, or for a multi question options until Done;
--- "Other..." asks for text where the question takes it.
-function M.pick(entry, on_done)
-  local chosen = {}
-  local function finish(other)
-    local answer, err = M.answer(entry, { labels = chosen, other = other })
-    if not answer then
-      vim.notify(err, vim.log.levels.ERROR)
-    end
-    if on_done then
-      on_done(answer)
-    end
-  end
-  local function ask()
-    local items = vim.tbl_filter(function(option)
-      return not vim.tbl_contains(chosen, option.label)
-    end, entry.options)
-    if entry.other then
-      items[#items + 1] = { label = "Other...", other = true }
-    end
-    if entry.multi and #chosen > 0 then
-      items[#items + 1] = { label = "Done", done = true }
-    end
-    vim.ui.select(items, {
-      prompt = entry.question .. (#chosen > 0 and (" (" .. table.concat(chosen, ", ") .. ")") or ""),
-      format_item = function(item)
-        return item.description and (item.label .. " · " .. item.description) or item.label
-      end,
-    }, function(item)
-      if not item then
-        return
-      elseif item.done then
-        finish()
-      elseif item.other then
-        vim.ui.input({ prompt = entry.question .. " " }, function(text)
-          if text and vim.trim(text) ~= "" then
-            finish(vim.trim(text))
-          end
-        end)
-      else
-        chosen[#chosen + 1] = item.label
-        if entry.multi then
-          vim.schedule(ask)
-        else
-          finish()
-        end
-      end
-    end)
-  end
-  ask()
 end
 
 local handles = {}

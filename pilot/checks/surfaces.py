@@ -306,13 +306,18 @@ try:
       end
       return n
     """, REPO_KEY) == 5, "the watcher to see what waits (brief, decide, news, status, aside)")
-    iso.lua("vim.g.asked = vim.NIL; vim.ui.select = function(_, opts) vim.g.asked = opts.prompt end")
 
     def step():
         before = len(events("surface."))
-        iso.lua("vim.g.asked = vim.NIL; require('isovim').next_needs_you()")
+        # A question opens as its buffer (isovim.surface_view), which leaves it waiting.
+        asked = iso.lua("""
+          require('isovim').next_needs_you()
+          for _, view in pairs(require('isovim.surface_view').views) do
+            if view.buf == vim.api.nvim_get_current_buf() and view.kind == 'question' then return view.entry.question end
+          end
+        """)
         new = [row for row in events("surface.")[before:] if row["topic"].endswith(".consumed")]
-        return iso.lua("return vim.g.asked") or (new[0]["repo"] + "/" + new[0]["name"] if new else None)
+        return asked or (new[0]["repo"] + "/" + new[0]["name"] if new else None)
 
     walked = [step() for _ in range(6)]
     assert walked == ["root/brief", "Decide?", f"{REPO_KEY}/news", f"{REPO_KEY}/status", "general/aside", "Decide?"], walked

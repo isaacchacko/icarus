@@ -99,7 +99,7 @@ side by side):
   command's first lines and `… +N lines` (`za` opens and closes any of them);
 - thinking dimmed and collapsed, the todo list as Claude's, the turn's summary after it;
 - a permission or a question as Claude's numbered box, answered by its number in the input box or
-  `<CR>` on an option (or in the Inbox), then put away;
+  `<CR>` on an option (or from its question surface in the Inbox), then put away;
 - Claude's colors, for dark and light backgrounds;
 - streamed token by token, following the bottom only when you're there;
 - long lines wrap; there's no sideways scrolling.
@@ -143,12 +143,18 @@ them, and writes a `*.surface.error` beside any that's broken or whose target is
 | type | made by | shown as |
 |---|---|---|
 | markdown | the router writes `name.md` with frontmatter (`name`, `icon`, `color`, `consumable`) | rendered markdown and an input box; the router rewrites it in place |
-| question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | options `{question, options:[{label, description}], multi?, other?}`; removed once answered |
+| question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
 | file / folder | `iso router surface file\|folder <path>` | opens beside the chat |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
 | Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done, one line per task | rendered as a list |
 
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
+- A question opens beside the chat (or in the main window) like a markdown surface, never as a
+  popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
+  multi question they tick it (`<Space>` too) and Submit or `s` sends. One that takes your own words
+  has the input box under it, whose `<CR>` sends them. The answer goes the way `iso answer`'s does,
+  and the buffer shows it, as it does when the question is answered elsewhere; `q` closes it. An
+  agent's permission request (Allow / Deny) is one of these too.
 - PRs appear only when the router registers them (`iso router pr`).
 
 ## The sidebar

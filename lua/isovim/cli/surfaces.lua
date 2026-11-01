@@ -115,13 +115,13 @@ local function question(args)
   if not q then
     fail(err)
   end
-  local entry, how = surfaces.ask(repo, spec, name)
+  local ws, agent = require("isovim.root").caller()
+  local from = ws and (ws .. "/" .. agent) or nil
+  local entry, how = surfaces.ask(repo, spec, name, from)
   if not entry then
     fail(how)
   end
   local id = entry.repo .. "/" .. entry.name
-  local ws, agent = require("isovim.root").caller()
-  local from = ws and (ws .. "/" .. agent) or nil
   local was = entry.routed
   local to = require("isovim.cli.rootmode").route_question(entry, from, how == "reworded")
   if to and (to ~= was or how == "reworded") then
