@@ -1,7 +1,7 @@
 """The keymap: LazyVim's global keys turned to repos (<leader><leader> picks a repo or Root, General,
 Terminals; <leader>ff, <leader>/ with transcripts, <leader>, scoped to the repo, <leader>fr recent
 agents), the <leader>i group (needs-you, the Inbox, router and roots by role, worker and agent
-pickers, the previous agent, the previous repo (and back, across a hot reload), General, Terminals, spawn, terminal, hosts, root mode), the sidebar's s
+pickers, the previous agent, the previous repo (and back, across a hot reload), General (<leader>is spawning there when it's current, even empty), Terminals, spawn, terminal, hosts, root mode), the sidebar's s
 spawn, x (root mode), S and its retiring a/A/b/T, the retiring <leader>a keys, buffers scoped by repo,
 and the help. Keys are pressed in the pilot's own TUI.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/keymap.py"""
@@ -120,6 +120,19 @@ def tabs_scopes():
 try:
     iso.start()
     src = iso.tmp / "src"
+    # <leader>ig with General empty only makes it the scope; <leader>is then spawns there, a general/aN.
+    leader("i", "g")
+    toasted("Nothing in General yet")
+    check(scope() == "general", "<leader>ig on an empty General makes it the scope", scope())
+    leader("i", "s")
+    spawned = iso.wait(lambda: lua("return require('isovim.store').agent('general', 'a0')"), "<leader>is spawned general/a0", timeout=30)
+    check(spawned.get("acp") is True, "<leader>is with General current spawns general/a0", spawned)
+    iso.cli("rm", "general/a0")
+    iso.wait(lambda: not lua("return require('isovim.store').agent('general', 'a0')"), "general/a0 removed")
+    # The window its chat leaves holds an empty buffer, listed in every scope; unlisted, so the buffer
+    # checks below see only their own.
+    lua("for _, b in ipairs(vim.api.nvim_list_bufs()) do if vim.bo[b].buflisted and vim.api.nvim_buf_get_name(b) == '' then"
+        " vim.bo[b].buflisted = false end end")
     ws = {}
     for name, dir_ in (("web1", src / "web"), ("web2", src / "web"), ("api1", src / "api"), ("notes", None), ("boss", None)):
         args = ["new", name] + (["--dir", str(dir_)] if dir_ else [])
@@ -280,6 +293,13 @@ try:
     iso.keys("Enter")
     iso.wait(lambda: scope() == "terminals", "Terminals picked")
     check(lua("return vim.b.isovim_sidebar") == "terminals" and tabs_scopes() == ["terminals"], "picking Terminals lists only terminals", tabs_scopes())
+    terminal_count = lambda: lua(  # noqa: E731
+        "local n = 0 for _, w in ipairs(require('isovim.store').list()) do for _, a in ipairs(require('isovim.store').agents(w.id)) do"
+        " if a.kind == 'terminal' then n = n + 1 end end end return n")
+    before = terminal_count()
+    leader("i", "s")
+    iso.wait(lambda: terminal_count() == before + 1, "<leader>is in Terminals: a new terminal")
+    check(scope() == "terminals", "<leader>is in Terminals opens a terminal, as t does", scope())
 
     # Hosts, from anywhere.
     open_agent(f"{ws['web1']}/main")

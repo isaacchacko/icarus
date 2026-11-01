@@ -1,7 +1,8 @@
 """The sidebar grouped by repo, with the Inbox hierarchy: the host root pinned first as "root"; each
 repo under a header in its glyph and color (two legacy workspaces of one repo and its new-layout
 agents, an ACP one among them, under one header), its router and repo-root, then the workers that
-aren't a worker's, each with the size of the team behind it; general last. Enter on a header opens
+aren't a worker's, each with the size of the team behind it; general last, shown (with a hint, s on
+it spawning a general/aN) even when empty. Enter on a header opens
 the router. The host Inbox holds the root's surfaces and a row per repo with something waiting
 (Enter opens that repo's Inbox), a repo's Inbox its surfaces (one row format per type), the top
 Inbox the other hosts' waiting surfaces (Enter shows that host); the root-mode marker sits beside a
@@ -140,6 +141,21 @@ def record(key, agent):
 try:
     iso.start()
     work = Path(iso.env["ISOVIM_WORK"])
+    # An empty General still shows, with the hint under it, and s on it spawns a general/aN.
+    kinds_now = lambda: lua("return require('isovim.sidebar').debug_kinds()")  # noqa: E731
+    iso.wait(lambda: "repo" in kinds_now(), "general's header")
+    ls, kinds = lines(), kinds_now()
+    general = next(i for i, (l, k) in enumerate(zip(ls, kinds)) if k == "repo" and "general" in l)
+    check(ls[general + 1].strip() == "no agents · s spawn · ? keys" and "agent" not in kinds, "an empty General shows, with the hint", ls)
+    iso.focus_sidebar()
+    lua("vim.cmd.stopinsert()")
+    iso.keys("Escape")
+    lua("vim.api.nvim_win_set_cursor(0, {..., 0})", general + 1)
+    iso.keys("s")
+    spawned = iso.wait(lambda: lua("return require('isovim.store').agent('general', 'a0')"), "s spawned general/a0", timeout=30)
+    check(spawned.get("acp") is True, "s on the empty General spawns general/a0 over ACP", spawned)
+    iso.wait(lambda: any("a0" in l for l in lines()[general:]) and "no agents · s spawn" not in "\n".join(lines()), "general/a0 under General, the hint gone")
+    check(True, "General lists it and drops the hint")
     # Legacy workspaces: two in acme/web, one in acme/api, the root's, one in no repo.
     ws = {}
     for name, dir_ in (("web1", src / "web"), ("web2", src / "web"), ("api1", src / "api"), ("boss", None), ("notes", None)):

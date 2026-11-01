@@ -355,9 +355,18 @@ local function inbox(which)
   end
 end
 
--- Spawns a worker in the current repo, as s does on a repo in the sidebar.
+-- Spawns a worker in the current repo, as s does on a repo in the sidebar: General's when that's
+-- current, even with nothing in it; in Terminals a terminal, as a worker there means nothing. In
+-- Root (nothing spawns there) or the workspace's own repo, the workspace's, which knows a legacy
+-- one's clone.
 function M.spawn()
-  sidebar().spawn(isovim().current)
+  local here, ws = current_scope(), isovim().current
+  if here == scope.TERMINALS then
+    return M.new_terminal()
+  elseif here == scope.ROOT or (ws and scope.of_workspace(ws) == here) then
+    return sidebar().spawn(ws)
+  end
+  sidebar().spawn({ repo_key = here })
 end
 
 function M.new_terminal()

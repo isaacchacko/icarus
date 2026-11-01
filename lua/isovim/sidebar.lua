@@ -669,7 +669,8 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
         items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
-    elseif g.kind == "repo" or #agents > 0 or #list > 0 then
+    -- General shows on this host even when empty, so s on it spawns a general/aN.
+    elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
       local collapsed = is_collapsed(host, "repo", g.key)
       items[#items + 1] = vim.tbl_extend("force", base_host, {
         kind = "repo",
@@ -709,6 +710,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
             items[#items + 1] = { kind = "empty", group_key = g.key, ws = g.key }
           end
         else
+          if g.kind == "general" and #agents == 0 and not host then
+            items[#items + 1] = { kind = "hint", text = "no agents · s spawn" .. (#entries == 0 and " · ? keys" or ""), repo_key = GENERAL_KEY }
+          end
           for _, entry in ipairs(listed_agents(agents)) do
             entry.group_key = g.key
             items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = g.key })
@@ -730,8 +734,8 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       end
     end
   end
-  if #entries == 0 and #items <= 2 then
-    items[#items + 1] = { kind = "hint", text = host and "no agents" or "no agents · s spawn · ? keys" }
+  if host and #entries == 0 and #items <= 2 then
+    items[#items + 1] = { kind = "hint", text = "no agents" }
   end
   return items
 end
