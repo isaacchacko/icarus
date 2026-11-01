@@ -32,7 +32,7 @@
 -- while the agent works (glyph, verb, time, tokens, <C-c> to interrupt) and says how many prompts
 -- wait; a rule above and below it, ❯ before it and a hint under it. While prompts wait, the queue
 -- shows in a window of its own between the chat and the composer (isovim.acp.queue), where you can
--- edit it.
+-- edit it. The column stays chat, queue, composer, the composer a fixed height (M.settle).
 --
 -- Chat keys: ]] [[ your own prompts, ]m [m any message, za zo zc the output of the tool call under
 -- the cursor, i a o the composer, <CR> too (or, on a box's option, that answer), <C-c> cancels the
@@ -1671,12 +1671,12 @@ local function make(ws, agent, old)
   })
   -- The queue window follows the composer's: above each window showing it, gone with it. Later,
   -- as a chat being opened is still placing windows. (Windows placed inside another autocmd, as
-  -- selecting a workspace rebuilds its layout, fire none: isovim.layout calls M.sync_queues.)
+  -- selecting a workspace rebuilds its layout, fire none: isovim.layout calls M.settle.)
   vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWinLeave", "WinClosed" }, {
     group = GROUP,
     buffer = composer,
     callback = function()
-      M.sync_queues(chat)
+      M.settle(chat)
     end,
   })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
@@ -1739,19 +1739,125 @@ local function make(ws, agent, old)
   return chat
 end
 
--- Soon (once whatever is placing windows is done): each chat's queue window (isovim.acp.queue)
--- where its composer shows, or chat's alone.
+-- The composer's height, its bar included. Nothing changes it: a drag, :resize or a layout
+-- restored is put back (M.settle).
+local COMPOSER_HEIGHT = 6
+
+-- Where a window sits in winlayout(): the col or row node holding it, and its index there.
+local function parent_of(win, node)
+  node = node or vim.fn.winlayout()
+  if node[1] == "leaf" then
+    return nil
+  end
+  for i, child in ipairs(node[2]) do
+    if child[1] == "leaf" and child[2] == win then
+      return node, i
+    end
+    local parent, j = parent_of(win, child)
+    if parent then
+      return parent, j
+    end
+  end
+end
+
+local function leaves(node, out)
+  out = out or {}
+  if node[1] == "leaf" then
+    out[#out + 1] = node[2]
+  else
+    for _, child in ipairs(node[2]) do
+      leaves(child, out)
+    end
+  end
+  return out
+end
+
+local function is_queue(win)
+  return vim.b[vim.api.nvim_win_get_buf(win)].isovim_queue == true
+end
+
+-- A window that got between the chat and its composer, or under the composer, goes beside the
+-- chat; a queue window there just closes (queue.sync puts back the one that belongs).
+local function move_beside(node, chat_win)
+  for _, win in ipairs(leaves(node)) do
+    if is_queue(win) then
+      pcall(vim.api.nvim_win_close, win, false)
+    else
+      pcall(vim.fn.win_splitmove, win, chat_win, { vertical = true, rightbelow = true })
+    end
+  end
+end
+
+-- The chat's column, as it always is: the chat (or the row it sits in, a file beside it), the
+-- queue window while it shows, and the composer at the bottom, COMPOSER_HEIGHT tall. Anything
+-- else that got between or under them goes beside the chat; a composer away from its chat goes
+-- back under it.
+---@param chat isovim.acp.Chat
+local function arrange(chat)
+  local here = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    here[win] = true
+  end
+  local chat_win = vim.fn.bufwinid(chat.buf)
+  for _, cwin in ipairs(vim.fn.win_findbuf(chat.composer)) do
+    if here[cwin] and chat_win ~= -1 then
+      local node, i = parent_of(cwin)
+      local above = 0
+      if node and node[1] == "col" then
+        for j = #node[2], i + 1, -1 do
+          move_beside(node[2][j], chat_win)
+        end
+        for j = i - 1, 1, -1 do
+          local child = node[2][j]
+          if vim.tbl_contains(leaves(child), chat_win) then
+            above = j
+            break
+          elseif not (child[1] == "leaf" and is_queue(child[2])) then
+            move_beside(child, chat_win)
+          end
+        end
+      end
+      if above == 0 then
+        pcall(vim.fn.win_splitmove, cwin, chat_win, { rightbelow = true })
+      end
+      if vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_height(cwin) ~= COMPOSER_HEIGHT then
+        pcall(vim.api.nvim_win_set_height, cwin, COMPOSER_HEIGHT)
+      end
+    end
+  end
+  queue.sync(chat)
+end
+
+-- Soon (once whatever is placing windows is done): each chat's column put right (arrange), with
+-- its queue window where its composer shows; or chat's alone.
+local settling = false
 ---@param chat? isovim.acp.Chat
-function M.sync_queues(chat)
+function M.settle(chat)
   vim.schedule(function()
+    if settling then
+      return
+    end
+    settling = true
     for _, each in pairs(chat and { chat } or chats) do
-      if vim.api.nvim_buf_is_valid(each.composer) then
-        queue.sync(each)
+      if vim.api.nvim_buf_is_valid(each.buf) and vim.api.nvim_buf_is_valid(each.composer) then
+        pcall(arrange, each)
         update_bar(each)
       end
     end
+    settling = false
   end)
 end
+
+-- Whenever windows change (a drag on a separator, :resize, a split, a layout restored), the chat
+-- columns on screen are put right again.
+vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "WinResized", "VimResized" }, {
+  group = vim.api.nvim_create_augroup("isovim_acp_column", { clear = true }),
+  callback = function()
+    if not settling and next(chats) then
+      M.settle()
+    end
+  end,
+})
 
 ---@return isovim.acp.Chat?
 function M.get(ws, agent)
@@ -1799,10 +1905,10 @@ function M.open(ws, agent, win)
   if old_composer ~= -1 and vim.api.nvim_win_is_valid(old_composer) and vim.fn.bufwinid(chat.composer) == -1 then
     vim.api.nvim_win_set_buf(old_composer, chat.composer)
   elseif vim.fn.bufwinid(chat.composer) == -1 then
-    vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = 6 })
+    vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = COMPOSER_HEIGHT })
   end
   update_bar(chat)
-  M.sync_queues(chat)
+  M.settle(chat)
   return chat
 end
 

@@ -132,6 +132,11 @@ redraw never touches it while you're editing it, nor closes it. It isn't part of
 chat brings it back wherever its input box shows, so switching workspaces, opening another agent or
 restarting leaves no stray queue window.
 
+The column is always the chat, the queue while it shows, and the input box at the bottom, six lines
+tall. A drag on a separator, `:resize` or a restored layout can't change the input box's height, and
+a window that would come between them or under them (a split opened from the chat) goes beside the
+chat instead.
+
 `<C-j>` / `<C-k>` walk down and up the column, chat → queue → input box, as they walk the sidebar's
 windows; with no queue showing they go straight between the chat and the input box.
 

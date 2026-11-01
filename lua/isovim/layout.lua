@@ -139,11 +139,12 @@ local function alive(node)
   return { node[1], children }
 end
 
--- The queue windows left out come back above their composers, once the layout is rebuilt.
-local function sync_queues()
+-- The chat columns are put right once the layout is rebuilt: the composers at their height, the
+-- queue windows left out back above them.
+local function settle()
   local chat = package.loaded["isovim.acp.chat"]
   if chat then
-    chat.sync_queues()
+    chat.settle()
   end
 end
 
@@ -213,7 +214,7 @@ function M.restore(ws, is_sidebar, want)
   if not is_sidebar(current) then
     vim.api.nvim_set_current_win(want_win or focus_win)
   end
-  sync_queues()
+  settle()
   return true
 end
 
@@ -273,7 +274,7 @@ function M.resume(ws, is_sidebar, open, want)
   if vim.api.nvim_buf_is_valid(placeholder) and vim.fn.bufwinid(placeholder) == -1 then
     vim.api.nvim_buf_delete(placeholder, { force = true })
   end
-  sync_queues()
+  settle()
   return true
 end
 
