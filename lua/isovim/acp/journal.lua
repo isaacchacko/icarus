@@ -140,13 +140,18 @@ function M.follow(ws, agent, on_entry, on_reset)
       end
       offset = offset + #chunk
       partial = partial .. chunk
-      for line in partial:gmatch("([^\n]*)\n") do
-        local entry = decode(line)
-        if entry then
-          on_entry(entry)
+      -- Up to the last newline, found from the end, as in events.follow: partial:match("[^\n]*$")
+      -- takes seconds on a large backlog.
+      local cut = partial:match(".*()\n")
+      if cut then
+        for line in partial:sub(1, cut):gmatch("([^\n]*)\n") do
+          local entry = decode(line)
+          if entry then
+            on_entry(entry)
+          end
         end
+        partial = partial:sub(cut + 1)
       end
-      partial = partial:match("[^\n]*$")
     end
     vim.uv.fs_close(fd)
   end
