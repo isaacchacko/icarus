@@ -1876,6 +1876,22 @@ end
 local TYPING = { "i", "a", "o", "O", "I", "A", "c", "s", "C", "S", "R", "gi", "gI" }
 local TYPING_VISUAL = { "c", "s", "C", "S", "R", "I", "A" }
 
+-- Keys that change text: on the conversation each says, quietly, that it's read-only (M.read_only)
+-- instead of vim's E21; in the composer they're vim's own.
+local EDITING = { "d", "D", "x", "X", "p", "P", "J", "gJ", "r", "~", ">", "<", "=", "g~", "gu", "gU", "g?", "&", ".",
+  "<C-a>", "<C-x>", "<Del>" }
+local EDITING_VISUAL = { "d", "D", "x", "X", "p", "P", "J", "gJ", "r", "~", ">", "<", "=", "u", "U", "g?", "<C-a>",
+  "<C-x>", "<Del>" }
+
+-- An edit tried on the conversation: one quiet line, at most every few seconds.
+local told_at = -math.huge
+function M.read_only()
+  if vim.uv.now() - told_at > 3000 then
+    told_at = vim.uv.now()
+    vim.api.nvim_echo({ { "the conversation is read-only: i to write in your draft", "IsovimAcpHint" } }, false, {})
+  end
+end
+
 local function global_maps(mode)
   local lhs = {}
   for _, map in ipairs(vim.api.nvim_get_keymap(mode)) do
@@ -1909,6 +1925,17 @@ local function map_keys(chat)
         return math.min(vim.fn.line("."), vim.fn.line("v")) > chat.lines and lhs or "<Esc>" .. to_composer
       end, "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
     end
+  end
+  local refuse = "<Cmd>lua require('isovim.acp.chat').read_only()<CR>"
+  for _, lhs in ipairs(EDITING) do
+    map("n", lhs, function()
+      return mine() and lhs or refuse
+    end, "edit (in the composer; the conversation is read-only)", { expr = true, nowait = false })
+  end
+  for _, lhs in ipairs(EDITING_VISUAL) do
+    map("x", lhs, function()
+      return math.min(vim.fn.line("."), vim.fn.line("v")) > chat.lines and lhs or refuse
+    end, "edit (in the composer; the conversation is read-only)", { expr = true, nowait = false })
   end
   map("n", "]]", function()
     jump(chat, 1, true)

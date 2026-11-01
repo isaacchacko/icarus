@@ -139,7 +139,8 @@ virtual text, so only what you type is text there. Normal mode works anywhere as
 you to the end of your draft, typing, and in the input box they're vim's own (a key a plugin
 maps, as LazyVim's flash maps `s`, is left to it). The conversation is read-only: the buffer is
 modifiable only while your cursor, and a selection's other end, is in the input box, so `dd`,
-`x` or `p` on it is refused, and a change that still reaches it (`dk` from the input box's first
+`x` or `p` on it is refused, with one quiet line (`the conversation is read-only: i to write in
+your draft`, at most every few seconds) rather than vim's E21, and a change that still reaches it (`dk` from the input box's first
 line, `:%s`) is caught as it happens and the chat drawn again from the journal, your draft as it
 was before that change. `<BS>`, `<C-w>` and `<C-u>` stop at the input box's start, and `<Up>`
 there stays (or walks your earlier prompts while the box is empty).
