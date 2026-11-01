@@ -50,7 +50,9 @@ end
 -- Agents started after this run in the new dir; running ones keep theirs until restarted.
 function commands.dir(args)
   local ws = resolve(args[1])
-  if args[2] and args[2] ~= "-" then
+  if args[2] and store.v2(ws.id) then
+    fail(ws.name .. " is a repo: each of its agents works in its own dir")
+  elseif args[2] and args[2] ~= "-" then
     if vim.fn.isdirectory(args[2]) == 0 then
       fail(args[2] .. " is not a directory")
     end
@@ -119,6 +121,9 @@ end
 
 function commands.archive(args)
   local ws = resolve(args[1])
+  if store.v2(ws.id) then
+    fail(select(2, store.archive_workspace(ws.id)))
+  end
   panes.stop_all(ws.id)
   store.reparent(ws.id)
   local ok, err, note = store.archive_workspace(ws.id)

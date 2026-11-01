@@ -14,14 +14,23 @@ local function tmux(args)
   return vim.system(tmux_cmd(args), { text = true }):wait()
 end
 
--- One tmux session per agent, named isovim-<ws>-<agent>. Every name is made and read here, so the
--- shape can change in one place; a name of any other shape isn't an agent's.
+-- One tmux session per agent, named isovim-<ws>-<agent>, or iso2-<key>+aN for a new-layout agent
+-- (store.v2), its key's "/" as "+" and "." as "," since tmux reads "." in a target as a pane (no
+-- key holds either). Every name is made and read here, so the shape can change in one place; a
+-- name of any other shape isn't an agent's.
 function M.encode(ws, agent)
+  if store.v2(ws) then
+    return ("iso2-%s+%s"):format((ws:gsub("/", "+"):gsub("%.", ",")), agent)
+  end
   return ("isovim-%s-%s"):format(ws, agent)
 end
 
 ---@return string? ws, string? agent
 function M.decode(name)
+  local key, agent = (name or ""):match("^iso2%-(.+)%+(a%d+)$")
+  if key then
+    return (key:gsub("%+", "/"):gsub(",", ".")), agent
+  end
   return (name or ""):match("^isovim%-(%x%x%x%x%x%x)%-(%S+)$")
 end
 
@@ -140,6 +149,9 @@ local function new_session(ws, agent)
   local id = ("%s-%s-%s-%s-%s"):format(hex:sub(1, 8), hex:sub(9, 12), hex:sub(13, 16), hex:sub(17, 20), hex:sub(21))
   vim.fn.mkdir(store.run_dir(ws), "p")
   vim.fn.writefile({ id }, store.run_dir(ws) .. "/" .. agent .. ".session")
+  if store.v2(ws) then
+    store.update_agent(ws, agent, { session = id })
+  end
   return id
 end
 
@@ -247,7 +259,11 @@ M.fullscreen_title = "isovim fullscreen"
 local HOST_NVIM_ENV = { "NVIM", "NVIM_APPNAME", "MYVIMRC", "VIMRUNTIME", "NVIM_LOG_FILE" }
 
 ---@param agent isovim.Agent
+---@param dir string where it runs: store.agent_dir
 function M.start(ws, agent, dir)
+  if store.v2(ws) then
+    vim.fn.mkdir(dir, "p")
+  end
   if agent.kind == "claude" then
     M.trust(dir)
   end
@@ -267,8 +283,12 @@ function M.start(ws, agent, dir)
     "-e", "ISOVIM_AGENT=" .. agent.name,
     "-e", "ISOVIM_ROLE=" .. store.role(agent),
     "-e", "ISOVIM_PARENT=" .. (agent.parent or ""),
-    "-e", "ISOVIM_META=" .. store.path(ws) .. "/.isovim.json",
+    -- Its address, <ws>/<agent> by ids, which a new-layout agent's state file path no longer spells.
+    "-e", "ISOVIM_ADDR=" .. ws .. "/" .. agent.id,
+    -- What iso-hook reads its names from: the workspace's .isovim.json, or the agent's own record.
+    "-e", "ISOVIM_META=" .. (store.v2(ws) and store.record_file(ws, agent.id) or store.path(ws) .. "/.isovim.json"),
     "-e", "ISOVIM_HIDDEN=" .. (agent.hidden and "1" or ""),
+    "-e", "ISOVIM_READONLY=" .. (agent.read_only and "1" or ""),
   }
   -- Set in the same call so even the server's first pane keeps a long scrollback for isovim.stream to replay.
   local args = { "set-option", "-g", "history-limit", "100000", ";" }

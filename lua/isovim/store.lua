@@ -8,10 +8,57 @@ M.session_file = M.root .. "/session.json"
 M.lock_file = M.root .. "/isovim.lock"
 -- Unix sockets cap paths near 104 bytes, so tests with a deep ISOVIM_HOME set ISOVIM_SOCK.
 M.socket = vim.env.ISOVIM_SOCK or M.root .. "/nvim.sock"
--- Where agents' work will live (~/iso/<owner>-<repo>/...); pilots point it into their tmp dir.
+-- Where agents' work lives (~/iso/<owner>/<repo>/...); pilots point it into their tmp dir.
 M.work = vim.env.ISOVIM_WORK or vim.fs.normalize("~/iso")
 
 local META = ".isovim.json"
+
+-- The new layout (opt-in for now: iso agent --v2) keeps agents per repo under the work root instead
+-- of per workspace:
+--   <key>/aN/                  the agent's own dir, where it starts
+--   <key>/iso/agents/aN.json   its record, outside aN/ so a dir left without one can be told apart
+--   <key>/iso/next             the next N, taken under a lock: a number is never given out twice
+--   <key>/iso/                 also the repo's transcripts/, layout.json and the .isovim.json
+--                              holding its PRs and pins, as a workspace's own dir holds them
+-- <key> is the repo as isovim.repos names it ("owner/repo"), or "_" for agents in no repo. A key
+-- stands wherever a workspace id does (store.list, run dirs, tmux names), so an agent's address is
+-- <key>/aN. A workspace id never holds a "/" and is never "_", so the two can't be confused.
+function M.v2(id)
+  return id == "_" or (type(id) == "string" and id:find("/", 1, true) ~= nil)
+end
+
+-- A key safe as a path under the work root: "_", or two or more names as repos.normalize makes them.
+function M.valid_key(key)
+  if key == "_" then
+    return true
+  end
+  local parts = vim.split(key or "", "/", { plain = true })
+  return #parts >= 2 and vim.iter(parts):all(function(part)
+    return part:match("^[%w._-]+$") ~= nil and not part:match("^%.+$")
+  end)
+end
+
+local function records(key)
+  return M.work .. "/" .. key .. "/iso/agents"
+end
+
+-- Where a new-layout agent's record is; also its ISOVIM_META.
+function M.record_file(key, agent)
+  return records(key) .. "/" .. agent .. ".json"
+end
+
+local function read_json(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  local decoded, value = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  return decoded and type(value) == "table" and value or nil
+end
+
+-- Written to a temp file and renamed over the old one, so no reader ever sees half of it.
+local function write_json(path, value)
+  local tmp = ("%s.%d.tmp"):format(path, vim.uv.os_getpid())
+  vim.fn.writefile({ vim.json.encode(value) }, tmp)
+  assert(vim.uv.fs_rename(tmp, path))
+end
 
 function M.read_session()
   local ok, lines = pcall(vim.fn.readfile, M.session_file)
@@ -33,8 +80,10 @@ function M.release_lock()
 end
 
 -- Host-only runtime state for a workspace's agents: <agent>.state and <agent>.session from its hooks, <agent>.seen.
+-- A repo key's "/" becomes "+" (never in a key), so every run dir sits right under run/, where the
+-- sidebar watches.
 function M.run_dir(id)
-  return M.run .. "/" .. id
+  return M.run .. "/" .. id:gsub("/", "+")
 end
 
 function M.state_file(ws, agent)
@@ -46,17 +95,24 @@ function M.seen_file(ws, agent)
 end
 
 -- The id of the agent's conversation, so a restart resumes that one and not another agent's.
+-- A new-layout agent's record keeps it too, for when the run dir is gone.
 function M.session_id(ws, agent)
   local file = io.open(M.run_dir(ws) .. "/" .. agent .. ".session")
-  if not file then
-    return nil
+  local id = file and vim.trim(file:read("*a")) or ""
+  if file then
+    file:close()
   end
-  local id = vim.trim(file:read("*a"))
-  file:close()
+  if id == "" and M.v2(ws) then
+    return (M.agent(ws, agent) or {}).session
+  end
   return id ~= "" and id or nil
 end
 
+-- A workspace's own dir, or a repo key's iso/: where its .isovim.json, layout.json and transcripts are.
 function M.path(id)
+  if M.v2(id) then
+    return M.work .. "/" .. id .. "/iso"
+  end
   return M.workspaces .. "/" .. id
 end
 
@@ -101,7 +157,11 @@ local function project_dir(id, meta)
   return M.path(id)
 end
 
+-- A repo key's dir holds its agents' own dirs (M.agent_dir).
 function M.dir(id)
+  if M.v2(id) then
+    return M.work .. "/" .. id
+  end
   return project_dir(id, read_meta(M.path(id)))
 end
 
@@ -122,9 +182,46 @@ function M.set_dir(id, dir)
   write_meta(path, meta)
 end
 
----@return {id:string, name:string, dir:string, created:integer, modified:integer}[]
+-- The repo keys under the work root that have agents. A key is a dir whose iso/agents/ holds a
+-- record; nothing below one is looked in, and keys from hosts other than GitHub can be up to four
+-- names long (host/group/sub/repo).
+---@return string[]
+local function keys()
+  local found = {}
+  local function walk(dir, key, depth)
+    if key and vim.uv.fs_stat(dir .. "/iso/agents") then
+      if M.valid_key(key) and #vim.fn.glob(records(key) .. "/a*.json", false, true) > 0 then
+        found[#found + 1] = key
+      end
+      return
+    end
+    if depth == 4 then
+      return
+    end
+    for name, kind in vim.fs.dir(dir) do
+      if kind == "directory" and not vim.startswith(name, ".") then
+        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+      end
+    end
+  end
+  walk(M.work, nil, 0)
+  return found
+end
+
+---@return {id:string, name:string, dir:string, created:integer, modified:integer, repo?:string}[]
 function M.list()
   local workspaces = {}
+  for _, key in ipairs(keys()) do
+    local stat = vim.uv.fs_stat(records(key))
+    workspaces[#workspaces + 1] = {
+      id = key,
+      name = (read_meta(M.path(key)) or {}).name or key,
+      dir = M.dir(key),
+      created = created_at(M.path(key), {}) or 0,
+      modified = stat and stat.mtime.sec or 0,
+      repo = key ~= "_" and key or nil,
+    }
+  end
   for id, kind in vim.fs.dir(M.workspaces) do
     local dir = M.path(id)
     local meta = kind == "directory" and read_meta(dir)
@@ -170,6 +267,20 @@ function M.create(name, project, worktree)
     M.set_dir(id, project)
   end
   return id
+end
+
+-- Where the agent starts: a new-layout agent in its own dir, <key>/aN, or a read-only one in its
+-- repo's base clone when there is one; any other agent in its workspace's dir.
+function M.agent_dir(ws, agent)
+  if not M.v2(ws) then
+    return M.dir(ws)
+  end
+  local spec = M.agent(ws, agent) or {}
+  local base = spec.read_only and spec.repo and require("isovim.repos").dir(spec.repo) .. "/base-clone"
+  if base and vim.fn.isdirectory(base) == 1 then
+    return base
+  end
+  return M.dir(ws) .. "/" .. agent
 end
 
 function M.update_meta(id, fields)
@@ -333,6 +444,10 @@ end
 ---@field hidden? boolean left out of the sidebar and never notifies
 ---@field role? "root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
+---@field read_only? boolean a new-layout agent that works in its repo's base clone
+---@field repo? string a new-layout agent's repo key; nil in "_"
+---@field created? integer when a new-layout agent was made
+---@field session? string a new-layout agent's conversation id, as also kept in its run dir
 
 -- The root sets the north star, the router is a repo's one interface to the user, workers do the work.
 M.roles = { "root", "router", "worker" }
@@ -345,14 +460,40 @@ end
 -- A workspace without an agent list has just its main agent.
 local DEFAULT_AGENTS = { { id = "main", name = "main", kind = "claude" } }
 
+local function number(id)
+  return tonumber((id or ""):match("^a(%d+)$"))
+end
+
+-- A repo key's agents, in the order they were made.
+---@return isovim.Agent[]
+local function records_of(key)
+  local list = {}
+  for _, path in ipairs(vim.fn.glob(records(key) .. "/a*.json", false, true)) do
+    local record = number(vim.fs.basename(path):sub(1, -6)) and read_json(path)
+    if record and record.id then
+      list[#list + 1] = record
+    end
+  end
+  table.sort(list, function(a, b)
+    return (number(a.id) or 0) < (number(b.id) or 0)
+  end)
+  return list
+end
+
 ---@return isovim.Agent[]
 function M.agents(ws)
+  if M.v2(ws) then
+    return records_of(ws)
+  end
   local meta = read_meta(M.path(ws)) or {}
   return meta.agents or vim.deepcopy(DEFAULT_AGENTS)
 end
 
 ---@return isovim.Agent?
 function M.agent(ws, id)
+  if M.v2(ws) then
+    return number(id) and read_json(M.record_file(ws, id)) or nil
+  end
   for _, agent in ipairs(M.agents(ws)) do
     if agent.id == id then
       return agent
@@ -366,10 +507,63 @@ local function has_agent(agents, id)
   end)
 end
 
--- Ids come from the name or kind, numbered when taken: codex, codex2, ...
----@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string}
----@return isovim.Agent
+-- The next N for a repo key, under a lock (a dir, which only one process can make): one past the
+-- counter, and past every aN dir and record there, so a number is never given out again even if
+-- the counter file goes. aN/ is made before the lock is let go.
+---@return integer? n, string? err
+local function take_number(key)
+  local iso = M.path(key)
+  vim.fn.mkdir(records(key), "p")
+  local lock = iso .. "/next.lock"
+  local deadline = vim.uv.hrtime() + 5e9
+  while not vim.uv.fs_mkdir(lock, 448) do
+    local stat = vim.uv.fs_stat(lock)
+    -- A holder that died: taking a number takes milliseconds.
+    if stat and os.time() - stat.mtime.sec > 30 then
+      vim.uv.fs_rmdir(lock)
+    elseif vim.uv.hrtime() > deadline then
+      return nil, "could not take the next agent number in " .. key .. ": " .. lock .. " is held"
+    else
+      vim.uv.sleep(20)
+    end
+  end
+  local ok, lines = pcall(vim.fn.readfile, iso .. "/next")
+  local n = ok and tonumber(lines[1]) or 0
+  for _, dir in ipairs({ M.dir(key), records(key) }) do
+    for name in vim.fs.dir(dir) do
+      local taken = number((name:gsub("%.json$", "")))
+      n = taken and math.max(n, taken + 1) or n
+    end
+  end
+  vim.fn.writefile({ tostring(n + 1) }, iso .. "/next.tmp")
+  vim.uv.fs_rename(iso .. "/next.tmp", iso .. "/next")
+  vim.fn.mkdir(M.dir(key) .. "/a" .. n, "p")
+  vim.uv.fs_rmdir(lock)
+  return n
+end
+
+-- A new-layout agent: aN/ and its record. Its name is the one given, else its id.
+---@return isovim.Agent? agent, string? err
+local function add_record(key, spec)
+  local n, err = take_number(key)
+  if not n then
+    return nil, err
+  end
+  local id = "a" .. n
+  local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
+    read_only = spec.read_only or false, repo = key ~= "_" and key or nil, created = os.time(), cmd = spec.cmd,
+    hidden = spec.hidden or nil, prompt = spec.prompt }
+  write_json(M.record_file(key, id), record)
+  return record
+end
+
+-- Ids come from the name or kind, numbered when taken: codex, codex2, ...; in a repo key, a0, a1, ...
+---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean}
+---@return isovim.Agent? agent, string? err nil only for a repo key
 function M.add_agent(ws, spec)
+  if M.v2(ws) then
+    return add_record(ws, spec)
+  end
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}
   local agents = meta.agents or vim.deepcopy(DEFAULT_AGENTS)
@@ -407,8 +601,16 @@ function M.tasks(ws, agent)
 end
 
 -- Calls fn with the agent's entry from the workspace's agent list (written out first if the
--- workspace still has just the default agent), then saves.
+-- workspace still has just the default agent), or with its record, then saves.
 local function with_agent(ws, agent, fn)
+  if M.v2(ws) then
+    local record = M.agent(ws, agent)
+    if record then
+      fn(record)
+      write_json(M.record_file(ws, agent), record)
+    end
+    return
+  end
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}
   meta.agents = meta.agents or vim.deepcopy(DEFAULT_AGENTS)
@@ -490,51 +692,46 @@ function M.reparent(ws, agent)
     -- Read again each time: handing down the previous one may have changed this one's parent.
     local gone = M.agent(ws, id) or {}
     for _, workspace in ipairs(M.list()) do
-      local dir = M.path(workspace.id)
-      local meta = read_meta(dir) or {}
-      local changed = false
-      for _, child in ipairs(meta.agents or {}) do
+      for _, child in ipairs(M.agents(workspace.id)) do
         if child.parent == ws .. "/" .. id then
-          child.parent, changed = gone.parent, true
+          with_agent(workspace.id, child.id, function(entry)
+            entry.parent = gone.parent
+          end)
         end
-      end
-      if changed then
-        write_meta(dir, meta)
       end
     end
   end
 end
 
+-- A new-layout agent loses its record; its dir stays for now (nothing tears it down yet).
 function M.remove_agent(ws, id)
   M.reparent(ws, id)
-  local dir = M.path(ws)
-  local meta = read_meta(dir) or {}
-  meta.agents = vim.tbl_filter(function(agent)
-    return agent.id ~= id
-  end, meta.agents or vim.deepcopy(DEFAULT_AGENTS))
-  write_meta(dir, meta)
+  if M.v2(ws) then
+    os.remove(M.record_file(ws, id))
+  else
+    local dir = M.path(ws)
+    local meta = read_meta(dir) or {}
+    meta.agents = vim.tbl_filter(function(agent)
+      return agent.id ~= id
+    end, meta.agents or vim.deepcopy(DEFAULT_AGENTS))
+    write_meta(dir, meta)
+  end
   vim.fn.delete(M.state_file(ws, id))
   vim.fn.delete(M.seen_file(ws, id))
   vim.fn.delete(M.run_dir(ws) .. "/" .. id .. ".session")
 end
 
 function M.set_hidden(ws, id, hidden)
-  local dir = M.path(ws)
-  local meta = read_meta(dir) or {}
-  meta.agents = meta.agents or vim.deepcopy(DEFAULT_AGENTS)
-  for _, agent in ipairs(meta.agents) do
-    if agent.id == id then
-      agent.hidden = hidden or nil
-    end
-  end
-  write_meta(dir, meta)
+  with_agent(ws, id, function(agent)
+    agent.hidden = hidden or nil
+  end)
 end
 
 function M.set_role(ws, id, role)
   local previous
   with_agent(ws, id, function(entry)
     previous = M.role(entry)
-    entry.role = role ~= "worker" and role or nil
+    entry.role = (role ~= "worker" or M.v2(ws)) and role or nil
   end)
   if previous and previous ~= role then
     local events = require("isovim.events")
@@ -618,6 +815,9 @@ end
 -- Its worktree goes too, unless it holds uncommitted work; the note says what was kept.
 ---@return boolean? ok, string? err, string? note
 function M.archive_workspace(id)
+  if M.v2(id) then
+    return nil, id .. " is a repo, not a workspace: remove its agents one by one"
+  end
   local dir = M.path(id)
   local note
   local project = M.dir(id)

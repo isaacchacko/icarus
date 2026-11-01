@@ -72,6 +72,10 @@ local KINDS = {
       end
     end,
     delete = function(item)
+      if store.v2(item.ws) then
+        Snacks.notify.warn(select(2, store.archive_workspace(item.ws)), { title = "isovim" })
+        return
+      end
       Snacks.picker.util.confirm("Archive " .. item.ws_name .. "?", function()
         panes.stop_all(item.ws)
         store.reparent(item.ws)
@@ -286,7 +290,7 @@ local function local_rows(workspaces)
   for _, ws in ipairs(workspaces) do
     local base = { ws = ws.id, ws_name = ws.name }
     local added, removed = diffstat.get(ws.dir, M.refresh)
-    local row = { kind = "workspace", running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents), repo = repo_mark(repos.for_dir(ws.dir)) }
+    local row = { kind = "workspace", running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents), repo = repo_mark(ws.repo and repos.style(ws.repo) or repos.for_dir(ws.dir)) }
     items[#items + 1] = vim.tbl_extend("force", base, row)
     local open = isovim.expanded[ws.id]
     if open and isovim.show_prs then
@@ -339,7 +343,7 @@ local function remote_rows(name, ssh, rows)
   local items = {}
   local by_ws, order = {}, {}
   for _, row in ipairs(rows) do
-    local ws_id = row.id:match("^[^/]+")
+    local ws_id = row.id:match("^(.+)/[^/]+$")
     local agent = remote_agent(row)
     if not by_ws[ws_id] then
       by_ws[ws_id] = { name = row.workspace, agents = {}, repo = row.repo }

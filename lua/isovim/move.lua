@@ -25,6 +25,9 @@ end
 
 ---@return boolean ok, string? err
 function M.send(ws, host)
+  if store.v2(ws.id) then
+    return false, "a repo's agents (the new layout) don't move between hosts yet"
+  end
   local dir = store.dir(ws.id)
   local manifest = { id = ws.id, running = {} }
   local agents = store.agents(ws.id)

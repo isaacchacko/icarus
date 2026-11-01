@@ -38,12 +38,15 @@ local function unique(query, candidates, keys, what)
   fail(("no %s matches %q"):format(what, query))
 end
 
+-- A repo key (store.v2) is matched by its start only when the query has a "/" or is "_", so a
+-- workspace id's prefix never runs into one.
 local function resolve(query)
   if not query then
     fail("missing workspace\n" .. usage())
   end
+  local by_key = store.v2(query)
   return unique(query, store.list(), function(ws)
-    return { ws.id, ws.name }
+    return (by_key or not store.v2(ws.id)) and { ws.id, ws.name } or {}
   end, "workspace")
 end
 
@@ -52,7 +55,14 @@ local function resolve_agent(query)
   if not query then
     fail("missing agent\n" .. usage())
   end
+  -- The last "/" splits it, as a repo key (owner/repo/aN) has one of its own, unless the whole of
+  -- it is a repo key: owner/repo means its first agent.
   local ws_query, agent_query = query:match("^(.*)/([^/]*)$")
+  if ws_query and vim.iter(store.list()):any(function(ws)
+    return ws.id == query
+  end) then
+    ws_query, agent_query = nil, nil
+  end
   local ws = resolve(ws_query or query)
   local agents = store.agents(ws.id)
   if not agent_query then
@@ -146,7 +156,7 @@ local function ensure_running(ws, agent)
     end
     return
   end
-  local result = panes.start(ws.id, agent, ws.dir)
+  local result = panes.start(ws.id, agent, store.agent_dir(ws.id, agent.id))
   if result.code ~= 0 then
     fail("could not start " .. agent.name .. ": " .. (result.stderr or ""))
   end
@@ -163,6 +173,39 @@ local function ensure_running(ws, agent)
   end) then
     fail(agent.name .. " did not start within 30s")
   end
+end
+
+-- Where a new-layout agent for target goes: target is a repo key ("owner/repo", or "_" for no
+-- repo), or a dir, which means its repo's key, or "_" outside one. A dir that exists wins.
+---@return table ws a store.list() entry for the key, made up when it has no agents yet
+local function unit(target)
+  if not target then
+    fail("missing repo or dir\n" .. usage())
+  end
+  local dir = vim.fs.normalize(target)
+  local key
+  if vim.fn.isdirectory(dir) == 1 then
+    key = require("isovim.repos").of(vim.uv.fs_realpath(dir) or dir) or "_"
+  elseif store.v2(target) and store.valid_key(target) then
+    key = target:lower()
+  else
+    fail(("%s is neither a dir nor a repo (owner/repo, or _ for none)"):format(target))
+  end
+  return vim.iter(store.list()):find(function(ws)
+    return ws.id == key
+  end) or { id = key, name = key, dir = store.dir(key), repo = key ~= "_" and key or nil }
+end
+
+-- Adds an agent to ws and starts it; a new-layout one (ws a repo key) gets the next aN there.
+---@return string address <ws>/<agent>
+local function spawn(ws, spec)
+  local agent, err = store.add_agent(ws.id, spec)
+  if not agent then
+    fail(err or "could not add the agent")
+  end
+  ensure_running(ws, agent)
+  tui("require('isovim').refresh()")
+  return ws.id .. "/" .. agent.id
 end
 
 local function option(args, name, default)
@@ -200,6 +243,8 @@ return {
   unique = unique,
   resolve = resolve,
   resolve_agent = resolve_agent,
+  unit = unit,
+  spawn = spawn,
   split_host = split_host,
   parent_address = parent_address,
   caller_address = caller_address,

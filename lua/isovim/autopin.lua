@@ -39,7 +39,7 @@ function M.run(ws, agent)
   if not answer then
     return {}
   end
-  local dir = store.dir(ws)
+  local dir = store.agent_dir(ws, agent)
   local skip = { [vim.uv.fs_realpath(vim.fs.normalize("~")) or ""] = true, [dir and vim.uv.fs_realpath(dir) or ""] = true }
   for _, entry in ipairs(store.pinned(ws)) do
     skip[vim.uv.fs_realpath(entry.path) or entry.path] = true

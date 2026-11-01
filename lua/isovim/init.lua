@@ -289,7 +289,7 @@ function M.open(ws, agent, win)
     return
   end
   if not panes.running(ws, agent) then
-    local result = panes.start(ws, spec, store.dir(ws))
+    local result = panes.start(ws, spec, store.agent_dir(ws, agent))
     if result.code ~= 0 then
       Snacks.notify.error("Could not start " .. spec.name .. ":\n" .. result.stderr)
       return
@@ -355,7 +355,7 @@ function M.restart(ws, agent)
   if shown then
     M.open(ws, agent)
   else
-    panes.start(ws, assert(store.agent(ws, agent)), store.dir(ws))
+    panes.start(ws, assert(store.agent(ws, agent)), store.agent_dir(ws, agent))
   end
 end
 
@@ -1088,7 +1088,7 @@ function M.find()
       end
       local id = row.id:gsub("^[^:]+:", "")
       if row.host == self then
-        local ws, agent = id:match("^([^/]+)/(.+)$")
+        local ws, agent = id:match("^(.+)/([^/]+)$")
         M.open(ws, agent)
       else
         M.open_remote(row.host, remote.host_of(row.host), id, row.host .. ":" .. row.workspace, row.agent)

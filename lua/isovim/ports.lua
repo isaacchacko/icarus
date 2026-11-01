@@ -70,7 +70,7 @@ function M.of(ws, agent)
   end
   local all = {}
   for key, ports in pairs(M.by_agent) do
-    if key:match("^" .. ws .. "/") then
+    if vim.startswith(key, ws .. "/") then
       vim.list_extend(all, ports)
     end
   end

@@ -8,6 +8,8 @@ local out = c.out
 local fail = c.fail
 local resolve = c.resolve
 local resolve_agent = c.resolve_agent
+local unit = c.unit
+local spawn = c.spawn
 local parent_address = c.parent_address
 local caller_address = c.caller_address
 local tui = c.tui
@@ -91,6 +93,8 @@ function commands.phone()
   end
 end
 
+-- With --v2 (or a repo key that already has agents) the agent is a new-layout one: <key>/aN in
+-- ~/iso/<key>/, for the repo of a dir or a repo named as owner/repo, or in _ outside any repo.
 function commands.agent(args)
   local name = option(args, "--name")
   local cmd = option(args, "--cmd")
@@ -98,10 +102,15 @@ function commands.agent(args)
   local hidden = flag(args, "--hidden")
   local role = option(args, "--role")
   local parent = option(args, "--parent")
-  local ws = resolve(args[1])
+  local v2 = flag(args, "--v2")
+  local read_only = flag(args, "--read-only")
+  local ws = v2 and unit(args[1]) or resolve(args[1])
   local kind = args[2]
   if not vim.tbl_contains(panes.kinds, kind) then
-    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r] [--parent agent]")
+    fail("usage: iso agent <ws> <" .. table.concat(panes.kinds, "|") .. "> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r] [--parent agent] [--v2 [--read-only]]")
+  end
+  if read_only and not store.v2(ws.id) then
+    fail("--read-only is for a new-layout agent: add --v2")
   end
   if kind == "command" and not cmd then
     fail("a command agent needs --cmd")
@@ -110,10 +119,8 @@ function commands.agent(args)
     fail("--role is one of " .. table.concat(store.roles, ", "))
   end
   parent = parent and parent_address(parent) or caller_address()
-  local agent = store.add_agent(ws.id, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role, parent = parent })
-  ensure_running(ws, agent)
-  out(ws.id .. "/" .. agent.id)
-  tui("require('isovim').refresh()")
+  out(spawn(ws, { kind = kind, name = name, cmd = cmd, hidden = hidden, prompt = prompt, role = role, parent = parent,
+    read_only = read_only or nil }))
 end
 
 -- The role picks the prompt an agent is told at launch, so a change reaches it only when it restarts.
@@ -184,13 +191,20 @@ function commands.fork(args)
   if agent.kind ~= "claude" or not session then
     fail(("%s · %s has no Claude conversation to fork"):format(ws.name, agent.name))
   end
-  local dir = store.dir(ws.id)
-  local tangent = store.create(name or (ws.name .. " tangent"), dir ~= store.path(ws.id) and dir or nil)
-  store.remove_agent(tangent, "main")
-  local fork = store.add_agent(tangent, { kind = "claude", name = agent.name, prompt = prompt })
+  -- A new-layout agent's tangent is the next aN of its repo key.
+  local tangent = ws.id
+  if not store.v2(ws.id) then
+    local dir = store.dir(ws.id)
+    tangent = store.create(name or (ws.name .. " tangent"), dir ~= store.path(ws.id) and dir or nil)
+    store.remove_agent(tangent, "main")
+  end
+  local fork, err = store.add_agent(tangent, { kind = "claude", name = store.v2(tangent) and name or agent.name, prompt = prompt })
+  if not fork then
+    fail(err)
+  end
   store.update_agent(tangent, fork.id, { fork_of = session, parent = caller or (ws.id .. "/" .. agent.id) })
   fork = store.agent(tangent, fork.id)
-  local result = panes.start(tangent, fork, store.dir(tangent))
+  local result = panes.start(tangent, fork, store.agent_dir(tangent, fork.id))
   if result.code ~= 0 then
     fail("could not start the fork: " .. (result.stderr or ""))
   end

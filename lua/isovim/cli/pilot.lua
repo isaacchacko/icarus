@@ -8,9 +8,13 @@ local tui = c.tui
 
 local commands = {}
 
--- Agents run with $ISOVIM_STATE at run/<ws>/<agent>.state, which names who is asking.
+-- Agents run with $ISOVIM_ADDR, or (started before it) $ISOVIM_STATE at run/<ws>/<agent>.state,
+-- which names who is asking.
 local function pilot_name()
-  local ws_id, agent_id = (vim.env.ISOVIM_STATE or ""):match("([^/]+)/([^/]+)%.state$")
+  local ws_id, agent_id = (vim.env.ISOVIM_ADDR or ""):match("^(.+)/([^/]+)$")
+  if not ws_id then
+    ws_id, agent_id = (vim.env.ISOVIM_STATE or ""):match("([^/]+)/([^/]+)%.state$")
+  end
   local ws = ws_id and vim.iter(store.list()):find(function(ws)
     return ws.id == ws_id
   end)

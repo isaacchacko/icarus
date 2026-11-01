@@ -14,7 +14,11 @@ local function offset_file(ws, agent)
 end
 
 ---@return string[] urls registered
+-- Not for a new-layout agent: in a repo only the router registers PRs, with iso pr.
 function M.run(ws, agent)
+  if store.v2(ws) then
+    return {}
+  end
   local spec = store.agent(ws, agent)
   local log = spec and spec.kind == "claude" and transcript.source(ws, agent)
   local file = log and io.open(log)

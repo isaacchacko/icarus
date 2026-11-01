@@ -82,16 +82,21 @@ M.list = {
       ["--prompt"] = "<text>",
       ["--role"] = "<role>",
       ["--parent"] = "<address>",
+      ["--v2"] = false,
+      ["--read-only"] = false,
     },
     help = [=[
        iso agent <ws> <kind> [--name n] [--hidden] [--cmd c] [--prompt text] [--role r]
-                     [--parent agent]
+                     [--parent agent] [--v2 [--read-only]]
                                      add an agent (claude|codex|terminal|command), start it;
                                      --prompt starts a claude or codex agent on that prompt;
                                      --role root|router|worker (default worker) picks the
                                      role prompt it's told (prompts in ~/.isovim/config.json).
                                      Its parent is the agent running this (iso new and iso fork
-                                     set it too), or --parent]=],
+                                     set it too), or --parent. --v2 (trying out the new layout)
+                                     makes it <owner>/<repo>/aN in ~/iso/<owner>/<repo>/aN, for
+                                     <ws> given as owner/repo or a dir in that repo (_ outside
+                                     one); --read-only starts it in the repo's base clone]=],
   },
   { name = "role", module = "agents",
     args = { "<agent>", "<role>" },

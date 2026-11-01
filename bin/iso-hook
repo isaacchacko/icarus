@@ -17,8 +17,13 @@ desktop() {
   fi
 }
 
-# The agent as events name it, <ws>/<agent> by ids, from its state file run/<ws>/<agent>.state.
+# The agent as events and iso name it, <ws>/<agent> by ids: $ISOVIM_ADDR, or for an agent started
+# before isovim set it, from its state file run/<ws>/<agent>.state.
 address() {
+  if [ -n "$ISOVIM_ADDR" ]; then
+    printf %s "$ISOVIM_ADDR"
+    return
+  fi
   local file="${ISOVIM_STATE%.state}" dir="${ISOVIM_STATE%/*}"
   printf %s "${dir##*/}/${file##*/}"
 }
@@ -48,10 +53,12 @@ set_state() {
 notify() {
   [ -S "$ISOVIM_SOCK" ] || [ -n "$ISOVIM_HIDDEN" ] && return
   meta="${ISOVIM_META:-$PWD/.isovim.json}"
-  name="$(jq -r '.name // empty' "$meta" 2>/dev/null)"
-  # Its current name (it may have been renamed since it started); the id is in its state file's name.
+  # Current names (it may have been renamed since it started). $ISOVIM_META is a workspace's
+  # .isovim.json, its agents listed in it by id (its state file's name), or a new-layout agent's own
+  # record, which has a kind, in a repo named by $ISOVIM_WS.
   id="$(basename "${ISOVIM_STATE%.state}")"
-  agent="$(jq -r --arg id "$id" '(.agents // [])[] | select(.id == $id) | .name' "$meta" 2>/dev/null)"
+  name="$(jq -r --arg ws "$ISOVIM_WS" 'if has("kind") then $ws else .name // empty end' "$meta" 2>/dev/null)"
+  agent="$(jq -r --arg id "$id" 'if has("kind") then .name else (.agents // [])[] | select(.id == $id) | .name end' "$meta" 2>/dev/null)"
   desktop "${name:-isovim} · ${agent:-${ISOVIM_AGENT:-isovim}} $1"
 }
 
@@ -59,13 +66,12 @@ notify() {
 # after an answer, also pins the files and folders it named and registers the PRs it opened
 # (iso autopin, iso autopr).
 transcript() {
-  agent="$(basename "${ISOVIM_STATE%.state}")"
-  ws="$(basename "$(dirname "$ISOVIM_STATE")")"
+  addr="$(address)"
   iso="$(dirname "$0")/iso"
   if [ "$1" = answered ]; then
-    ("$iso" transcript "$ws/$agent" && "$iso" autopin "$ws/$agent" && "$iso" autopr "$ws/$agent") </dev/null >/dev/null 2>&1 &
+    ("$iso" transcript "$addr" && "$iso" autopin "$addr" && "$iso" autopr "$addr") </dev/null >/dev/null 2>&1 &
   else
-    ("$iso" transcript "$ws/$agent" </dev/null >/dev/null 2>&1 &)
+    ("$iso" transcript "$addr" </dev/null >/dev/null 2>&1 &)
   fi
 }
 
@@ -85,9 +91,7 @@ prompt)
   input="$(cat)"
   case "$input" in
   *"from "*)
-    agent="$(basename "${ISOVIM_STATE%.state}")"
-    ws="$(basename "$(dirname "$ISOVIM_STATE")")"
-    printf %s "$input" | "$(dirname "$0")/iso" checkstamp "$ws/$agent"
+    printf %s "$input" | "$(dirname "$0")/iso" checkstamp "$(address)"
     ;;
   esac
   ;;
@@ -96,8 +100,7 @@ stop)
   # stays "checking" (drawn as working); an answer that only waits on something it started (a build,
   # a server coming up) becomes "waiting" and never notifies.
   set_state checking
-  agent="$(basename "${ISOVIM_STATE%.state}")"
-  ws="$(basename "$(dirname "$ISOVIM_STATE")")"
+  addr="$(address)"
   iso="$(dirname "$0")/iso"
   (
     # A turn can end on a dialog that waits for you (a plan to approve): it draws just after this
@@ -107,16 +110,16 @@ stop)
       set_state attention
       notify "needs you"
     else
-      "$iso" transcript "$ws/$agent"
-      if [ "$("$iso" progress "$ws/$agent")" = waiting ]; then
+      "$iso" transcript "$addr"
+      if [ "$("$iso" progress "$addr")" = waiting ]; then
         set_state waiting
       else
         set_state idle
         notify "finished"
       fi
     fi
-    "$iso" autopin "$ws/$agent"
-    "$iso" autopr "$ws/$agent"
+    "$iso" autopin "$addr"
+    "$iso" autopr "$addr"
   ) </dev/null >/dev/null 2>&1 &
   ;;
 ask)
