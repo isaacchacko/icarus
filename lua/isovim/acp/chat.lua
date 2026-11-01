@@ -2259,7 +2259,7 @@ M.help_keys = {
   thread = {
     { "<CR>", "in its composer: post to the router (a new thread's first <CR> takes its title)" },
     { "r", "on the thread: resolve it, or open it again" },
-    { "n / <leader>ic", "a new thread: n on a repo's row in the sidebar, <leader>ic in the current repo" },
+    { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
     { "", "otherwise as a chat: insert keys go to the draft, u undoes it, ]] [[ your posts" },
   },
   composer = {

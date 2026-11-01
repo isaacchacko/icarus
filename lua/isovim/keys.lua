@@ -665,7 +665,12 @@ M.GROUP = {
     sidebar().focus_window("terminals")
   end, "Terminals in the sidebar" },
   { "s", M.spawn, "spawn a worker over ACP in the repo" },
-  { "t", M.new_terminal, "new terminal" },
+  { "t", function()
+    local scope = require("isovim.scope")
+    local current = isovim().current_scope
+    require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
+  end, "a new thread with the repo's router" },
+  { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)
   end, "the previous host" },
@@ -679,11 +684,6 @@ M.GROUP = {
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },
   { "q", M.prompt_queue, "the prompt queue of the agent on screen" },
-  { "c", function()
-    local scope = require("isovim.scope")
-    local current = isovim().current_scope
-    require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
-  end, "a new thread with the repo's router" },
   { "u", function()
     require("isovim.acp.chat").rewind_at_cursor()
   end, "rewind: edit your prompt under the cursor and go on from before it" },
@@ -714,7 +714,7 @@ end
 
 -- legacy: refused once enforcement is on (its action says so, in place of the hint).
 M.RETIRED = {
-  { "t", on_current("isovim_terminal"), "<leader>it" },
+  { "t", on_current("isovim_terminal"), "<leader>iN" },
   { "a", on_current("isovim_add_agent"), "<leader>is", legacy = true },
   { "n", function()
     sidebar().actions.isovim_add()

@@ -1524,7 +1524,8 @@ local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox or Terminals, collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, Inbox or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
-  { "t", "isovim_terminal", "new terminal (it opens in ~)" },
+  { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
+  { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent or terminal" },
   { "d", "isovim_delete", "remove the agent, terminal or pinned path, or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
@@ -1538,7 +1539,6 @@ local LIST_KEYS = {
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
   { "P", "isovim_open_prs", "the PRs surface of the row's repo (the root's on its rows; on General or Terminals, the current repo's)" },
-  { "n", "isovim_new_thread", "a new thread with the repo's router (isovim.threads): its title, then your first post" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
 -- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
@@ -2231,7 +2231,7 @@ M.actions = {
     end
     require("isovim.keys").prs(key)
   end,
-  -- n: a new thread in the row's repo (none in General, Root or Terminals).
+  -- t: a new thread in the row's repo, an agent's row's too (none in General, Root or Terminals).
   isovim_new_thread = function(item)
     local key = item and (item.repo_key or item.group_key or (item.ws and not item.host and M.group_key(item.ws)))
     require("isovim.acp.chat").new_thread(key ~= GENERAL_KEY and key ~= ROOT_KEY and key or nil)

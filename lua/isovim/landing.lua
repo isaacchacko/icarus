@@ -97,7 +97,7 @@ local function actions()
     { "i", function()
       sidebar().focus_inbox("host")
     end, keys.GROUP, "h" },
-    { "t", keys.new_terminal, keys.GROUP, "t" },
+    { "n", keys.new_terminal, keys.GROUP, "N" },
     { "m", send_repo, sidebar().LIST_KEYS, "m" },
     { "?", sidebar().help, sidebar().COLUMN_KEYS, "?" },
   }

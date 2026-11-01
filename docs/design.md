@@ -217,7 +217,7 @@ host; General, Root and Terminals have none, and starting one there says why.
   `iso router thread new "<title>" ["first post"]` rather than bury it in its chat, and resolves one
   with `iso router thread resolve <id> ["outcome"]`; `thread ls [--all]` and `thread show <id>` read
   them, which any role may; only routers (and you, from a shell) make, post and resolve.
-- **Starting one:** `n` on a repo's row in the sidebar, or `<leader>ic` in the current repo: the
+- **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
   posts (`working…` while the router's turn on it runs). One with a router post you haven't read
@@ -374,7 +374,7 @@ ISOVIM 2de9e2b
 The column is two windows, the list and the footer. The list starts with the Inbox of the host it
 shows, so `<` and `>` switch it with the rest (on another host it says whose, `Inbox 2 ·
 cleopatra`); `<leader>ih` brings it back to this host. Terminals is the list's last group, as General
-is one: Enter on a terminal opens it, `t` makes one, `r` / `d` / `o` rename, remove and open its
+is one: Enter on a terminal opens it, `n` makes one, `r` / `d` / `o` rename, remove and open its
 port, and `<leader>iT` lands on it. Each
 surface waiting on you is a row of its own, in the order `<leader>in` walks them: its repo's glyph in
 its color and short name (root's or general's for theirs), then the surface's mark and title, cut to
@@ -554,7 +554,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `P` | pick a repo (Root, General and Terminals among them) |
 | `o` | the current repo's PRs surface |
 | `g` / `T` | general / terminals |
-| `s` / `t` | spawn / new terminal |
+| `s` / `t` / `N` | spawn / new thread / new terminal |
 | `x` | root mode for this repo |
 | `j` | jump |
 | `<` / `>` | switch host |
@@ -567,7 +567,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 - On start, when there is nothing to resume, the editing area shows the landing (`isovim.landing`):
   what isovim is, the Inbox count, the repos in `~/.isovim/repos`, the keys that matter (their words
   read from the key tables, as `?` does) and quick actions on single keys: `s` spawn in a repo picked,
-  `p` anything in the sidebar (as `<leader><leader>`), `j` jump to a dir, `i` the host's Inbox, `t` a terminal, `m` send a repo to a host, `?` help.
+  `p` anything in the sidebar (as `<leader><leader>`), `j` jump to a dir, `i` the host's Inbox, `n` a terminal, `m` send a repo to a host, `?` help.
   `<leader>il` brings it back. It belongs to no workspace, so no layout keeps it.
 
 **In the chat** (the conversation and, at its end, the input box: one buffer)
@@ -605,7 +605,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `<CR>` / `<Tab>` | open / collapse |
 | `<` / `>` | switch host |
 | `<C-l>` | back to the window you came from |
-| `s` / `t` | spawn / new terminal |
+| `s` / `t` / `n` | spawn / new thread (on a repo's or agent's row) / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |
 | `x` | root mode |
 | `o` / `c` | open the port / changes |
