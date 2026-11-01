@@ -909,4 +909,8 @@ function M.table(rows, width)
   return lines, spans
 end
 
+
+-- A line's markdown marks taken out (with where they drew), and text cut to a width: for isovim.pr_view.
+M.plain, M.wrap = plain, wrap
+
 return M

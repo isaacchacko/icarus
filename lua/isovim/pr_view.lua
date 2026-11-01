@@ -19,7 +19,7 @@ local FIELDS = "number,title,state,isDraft,author,baseRefName,headRefName,mergea
 local THREADS = [[query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100) { nodes { isResolved path line originalLine
-      comments(first: 50) { nodes { author { login } body } } } } } } }]]
+      comments(first: 50) { nodes { author { login } body createdAt } } } } } } }]]
 
 ---@class isovim.PrView
 ---@field repo string the repo key the PR is registered under
@@ -70,6 +70,57 @@ local function span(from, to)
   return math.floor(seconds / 86400) .. "d"
 end
 
+-- Colors, from the chat's palette (isovim.acp.look: Claude's dark and light), set again when the
+-- colorscheme or the background changes.
+local PURPLE = { dark = "#A371F7", light = "#8250DF" }
+
+local function highlights()
+  local look = require("isovim.acp.look")
+  look.highlights()
+  local mode = vim.o.background == "light" and "light" or "dark"
+  local c = look.palette[mode]
+  local groups = {
+    IsovimPrBorder = { fg = c.rule },
+    IsovimPrTitle = { fg = c.text, bold = true },
+    IsovimPrDim = { fg = c.dim },
+    IsovimPrOk = { fg = c.success },
+    IsovimPrError = { fg = c.error },
+    IsovimPrPending = { fg = c.accent },
+    IsovimPrLink = { fg = c.code },
+    IsovimPrAdd = { fg = c.add_nr },
+    IsovimPrDelete = { fg = c.del_nr },
+    IsovimPrPillOpen = { fg = c.chip_fg, bg = c.success, bold = true },
+    IsovimPrPillDraft = { fg = c.chip_fg, bg = c.dim, bold = true },
+    IsovimPrPillMerged = { fg = c.chip_fg, bg = PURPLE[mode], bold = true },
+    IsovimPrPillClosed = { fg = c.chip_fg, bg = c.error, bold = true },
+  }
+  for name, spec in pairs(groups) do
+    vim.api.nvim_set_hl(0, name, spec)
+  end
+end
+
+vim.api.nvim_create_autocmd({ "ColorScheme", "OptionSet" }, {
+  group = vim.api.nvim_create_augroup("isovim_pr_view_colors", { clear = true }),
+  callback = function(ev)
+    if ev.event == "ColorScheme" or ev.match == "background" then
+      highlights()
+    end
+  end,
+})
+
+local G = {
+  description = "\u{f405}", -- oct-book
+  checks = "\u{f45e}", -- oct-checklist
+  reviews = "\u{f442}", -- oct-comment-discussion
+  files = "\u{f440}", -- oct-diff
+  person = "\u{f415}", -- oct-person
+  branch = "\u{f418}", -- oct-git-branch
+  robot = "\u{f06a9}", -- md-robot
+  clock = "\u{f43a}", -- oct-clock
+  check = "\u{f42e}", -- oct-check
+  warn = "\u{f071}", -- fa-warning
+}
+
 local FAILED = { FAILURE = true, TIMED_OUT = true, CANCELLED = true, ACTION_REQUIRED = true, STARTUP_FAILURE = true, ERROR = true }
 
 -- A check's glyph and color, and whether it failed.
@@ -77,212 +128,346 @@ local function check_mark(check)
   local done = check.status == "COMPLETED" or (check.state and check.state ~= "PENDING" and check.state ~= "EXPECTED")
   local verdict = check.conclusion or check.state
   if FAILED[verdict] then
-    return "✗", "DiagnosticError", true
+    return "✗", "IsovimPrError", true
   elseif not done then
-    return "●", "DiagnosticWarn", false
+    return "●", "IsovimPrPending", false
   elseif verdict == "SUCCESS" then
-    return "✓", "DiagnosticOk", false
+    return "✓", "IsovimPrOk", false
   end
-  return "–", "Comment", false
+  return "–", "IsovimPrDim", false
 end
 
 local REVIEW = {
-  APPROVED = { "approved", "DiagnosticOk" },
-  CHANGES_REQUESTED = { "changes requested", "DiagnosticError" },
-  COMMENTED = { "commented", "Comment" },
-  DISMISSED = { "dismissed", "Comment" },
+  APPROVED = { "approved", "IsovimPrOk" },
+  CHANGES_REQUESTED = { "changes requested", "IsovimPrError" },
+  COMMENTED = { "commented", "IsovimPrDim" },
+  DISMISSED = { "dismissed", "IsovimPrDim" },
 }
 
--- The view's lines, highlights {row, col, end_col, hl[, conceal]}, what each line is and each line's
--- fold level: 0 for the header, >1 opening a section, 1 in it, >2 a resolved thread (closed).
-local function render(view, data)
-  local lines, marks, rows, levels = {}, {}, {}, {}
-  local function add(text, hl, level)
-    lines[#lines + 1] = text
-    levels[#lines] = level or "1"
-    if hl then
-      marks[#marks + 1] = { #lines - 1, 0, #text, hl }
+-- A line under construction: its text and its highlights {col, end_col, hl}, bytes from its start.
+local function seg(text, hl)
+  return { text = text, marks = hl and text ~= "" and { { 0, #text, hl } } or {} }
+end
+
+local function cat(...)
+  local out = { text = "", marks = {} }
+  for _, part in ipairs({ ... }) do
+    for _, mark in ipairs(part.marks) do
+      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3] }
     end
-    return #lines - 1
+    out.text = out.text .. part.text
   end
-  local function dim(row, from, to)
-    marks[#marks + 1] = { row, from, to, "Comment" }
+  return out
+end
+
+local function cells(line)
+  return vim.fn.strdisplaywidth(line.text)
+end
+
+-- line cut or padded to exactly width cells.
+local function fit(line, width)
+  local shown = cells(line)
+  if shown <= width then
+    return cat(line, seg((" "):rep(width - shown)))
   end
-  local function section(title, count)
-    add("", nil, "0")
-    local text = count and ("%s  %s"):format(title, count) or title
-    local row = add(text, nil, ">1")
-    marks[#marks + 1] = { row, 0, #title, "Bold" }
-    dim(row, #title, #text)
+  local text = line.text
+  while vim.fn.strdisplaywidth(text) > width - 1 do
+    text = vim.fn.strcharpart(text, 0, vim.fn.strchars(text) - 1)
   end
-  if not data then
-    add(("#%d"):format(select(3, parts(view.url))), "Title", "0")
-    add(view.refreshing and "Fetching from GitHub…" or "gh gave nothing for it: r tries again.", "Comment", "0")
-    return lines, marks, rows, levels
+  local out = { text = text .. "…", marks = {} }
+  for _, mark in ipairs(line.marks) do
+    if mark[1] < #text then
+      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3] }
+    end
   end
-  -- Header.
-  local row = add(("#%d %s"):format(data.number or 0, data.title or ""), "Title", "0")
-  local state = data.isDraft and data.state == "OPEN" and "draft" or (data.state or "?"):lower()
-  local facts = { state }
-  if type(data.author) == "table" and data.author.login then
-    facts[#facts + 1] = "by " .. data.author.login
+  return out
+end
+
+-- A box's top: ╭─ title ───╮ width cells wide; its bottom with a dim note in it, or none; a side.
+local function top(width, title, border)
+  border = border or "IsovimPrBorder"
+  local head = cat(seg("╭─ ", border), title, seg(" ", border))
+  local rest = width - cells(head) - 1
+  if rest < 0 then
+    head = fit(head, width - 2)
+    rest = width - cells(head) - 1
   end
-  if data.baseRefName then
-    facts[#facts + 1] = ("%s ← %s"):format(data.baseRefName, data.headRefName or "?")
-  end
-  local info = store.pr_info(view.repo)[view.url] or {}
-  local ws, agent = (info.by or ""):match("^(.*)/([^/]+)$")
-  if ws then
-    local spec = store.agent(ws, agent)
-    facts[#facts + 1] = "registered by " .. (spec and spec.name or agent)
-  end
-  facts[#facts + 1] = span(data.createdAt)
-  local mergeable = ({ MERGEABLE = { "mergeable", "DiagnosticOk" }, CONFLICTING = { "conflicts", "DiagnosticError" } })[data.mergeable or ""]
-  local text = table.concat(vim.tbl_filter(function(fact)
-    return fact ~= nil
-  end, facts), " · ")
-  row = add(text, "Comment", "0")
-  if data.state == "OPEN" and mergeable then
-    local col = #lines[#lines] + 3
-    lines[#lines] = lines[#lines] .. " · " .. mergeable[1]
-    marks[#marks + 1] = { row, col, #lines[#lines], mergeable[2] }
-  end
-  local state_hl = ({ open = "DiagnosticOk", draft = "Comment", merged = "Special", closed = "DiagnosticError" })[state]
-  if state_hl then
-    marks[#marks + 1] = { row, 0, #state, state_hl }
-  end
-  -- Description, as the chat draws markdown, in its colors.
-  section("Description")
+  return cat(head, seg(("─"):rep(math.max(0, rest)) .. "╮", border))
+end
+
+local function bottom(width, note, border)
+  border = border or "IsovimPrBorder"
+  local head = note and cat(seg("╰─ ", border), seg(note, "IsovimPrDim"), seg(" ", border)) or seg("╰", border)
+  return cat(head, seg(("─"):rep(math.max(0, width - cells(head) - 1)) .. "╯", border))
+end
+
+local function side(width, content, border)
+  border = border or "IsovimPrBorder"
+  return cat(seg("│ ", border), fit(content, width - 4), seg(" │", border))
+end
+
+-- text (markdown) as lines no wider than width: `code`, **bold** and # headings drawn, their marks
+-- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them.
+local function markdown(text, width)
   local look = require("isovim.acp.look")
-  look.highlights()
-  local body = vim.split(vim.trim((data.body or ""):gsub("\r", "")), "\n", { plain = true })
-  if #body == 1 and body[1] == "" then
-    add("  No description.", "Comment")
+  local body = vim.split(vim.trim((text or ""):gsub("\r", "")), "\n", { plain = true })
+  local out, fenced, i = {}, false, 1
+  local function wrapped(line, base)
+    local plain, spans = look.plain(line)
+    for _, piece in ipairs(look.wrap(plain, width)) do
+      local part = { text = plain:sub(piece[1] + 1, piece[2]), marks = {} }
+      for _, span in ipairs(base and { { 0, #plain, base } } or {}) do
+        part.marks[#part.marks + 1] = { 0, #part.text, span[3] }
+      end
+      for _, span in ipairs(spans) do
+        local from, to = math.max(span[1], piece[1]), math.min(span[2], piece[2])
+        if from < to then
+          part.marks[#part.marks + 1] = { from - piece[1], to - piece[1], span[3] }
+        end
+      end
+      out[#out + 1] = part
+    end
   end
-  local i = 1
   while i <= #body do
-    if look.table_row(body[i]) and body[i + 1] and look.table_alignments(body[i + 1]) then
-      local tbl = {}
+    local line = body[i]
+    if line:match("^%s*```") then
+      fenced = not fenced
+      out[#out + 1] = seg(line, "IsovimPrDim")
+      i = i + 1
+    elseif fenced then
+      out[#out + 1] = seg(line, "IsovimAcpCode")
+      i = i + 1
+    elseif look.table_row(line) and body[i + 1] and look.table_alignments(body[i + 1]) then
+      local rows = {}
       while body[i] and look.table_row(body[i]) do
-        tbl[#tbl + 1] = body[i]
+        rows[#rows + 1] = body[i]
         i = i + 1
       end
-      local drawn, spans = look.table(tbl, 100)
-      local first = #lines
-      for _, line in ipairs(drawn) do
-        add("  " .. line)
-      end
-      for _, span_ in ipairs(spans) do
-        marks[#marks + 1] = { first + span_[1], span_[2] + 2, span_[3] + 2, span_[4] }
+      local drawn, spans = look.table(rows, width)
+      for r, text_ in ipairs(drawn) do
+        out[#out + 1] = { text = text_, marks = {} }
+        for _, span in ipairs(spans) do
+          if span[1] == r - 1 then
+            table.insert(out[#out].marks, { span[2], span[3], span[4] == "IsovimAcpRule" and "IsovimPrBorder" or span[4] })
+          end
+        end
       end
     else
-      local line = body[i] == "" and "" or "  " .. body[i]
-      local r = add(line)
-      local spans, conceals = look.markdown(line)
-      for _, s in ipairs(spans) do
-        marks[#marks + 1] = { r, s[1], s[2], s[3] }
-      end
-      for _, c in ipairs(conceals) do
-        marks[#marks + 1] = { r, c[1], c[2], conceal = "" }
+      local heading = line:match("^#+%s+(.*)$")
+      if line == "" then
+        out[#out + 1] = seg("")
+      else
+        wrapped(heading or line, heading and "IsovimAcpHeading" or nil)
       end
       i = i + 1
     end
   end
-  -- Checks.
-  local checks = type(data.statusCheckRollup) == "table" and data.statusCheckRollup or {}
-  local passed, failed, pending = 0, 0, 0
-  for _, check in ipairs(checks) do
-    local glyph, _, bad = check_mark(check)
-    passed = passed + (glyph == "✓" and 1 or 0)
-    failed = failed + (bad and 1 or 0)
-    pending = pending + (glyph == "●" and 1 or 0)
-  end
-  section("Checks", #checks > 0 and ("%d ✓  %d ✗  %d ●"):format(passed, failed, pending) or "none")
-  for _, check in ipairs(checks) do
-    local glyph, hl, bad = check_mark(check)
-    local name = check.name or check.context or "?"
-    if check.workflowName and check.workflowName ~= "" and check.workflowName ~= name then
-      name = check.workflowName .. " / " .. name
+  return out
+end
+
+-- How long ago a time of gh's was, if it has one.
+local function ago(at)
+  return at and span(at) or nil
+end
+
+-- The view's lines, highlights {row, col, end_col, hl}, what each line is and each line's fold level:
+-- the banner at 0; a section's box opening its fold, so a folded one shows its top line; a resolved
+-- thread a fold inside it, closed. width: the window's.
+local function render(view, data, width)
+  local lines, marks, rows, levels = {}, {}, {}, {}
+  local function add(line, level, row)
+    lines[#lines + 1] = line.text
+    levels[#lines] = level or "1"
+    rows[#lines] = row
+    for _, mark in ipairs(line.marks) do
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3] }
     end
-    local took = span(check.startedAt, check.completedAt)
-    local line = "  " .. glyph .. " " .. name
-    local r = add(line .. (took and "  " .. took or "") .. (bad and "  <CR> its log" or ""))
-    marks[#marks + 1] = { r, 2, 2 + #glyph, hl }
-    dim(r, #line, #lines[#lines])
-    rows[r + 1] = { check = check }
   end
-  -- Reviews and comments, then the inline threads by file:line.
+  width = math.max(48, width - 1)
+  local inner = width - 4
+  if not data then
+    add(seg(("#%d"):format(select(3, parts(view.url))), "IsovimPrTitle"), "0")
+    add(seg(view.refreshing and "Fetching from GitHub…" or "gh gave nothing for it: r tries again.", "IsovimPrDim"), "0")
+    return lines, marks, rows, levels
+  end
+  -- A section: its box, title bold after its glyph, its counts dim in the top border; level 1.
+  local function section(glyph, title, counts, body, note)
+    add(seg(""), "0")
+    add(top(width, cat(seg(glyph .. " " .. title, "IsovimPrTitle"), seg(counts and ("  " .. counts) or "", "IsovimPrDim"))), ">1")
+    for _, line in ipairs(body) do
+      add(side(width, line.line or line), line.level or "1", line.row)
+    end
+    add(bottom(width, note), "1")
+  end
+
+  -- The banner: the state as a pill, #n and the title bold, then a dim line of facts with glyphs.
+  local state = data.isDraft and data.state == "OPEN" and "draft" or (data.state or "?"):lower()
+  local pill = ({ open = "IsovimPrPillOpen", draft = "IsovimPrPillDraft", merged = "IsovimPrPillMerged", closed = "IsovimPrPillClosed" })[state] or "IsovimPrPillDraft"
+  add(cat(seg(" " .. state .. " ", pill), seg(" "), seg(("#%d"):format(data.number or 0), "IsovimPrTitle"), seg(" "), seg(data.title or "", "IsovimPrTitle")), "0")
+  local facts = {}
+  local function fact(glyph, text, hl)
+    if #facts > 0 then
+      facts[#facts + 1] = seg("  ·  ", "IsovimPrDim")
+    end
+    facts[#facts + 1] = cat(seg(glyph .. " ", hl or "IsovimPrDim"), seg(text, hl or "IsovimPrDim"))
+  end
+  if type(data.author) == "table" and data.author.login then
+    fact(G.person, data.author.login)
+  end
+  if data.baseRefName then
+    fact(G.branch, ("%s ← %s"):format(data.baseRefName, data.headRefName or "?"))
+  end
+  local by = ((store.pr_info(view.repo)[view.url] or {}).by or "")
+  local ws, agent = by:match("^(.*)/([^/]+)$")
+  if ws then
+    local spec = store.agent(ws, agent)
+    fact(G.robot, spec and spec.name or agent)
+  end
+  if ago(data.createdAt) then
+    fact(G.clock, ago(data.createdAt))
+  end
+  if data.state == "OPEN" and data.mergeable == "MERGEABLE" then
+    fact(G.check, "mergeable", "IsovimPrOk")
+  elseif data.state == "OPEN" and data.mergeable == "CONFLICTING" then
+    fact(G.warn, "conflicts", "IsovimPrError")
+  end
+  add(cat(seg(" "), cat(unpack(facts))), "0")
+
+  -- Description.
+  local description = markdown(data.body, inner)
+  if #description == 0 or (#description == 1 and description[1].text == "") then
+    description = { seg("No description.", "IsovimPrDim") }
+  end
+  section(G.description, "Description", nil, description)
+
+  -- Checks: failed first, then running, then the rest; names aligned, durations at the right.
+  local checks = vim.deepcopy(type(data.statusCheckRollup) == "table" and data.statusCheckRollup or {})
+  local order = { ["✗"] = 0, ["●"] = 1 }
+  local counts = { ["✓"] = 0, ["✗"] = 0, ["●"] = 0 }
+  for i, check in ipairs(checks) do
+    check.glyph, check.hl, check.failed = check_mark(check)
+    check.name_ = (check.workflowName and check.workflowName ~= "" and check.workflowName ~= (check.name or check.context))
+      and (check.workflowName .. " / " .. (check.name or "?")) or (check.name or check.context or "?")
+    check.i = i
+    counts[check.glyph] = (counts[check.glyph] or 0) + 1
+  end
+  table.sort(checks, function(a, b)
+    local oa, ob = order[a.glyph] or 2, order[b.glyph] or 2
+    return oa ~= ob and oa < ob or (oa == ob and a.i < b.i)
+  end)
+  local body, name_width, took_width = {}, 0, 0
+  for _, check in ipairs(checks) do
+    check.took = span(check.startedAt, check.completedAt) or ""
+    name_width = math.max(name_width, vim.fn.strdisplaywidth(check.name_))
+    took_width = math.max(took_width, #check.took)
+  end
+  for _, check in ipairs(checks) do
+    local name = seg(check.name_, check.failed and "IsovimPrTitle" or nil)
+    local gap = name_width - cells(name) + 3 + took_width - #check.took
+    body[#body + 1] = {
+      line = cat(seg(check.glyph, check.hl), seg(" "), name, seg((" "):rep(gap)), seg(check.took, "IsovimPrDim")),
+      row = { check = check },
+    }
+  end
+  if #body == 0 then
+    body = { seg("No checks.", "IsovimPrDim") }
+  end
+  section(G.checks, "Checks", #checks > 0 and ("%d✓ %d✗ %d●"):format(counts["✓"], counts["✗"], counts["●"]) or nil, body,
+    counts["✗"] > 0 and "<CR> on a failed one opens its log" or nil)
+
+  -- Reviews and comments, each in a small box; then the inline threads, each boxed under its
+  -- file:line, replies on a │ rail; a resolved one folded to a dim line.
   local reviews = vim.tbl_filter(function(review)
     return review.state ~= "PENDING" and (review.state ~= "COMMENTED" or vim.trim(review.body or "") ~= "")
   end, type(data.reviews) == "table" and data.reviews or {})
   local comments = type(data.comments) == "table" and data.comments or {}
   local threads = type(data.threads) == "table" and data.threads or {}
-  section("Reviews and comments", tostring(#reviews + #comments + #threads))
-  local function body_lines(text, indent)
-    for _, line in ipairs(vim.split(vim.trim((text or ""):gsub("\r", "")), "\n", { plain = true })) do
-      line = line == "" and "" or indent .. line
-      local r = add(line)
-      local spans, conceals = look.markdown(line)
-      for _, s in ipairs(spans) do
-        marks[#marks + 1] = { r, s[1], s[2], s[3] }
-      end
-      for _, c in ipairs(conceals) do
-        marks[#marks + 1] = { r, c[1], c[2], conceal = "" }
-      end
+  body = {}
+  local box = inner
+  local function small(title, text, level)
+    body[#body + 1] = { line = top(box, title), level = level }
+    for _, line in ipairs(text and vim.trim(text) ~= "" and markdown(text, box - 4) or {}) do
+      body[#body + 1] = { line = side(box, line), level = level }
     end
+    body[#body + 1] = { line = bottom(box), level = level }
   end
   for _, review in ipairs(reviews) do
-    local verdict = REVIEW[review.state] or { (review.state or ""):lower(), "Comment" }
+    local verdict = REVIEW[review.state] or { (review.state or ""):lower(), "IsovimPrDim" }
     local who = type(review.author) == "table" and review.author.login or "?"
-    local r = add(("  %s  %s"):format(verdict[1], who))
-    marks[#marks + 1] = { r, 2, 2 + #verdict[1], verdict[2] }
-    if vim.trim(review.body or "") ~= "" then
-      body_lines(review.body, "    ")
+    local title = cat(seg(who, "IsovimPrTitle"), seg(" · ", "IsovimPrDim"), seg(verdict[1], verdict[2]))
+    if ago(review.submittedAt) then
+      title = cat(title, seg(" · " .. ago(review.submittedAt), "IsovimPrDim"))
     end
+    small(title, review.body)
   end
   for _, comment in ipairs(comments) do
     local who = type(comment.author) == "table" and comment.author.login or "?"
-    local r = add(("  %s commented"):format(who))
-    dim(r, 2 + #who, #lines[#lines])
-    body_lines(comment.body, "    ")
+    local title = cat(seg(who, "IsovimPrTitle"), seg(" · commented", "IsovimPrDim"))
+    if ago(comment.createdAt) then
+      title = cat(title, seg(" · " .. ago(comment.createdAt), "IsovimPrDim"))
+    end
+    small(title, comment.body)
   end
   for _, thread in ipairs(threads) do
     local where = ("%s:%s"):format(thread.path or "?", tostring(thread.line or thread.originalLine or "?"))
-    local text_ = "  " .. where .. (thread.isResolved and "  resolved" or "")
-    local r = add(text_, nil, thread.isResolved and ">2" or "1")
-    marks[#marks + 1] = { r, 2, 2 + #where, "Directory" }
-    dim(r, 2 + #where, #text_)
     local nodes = type(thread.comments) == "table" and thread.comments.nodes or {}
-    for _, comment in ipairs(nodes) do
+    local level
+    if thread.isResolved then
+      body[#body + 1] = { line = cat(seg("✓ ", "IsovimPrOk"), seg(where, "IsovimPrDim"), seg(("  resolved · %d"):format(#nodes), "IsovimPrDim")), level = ">2" }
+      level = "2"
+    end
+    body[#body + 1] = { line = top(box, seg(where, "IsovimPrLink")), level = level }
+    for n, comment in ipairs(nodes) do
       local who = type(comment.author) == "table" and comment.author.login or "?"
-      local first = add("    " .. who, "Bold", thread.isResolved and "2" or "1")
-      local _ = first
-      local before = #lines
-      body_lines(comment.body, "      ")
-      if thread.isResolved then
-        for n = before + 1, #lines do
-          levels[n] = "2"
-        end
+      local head = seg(who, "IsovimPrTitle")
+      if ago(comment.createdAt) then
+        head = cat(head, seg(" · " .. ago(comment.createdAt), "IsovimPrDim"))
+      end
+      body[#body + 1] = { line = side(box, head), level = level }
+      for _, line in ipairs(markdown(comment.body, box - 8)) do
+        body[#body + 1] = { line = side(box, cat(seg("│ ", "IsovimPrBorder"), line)), level = level }
+      end
+      if n < #nodes then
+        body[#body + 1] = { line = side(box, seg("")), level = level }
       end
     end
+    body[#body + 1] = { line = bottom(box), level = level }
   end
-  -- Files changed.
+  if #body == 0 then
+    body = { seg("No reviews or comments.", "IsovimPrDim") }
+  end
+  section(G.reviews, "Reviews and comments", tostring(#reviews + #comments + #threads), body)
+
+  -- Files: + and − right-aligned in their columns, a file-type glyph, the path.
   local files = type(data.files) == "table" and data.files or {}
-  local plus, minus = 0, 0
+  local plus, minus, wide_plus, wide_minus = 0, 0, 2, 2
   for _, file in ipairs(files) do
     plus, minus = plus + (file.additions or 0), minus + (file.deletions or 0)
+    wide_plus = math.max(wide_plus, #tostring(file.additions or 0) + 1)
+    wide_minus = math.max(wide_minus, #tostring(file.deletions or 0) + 1)
   end
-  section("Files changed", ("%d  +%d −%d  <CR> a file's diff · c every file's"):format(#files, plus, minus))
+  local ok_icons, icons = pcall(require, "mini.icons")
+  body = {}
   for _, file in ipairs(files) do
     local add_text, del_text = "+" .. (file.additions or 0), "−" .. (file.deletions or 0)
-    local line = ("  %6s %6s  %s"):format(add_text, del_text, file.path or "?")
-    local r = add(line)
-    local a = line:find("+", 1, true)
-    marks[#marks + 1] = { r, a - 1, a - 1 + #add_text, "DiffAdd" }
-    local d = line:find("−", a + #add_text, true)
-    marks[#marks + 1] = { r, d - 1, d - 1 + #del_text, "DiffDelete" }
-    rows[r + 1] = { file = file.path }
+    local glyph, glyph_hl = "\u{f15b}", "IsovimPrDim"
+    if ok_icons then
+      local got, icon, hl = pcall(icons.get, "file", file.path or "")
+      if got then
+        glyph, glyph_hl = icon, hl
+      end
+    end
+    body[#body + 1] = {
+      line = cat(seg((" "):rep(wide_plus - #tostring(file.additions or 0) - 1)), seg(add_text, "IsovimPrAdd"), seg(" "),
+        seg((" "):rep(wide_minus - #tostring(file.deletions or 0) - 1)), seg(del_text, "IsovimPrDelete"), seg("  "),
+        seg(glyph, glyph_hl), seg(" "), seg(file.path or "?")),
+      row = { file = file.path },
+    }
   end
+  if #body == 0 then
+    body = { seg("No files.", "IsovimPrDim") }
+  end
+  section(G.files, "Files changed", ("%d  +%d −%d"):format(#files, plus, minus), body, "<CR> a file's diff · c every file's")
   return lines, marks, rows, levels
 end
 
@@ -297,7 +482,9 @@ local function draw(view)
     return
   end
   local data = read_json(cache_file(view.repo, view.url))
-  local lines, marks, rows, levels = render(view, data)
+  local win = vim.fn.bufwinid(view.buf)
+  view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
+  local lines, marks, rows, levels = render(view, data, view.width)
   view.rows, view.levels = rows, levels
   vim.bo[view.buf].modifiable = true
   vim.api.nvim_buf_set_lines(view.buf, 0, -1, false, lines)
@@ -305,7 +492,7 @@ local function draw(view)
   vim.bo[view.buf].modified = false
   vim.api.nvim_buf_clear_namespace(view.buf, NS, 0, -1)
   for _, mark in ipairs(marks) do
-    pcall(vim.api.nvim_buf_set_extmark, view.buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4], conceal = mark.conceal })
+    pcall(vim.api.nvim_buf_set_extmark, view.buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
   end
   -- What the fetch is doing, after the title: refreshing, or that gh couldn't (the cache stays).
   local note = view.refreshing and "  refreshing…" or view.failed and "  couldn't refresh · r tries again"
@@ -466,11 +653,25 @@ M.keys = {
 
 local function window(win)
   local wo = vim.wo[win][0]
-  wo.wrap, wo.linebreak, wo.breakindent, wo.breakindentopt = true, true, true, "shift:2"
+  -- Drawn to the window's width, boxes and all: no wrapping (a resize draws it again).
+  wo.wrap, wo.sidescrolloff = false, 0
   wo.number, wo.relativenumber, wo.signcolumn, wo.spell, wo.conceallevel, wo.list = false, false, "no", false, 2, false
   wo.foldmethod, wo.foldexpr, wo.foldtext, wo.foldlevel = "expr", "v:lua.require'isovim.pr_view'.fold(v:lnum)", "", 1
   wo.fillchars = "fold: ,eob: "
 end
+
+-- A view's window resized: drawn again to its width.
+vim.api.nvim_create_autocmd("WinResized", {
+  group = vim.api.nvim_create_augroup("isovim_pr_view_resize", { clear = true }),
+  callback = function()
+    for _, view in pairs(M.views) do
+      local win = vim.api.nvim_buf_is_valid(view.buf) and vim.fn.bufwinid(view.buf) or -1
+      if win ~= -1 and vim.api.nvim_win_get_width(win) ~= view.width then
+        require("isovim.safe").wrap("drawing a PR", draw)(view)
+      end
+    end
+  end,
+})
 
 -- pr.<repo>.<n>.ci|review|state: an open view of that PR fetches again. One watch for the TUI's life.
 local function watch()
@@ -528,6 +729,7 @@ function M.open(repo, url)
     M.views[url] = view
   end
   view.repo = repo
+  highlights()
   draw(view)
   local win = vim.fn.bufwinid(view.buf)
   if win == -1 then

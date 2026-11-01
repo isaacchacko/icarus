@@ -272,7 +272,13 @@ one tab, isovim, in every scope.
   too), its checks with their glyph and duration (`<CR>` on a failed one opens `gh run view
   --log-failed` as a tab), its reviews and comments and the inline threads by file:line with their
   replies (resolved ones folded), and its files with their +/- counts (`<CR>` opens that file's
-  part of `gh pr diff` as a diff buffer tab, `c` the whole diff). Each section folds (`za`); `o` opens
+  part of `gh pr diff` as a diff buffer tab, `c` the whole diff). The header is a banner (the state as a
+  colored pill, #n and the title bold, a dim line of facts with glyphs); each section is a rounded box
+  as wide as the window, its title bold after a glyph and its counts in the top border, a key hint in
+  the bottom one; failed checks come first, names aligned and durations in a column; each review,
+  comment and thread is a small box of its own, replies on a │ rail; + counts green, − red, a file's
+  type glyph beside it; the colors are the chat's palette, set again with the colorscheme or
+  background. Each section folds (`za`) to its top line; `o` opens
   it in the browser, `y` copies its URL, `a` opens the registering agent's chat, `r` fetches again.
   It's read-only: approving, merging and commenting are the browser's. gh runs in the background
   (gh pr view, and gh api graphql for the threads), cached under `run/<repo>/pr-<n>.json`; the view
