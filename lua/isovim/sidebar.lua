@@ -9,6 +9,7 @@ local icons = require("isovim.icons")
 local diffstat = require("isovim.diffstat")
 local remote = require("isovim.remote")
 local repos = require("isovim.repos")
+local meter = require("isovim.meter")
 local isovim = require("isovim")
 
 local M = {}
@@ -335,6 +336,9 @@ local function shown_host()
   return name and remote.peers()[name] and name or nil
 end
 
+-- Whether some shown agent is working, so its spinner turns.
+local spinning = false
+
 -- Every host's agents waiting on you go to M.queue, the Inbox, this host's first; the rows returned
 -- are the shown host's. Hidden agents show only while show_hidden is on.
 local function collect()
@@ -344,12 +348,16 @@ local function collect()
   local shown = shown_host()
   local queue = {}
   local working = false
+  local live = 0
   for _, ws in ipairs(workspaces) do
     local running = sessions[ws.id] or {}
     ws.active = ws.modified
     ws.agents = {}
     for _, agent in ipairs(store.agents(ws.id)) do
       agent.running = running[agent.id] ~= nil
+      if agent.running and panes.reports(agent.kind) then
+        live = live + 1
+      end
       agent.status = status.get(ws.id, agent.id)
       ws.active = math.max(ws.active, running[agent.id] or 0)
       if not agent.hidden or isovim.show_hidden then
@@ -387,7 +395,8 @@ local function collect()
     end
   end
 
-  status.animate(working)
+  spinning = working
+  meter.update(live)
   table.sort(workspaces, function(a, b)
     return a[isovim.sort] > b[isovim.sort]
   end)
@@ -448,15 +457,36 @@ local rows = { list = {}, inbox = {}, footer = {} }
 local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "L" }, { "show_tasks", "T" } }
 
 -- The column's title sits in the tab line, over the column (bufferline's offset for the sidebar's
--- filetype), so the column runs the screen's full height. width: the cells it has.
+-- filetype), so the column runs the screen's full height: the style meter, then the badges at the
+-- right. A statusline string; width: the cells it has. Short of room, the badges close up, then
+-- the meter's phrase is cut.
 function M.title(width)
-  local badges = ""
+  local on = {}
   for _, toggle in ipairs(TOGGLES) do
     if isovim[toggle[1]] then
-      badges = badges .. " " .. toggle[2]
+      on[#on + 1] = toggle[2]
     end
   end
-  return "ISOVIM" .. (" "):rep(width - 6 - #badges) .. badges
+  local chunks = meter.chunks()
+  local used = 0
+  for _, chunk in ipairs(chunks) do
+    used = used + vim.api.nvim_strwidth(chunk[1])
+  end
+  local badges = table.concat(on, " ")
+  if #on > 0 and used + 1 + #badges > width then
+    badges = table.concat(on)
+  end
+  local room = width - (#on > 0 and 1 + #badges or 0)
+  if used > room then
+    local phrase = chunks[#chunks]
+    phrase[1] = vim.fn.strcharpart(phrase[1], 0, math.max(0, vim.fn.strchars(phrase[1]) - (used - room)))
+    used = room
+  end
+  local line = {}
+  for _, chunk in ipairs(chunks) do
+    line[#line + 1] = "%#" .. chunk[2] .. "#" .. chunk[1]:gsub("%%", "%%%%")
+  end
+  return table.concat(line) .. "%#Title#" .. (" "):rep(width - used - #badges) .. badges
 end
 
 -- The Inbox: what waits on you on every host, under a title with the count. Collapsed, only the title.
@@ -523,7 +553,7 @@ local function footer_lines()
   return {
     first,
     { { "  " }, { "\u{f013}", "Special" }, { " Settings" } }, -- fa-cog
-    { { ("  isovim %s · agents first, in nvim"):format(version or ""), "Comment" } },
+    { { "  " }, { "ISOVIM", "Title" }, { " " .. (version or ""), "Comment" } },
   }
 end
 
@@ -539,6 +569,7 @@ local function render(wins)
     shown_title = title
     vim.cmd.redrawtabline()
   end
+  status.animate(spinning or meter.moving())
   if wins.inbox then
     local lines = inbox_lines()
     draw(wins.inbox, lines)

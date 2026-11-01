@@ -43,13 +43,20 @@ return {
     opts = function(_, opts)
       -- The tab line always shows, starting right of the sidebar: over the sidebar is its title.
       opts.options.always_show_bufferline = true
+      -- bufferline sizes the offset by its text's length, highlight codes and all, so the title is
+      -- drawn by a statusline expression whose source is padded to the width it draws.
+      _G.isovim_title = function(width)
+        return require("isovim.sidebar").title(width)
+      end
       table.insert(opts.options.offsets, {
         filetype = "isovim_sidebar",
         text = function()
           local sidebar = vim.tbl_filter(function(win)
             return vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "isovim_sidebar"
           end, vim.api.nvim_tabpage_list_wins(0))[1]
-          return require("isovim.sidebar").title(vim.api.nvim_win_get_width(sidebar) - 2)
+          local width = vim.api.nvim_win_get_width(sidebar) - 2
+          local call = ("%%{%%v:lua.isovim_title(%d)"):format(width)
+          return call .. (" "):rep(width - #call - 2) .. "%}"
         end,
         highlight = "Title",
         text_align = "left",

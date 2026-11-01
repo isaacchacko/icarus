@@ -514,6 +514,7 @@ function M.setup(opts)
 
   local sidebar = require("isovim.sidebar")
   icons.setup()
+  require("isovim.meter").setup()
   vim.keymap.set("n", "<leader>e", sidebar.toggle, { desc = "isovim: focus or close the sidebar" })
   for _, lhs in ipairs({ "<leader>E", "<leader>fe", "<leader>fE" }) do
     vim.keymap.set("n", lhs, sidebar.files, { desc = "isovim: the workspace's files in the sidebar" })
@@ -553,6 +554,7 @@ function M.setup(opts)
     require("which-key").add({ { "<leader>a", group = "isovim" } })
   end)
   local group = vim.api.nvim_create_augroup("isovim", { clear = true })
+  vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = require("isovim.meter").setup })
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
     callback = function(ev)
