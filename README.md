@@ -1,21 +1,20 @@
 # isovim
 
-Agents first, in nvim. `iso` opens an nvim built around coding agents: a sidebar of workspaces, each with its Claude Code and Codex agents, terminals, PRs and dev servers. Agents keep running in tmux when the window closes. Plain `nvim` stays your editor; `iso` is for when the agents come first.
+An agent mux built on nvim. `iso` opens an nvim where coding agents come first: a sidebar of your repos, each with a router that runs its workers and an Inbox of what's waiting on you, and every agent's chat a real nvim buffer. Agents keep running when the window closes. isovim brings you what needs you, with its context loaded, and keeps everything else moving without you. Plain `nvim` stays your editor.
 
-![isovim: workspaces with their agents, terminals and pins in the sidebar, an agent's chat on the right](docs/screenshot.png)
+![isovim: the sidebar of repos and agents, an agent's chat on the right](docs/screenshot.png)
 
 ## What it does
 
-- **Workspaces**, one per task, each with its own worktree, PRs and dev servers.
-- **Agents**: Claude Code, Codex, terminals or any command, as many per workspace as you like.
-- **Tasks** each agent keeps, shown under its row.
-- **Pins**: the files an agent points you at, one Enter away.
-- **Agents talking to each other**, with one root agent the others ask.
-- **Other hosts**: their agents in the same sidebar, and workspaces that move between machines.
+- **Repos**, each with its agents, its Inbox, its PRs and its scripts, in its own glyph and color.
+- **Agents** that run Claude Code over ACP, each in a chat drawn like Claude's own screen, with a vim input box under it. Messages sent while one works queue up; nothing is ever typed over you.
+- **Roles**: workers do the work, a router per repo runs them and is your one interface to it, and roots decide for you while you're away.
+- **Surfaces**: the router's questions, files, chats and Task Board, in the repo's Inbox.
+- **Other hosts**: their agents and Inboxes in the same sidebar.
 
 ## Install
 
-Needs nvim 0.11+, tmux 3+, git, jq, ripgrep, lsof, node, `gh` (signed in), and `claude` and/or `codex`.
+Needs nvim 0.11+, tmux 3+, git, jq, ripgrep, lsof, rsync, node and npm, `gh` (signed in), and `claude`.
 
 ```sh
 git clone https://github.com/isaacchacko/isovim ~/isovim
@@ -24,65 +23,73 @@ iso checkhealth
 iso
 ```
 
-The first `iso` installs its plugins (a LazyVim-based config in `starter/`, under its own `NVIM_APPNAME`, so your nvim config is untouched).
+The first `iso` installs its plugins (a LazyVim-based config in `starter/`, under its own `NVIM_APPNAME`, so your nvim config is untouched) and seeds the role prompts in `~/.isovim/prompts/`. The first agent installs the pinned ACP adapter, `claude-agent-acp`, with npm.
 
 ## Use
 
-In the sidebar, `?` lists every key. The ones to start with:
+In the sidebar, `s` spawns a worker in the repo under the cursor and opens its chat; type in the box under it and `Enter` sends. `Enter` on a repo opens its router, and on an Inbox row, that surface. `<leader>in` anywhere goes to the next thing that needs you. `?` lists every key.
 
-| key | does |
-|---|---|
-| `s` / `t` | spawn a worker in the repo under the cursor / new terminal |
-| `Tab` | expand or collapse a workspace (all start collapsed) |
-| `Enter` | open the agent, PR or pin |
-| `d` | remove the agent or pin, or archive the workspace |
-| `P` / `H` / `L` | PRs, hidden agents, ports |
-| `E` / `W` | files / back to workspaces |
-| `<` / `>` | the previous / next host's workspaces |
-| `Ctrl-j` / `Ctrl-k` | between the Inbox, the workspaces, Terminals and the footer |
-| `<leader>e` | focus or close the sidebar |
-| `Ctrl-h` / `Ctrl-l` | between the sidebar and the chat |
-
-Anywhere, LazyVim's keys work on repos: `<leader><leader>` picks a repo (or Root, General, Terminals), `<leader>ff` / `<leader>/` find files in / grep the repo and its agents' transcripts, `<leader>,` lists the repo's buffers, `<leader>fr` recent agents (`<leader>fR` recent files). The `<leader>i` group reaches agents: `in` the next one that needs you, `ir` / `iR` / `iH` the repo's router / nearest root / host root, `iw` / `ia` / `ib` a worker in the repo / any agent / the previous one, `is` / `it` spawn / new terminal. The `<leader>a` keys from before still work for now and say which key replaced them.
-
-`iso help` lists the commands. For Tab completion of commands, agents, workspaces and hosts, add `source <(iso completion zsh)` to ~/.zshrc after compinit (bash: `eval "$(iso completion bash)"` in ~/.bashrc).
+`iso help` lists the commands. For Tab completion and the `iso jump` shell function, add `source <(iso completion zsh)` to ~/.zshrc after compinit (bash: `eval "$(iso completion bash)"` in ~/.bashrc).
 
 ## More
 
-### Workspaces and agents
+### The model
 
-- A workspace can get its own git worktree and branch, runs its repo's setup script, and shows its diff size, PRs (with CI and review state) and the ports its dev servers listen on. A PR an agent opens shows up by itself.
-- Each agent runs in its own tmux session and resumes its conversation when restarted. The sidebar shows which are working, which have something new for you and which are waiting on you, and an Inbox lists those.
-- Agents keep their own task lists (`iso task`), with status, parent steps, PRs and what they wait on; `T` shows them under each agent's row.
-- Agents pin the files they point you at (a report, a screenshot, the file they changed) under their workspace; Enter opens one beside the chat.
+- A **repo** is a codebase, known by its remote, `owner/repo`. Beside the real ones are three pseudo-repos: `root` (the host root, pinned first), `general` (agents in no repo) and `terminals`.
+- An **agent** is one ACP session, addressed `<owner>/<repo>/aN` (`_/aN` in General); numbers are never reused. Its supervisor runs in a tmux pane, so it outlives the TUI, and `claude --resume` sees its session. It starts in `~/iso/<owner>/<repo>/aN/` and gets its worktree, `aN/w`, on its first edit, on a new branch `$USER/<its name>` off origin's default branch. A read-only agent (`--read-only`) works in the repo's base clone instead, and its edits are refused.
+- A **role** is `worker` < `router` < `repo-root` < `root`. Every agent starts as a worker. There's one router per repo per host, one repo-root per repo and one root per host. An agent spawns roles up to its own, and agents promote each other one way only: a worker to router, a worker or router to repo-root, any of them to root, each only when that place is empty. A promoted agent's session reloads with its new role's prompt; a router or repo-root made root is forked, so the repo keeps it. The agent that starts another is its parent, and a removed agent's children go to its parent (at the top, to the repo's router).
+- A **surface** is a file in a repo's `~/iso/<owner>/<repo>/iso/`, written only by its router, that shows you something; some take an answer. isovim watches them and writes a `<file>.surface.error` beside one that's broken.
 
-### Agents working together
+  | surface | made by | shows |
+  |---|---|---|
+  | markdown | the router writes `<name>.md` (optional frontmatter: `name`, `icon`, `color`, `consumable`) | the rendered file, rewritten in place |
+  | question | `iso router surface question <json\|file\|->` | `{question, options: [{label, description}], multi?, other?}`; the router blocks until it's answered |
+  | file / folder | `iso router surface file\|folder <path>` | the file or folder, beside the chat |
+  | chat | `iso router surface chat <agent>` | an agent's chat, gone once you open it |
+  | Task Board | the router edits `tasks.md` | headings todo, doing, waiting, blocked, done; one task a line |
 
-- Agents run their commands under their role, `iso <worker|router|repo-root|root> <action>` (`iso worker help` lists a worker's), and bare `iso <command>` is yours. isovim checks the role against the agent's record and, for now, only warns on a mismatch, or when an agent runs a bare command.
-- Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso worker ls`, `find`, `peek`, `wait`, `msg`.
-- **Its own work.** A worker or router runs `iso <role> wt [--from <branch|PR>]` for its worktree and `iso <role> setup`, `teardown` and `run [<action>]` for its repo's scripts, each acting on the agent that runs it (known by its process, not its cwd). A new-layout agent (`<owner>/<repo>/aN`) gets its worktree only when it asks: `aN/w`, on a new branch `$USER/<its name>` off origin's default branch (or the branch or PR given), made from the repo's base clone, which is cloned first if missing; the repo's `worktree_setup` then runs in it, and the agent, which starts in `aN/`, does `cd w`. A second `wt` just prints the path. Scripts run in `aN/w` (or `aN` before it has one), each in a pane of its own named for it and listed under Terminals as `<action> · <repo>/aN`; running one again restarts it. A workspace's agent keeps its workspace's checkout and panes.
-- An agent that starts another (`iso <role> spawn`, `iso <role> fork`, `iso agent`, `iso new`) is its parent: `iso <role> msg parent` and `msg children` reach them, and removing an agent hands its children to its own parent. An agent spawns roles up to its own; there's one router per repo on a host, one repo-root per repo and one root per host. `iso spawn` starts one from a shell or a script, with no parent.
-- **Promotion.** `iso <role> promote [<agent>] router|repo-root|root ["reason"]` raises an agent (itself by default): a worker to router in a git repo with no router here, a worker or router to repo-root or root when there's none. It restarts on its conversation with its new role's prompt, and one promoted by another agent gets a stamped message saying who and why. A router made root is forked: the fork is the root and the router stays. There's no demotion.
-- **Surfaces.** A repo's router shows you things through files in `~/iso/<owner>/<repo>/iso/`, which isovim watches: `<name>.md` (optional frontmatter: `name`, `icon`, `color`, `consumable`), `tasks.md` as the Task Board (headings todo, doing, waiting, blocked, done; one task a line), and what `iso router surface` makes: `question '<json>'` (`{question, options: [{label, description}], multi?, other?}`, checked at once; it blocks until you `iso answer <name> <answer...>` and prints your answer, and a rerun reattaches), `file|folder <path>` and `chat <agent>` (gone once you open it). One that's broken gets a `<file>.surface.error` beside it saying why, until it's fixed. Each change is published as `surface.<owner/repo>.<name>.created|changed|removed|answered|consumed`.
-- **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in the Inbox. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
+- An **Inbox** is the surfaces waiting on you: each repo has one, the host's gathers the root's surfaces and a row per busy repo, and the top one counts other hosts'. PRs show only once the router registers them (`iso router pr`).
+- **Root mode**: `iso rootmode on <repo|host> [--task "<description>"]` gives a repo (a repo-root) or the host (the root) an agent that decides the routers' questions while you're away, spawning a worker and promoting it if there's no root yet. A question goes to the most specific active root, which answers it (`iso <root|repo-root> answer`) or raises it to your Inbox (`--raise`). `--task` is the root's first message, guidance it narrows itself by. Only the host root's stamped messages carry your authority, and its prompt lists what's permanently off.
 
-### Other hosts
+### Chats
 
-Agents on your other machines show in the sidebar, one host at a time (`<` / `>`); the Inbox lists what waits on you on all of them. `m` moves a workspace (conversations, branch, uncommitted work) to another host over ssh.
+- Each message is drawn as Claude draws it: `❯` your prompts, `⏺` the agent's text, `✻` thinking, tool calls one line each with their output folded under `⎿` (`za` opens one), diffs colored inline, Bash output streaming, a spinner while it works. It streams token by token and follows the bottom only when you're there.
+- The input box is a buffer under the chat, with full vim editing. A prompt sent while the agent works, yours or another agent's, is queued and goes when its turn ends; `<leader>iq` opens the queue to edit, reorder or clear (`:w`), and `Enter` on a line sends it now, cancelling the running turn.
+- `iso attach <agent>` opens the same chat and input box in a minimal nvim, from any terminal or over ssh; `iso phone` picks an agent, needs-you first, and attaches. `iso handover <agent>` gives the session to Claude's own screen (`claude --resume` in its pane) and takes it back when Claude exits.
+- Sessions run in bypass mode and survive: a restarted agent loads its session, and `iso <role> fork` copies one.
+- Landing now: fork up to a message (`<leader>if`); rewind (`<leader>iu`), which edits one of your earlier prompts, forks before it, sends the edited prompt and restores the files from per-turn snapshots; `/new`, `/clear`, `/resume` and `/fork` done by isovim (every other slash command goes to the agent); and a structured question or permission request from an agent becoming a question surface in its repo's Inbox, with your answer going back to it. Until then those keys say "not yet" and permission requests are denied.
 
-### A browser for agents
+### Keys
 
-`iso browser` runs one Chrome per host that agents drive over CDP, in the background, without taking your focus.
+Plain nvim keys keep their meaning. File keys work on repos and agents, and everything isovim's own is under `<leader>i`.
 
-### Hot reload
+- `<leader><leader>` picks a repo; `<leader>ff` finds a file in it and `<leader>/` greps it, transcripts included; `<leader>,` shows its buffers; `<leader>fr` recent agents (`<leader>fR` recent files); `<leader>e` opens or closes the sidebar.
+- `<leader>i`: `n` the next thing that needs you; `i` / `h` / `I` the repo / host / other hosts' Inbox; `r` the router, `R` the nearest root, `H` the host root; `w` / `a` / `b` a worker / any agent / the previous one; `g` / `T` General / Terminals; `s` / `t` spawn / new terminal; `j` jump; `<` / `>` switch host; `q` the queue; `u` / `f` rewind / fork at the cursor; `x` root mode (not wired yet: use `iso rootmode`).
+- In a chat: `]]` / `[[` your prompts, `]m` / `[m` any message, `za` folds, `i` / `a` / `o` / `Enter` to the input box, `<C-c>` cancels, `gf` opens a file. In the input box: `Enter` sends, `<S-CR>` (or `<C-j>`) a newline, `<Up>` / `<Down>` your earlier prompts while it's empty, `<Esc>` normal mode, `<C-k>` up to the chat.
+- In the sidebar: `Enter` / `Tab` open / collapse, `<` / `>` switch host, `<C-j>` / `<C-k>` between windows, `s` / `t` spawn / terminal, `r` / `d` / `R` / `m` rename / remove / restart / move, `o` / `y` / `c` its port / copy the PR URL / its changes, `u` measure CPU and RAM, `H` / `P` / `L` hidden agents / PRs / ports, `?` help.
 
-Edit isovim's source and the running app picks it up.
+### The CLI
+
+Agents run `iso <worker|router|repo-root|root> <action>`, checked against their own record (for now isovim warns on a mismatch; after cutover it refuses). Bare `iso <action>` is yours. `iso <role> help` lists a role's actions.
+
+- **Every role**: `msg <agent|parent|children> <text>`, `ls`, `status`, `peek`, `wait`, `find`, `transcript`, `listen`; `browser`, `pilot` (drive the TUI, one holder at a time), `spawn [--role r] [--read-only] [--name n] "<prompt>"`, `promote [<agent>] <role> ["reason"]`, `fork`, `checkhealth`, `version`.
+- **Workers and routers**: `wt [--from <branch|PR>]` makes the worktree up front; `setup`, `teardown` and `run [<action>]` run the repo's scripts in it, each in a pane of its own under Terminals. Setup runs only when asked.
+- **Routers**: `surface question|file|folder|chat`, and `pr <owner/repo> <url>` to register a PR.
+- **Roots**: `answer <repo>/<question> <answer...>`, or `--raise` to give it to you.
+- **Yours**: `iso` opens the TUI. `spawn [--repo owner/repo|dir]` (with no parent), `jump` (fzf, one level at a time, `.` and `..`), `attach`, `phone`, `handover`, `move`, `rm`, `restart`, `rename`, `rootmode`, `answer`, `listen`, `verify`, `sync`, `checkhealth`.
+- **Retired**: `task`, `pin` and `ask` still work for workspace agents until cutover; v0's replacements are the router's `tasks.md`, `surface file|folder` and `surface question`. `doctor` is a hidden alias of `checkhealth` until 2026-12-01.
+
+Every message between agents carries isovim's stamp, `[from <host>:<agent> · m<id>]`, proven from the sending process, and it arrives as its own prompt; the receiver is told whether it's real, and only the host root's speak for you.
+
+### Events
+
+Every change is a JSON line in `~/.isovim/events/events.jsonl`: `agent.<scope>.<id>.status|spawned|exited|promoted`, `msg.<scope>.<id>`, `surface.<owner/repo>.<name>.created|changed|removed|answered|consumed` and `pr.<owner/repo>.<n>.state|ci|review`, where an agent's scope is its repo and its id `aN`. In a part, `%` is written `%25` and `.` `%2E`. `iso listen '<pattern>'... [--once] [--since 10m]` streams the matching ones, `*` matching one part and `**` any number: `agent.acme/app.**` is a whole repo.
 
 ### Make it yours
 
 Everything lives in `~/.isovim/`:
 
-- **`instructions.md`** is added to what every agent is told at launch.
+- **`prompts/<role>.md`**, seeded on first run for worker, router, repo-root and root: what each role is for. They're policy, yours to edit; isovim never writes over one, and recreates one you delete. The root's lists the actions that are permanently off (spending money, force-pushing a shared branch, deleting remote data, posting publicly, approving a PR, changing credentials). isovim's own words for each role, how to use isovim, come first, then **`instructions.md`** (added for every agent), then the role's file.
 - **`config.json`**, all optional:
   ```json
   {
@@ -91,21 +98,27 @@ Everything lives in `~/.isovim/`:
     "aliases": { "box": "desktop" },
     "repo_dirs": ["~/clients"],
     "idle_after": 30,
-    "prompts": { "root": "~/notes/root.md", "router": "prompts/router.md" },
-    "repo_defaults": { "glyph": "\uf401", "palette": ["teal", "magenta", "#ff9e64"] }
+    "prompts": { "root": "~/notes/root.md", "router": "~/.isovim/prompts/router.md", "worker": null },
+    "repo_defaults": { "glyph": "", "palette": ["teal", "magenta", "#ff9e64"] }
   }
   ```
-  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `repo-root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told. `repo_defaults` is the glyph and the colors new repos are given (below); without it, the repo glyph and the twelve colors red to pink.
-- **`repos/<owner>/<repo>/config.json`** sets how a repo's workspaces show in the sidebar, picked by their git origin: `{"glyph": "\uf1d3", "color": "teal"}`. `color` is `#rrggbb` or one of red, orange, yellow, lime, green, teal, cyan, sky, blue, purple, magenta, pink. The first time isovim sees a repo without a `color`, it writes one into this file, with the default glyph if it has none: the palette's next color, the one at (number of repo configs that have a color) mod (palette size), so repos take the colors in the order they're first seen and wrap round. From then on the file decides, so edit it to change them. A file that isn't valid JSON is never written over.
-- **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes, once per quiet spell.
-- **Roles.** Every agent is a `worker` unless made a `root` (sets the north star), `repo-root` (holds one repo's) or `router` (a repo's one interface to you, running the swarm): promoted by an agent (above), `iso spawn --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
-- **`iso agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `iso ls --json` says when each agent was last active.
+  `hosts` are your other machines by ssh name. `prompts` names a file (relative to `~`) for each role; isovim fills in the seeded file for a role with no entry, and `null` gives a role none. `repo_defaults` is the glyph and the colors new repos are given; without it, the repo glyph and the twelve colors red to pink. Every write isovim makes to `config.json` or `repos/` is sent to your other hosts (`iso sync` sends it now); each host keeps its own `self` and `hosts`, and base clones stay put.
+- **`repos/<owner>/<repo>/config.json`** is a repo's: `glyph`, `color` (`#rrggbb` or a palette name), and its scripts in Superset's format: `setup`, `teardown`, `run`, `worktree_setup` (run in each new worktree) and `actions` (name → command list, for `iso <role> run <action>`). A new repo gets the palette's next color. Its scripts are imported once from the repo's own `.isovim/config.json` or `.superset/config.json`. Beside it, `base-clone/` is the clone worktrees and read-only agents come from.
+- **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes.
 
-A repo's workspace scripts, `setup`, `teardown` and `run` command lists in Superset's format, live in the same `repos/<owner>/<repo>/config.json`, beside `worktree_setup` (run in a new-layout agent's new worktree) and `actions` (name → command list, run by `iso <role> run <action>`, which Tab completes). A command whose first word is a file in that folder runs it, so scripts can sit beside the config (`"./setup.sh"`). The first time isovim looks for a repo's scripts and its config has none, it copies them from the repo's own `.isovim/config.json` (or a Superset `.superset/config.json`) and records `imported_from` and `imported_at`; it never imports again or writes over a key you set. A script the config lacks is still read from the repo's file.
+### Other hosts, the browser, hot reload
+
+- Other machines' agents show in the sidebar one host at a time (`<` / `>`), and the top Inbox counts what waits on you there.
+- `iso browser` runs one Chrome per host that agents drive over CDP, with your logins, without taking your focus.
+- Edit isovim's source and the running app picks it up.
+
+### Cutover
+
+v0 starts fresh rather than migrating. Until then, the workspaces and agents from before (in Claude's TUI, with `iso task`, `iso pin` and `iso ask`) keep running beside v0's and fold under their repo in the sidebar. `iso cutover --dry-run` will list what goes (every workspace, legacy agent, worktree and pin), and after your go `iso cutover` pushes any unsaved work to a `wip/<agent>` branch, stops the legacy agents, seeds the repo configs and base clones, and wipes the old layout. Conversations in `~/.claude/projects` are left alone. The reaper, which tears down `aN/` dirs with no agent every 10 minutes, only logs (to `~/.isovim/reaper.log`) until then.
 
 ## Develop
 
-`pilot/iso.py` runs an isolated isovim headless (its own home, tmux servers and a fake agent), presses keys, reads nvim over RPC and renders the screen to PNG. Changes are checked by piloting, not by a test suite; `pilot/checks/` holds scripts that check one thing each. Pilots set `ISOVIM_WORK` (where agents' work lives, default `~/iso`) into their own tmp dir.
+`pilot/iso.py` runs an isolated isovim headless (its own home, tmux servers, and fake agents: `pilot/fake-acp-agent` stands in for the ACP adapter and logs every frame it's sent), presses keys, reads nvim over RPC and renders the screen to PNG. Changes are checked by piloting, not by a test suite; `pilot/checks/` holds scripts that check one thing each.
 
 ## License
 
