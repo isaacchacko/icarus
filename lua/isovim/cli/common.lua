@@ -168,11 +168,43 @@ local function ensure_running(ws, agent)
     end
   elseif not panes.reports(agent.kind) then
     vim.uv.sleep(500)
-  elseif not await(ws.id, agent.id, 30, function(state)
-    return state ~= nil
-  end) then
-    fail(agent.name .. " did not start within 30s")
+  else
+    -- An ACP agent's first start on a host installs its adapter first; its supervisor ends its
+    -- pane when it can't start, and says why in its journal.
+    local timeout = agent.acp and 120 or 30
+    local gone = false
+    if not await(ws.id, agent.id, timeout, function(state)
+      gone = agent.acp and not panes.running(ws.id, agent.id)
+      return state ~= nil or gone
+    end) then
+      fail(("%s did not start within %ds"):format(agent.name, timeout))
+    elseif gone and status.state(ws.id, agent.id) == nil then
+      local notices = vim.tbl_filter(function(entry)
+        return entry.kind == "notice"
+      end, require("isovim.acp.journal").read(ws.id, agent.id))
+      fail(("%s did not start: %s"):format(agent.name, notices[#notices] and notices[#notices].text or "its supervisor ended"))
+    end
   end
+end
+
+-- Gives the agent text as a prompt and publishes msg.<scope>.<id> with msg ({from, kind, id, text}):
+-- an ACP agent's supervisor takes it over its socket, queued while the agent works, and publishes
+-- the event itself; any other agent has it typed into its pane.
+---@return table? result an ACP agent's answer: {id, queued, position?}
+local function prompt(ws, agent, text, msg)
+  if agent.acp then
+    local ok, result = require("isovim.acp").call(ws.id, agent.id, "prompt",
+      { text = text, from = msg.from, kind = msg.kind, stamp = msg.id, message = msg.text, publish = true })
+    if not ok then
+      fail("could not reach " .. agent.name .. ": " .. tostring(result))
+    end
+    return result
+  end
+  local result = panes.send(ws.id, agent.id, text)
+  if result.code ~= 0 then
+    fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
+  end
+  require("isovim.events").publish_msg(ws.id, agent.id, msg)
 end
 
 -- Where a new-layout agent for target goes: target is a repo key ("owner/repo", or "_" for no
@@ -255,6 +287,7 @@ return {
   word = word,
   await = await,
   ensure_running = ensure_running,
+  prompt = prompt,
   option = option,
   flag = flag,
   forward = forward,

@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Stand-in for claude-agent-acp when piloting: an ACP agent on stdio (newline-delimited JSON-RPC)
+that answers like the adapter does, without the model.
+
+It answers initialize, session/new, session/resume, session/load and session/set_mode. A prompt
+streams a tool call (pending, then completed) and "reply to: <text>" in two chunks after
+$FAKE_AGENT_DELAY seconds, then ends the turn. "run <cmd>" runs a shell command as a tool would,
+a child of this process; "slow <n>" works for n seconds; "perm" asks for a permission and replies
+with the outcome. session/cancel ends the running turn as cancelled.
+
+Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
+with, so checks can see what the client sent. A prompt that arrives while another is running is
+logged as an overlap: the client is meant to queue them."""
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+LOG = os.environ.get("FAKE_ACP_LOG")
+DELAY = float(os.environ.get("FAKE_AGENT_DELAY", "1"))
+write_lock = threading.Lock()
+pending = {}
+next_id = [1000]
+running = {"prompt": None, "cancelled": False}
+state_lock = threading.Lock()
+
+
+def log(entry):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+
+def send(frame):
+    with write_lock:
+        sys.stdout.write(json.dumps(frame) + "\n")
+        sys.stdout.flush()
+
+
+def update(session, body):
+    send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": session, "update": body}})
+
+
+def request(method, params):
+    """A request to the client; returns its result (or error) once answered."""
+    next_id[0] += 1
+    rid = next_id[0]
+    done = threading.Event()
+    pending[rid] = {"event": done}
+    send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+    done.wait(30)
+    return pending.pop(rid).get("answer")
+
+
+def text_of(prompt):
+    return "".join(block.get("text", "") for block in prompt if block.get("type") == "text")
+
+
+def chunk(session, text):
+    update(session, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+
+
+def work(seconds):
+    """Sleeps, ending early when the turn is cancelled."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if running["cancelled"]:
+            return False
+        time.sleep(0.05)
+    return not running["cancelled"]
+
+
+def tool(session, call_id, title, kind, status, output=None):
+    body = {"sessionUpdate": "tool_call" if status == "pending" else "tool_call_update", "toolCallId": call_id,
+            "status": status}
+    if status == "pending":
+        body.update({"title": title, "kind": kind})
+    if output is not None:
+        body["content"] = [{"type": "content", "content": {"type": "text", "text": output}}]
+    update(session, body)
+
+
+def prompt(rid, params):
+    session = params["sessionId"]
+    text = text_of(params.get("prompt", []))
+    with state_lock:
+        if running["prompt"] is not None:
+            log({"overlap": True, "text": text, "running": running["prompt"]})
+        running["prompt"], running["cancelled"] = text, False
+    call_id = "tool-" + uuid.uuid4().hex[:8]
+    stop = "end_turn"
+    if text.startswith("run "):
+        command = text[4:]
+        tool(session, call_id, "run " + command, "execute", "pending")
+        result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+        tool(session, call_id, None, None, "completed", (result.stdout + result.stderr).strip())
+        chunk(session, "ran: " + command)
+    elif text == "perm":
+        tool(session, call_id, "Bash: rm -rf build", "execute", "pending")
+        answer = request("session/request_permission", {
+            "sessionId": session,
+            "toolCall": {"toolCallId": call_id, "title": "Bash: rm -rf build", "kind": "execute"},
+            "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                        {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
+        })
+        outcome = ((answer or {}).get("result") or {}).get("outcome", {})
+        chosen = outcome.get("optionId") or outcome.get("outcome")
+        tool(session, call_id, None, None, "failed" if chosen == "reject" else "completed")
+        chunk(session, "permission: " + str(chosen))
+    else:
+        seconds = float(text.split()[1]) if text.startswith("slow ") else DELAY
+        tool(session, call_id, "Read notes.md", "read", "pending")
+        if work(seconds):
+            tool(session, call_id, None, None, "completed")
+            chunk(session, "reply to: ")
+            chunk(session, text)
+        else:
+            stop = "cancelled"
+    with state_lock:
+        running["prompt"] = None
+    send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": stop}})
+
+
+def handle(frame):
+    method, rid, params = frame.get("method"), frame.get("id"), frame.get("params") or {}
+    if method is None:
+        entry = pending.get(rid)
+        if entry:
+            entry["answer"] = frame
+            entry["event"].set()
+        return
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "protocolVersion": 1,
+            "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}},
+                                  "promptCapabilities": {"image": False}},
+            "agentInfo": {"name": "fake-acp", "version": "1"},
+            "authMethods": [],
+        }})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "fake-" + uuid.uuid4().hex[:12]}})
+    elif method in ("session/resume", "session/load"):
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "session/set_mode":
+        update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "session/prompt":
+        threading.Thread(target=prompt, args=(rid, params), daemon=True).start()
+    elif method == "session/cancel":
+        running["cancelled"] = True
+    elif rid is not None:
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "Method not found"}})
+
+
+def main():
+    keep = ("CLAUDE_CODE_EXECUTABLE", "CLAUDE_CODE_ENTRYPOINT", "ISOVIM_ADDR", "ISOVIM_ACP", "PWD")
+    log({"started": True, "pid": os.getpid(), "cwd": os.getcwd(), "env": {k: os.environ.get(k) for k in keep}})
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        frame = json.loads(line)
+        log({"frame": frame})
+        handle(frame)
+
+
+main()

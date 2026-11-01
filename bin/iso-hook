@@ -49,6 +49,8 @@ encode() {
 # agent.<scope>.<id>.status, the address split at its last "/" (a scope may hold one, an id never),
 # each part encoded in the topic and raw in the details.
 set_state() {
+  # An ACP agent's supervisor (isovim.acp.host) owns its state; its hooks do only the rest.
+  [ -n "$ISOVIM_ACP" ] && return
   local previous="" addr scope id
   IFS= read -r previous 2>/dev/null <"$ISOVIM_STATE"
   printf %s "$1" >"$ISOVIM_STATE"
@@ -113,6 +115,16 @@ stop)
   set_state checking
   addr="$(address)"
   iso="$(dirname "$0")/iso"
+  # An ACP agent has no dialog in a pane to look for, and its supervisor sets its state.
+  if [ -n "$ISOVIM_ACP" ]; then
+    (
+      "$iso" transcript "$addr"
+      notify "finished"
+      "$iso" autopin "$addr"
+      "$iso" autopr "$addr"
+    ) </dev/null >/dev/null 2>&1 &
+    exit 0
+  fi
   (
     # A turn can end on a dialog that waits for you (a plan to approve): it draws just after this
     # hook, so look at the pane a moment later.
@@ -134,12 +146,15 @@ stop)
   ) </dev/null >/dev/null 2>&1 &
   ;;
 ask)
+  # Nothing waits on you in an ACP agent yet: what it asks is denied (isovim.acp.host).
+  [ -n "$ISOVIM_ACP" ] && exit 0
   set_state attention
   notify "needs you"
   ;;
 interrupt) set_state idle ;;
 tool-done) grep -qE "attention|waiting" "$ISOVIM_STATE" 2>/dev/null && set_state working ;;
 notification)
+  [ -n "$ISOVIM_ACP" ] && exit 0
   case "$(cat)" in
   *idle_prompt* | *"waiting for your input"*) ;;
   *)

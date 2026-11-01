@@ -70,17 +70,20 @@ M.list = {
   },
   { name = "spawn", module = "roles",
     args = { "<text>..." },
-    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>" },
+    flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>", ["--acp"] = false },
     audience = "user",
     summary = "start a claude agent in a workspace of its own",
     help = [=[
-       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [<prompt...>]
+       iso spawn [--repo owner/repo|dir] [--role r] [--read-only] [--name n] [--acp] [<prompt...>]
                                      start a claude agent in a workspace of its own, in the
                                      repo's dir (from an agent, its own project by default),
                                      on the prompt; prints <ws>/<agent>. An agent's spawn is
                                      its child, of a role no higher than its own; one router
                                      per repo here, one repo-root per repo, one root per host.
-                                     --read-only is recorded only: nothing enforces it yet]=],
+                                     --read-only is recorded only: nothing enforces it yet.
+                                     --acp runs it over ACP instead of claude's TUI, as the
+                                     repo's next <owner>/<repo>/aN: messages to it queue while
+                                     it works, and its chat is rebuilt from its journal]=],
   },
   { name = "new", module = "workspaces",
     audience = "user",

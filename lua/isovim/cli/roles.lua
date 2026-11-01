@@ -197,19 +197,28 @@ local function send_as(from, ws, agent, text)
   local sender = root.address(from_ws, from_agent)
   local stamp = root.stamp("from", sender, root.address(ws.id, agent.id), text)
   c.ensure_running(ws, agent)
-  local result = require("isovim.panes").send(ws.id, agent.id, stamp .. " " .. text)
-  if result.code ~= 0 then
-    fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
+  c.prompt(ws, agent, stamp .. " " .. text, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
+end
+
+-- iso spawn --acp: a new-layout agent (<repo key>/aN) that runs over ACP (isovim.acp), in the
+-- repo dir names, else the spawner's repo, else in no repo ("_").
+local function spawn_acp(key, dir, spec)
+  local agent, err = store.add_agent(key, vim.tbl_extend("force", spec, { kind = "claude", acp = true, checkout = dir }))
+  if not agent then
+    fail(err or "could not add the agent")
   end
-  require("isovim.events").publish_msg(ws.id, agent.id, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = text })
+  c.ensure_running(c.resolve(key), agent)
+  out(key .. "/" .. agent.id)
 end
 
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no
--- higher than its own). Today each spawn is a workspace with one claude agent, in the repo's dir.
+-- higher than its own). Today each spawn is a workspace with one claude agent, in the repo's dir;
+-- with --acp, a new-layout agent over ACP.
 function M.spawn(args)
   local repo = option(args, "--repo")
   local role = option(args, "--role", "worker")
   local read_only = flag(args, "--read-only")
+  local acp = flag(args, "--acp")
   local name = option(args, "--name")
   local prompt = vim.trim(table.concat(args, " "))
   if not RANK[role] then
@@ -223,9 +232,19 @@ function M.spawn(args)
   if not dir and caller_ws and not store.v2(caller_ws) and store.dir(caller_ws) ~= store.path(caller_ws) then
     dir = store.dir(caller_ws)
   end
-  check_unique(role, dir and repo_key(dir))
+  local key = acp and (dir and require("isovim.repos").of(dir) or (caller_ws and store.v2(caller_ws) and caller_ws) or "_")
+  check_unique(role, dir and repo_key(dir) or (key ~= "_" and key or nil))
   if not name then
     name = prompt ~= "" and table.concat(vim.list_slice(vim.split(prompt, "%s+"), 1, 4), " "):sub(1, 30) or role
+  end
+  if acp then
+    spawn_acp(key, dir, { name = name, prompt = prompt ~= "" and prompt or nil, role = role,
+      parent = not ROOTS[role] and address or nil, read_only = read_only or nil })
+    if read_only then
+      io.stderr:write("iso: --read-only is recorded on the agent; nothing enforces it yet\n")
+    end
+    c.tui("require('isovim').refresh()")
+    return
   end
   local id = store.create(name, dir)
   store.update_agent(id, "main", {

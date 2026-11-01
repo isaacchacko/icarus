@@ -468,6 +468,7 @@ end
 ---@field of? string a new-layout script pane's agent: the aN whose work dir it runs in
 ---@field checkout? string the clone a new-layout agent was made from, for its repo's base clone
 ---@field branch? string a new-layout agent's worktree branch (iso <role> wt)
+---@field acp? boolean a new-layout claude agent that runs over ACP (isovim.acp), not in claude's TUI
 
 -- The root sets the north star, a repo-root holds one repo's, the router is a repo's one interface
 -- to the user, workers do the work.
@@ -573,7 +574,8 @@ local function add_record(key, spec)
   local id = "a" .. n
   local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
     read_only = spec.read_only or false, repo = key ~= "_" and key or nil, created = os.time(), cmd = spec.cmd,
-    hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of }
+    hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of,
+    acp = spec.acp or nil }
   write_json(M.record_file(key, id), record)
   return record
 end
@@ -582,7 +584,7 @@ end
 -- A pane a repo script runs in (isovim.scripts) has its script, and in a repo key the agent it runs
 -- for as `of`; checkout is the clone a new-layout agent was made from, which a base clone can be
 -- made from (isovim.repoconf.base).
----@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean, checkout?: string, script?: string, of?: string}
+---@param spec {kind: string, name?: string, cmd?: string, hidden?: boolean, prompt?: string, role?: string, parent?: string, read_only?: boolean, checkout?: string, script?: string, of?: string, acp?: boolean}
 ---@return isovim.Agent? agent, string? err nil only for a repo key
 function M.add_agent(ws, spec)
   if M.v2(ws) then

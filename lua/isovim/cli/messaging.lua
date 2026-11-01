@@ -39,13 +39,11 @@ local function deliver(query, text, kind)
     text = stamp .. " " .. text
   end
   ensure_running(ws, agent)
-  local result = panes.send(ws.id, agent.id, text)
-  if result.code ~= 0 then
-    fail("could not type into " .. agent.name .. ": " .. (result.stderr or ""))
-  end
-  require("isovim.events").publish_msg(ws.id, agent.id,
-    { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
-  if panes.reports(agent.kind) then
+  local taken = c.prompt(ws, agent, text, { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
+  -- An ACP agent has it once its supervisor answers: sent, or queued behind the running turn.
+  if taken and taken.queued then
+    io.stderr:write(("iso: %s is working; the message is queued (%d) for when its turn ends\n"):format(agent.name, taken.position))
+  elseif not agent.acp and panes.reports(agent.kind) then
     await(ws.id, agent.id, 10, function(state)
       return state == "working" or state == "attention"
     end)

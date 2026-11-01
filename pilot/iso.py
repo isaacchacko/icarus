@@ -41,6 +41,9 @@ class Iso:
             "ISOVIM_TMUX_SOCKET": f"isot-panes-{os.getpid()}-{name}"[:60],
             "ISOVIM_SOCK": str(self.tmp / "s"),
             "ISOVIM_AGENT_CMD": str(REPO / "pilot" / "fake-agent"),
+            # An ACP agent's supervisor runs a fake adapter, which logs what it's sent here.
+            "ISOVIM_ACP_CMD": str(REPO / "pilot" / "fake-acp-agent"),
+            "FAKE_ACP_LOG": str(self.tmp / "fake-acp.log"),
             "ISOVIM_CLAUDE_JSON": str(self.tmp / "claude.json"),
             "ISOVIM_NOTIFY_LOG": str(self.tmp / "notifications.log"),
             "FAKE_AGENT_DELAY": str(agent_delay),
@@ -69,6 +72,26 @@ class Iso:
             self.stop()
             raise
         return self
+
+    def close_tui(self):
+        """Quits the TUI alone, as closing its terminal would; the agents' tmux server stays up."""
+        if self.nvim:
+            try:
+                self.nvim.close()
+            except Exception:
+                pass
+            self.nvim = None
+        subprocess.run(["tmux", "-L", self.ui, "kill-server"], capture_output=True)
+        lock = Path(self.env["ISOVIM_HOME"]) / "isovim.lock"
+
+        def gone():
+            try:
+                os.kill(int(lock.read_text().strip()), 0)
+                return False
+            except (OSError, ValueError):
+                return True
+
+        self.wait(gone, "the TUI to quit")
 
     def stop(self):
         if self.nvim:

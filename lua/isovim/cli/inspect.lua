@@ -96,6 +96,15 @@ function commands.checkhealth()
     local path = panes.exe(name)
     check(vim.fn.executable(path) == 1, name .. " " .. path, "install " .. name .. " (agents of that kind can't start)")
   end
+  -- ACP agents (iso spawn --acp) run claude-agent-acp at a pinned version, which the first one
+  -- installs with npm (isovim.acp.adapter).
+  local adapter = require("isovim.acp.adapter")
+  if adapter.installed() then
+    check(true, ("claude-agent-acp %s (ACP agents) at %s"):format(adapter.version, store.home_relative(adapter.dir())))
+  else
+    check(vim.fn.executable("npm") == 1, ("claude-agent-acp %s (ACP agents) not installed yet: the first ACP agent installs it with npm")
+      :format(adapter.version), "put npm on PATH, or run " .. table.concat(adapter.install_cmd(), " "))
+  end
   local link = vim.fn.resolve(vim.fn.exepath("iso"))
   check(link == panes.bin, "iso on PATH is this repo's", "ln -s " .. panes.bin .. " ~/.local/bin/iso")
   -- A prompt file that can't be read is left out of what its role is told, silently.

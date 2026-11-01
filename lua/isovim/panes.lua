@@ -67,6 +67,11 @@ local HOOKS = vim.json.encode({
   end, EVENTS),
 })
 
+-- The same hooks as a settings table, which an ACP session takes in its _meta (isovim.acp.host).
+function M.hook_settings()
+  return vim.json.decode(HOOKS)
+end
+
 -- Codex takes the same hooks as config overrides; Interrupt (Esc) is Codex-only.
 local function codex_hooks()
   local args = {}
@@ -132,6 +137,7 @@ local function instructions(agent)
     return part ~= ""
   end, parts), "\n\n")
 end
+M.instructions = instructions
 
 -- Claude keeps a workspace's transcripts under ~/.claude/projects/<cwd with / and . as ->.
 function M.claude_project(dir)
@@ -188,9 +194,14 @@ function M.exe(name)
   return name
 end
 
+-- An ACP agent's pane runs its supervisor, which starts the adapter itself (isovim.acp.host).
+M.acp_host = repo .. "/lua/isovim/acp/agent_host.lua"
+
 ---@param agent isovim.Agent
 function M.agent_cmd(ws, agent, dir)
-  if agent.kind == "claude" then
+  if agent.acp then
+    return { "env", "NVIM_APPNAME=isovim", vim.v.progpath, "-l", M.acp_host, ws .. "/" .. agent.id }
+  elseif agent.kind == "claude" then
     if vim.env.ISOVIM_AGENT_CMD then
       return vim.split(vim.env.ISOVIM_AGENT_CMD, " ", { trimempty = true })
     end
@@ -274,8 +285,9 @@ function M.start(ws, agent, dir)
     dir = vim.uv.os_homedir()
   end
   vim.fn.mkdir(store.run_dir(ws), "p")
-  -- A terminal's only state is "exited" (iso closed), which must not outlive the shell it was about.
-  if agent.kind == "terminal" or agent.kind == "command" then
+  -- A terminal's only state is "exited" (iso closed), which must not outlive the shell it was about;
+  -- an ACP agent's supervisor writes ready once its session is up, which a starter waits for.
+  if agent.kind == "terminal" or agent.kind == "command" or agent.acp then
     os.remove(store.state_file(ws, agent.id))
   end
   local env = {
@@ -292,6 +304,10 @@ function M.start(ws, agent, dir)
     "-e", "ISOVIM_HIDDEN=" .. (agent.hidden and "1" or ""),
     "-e", "ISOVIM_READONLY=" .. (agent.read_only and "1" or ""),
   }
+  -- An ACP agent's supervisor owns its state, so its hooks (bin/iso-hook) leave the state file alone.
+  if agent.acp then
+    vim.list_extend(env, { "-e", "ISOVIM_ACP=1" })
+  end
   -- Set in the same call so even the server's first pane keeps a long scrollback for isovim.stream to replay.
   local args = { "set-option", "-g", "history-limit", "100000", ";" }
   -- The server copies the env of whoever started it, an isovim nvim: an agent's nvim (Claude's
