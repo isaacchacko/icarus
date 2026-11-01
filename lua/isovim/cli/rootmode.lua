@@ -1,5 +1,5 @@
 -- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode on <repo|host>
--- makes a root answer in your place: a worker spawned over ACP and promoted (repo-root for a repo,
+-- makes a root answer in your place: an agent spawned over ACP with the role (repo-root for a repo,
 -- root for the host), or the agent that holds that role already, with --task "<description>" as
 -- its first message (guidance only: the root decides what's outside it and raises that to you).
 -- iso rootmode off hands its waiting questions on, to the host root or to you, as iso rm of a root
@@ -200,16 +200,21 @@ local function on(scope, task)
     end
     out(("root mode is on for %s: %s, its %s already, answers its routers now"):format(label(scope), address, role))
   else
-    -- A worker, promoted before its first session opens, so that session has the role's prompt.
+    -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
+    -- the role's prompt, which a resumed or reloaded session couldn't take as its system prompt.
+    -- Not while claude isn't logged in here: a root that can't work would be on in your place.
+    local blocked = require("isovim.auth").why("claude")
+    if blocked then
+      fail(("root mode stays off for %s: %s"):format(label(scope), blocked))
+    end
     -- The host root lives in root/, the pseudo-repo of its own.
     local key = scope == "host" and store.ROOT or scope
     local dir = scope ~= "host" and known_clone(scope) or nil
-    local agent, err = store.add_agent(key, { kind = "claude", acp = true, name = role, role = "worker", checkout = dir,
+    local agent, err = store.add_agent(key, { kind = "claude", acp = true, name = role, role = role, checkout = dir,
       prompt = first })
     if not agent then
       fail(err or "could not add the agent")
     end
-    store.set_role(key, agent.id, role)
     address = key .. "/" .. agent.id
     rootmode.set(scope, { agent = address, task = task, since = os.time() })
     c.ensure_running(c.resolve(key), store.agent(key, agent.id))

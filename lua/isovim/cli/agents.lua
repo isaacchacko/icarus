@@ -212,6 +212,11 @@ end
 
 function commands.restart(args)
   local ws, agent = resolve_agent(args[1], true)
+  -- A running agent stays as it is while its kind isn't logged in: restarted, it couldn't work.
+  local blocked = panes.running(ws.id, agent.id) and require("isovim.auth").restart_blocked(agent)
+  if blocked then
+    fail(("%s/%s keeps running, not restarted: %s"):format(ws.id, agent.id, blocked))
+  end
   if not tui("require('isovim').restart(...)", ws.id, agent.id) then
     panes.stop(ws.id, agent.id)
     ensure_running(ws, agent)

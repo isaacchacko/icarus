@@ -92,9 +92,16 @@ function commands.checkhealth()
   check(vim.fn.executable("node") == 1, "node", "put node on PATH (the language servers for files you open run on it)")
   check(vim.fn.executable("lsof") == 1, "lsof", "install lsof (the sidebar's dev server ports)")
   check(vim.fn.executable("rg") == 1, "rg", "install ripgrep (iso find searches conversations with it)")
+  local auth = require("isovim.auth")
   for _, name in ipairs({ "claude", "codex" }) do
     local path = panes.exe(name)
     check(vim.fn.executable(path) == 1, name .. " " .. path, "install " .. name .. " (agents of that kind can't start)")
+    -- Not logged in, it still starts, and then fails every prompt.
+    local logged_in, detail = auth.check(name, true)
+    if logged_in ~= nil then
+      check(logged_in, ("%s logged in (%s)"):format(name, detail), ("%s needs login: %s (until then its agents' prompts wait in their queues, and nothing restarts them)")
+        :format(name, name == "codex" and "run codex login" or "run claude, then /login"))
+    end
   end
   -- ACP agents run their kind's adapter (claude-agent-acp, codex-acp) at a pinned version, which
   -- the first agent of that kind installs with npm (isovim.acp.adapter).
@@ -160,7 +167,15 @@ function commands.status(args)
     forward(host, { "status", query })
   end
   local ws, agent = resolve_agent(query)
-  out(word(ws.id, agent.id))
+  -- A held queue says what it waits on.
+  local held = panes.running(ws.id, agent.id) and status.state(ws.id, agent.id) == "held"
+  out(held and ("held: " .. (status.reason(ws.id, agent.id) or "its queue waits")) or word(ws.id, agent.id))
+end
+
+-- iso __auth claude|codex: {logged_in, detail} as isovim.auth sees it here.
+commands["__auth"] = function(args)
+  local logged_in, detail = require("isovim.auth").check(args[1] == "codex" and "codex" or "claude", true)
+  out(vim.json.encode({ logged_in = logged_in == nil and vim.NIL or logged_in, detail = detail }))
 end
 
 function commands.wait(args)

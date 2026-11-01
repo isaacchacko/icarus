@@ -32,7 +32,14 @@ class Iso:
         self.tmp = Path(tempfile.mkdtemp(prefix="iso-"))
         self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
         # Never the caller's isovim identity: a pilot run from inside an agent would act as that agent.
-        inherited = {k: v for k, v in os.environ.items() if not k.startswith("ISOVIM_")}
+        # Nor the Claude Code session it may run in: CLAUDECODE, CLAUDE_CODE_* (its messaging socket
+        # among them), CLAUDE_PID and TMUX_PANE would reach real agents. A login or provider set in
+        # the env (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_*) stays.
+        def kept(k):
+            if k.startswith("ISOVIM_") or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "TMUX_PANE"):
+                return False
+            return not k.startswith("CLAUDE_CODE_") or k == "CLAUDE_CODE_OAUTH_TOKEN" or k.startswith("CLAUDE_CODE_USE_")
+        inherited = {k: v for k, v in os.environ.items() if kept(k)}
         self.env = {
             **inherited,
             "ISOVIM_HOME": str(self.tmp / "home"),
@@ -47,6 +54,13 @@ class Iso:
             "ISOVIM_CLAUDE_JSON": str(self.tmp / "claude.json"),
             "ISOVIM_NOTIFY_LOG": str(self.tmp / "notifications.log"),
             "FAKE_AGENT_DELAY": str(agent_delay),
+            # Logged in, as `claude auth status` and `codex login status` say through a stand-in
+            # (isovim.auth); a check writes false to FAKE_AUTH_FILE to log out. Never kept, so a
+            # change shows at once.
+            "ISOVIM_AUTH_CLAUDE": str(REPO / "pilot" / "fake-auth"),
+            "ISOVIM_AUTH_CODEX": str(REPO / "pilot" / "fake-auth"),
+            "FAKE_AUTH_FILE": str(self.tmp / "fake-auth"),
+            "ISOVIM_AUTH_TTL": "0",
             # No real other hosts in the sidebar; pilots that want one set it.
             "ISOVIM_PEERS": "-",
             # A pilot with a fake peer (fake-ssh runs the remote side here) syncs config into its

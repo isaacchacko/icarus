@@ -28,12 +28,26 @@ function M.state(ws, agent)
   return state
 end
 
--- For what no hook reports, like Claude being interrupted.
-function M.set_state(ws, agent, state)
+-- Why it's in that state, when whoever wrote it said (the state file's second line): an ACP
+-- agent's held queue says what it waits on (isovim.acp.host).
+---@return string?
+function M.reason(ws, agent)
+  local file = io.open(store.state_file(ws, agent))
+  if not file then
+    return nil
+  end
+  file:read("*l")
+  local reason = file:read("*l")
+  file:close()
+  return reason ~= "" and reason or nil
+end
+
+-- For what no hook reports, like Claude being interrupted. reason goes on the second line.
+function M.set_state(ws, agent, state, reason)
   local previous = M.state(ws, agent)
   local file = io.open(store.state_file(ws, agent), "w")
   if file then
-    file:write(state)
+    file:write(state .. (reason and ("\n" .. reason:gsub("\n", " ")) or ""))
     file:close()
   end
   if state ~= previous then
@@ -52,6 +66,10 @@ function M.get(ws, agent)
     return "attention"
   end
   local state = M.state(ws, agent)
+  -- Its prompts wait on something it can't do itself (a login): it needs you until that's fixed.
+  if state == "held" then
+    return "attention"
+  end
   if state == "working" or state == "checking" then
     return "working"
   elseif state == "waiting" then

@@ -33,6 +33,22 @@ local function is_dir(path)
 end
 
 ---@return boolean ok, string? err
+-- Why a running agent of this kind can't restart on host (its claude or codex isn't logged in
+-- there, as that host's iso __auth says), or nil. A host that can't say (an older isovim) is let
+-- through, as before.
+local function remote_blocked(host, agent)
+  local kind = require("isovim.auth").kind_of(agent)
+  if not kind then
+    return nil
+  end
+  local cmd = ("%s %s %s"):format(M.ssh, vim.fn.shellescape(host), vim.fn.shellescape(M.remote_bin .. " __auth " .. kind))
+  local result = vim.system({ "bash", "-c", cmd }, { text = true, timeout = 30000 }):wait()
+  local ok, answer = pcall(vim.json.decode, vim.trim(result.stdout or ""))
+  if result.code == 0 and ok and type(answer) == "table" and answer.logged_in == false then
+    return ("%s needs login on %s (%s)"):format(kind, host, tostring(answer.detail))
+  end
+end
+
 function M.send(ws, host)
   if store.v2(ws.id) then
     return false, "a repo's agents move one at a time: iso move <owner>/<repo>/aN <host>"
@@ -43,6 +59,13 @@ function M.send(ws, host)
   for _, agent in ipairs(agents) do
     if panes.running(ws.id, agent.id) then
       table.insert(manifest.running, agent.id)
+    end
+  end
+  -- The running ones restart there: not while their kind isn't logged in there.
+  for _, agent in ipairs(agents) do
+    local blocked = vim.tbl_contains(manifest.running, agent.id) and remote_blocked(host, agent)
+    if blocked then
+      return false, blocked .. "; its agents stay running here"
     end
   end
   panes.stop_all(ws.id)
@@ -239,6 +262,10 @@ function M.send_agent(key, agent, host)
     end
   elseif running and require("isovim.status").get(key, id) == "working" then
     return false, address .. " is mid-turn; wait for its turn to end, or cancel it"
+  end
+  local blocked = running and remote_blocked(host, agent)
+  if blocked then
+    return false, blocked .. "; it stays running here"
   end
   -- Its worktree goes as its branch, pushed to origin.
   local w = store.dir(key) .. "/" .. id .. "/w"

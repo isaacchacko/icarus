@@ -386,6 +386,12 @@ end
 -- The chat comes back on screen only if it was there.
 function M.restart(ws, agent)
   agent = agent or default_agent(ws)
+  -- Not while its kind isn't logged in here: it keeps running rather than coming back unable to work.
+  local blocked = panes.running(ws, agent) and require("isovim.auth").restart_blocked(store.agent(ws, agent))
+  if blocked then
+    vim.notify(("%s/%s keeps running, not restarted: %s"):format(ws, agent, blocked), vim.log.levels.WARN)
+    return
+  end
   panes.stop(ws, agent)
   local shown = false
   for _, buf in ipairs(chat_bufs()) do

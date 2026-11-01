@@ -595,6 +595,13 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
+  -- Whether claude or codex is logged in here, as JSON (isovim.auth): for iso move to ask the host
+  -- an agent moves to.
+  { name = "__auth", module = "inspect",
+    args = { "claude|codex" },
+    hidden = true,
+    audience = "plumbing",
+  },
   -- The role warnings for a command bin/iso runs itself (iso browser).
   { name = "__warn", module = "roles",
     hidden = true,

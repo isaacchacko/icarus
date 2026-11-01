@@ -11,6 +11,15 @@
 -- which publishes agent.<scope>.<id>.status, and publishes msg.<scope>.<id> for each message it
 -- takes. Its pane shows a plain-text tail.
 --
+-- A prompt that fails on something that passes (claude not logged in, a usage limit, the adapter
+-- going away) isn't used up: it goes back to the front of the queue, which is held (state held,
+-- with why, and a held-aN notice in the repo's Inbox) until the login is back or a retry works.
+-- A supervisor that starts while claude isn't logged in holds its queue the same way. Claude Code
+-- restores the system prompt a session started with, so a resumed, reloaded or forked session
+-- whose role prompt changed gets it as its first message, "[isovim: your role is now X]".
+-- Stopping, it stops everything it started, the background shells Claude runs in process groups
+-- of their own too.
+--
 -- iso handover: the adapter is stopped (which closes the ACP session), your own claude runs in the
 -- pane on the same session (claude --resume), and when it exits what happened there goes into the
 -- journal from Claude's transcript and the session is opened again. One writer at a time: prompts
@@ -38,6 +47,7 @@ local log = require("isovim.acp.log")
 local sessions = require("isovim.acp.sessions")
 local asks_mod = require("isovim.acp.asks")
 local Client = require("isovim.acp.client")
+local auth = require("isovim.auth")
 
 local M = {}
 
@@ -72,6 +82,9 @@ local S = {
   asks = nil, ---@type isovim.acp.Asks
   after_turn = nil, ---@type fun()? what waits for the running turn to end (a session switch)
   loading = false, -- a session/load whose replay goes into the journal (a /resume with no kept journal)
+  held = nil, ---@type {why: string, kind: "auth"|"usage"|"transport"|"error", delay?: number}? what the queue waits on
+  retry = nil, -- the timer that tries a held queue again
+  prompt_hash = nil, ---@type string? the role prompt's sha256, as the last session request sent it
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -118,7 +131,11 @@ local function notice(text)
   out("\n[" .. text .. "]\n")
 end
 
+-- While the queue is held, the agent's state says so (held, and why) whatever else would be written.
 local function set_state(state)
+  if S.held and state ~= "working" then
+    return status.set_state(S.ws, S.agent, "held", S.held.why)
+  end
   status.set_state(S.ws, S.agent, state)
 end
 
@@ -150,7 +167,7 @@ local function save_queue()
   for _, prompt in ipairs(S.queue) do
     if not prompt.reload then
       kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
-        message = prompt.message, via = prompt.via }
+        message = prompt.message, via = prompt.via, role = prompt.role }
     end
   end
   local path = queue_file(S.ws, S.agent)
@@ -203,7 +220,7 @@ local function next_prompt()
     S.after_turn = nil
     return after()
   end
-  if S.busy or not S.ready then
+  if S.busy or not S.ready or S.held then
     return
   end
   local prompt = table.remove(S.queue, 1)
@@ -214,12 +231,119 @@ local function next_prompt()
   end
 end
 
--- The turn ended: say so, and send the next queued prompt.
+-- A held queue's notice in the agent's repo's Inbox, held-aN.md, until the queue goes again.
+local function inbox_file()
+  return require("isovim.surfaces").dir(store.canon(S.ws)) .. "/held-" .. S.agent .. ".md"
+end
+
+local function inbox_notice(why)
+  pcall(function()
+    local path = inbox_file()
+    vim.fn.mkdir(vim.fs.dirname(path), "p")
+    local short = why:gsub('"', "'"):gsub("%s*%(.*$", "")
+    local lines = { "---", ('name: "%s/%s\'s prompts are held: %s"'):format(S.ws, S.agent, short), 'color: "#e06c75"',
+      "consumable: true", "---", "", ("%s/%s's queue waits: %s."):format(S.ws, S.agent, why), "",
+      ("Its %d queued prompt(s) are kept (iso/journal/%s.queue.json) and go once that's fixed; isovim tries again by itself.")
+        :format(#queue_items(), S.agent) }
+    local tmp = ("%s/.%s.%d.tmp"):format(vim.fs.dirname(path), vim.fs.basename(path), vim.uv.os_getpid())
+    vim.fn.writefile(lines, tmp)
+    vim.uv.fs_rename(tmp, path)
+    require("isovim.surfaces").scan(store.canon(S.ws), true)
+  end)
+end
+
+local function inbox_clear()
+  pcall(function()
+    if os.remove(inbox_file()) then
+      require("isovim.surfaces").scan(store.canon(S.ws), true)
+    end
+  end)
+end
+
+-- What made a prompt fail, when it's something that passes (a login, a usage limit, the adapter
+-- going away), so the prompt is kept rather than used up: "auth", "usage", "transport", or nil.
+local TRANSPORT_ERROR = -32000
+local function failure_kind(err)
+  local text = (tostring(err.message or "") .. " " .. vim.inspect(err.data or "")):lower()
+  if text:find("auth") or text:find("log ?in") or text:find("401") or text:find("credential") then
+    return "auth"
+  elseif text:find("usage") or text:find("rate.?limit") or text:find("limit reached") or text:find("429")
+    or text:find("overloaded") or text:find("quota") or text:find("credit") or text:find("529") then
+    return "usage"
+  elseif err.code == TRANSPORT_ERROR or text:find("disconnected") or text:find("not connected") then
+    return "transport"
+  end
+end
+
+local function auth_kind()
+  return auth.kind_of(S.spec) or "claude"
+end
+
+local release
+
+-- The queue waits: nothing is sent until release, which the retry timer calls once a login is
+-- back (asked every 30s) or, for anything else, after a while that doubles each time (to 30 min).
+-- The agent's state is held, with why; its repo's Inbox says so.
+local function hold(why, kind)
+  local first = not S.held
+  local base = tonumber(vim.env.ISOVIM_RETRY_SECS or "") or (kind == "auth" and 30 or 60)
+  local delay = kind == "auth" and base or math.min(S.held and S.held.delay and S.held.delay * 2 or base, 1800)
+  S.held = { why = why, kind = kind, delay = delay }
+  set_state("held")
+  if first then
+    notice("its prompts are held: " .. why .. "; they stay queued and go once that's fixed")
+  end
+  inbox_notice(why)
+  S.retry = S.retry or vim.uv.new_timer()
+  S.retry:stop()
+  S.retry:start(math.floor(delay * 1000), 0, vim.schedule_wrap(function()
+    if not S.held then
+      return
+    end
+    local still = S.held.kind == "auth" and auth.why(auth_kind(), true) or nil
+    if still then
+      return hold(still, "auth")
+    end
+    release(S.held.kind == "auth" and "logged in again" or "trying again")
+  end))
+end
+
+release = function(why)
+  if not S.held then
+    return
+  end
+  S.held = nil
+  if S.retry then
+    S.retry:stop()
+  end
+  inbox_clear()
+  notice("its queue goes again" .. (why and (": " .. why) or ""))
+  if S.ready and not S.busy then
+    set_state(#S.queue > 0 and "ready" or "idle")
+  end
+  next_prompt()
+end
+
+-- The turn ended: say so, and send the next queued prompt. One that failed on something that
+-- passes goes back to the front of the queue, which is held.
 local function turn_ended(prompt, result, err)
   S.busy = false
   local reason = result and result.stopReason or nil
   append("turn", { state = "end", id = prompt.id, stopReason = reason, error = err and err.message or nil })
-  if err then
+  local kept = err and failure_kind(err)
+  if kept then
+    -- A login that's gone is said as that, not in the adapter's words.
+    local why = kept == "auth" and auth.why(auth_kind(), true) or nil
+    if kept == "auth" and not why then
+      -- Logged in all the same: tried again after a while, as anything else is.
+      kept = "error"
+    end
+    why = why or ("the prompt failed (%s): %s"):format(kept, tostring(err.message))
+    table.insert(S.queue, 1, prompt)
+    queue_changed()
+    notice("the prompt failed: " .. tostring(err.message) .. "; it's kept, first in the queue")
+    hold(why, kept)
+  elseif err then
     notice("the prompt failed: " .. tostring(err.message or vim.inspect(err)))
   end
   out("\n")
@@ -242,8 +366,17 @@ deliver = function(prompt)
   -- The files as they were before this turn, for a rewind to put back.
   local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
   snapshot = ok and snapshot or nil
-  append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind, stamp = prompt.stamp,
-    via = prompt.via })
+  local entry = append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind,
+    stamp = prompt.stamp, via = prompt.via, role = prompt.role })
+  -- The role prompt a resumed session can't get any other way: said once it's in the journal.
+  if prompt.via == "role" then
+    local journaled = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
+      return e.kind == "prompt" and e.id == prompt.id
+    end)
+    notice(journaled and ("gave it the %s's prompt as a message (journal seq %s): a resumed session keeps the system prompt it started with")
+      :format(prompt.role or "role", tostring(journaled.seq or entry.seq))
+      or ("could not find the %s's prompt in the journal after sending it"):format(prompt.role or "role"))
+  end
   append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
     snapshot_dir = snapshot and snapshot.dir })
   -- The session's title in the history picker: its first prompt.
@@ -260,7 +393,7 @@ end
 ---@param prompt isovim.acp.Prompt
 local function submit(prompt)
   prompt.id = next_id()
-  local queued = S.busy or not S.ready
+  local queued = S.busy or not S.ready or S.held ~= nil
   if prompt.publish then
     events.publish_msg(S.ws, S.agent, { from = prompt.from, kind = prompt.kind, id = prompt.stamp,
       text = prompt.message or prompt.text, queued = queued })
@@ -301,7 +434,7 @@ end
 -- payload, the promoter's message) is queued right after it, so it arrives after the reload.
 ---@param payload {then_prompt?: table}
 function CALLS.reload(payload)
-  local queued = S.busy or not S.ready
+  local queued = S.busy or not S.ready or S.held ~= nil
   if queued then
     S.queue[#S.queue + 1] = { id = next_id(), reload = true, text = "(reload)", via = "iso" }
   else
@@ -469,6 +602,7 @@ local function with_meta(params)
   S.imported = vim.tbl_map(function(import)
     return import.path
   end, found)
+  S.prompt_hash = vim.fn.sha256(require("isovim.panes").instructions(S.spec))
   return adapter.session_params(S.spec.kind, params, append_text)
 end
 
@@ -480,9 +614,42 @@ local function remember_session(id, how)
   pcall(sessions.note, S.ws, S.agent, id, { how = how })
 end
 
--- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session entry.
-local function session_ready(how, fresh, extra)
-  append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported }))
+-- The role prompt's hash the journal last recorded a session getting, and that session's role.
+local function last_prompt_hash(entries)
+  entries = entries or journal.read(S.ws, S.agent)
+  for i = #entries, 1, -1 do
+    if entries[i].kind == "session" and entries[i].prompt_hash then
+      return entries[i].prompt_hash, entries[i].role
+    end
+  end
+end
+
+-- Claude Code keeps the system prompt a session started with (a prompt_snapshot in its
+-- transcript) and restores it on resume, so a resumed, reloaded or forked session never sees a
+-- changed --append-system-prompt or _meta. A role or role prompt that changed since reaches it as
+-- the first message instead, stamped by isovim.
+local function role_prompt()
+  local role = store.role(S.spec)
+  local text = ("[isovim: your role is now %s]\nA resumed session keeps the system prompt it started with, so this "
+    .. "is your role's prompt now; where your system prompt says otherwise about your role, this wins.\n\n%s")
+    :format(role, require("isovim.panes").instructions(S.spec))
+  return { id = next_id(), text = text, via = "role", role = role }
+end
+
+-- Whether the session just opened (resumed: one that keeps an earlier system prompt) needs the
+-- role prompt as a message: its hash differs from what the journal last recorded; with nothing
+-- recorded, only a fork (a copy of another agent's session) does.
+local function role_changed(resumed, how, last)
+  return resumed and S.prompt_hash ~= nil and last ~= S.prompt_hash and (last ~= nil or how == "fork")
+end
+
+-- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session
+-- entry. resumed: it carries an earlier session's system prompt (resume, load, fork).
+local function session_ready(how, fresh, extra, resumed)
+  local last = last_prompt_hash() or (how == "fork" and S.source_hash or nil)
+  local tell = role_changed(resumed, how, last)
+  append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported,
+    role = store.role(S.spec), prompt_hash = S.prompt_hash }))
   local mode = adapter.mode(S.spec)
   S.client:request("session/set_mode", { sessionId = S.session, modeId = mode }, function(_, err)
     if err then
@@ -496,6 +663,13 @@ local function session_ready(how, fresh, extra)
     -- The spawn's prompt goes once, to the agent's first session.
     if fresh and S.spec.prompt and S.spec.prompt ~= "" and not S.prompted then
       table.insert(S.queue, 1, { id = next_id(), text = S.spec.prompt, via = "spawn" })
+    end
+    if tell then
+      table.insert(S.queue, 1, role_prompt())
+      save_queue()
+    end
+    if S.held then
+      return set_state("held")
     end
     local first = table.remove(S.queue, 1)
     if first then
@@ -511,8 +685,17 @@ local function session_caps()
 end
 
 -- A promotion's reload: closes the session and opens it again (resume, else load) with the
--- record's role prompt, since the adapter keeps a live session's prompt. The queue waits on it.
+-- record's role prompt in _meta, and since Claude Code restores the system prompt a session
+-- started with, gives it that prompt as the first message too (role_prompt). The queue waits on it.
+-- Never while claude isn't logged in: the reopened session couldn't take a prompt, so the reload
+-- waits first in the queue, which is held until the login is back.
 reload = function()
+  local blocked = auth.why(auth_kind(), true)
+  if blocked then
+    table.insert(S.queue, 1, { id = next_id(), reload = true, text = "(reload)", via = "iso" })
+    hold(blocked, "auth")
+    return
+  end
   S.busy = true
   S.spec = store.agent(S.ws, S.agent) or S.spec
   local role = store.role(S.spec)
@@ -521,10 +704,21 @@ reload = function()
   local function done(err)
     S.busy = false
     if err then
-      notice(("could not reload the session as a %s (%s); iso restart %s/%s loads it"):format(role, err, S.ws, S.agent))
+      notice(("could not reload the session as a %s (%s); iso restart %s/%s loads it. That role's prompt goes to it as the next message")
+        :format(role, err, S.ws, S.agent))
+      table.insert(S.queue, 1, role_prompt())
+      save_queue()
     else
-      append("session", { how = "reload", sessionId = S.session, role = role, imports = S.imported })
-      notice("reloaded the session as a " .. role .. ", with that role's prompt")
+      local last = last_prompt_hash()
+      append("session", { how = "reload", sessionId = S.session, role = role, imports = S.imported, prompt_hash = S.prompt_hash })
+      if last ~= S.prompt_hash then
+        table.insert(S.queue, 1, role_prompt())
+        save_queue()
+        notice(("reloaded the session as a %s; that role's prompt goes to it as the next message, since a resumed session keeps the system prompt it started with")
+          :format(role))
+      else
+        notice(("reloaded the session as a %s; its role prompt hasn't changed"):format(role))
+      end
     end
     next_prompt()
   end
@@ -590,6 +784,9 @@ end
 local function fork_session()
   local spec = S.spec
   local from_ws, from_agent = tostring(spec.fork_from or ""):match("^(.*)/([^/]+)$")
+  -- The prompt its source's session had (the carried journal keeps no session entries): a fork of
+  -- the same role needs no role message.
+  S.source_hash = from_ws and last_prompt_hash(journal.read(from_ws, from_agent)) or nil
   local function carry(id)
     if from_ws then
       replace_journal(sessions.carry(journal.read(from_ws, from_agent), tonumber(spec.fork_seq)))
@@ -615,7 +812,7 @@ local function fork_session()
     end
     carry()
     remember_session(result.sessionId, "fork")
-    session_ready("fork", true, extra)
+    session_ready("fork", true, extra, true)
   end)
 end
 
@@ -644,7 +841,7 @@ local function open_session(init)
       return new_session()
     end
     S.session = id
-    session_ready(resume and "resume" or "load", false)
+    session_ready(resume and "resume" or "load", false, nil, true)
   end)
 end
 
@@ -725,7 +922,7 @@ function CALLS.resume(payload)
       end
       close_old(old)
       remember_session(id, "resume")
-      session_ready(method == "session/resume" and "resume" or "load", false, { previous = old })
+      session_ready(method == "session/resume" and "resume" or "load", false, { previous = old }, true)
     end)
   end)
   return { switching = true, waited = waited, previous = old }
@@ -781,7 +978,7 @@ function CALLS.rewind(payload)
     close_old(old)
     remember_session(id, "rewind")
     table.insert(S.queue, 1, { id = next_id(), text = payload.text, via = "composer" })
-    session_ready("rewind", false, { previous = old, prompt = payload.id, at = cut.messageId, files = restored })
+    session_ready("rewind", false, { previous = old, prompt = payload.id, at = cut.messageId, files = restored }, cut.messageId ~= nil)
   end
   local waited = when_idle(function()
     local function opened(result, err)
@@ -929,13 +1126,27 @@ function CALLS.handover()
   return { started = true, pid = pid, session = S.session, command = cmd[1] }
 end
 
+-- The supervisor stops (iso rm, iso restart, the agent's tmux session killed): everything it
+-- started goes with it, the background shells Claude runs in process groups of their own too.
 function M.shutdown(code)
+  -- The socket first, and only while it's this one's: an iso restart starts the next supervisor
+  -- on the same path while this one is still stopping.
+  local sock = S.sock and vim.uv.fs_stat(S.sock)
+  if sock and S.sock_ino and sock.ino == S.sock_ino then
+    os.remove(S.sock)
+  end
+  S.sock = nil
+  local transport = require("isovim.acp.transport")
+  -- Asked first, while they're still below it. A signal handler runs this, in a fast context.
+  local listed, below, own_pgid = pcall(transport.descendants, vim.uv.os_getpid())
+  below = listed and below or {}
   if S.handover and S.handover.pid then
     vim.uv.kill(S.handover.pid, "sighup")
   end
   if S.client then
     pcall(S.client.stop, S.client)
   end
+  pcall(transport.kill_descendants, below, own_pgid)
   if S.sock then
     os.remove(S.sock)
   end
@@ -988,6 +1199,7 @@ function M.run(addr)
   S.sock = require("isovim.acp").socket(ws, agent)
   os.remove(S.sock)
   vim.fn.serverstart(S.sock)
+  S.sock_ino = (vim.uv.fs_stat(S.sock) or {}).ino
 
   local kind = S.spec.kind
   if not adapter.supports(kind) then
@@ -1003,6 +1215,13 @@ function M.run(addr)
   if not installed then
     notice("could not install " .. launch.package .. ": " .. tostring(err))
     return M.shutdown(1)
+  end
+  -- A claude that isn't logged in opens sessions and then fails every prompt: said once, as that,
+  -- and the queue waits for the login rather than being used up.
+  inbox_clear()
+  local blocked = auth.why(auth_kind(), true)
+  if blocked then
+    hold(blocked, "auth")
   end
   start_adapter()
 

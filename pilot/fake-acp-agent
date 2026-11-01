@@ -24,6 +24,15 @@ check sees what a resumed, forked or rewound session remembers. "ask" asks two q
 elicitation (elicitation/create, as the adapter presents AskUserQuestion) when the client offers
 forms, and replies with what came back.
 
+The system prompt is kept as Claude Code 2.1.314 keeps it: session/new stores _meta.systemPrompt.append
+as the session's prompt snapshot, and session/resume, session/load and session/fork keep the one the
+session (or its source) started with, ignoring the append they're sent. "system" answers with that
+snapshot; "whoami" with the role the agent believes it has: the last "[isovim: your role is now X]"
+message it was given, else the snapshot's "as a X agent". While $FAKE_AUTH_FILE says false (claude
+logged out) every prompt fails at once with "Authentication required", as the adapter's do; "limit"
+fails with a usage limit. "bg <cmd>" runs cmd as Claude runs a background Bash: a child of this
+process in a process group of its own, still running after the turn.
+
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
 logged as an overlap: the client is meant to queue them."""
@@ -60,6 +69,7 @@ if os.environ.get("FAKE_ACP_CLAUDE_KEYED"):
 memory = {}
 session_lock = threading.Lock()
 turn = {"messageId": None, "text": ""}
+background = []
 
 
 def load_session(sid):
@@ -204,6 +214,12 @@ def prompt(rid, params):
     turn["messageId"], turn["text"] = None, ""
     if text == "history":
         chunk(session, "history: " + " | ".join(earlier))
+    elif text == "system":
+        chunk(session, "system: " + ((load_session(session) or {}).get("system") or ""))
+    elif text == "whoami":
+        told = [m.group(1) for m in (re.match(r"\[isovim: your role is now ([\w-]+)\]", e) for e in earlier) if m]
+        snap = re.search(r"as a ([\w-]+) agent", (load_session(session) or {}).get("system") or "")
+        chunk(session, "role: " + (told[-1] if told else snap.group(1) if snap else "unknown"))
     elif text == "ask":
         if (client["capabilities"].get("elicitation") or {}).get("form") is None:
             chunk(session, "no elicitation")
@@ -226,6 +242,16 @@ def prompt(rid, params):
             result = (answer or {}).get("result") or {}
             tool(session, call_id, None, None, "completed" if result.get("action") == "accept" else "failed")
             chunk(session, "answer: " + json.dumps(result, sort_keys=True))
+    elif text.startswith("bg "):
+        # As Claude runs a run_in_background Bash: its own child, in a process group (session) of
+        # its own, left running when the turn ends.
+        command = text[3:]
+        proc = subprocess.Popen(["bash", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        background.append(proc)
+        tool(session, call_id, "run in background " + command, "execute", "pending")
+        tool(session, call_id, None, None, "completed", f"running in background (pid {proc.pid})")
+        chunk(session, f"started: {proc.pid}")
     elif text.startswith("run "):
         command = text[4:]
         tool(session, call_id, "run " + command, "execute", "pending")
@@ -325,6 +351,19 @@ def prompt(rid, params):
     send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": stop}})
 
 
+def logged_out():
+    """claude isn't logged in, as pilot/fake-auth's $FAKE_AUTH_FILE says."""
+    path = os.environ.get("FAKE_AUTH_FILE")
+    try:
+        return bool(path) and open(path).read().strip() == "false"
+    except OSError:
+        return False
+
+
+def system_of(params):
+    return ((params.get("_meta") or {}).get("systemPrompt") or {}).get("append") or ""
+
+
 def remember_hooks(session, params):
     meta = params.get("_meta") or {}
     settings = ((meta.get("claudeCode") or {}).get("options") or {}).get("settings") or {}
@@ -353,7 +392,7 @@ def handle(frame):
         sid = "fake-" + uuid.uuid4().hex[:12]
         remember_hooks(sid, params)
         with session_lock:
-            save_session(sid, {"messages": [], "cwd": params.get("cwd")})
+            save_session(sid, {"messages": [], "cwd": params.get("cwd"), "system": system_of(params)})
         send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
     elif method == "session/resume":
         if os.environ.get("FAKE_ACP_CLAUDE_KEYED") and load_session(params.get("sessionId")) is None:
@@ -386,13 +425,20 @@ def handle(frame):
         sid = "fork-" + uuid.uuid4().hex[:12]
         remember_hooks(sid, params)
         with session_lock:
-            save_session(sid, {"messages": messages, "cwd": params.get("cwd"), "forkedFrom": params["sessionId"]})
+            save_session(sid, {"messages": messages, "cwd": params.get("cwd"), "forkedFrom": params["sessionId"],
+                               "system": source.get("system")})
         send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
     elif method == "session/close":
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/set_mode":
         update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "session/prompt" and logged_out():
+        # As the adapter answers a prompt when claude isn't logged in: at once, an error.
+        log({"failed": "auth", "text": text_of(params.get("prompt", []))})
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Authentication required"}})
+    elif method == "session/prompt" and text_of(params.get("prompt", [])) == "limit":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Claude AI usage limit reached"}})
     elif method == "session/prompt":
         # Here, not in its thread: a cancel that comes right after must not be undone by it.
         running["cancelled"] = False

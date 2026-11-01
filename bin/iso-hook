@@ -103,7 +103,7 @@ prompt)
   # context it can tell apart from typed text.
   input="$(cat)"
   case "$input" in
-  *"from "*)
+  *"from "* | *"[isovim: your role is now "*)
     printf %s "$input" | "$(dirname "$0")/iso" checkstamp "$(address)"
     ;;
   esac

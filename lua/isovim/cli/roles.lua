@@ -365,9 +365,10 @@ local function finish_later(address, promoter, reason)
 end
 
 local function promoted_text(role, promoter, reason, acp)
-  return ("You were promoted to %s by %s%s. %s on this conversation, with that role's prompt.")
+  return ("You were promoted to %s by %s%s. %s")
     :format(role, promoter, reason ~= "" and (": " .. reason) or "",
-      acp and "Your session was reloaded" or ("You restarted as a " .. role))
+      acp and ("Your session was reloaded on this conversation, and isovim gave you the %s's prompt as the message before this one (a resumed session keeps the system prompt it started with)."):format(role)
+      or ("You restarted as a %s on this conversation, with that role's prompt."):format(role))
 end
 
 -- A router or repo-root made root: a fork of it (iso fork) becomes the root, and it keeps its
@@ -417,16 +418,35 @@ local function reload(ws, agent, promoter, reason)
       publish = true }
   end
   if require("isovim.panes").running(ws.id, agent.id) and acp.wait_up(ws.id, agent.id, 10) then
-    local ok, err = acp.call(ws.id, agent.id, "reload", { then_prompt = message })
+    local journal = require("isovim.acp.journal")
+    local before = #journal.read(ws.id, agent.id)
+    local ok, result = acp.call(ws.id, agent.id, "reload", { then_prompt = message })
     if not ok then
-      fail(("could not reach %s/%s to reload it: %s"):format(ws.id, agent.id, tostring(err)))
+      fail(("could not reach %s/%s to reload it: %s"):format(ws.id, agent.id, tostring(result)))
     end
-    return
+    if type(result) == "table" and result.queued then
+      return "queued"
+    end
+    -- An idle agent reloads now: its role prompt is in its journal as a message within seconds.
+    local given
+    vim.wait(20000, function()
+      given = vim.iter(vim.list_slice(journal.read(ws.id, agent.id), before + 1)):find(function(e)
+        return e.kind == "prompt" and e.via == "role"
+      end)
+      return given ~= nil
+    end, 200)
+    return given and ("given:" .. tostring(given.seq)) or "unconfirmed"
+  end
+  -- Not running: its next start resumes the session and gives it the role prompt first.
+  local blocked = require("isovim.auth").restart_blocked(agent)
+  if blocked then
+    fail(("%s/%s is a %s now, but isn't started: %s"):format(ws.id, agent.id, store.role(agent), blocked))
   end
   c.ensure_running(ws, agent)
   if message then
     c.prompt(ws, agent, message.text, { from = message.from, kind = "from", id = message.stamp, text = message.message })
   end
+  return "started"
 end
 
 -- iso <role> promote [<agent>] <role> ["reason"]: only agents promote, upward only.
@@ -468,12 +488,23 @@ function M.promote(args)
   c.tui("require('isovim').refresh()")
   local by_other = promoter ~= address
   if agent.acp then
-    reload(ws, store.agent(ws.id, agent.id), by_other and promoter or nil, reason)
-    if by_other then
-      out(("%s is now a %s. Once its turn ends, isovim reloads its session with that role's prompt and tells it you promoted it")
-        :format(address, role))
+    local how = reload(ws, store.agent(ws.id, agent.id), by_other and promoter or nil, reason)
+    -- A resumed Claude session keeps the system prompt it started with, so the role prompt goes as
+    -- a message; said as it is: given (and in its journal), or still to come.
+    local why = "a resumed session keeps the system prompt it started with"
+    local seq = how:match("^given:(.*)$")
+    if not by_other then
+      out(("You are now a %s. When this turn ends, isovim reloads your session and gives you the %s's prompt as your next message (%s).")
+        :format(role, role, why))
+    elseif seq then
+      out(("%s is now a %s. isovim reloaded its session and gave it the %s's prompt as a message (journal seq %s, since %s); your message follows it")
+        :format(address, role, role, seq, why))
+    elseif how == "queued" or how == "started" then
+      out(("%s is now a %s. %s, isovim reloads its session, gives it the %s's prompt as its first message (%s), then tells it you promoted it")
+        :format(address, role, how == "queued" and "Once its turn ends" or "As it starts", role, why))
     else
-      out(("You are now a %s. When this turn ends, isovim reloads your session with that role's prompt."):format(role))
+      out(("%s is now a %s, but its role prompt isn't in its journal yet; iso status %s says why (its queue may be held)")
+        :format(address, role, address))
     end
     return
   end
@@ -500,6 +531,15 @@ M["__promote-finish"] = function(args)
     return not panes.running(ws.id, agent.id) or not busy[status.state(ws.id, agent.id) or ""]
   end, 1000)
   agent = store.agent(ws.id, agent.id) or fail(args[1] .. " is gone")
+  -- Never restarted while its kind isn't logged in here: it would come back unable to work.
+  local auth = require("isovim.auth")
+  local blocked = panes.running(ws.id, agent.id) and auth.restart_blocked(agent)
+  if blocked then
+    out(("%s %s waits to restart: %s"):format(os.date("%F %T"), args[1], blocked))
+    vim.wait(12 * 3600 * 1000, function()
+      return not auth.restart_blocked(agent)
+    end, 30000)
+  end
   if panes.running(ws.id, agent.id) then
     panes.stop(ws.id, agent.id)
     -- The ready its start hook writes says it's back.

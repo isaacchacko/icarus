@@ -46,6 +46,71 @@ function M.decode_line(line)
   return pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
 end
 
+-- Every process below pid now, as {pid, pgid}, and pid's own process group. Claude runs an agent's
+-- background shells (run_in_background) in process groups of their own, so stopping the adapter's
+-- group leaves them running; whoever tears an agent down asks for these first, while they're
+-- still below it (once their parent is gone they belong to init, and nothing finds them).
+-- Plain Lua and libuv only (io.popen, uv.sleep), as a signal handler's fast context allows.
+---@return {pid: integer, pgid: integer}[] found, integer? own_pgid
+function M.descendants(pid)
+  local ps = io.popen("ps -A -o pid= -o ppid= -o pgid= 2>/dev/null")
+  if not ps then
+    return {}
+  end
+  local listing = ps:read("*a") or ""
+  ps:close()
+  local children, groups = {}, {}
+  for line in listing:gmatch("[^\n]+") do
+    local child, parent, pgid = line:match("^%s*(%d+)%s+(%d+)%s+(%d+)")
+    if child then
+      child, parent, pgid = tonumber(child), tonumber(parent), tonumber(pgid)
+      groups[child] = pgid
+      children[parent] = children[parent] or {}
+      table.insert(children[parent], child)
+    end
+  end
+  local found, todo = {}, { pid }
+  while #todo > 0 do
+    for _, child in ipairs(children[table.remove(todo)] or {}) do
+      found[#found + 1] = { pid = child, pgid = groups[child] }
+      todo[#todo + 1] = child
+    end
+  end
+  return found, groups[pid]
+end
+
+-- Stops every process below pid (descendants), each process group of theirs that isn't pid's own
+-- whole, then any left with SIGKILL.
+function M.kill_descendants(found, own_pgid)
+  local function signal(sig)
+    for _, proc in ipairs(found) do
+      if proc.pgid and proc.pgid ~= own_pgid and proc.pgid > 1 then
+        uv.kill(-proc.pgid, sig)
+      end
+      uv.kill(proc.pid, sig)
+    end
+  end
+  local function gone()
+    for _, proc in ipairs(found) do
+      if uv.kill(proc.pid, 0) == 0 then
+        return false
+      end
+    end
+    return true
+  end
+  if #found == 0 then
+    return
+  end
+  signal(15)
+  for _ = 1, 10 do
+    if gone() then
+      return
+    end
+    uv.sleep(50)
+  end
+  signal(9)
+end
+
 ---@param config isovim.acp.TransportConfig
 ---@param callbacks isovim.acp.TransportCallbacks
 function M.create_stdio_transport(config, callbacks)

@@ -17,7 +17,8 @@
 -- A running agent is stopped first and started again at its new address, where it resumes its
 -- session (and Claude's transcript of it is copied to where Claude looks for the new dir). One that
 -- is mid-turn or waiting on a question isn't cut off: the whole move waits (deferred) until none
--- is, and the next start or iso command tries again. old _/aN addresses keep working: the move's
+-- is, and the next start or iso command tries again; so does one while a running agent's claude (or
+-- codex) isn't logged in here (isovim.auth), as it would restart unable to work. old _/aN addresses keep working: the move's
 -- map (~/.isovim/migrated.json) says where each went (store.canon_address). Every step is logged to
 -- ~/.isovim/migrate.log.
 local store = require("isovim.store")
@@ -275,6 +276,16 @@ local function move(opts)
     end
     if agent.running and BUSY[agent.state or ""] and not (opts and opts.force) then
       log(("deferred: %s/%s is %s; the move waits until no agent there is mid-turn"):format(OLD, agent.id, agent.state))
+      return "deferred"
+    end
+  end
+  -- The move restarts the running ones, and one restarted while its kind isn't logged in here
+  -- comes back unable to work: they stay where they are, running, until the login is back.
+  for _, agent in ipairs(agents) do
+    local blocked = agent.running and agent.record and require("isovim.auth").restart_blocked(agent.record)
+    if blocked then
+      log(("deferred: %s/%s is running and would restart, but %s; nothing moves until it's logged in"):format(OLD,
+        agent.id, blocked))
       return "deferred"
     end
   end

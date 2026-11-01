@@ -35,6 +35,8 @@ def check(ok, what, detail=""):
 
 iso = Iso("acp_real")
 iso.env.pop("ISOVIM_ACP_CMD")
+# The real claude auth status, as the real adapter's login is what's asked.
+iso.env.pop("ISOVIM_AUTH_CLAUDE")
 iso.env["ANTHROPIC_MODEL"] = "haiku"
 
 
@@ -130,6 +132,41 @@ try:
                            "don't try again in any way; reply with the word refused.", cwd=iso.tmp)
     iso.wait(lambda: turns("a1"), "the read-only agent's turn", 240)
     check(not (base / "ro.txt").exists(), "real adapter: a read-only agent's Write is refused", list(base.iterdir()))
+
+    print("\n# a promotion of an agent with a conversation: the role prompt comes as a message")
+
+    def entries(agent):
+        path = unit / "iso" / "journal" / f"{agent}.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def said_after(agent, seq):
+        return "".join(e["update"]["content"].get("text", "") for e in entries(agent)
+                       if e["seq"] > seq and e["kind"] == "update" and e["update"].get("sessionUpdate") == "agent_message_chunk")
+
+    rc, target_addr, err = run("spawn", "--repo", str(app), "--name", "target", "Remember the word plum. Reply with just: ok", cwd=iso.tmp)
+    check(rc == 0 and target_addr == "acme/app/a2", "a worker with a conversation", (rc, target_addr, err))
+    iso.wait(lambda: turns("a2"), "its first turn", 240)
+    ends = len(turns("a0"))
+    seq0 = entries("a0")[-1]["seq"]
+    run("send", edit_addr, f"Run exactly this command with the Bash tool, once: {BIN} worker promote {target_addr} router "
+        "the app needs a lead. Then reply with the command's output.")
+    iso.wait(lambda: any(e["kind"] == "prompt" and "You were promoted to router" in (e.get("text") or "") for e in entries("a2")),
+             "the promoter's message reached the target", 300)
+    iso.wait(lambda: len(turns("a0")) > ends, "the promoter's turn", 240)
+    print("     promoter said:", said_after("a0", seq0)[-400:])
+    vias = [e.get("via") for e in entries("a2") if e["kind"] == "prompt"]
+    given = [e for e in entries("a2") if e["kind"] == "prompt" and e.get("via") == "role"]
+    check(given and given[0]["text"].startswith("[isovim: your role is now router]") and vias[-2:] == ["role", "iso"],
+          "real adapter: the router's prompt goes as a message, before the promoter's", vias)
+    check(any("gave it the router's prompt as a message (journal seq" in e["text"] for e in entries("a2") if e["kind"] == "notice"),
+          "and the journal says it was given")
+    iso.wait(lambda: len(turns("a2")) >= 3 and run("status", target_addr)[1] in ("idle", "unread", "ready"), "the target idle", 240)
+    seq = entries("a2")[-1]["seq"]
+    run("send", target_addr, "Two words, lowercase, separated by a space: the isovim role you have now, per the latest "
+        "instructions you were given, then the word I asked you to remember.")
+    iso.wait(lambda: any(e["seq"] > seq and e["kind"] == "turn" and e["state"] == "end" for e in entries("a2")), "its answer", 240)
+    answer = said_after("a2", seq).lower()
+    check("router" in answer and "plum" in answer, "real adapter: the promoted agent says it's a router, and keeps its context", answer)
     if os.environ.get("ISOVIM_ACP_REAL_SESSIONS", "1") == "1":
         print("\n# sessions (L2): a fork at a message and a whole one, AskUserQuestion through the Inbox")
 
@@ -203,9 +240,14 @@ try:
         seq = moved_journal()[-1]["seq"]
         rc, _, err = run("send", "_/a0", recall)
         check(rc == 0, "iso send _/a0 starts it at root/a0", err)
-        iso.wait(lambda: len([e for e in moved_journal() if e["kind"] == "turn" and e["state"] == "end"]) > ends, "root/a0's turn", 180)
+        # Its role is root now (it was a worker in this session), so the root's prompt goes first, as a message.
+        recall_ids = lambda: {e["id"] for e in moved_journal() if e["seq"] > seq and e["kind"] == "prompt" and e.get("text") == recall}  # noqa: E731
+        iso.wait(lambda: any(e["kind"] == "turn" and e["state"] == "end" and e.get("id") in recall_ids() for e in moved_journal()),
+                 "root/a0's turn", 240)
         sessions = [e for e in moved_journal() if e["seq"] > seq and e["kind"] == "session"]
-        notices = [e["text"] for e in moved_journal() if e["seq"] > seq and e["kind"] == "notice"]
+        notices = [e["text"] for e in moved_journal() if e["seq"] > seq and e["kind"] == "notice" and "prompt as a message" not in e["text"]]
+        check(any(e.get("via") == "role" for e in moved_journal() if e["seq"] > seq and e["kind"] == "prompt"),
+              "its new role's prompt went to it as a message first")
         check(sessions and sessions[-1]["sessionId"] == old_sid and sessions[-1]["how"] in ("resume", "load") and not notices,
               "it resumed the same session from its new dir", (sessions, notices))
         answer = "".join(e["update"]["content"].get("text", "") for e in moved_journal()
