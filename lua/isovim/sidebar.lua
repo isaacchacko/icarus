@@ -684,8 +684,12 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     end
     local collapsed = is_collapsed(host, "inbox")
     inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = count, root_mode = has_root, collapsed = collapsed })
+    -- Exactly what needs you, as the count: the root's surfaces with needs_you (a question a root is
+    -- still deciding has none) and the repos with any; a repo's others stay in its own Inbox.
     if not collapsed then
-      surface_rows(inbox, base_host, root_list, 1)
+      surface_rows(inbox, base_host, vim.tbl_filter(function(entry)
+        return entry.needs_you
+      end, root_list), 1)
       for _, b in ipairs(busy) do
         inbox[#inbox + 1] = vim.tbl_extend("force", base_host, { kind = "busy", repo_key = b.group.key, name = b.group.name, group_kind = b.group.kind, mark = repo_mark(b.group.style), count = b.count })
       end
