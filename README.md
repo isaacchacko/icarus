@@ -43,7 +43,7 @@ In the sidebar, `?` lists every key. The ones to start with:
 | `<leader>e` | focus or close the sidebar |
 | `Ctrl-h` / `Ctrl-l` | between the sidebar and the chat |
 
-`iso help` lists the commands.
+`iso help` lists the commands. For Tab completion of commands, agents, workspaces and hosts, add `source <(iso completion zsh)` to ~/.zshrc after compinit (bash: `eval "$(iso completion bash)"` in ~/.bashrc).
 
 ## More
 
@@ -98,7 +98,7 @@ A repo can ship workspace scripts in `.isovim/config.json` (or a Superset `.supe
 
 ## Develop
 
-`pilot/iso.py` runs an isolated isovim headless (its own home, tmux servers and a fake agent), presses keys, reads nvim over RPC and renders the screen to PNG. Changes are checked by piloting, not by a test suite.
+`pilot/iso.py` runs an isolated isovim headless (its own home, tmux servers and a fake agent), presses keys, reads nvim over RPC and renders the screen to PNG. Changes are checked by piloting, not by a test suite; `pilot/checks/` holds scripts that check one thing each. Pilots set `ISOVIM_WORK` (where agents' work lives, default `~/iso`) into their own tmp dir.
 
 ## License
 

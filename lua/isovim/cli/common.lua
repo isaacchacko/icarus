@@ -1,0 +1,213 @@
+-- What the commands in isovim.cli.* share: output, failing, finding workspaces and agents by what
+-- the user typed, reaching the open TUI, and starting an agent and waiting on its hooks.
+local store = require("isovim.store")
+local panes = require("isovim.panes")
+local status = require("isovim.status")
+
+local function usage()
+  return require("isovim.cli.commands").usage()
+end
+
+-- print() goes to stderr under `nvim -l`.
+local function out(text)
+  io.stdout:write(text, "\n")
+end
+
+local function fail(message)
+  io.stderr:write("iso: " .. message .. "\n")
+  os.exit(1)
+end
+
+local function unique(query, candidates, keys, what)
+  for _, exact in ipairs({ true, false }) do
+    local found = {}
+    for _, candidate in ipairs(candidates) do
+      for _, key in ipairs(keys(candidate)) do
+        if (exact and key == query) or (not exact and vim.startswith(key, query)) then
+          found[candidate.id] = candidate
+        end
+      end
+    end
+    local ids = vim.tbl_keys(found)
+    if #ids == 1 then
+      return found[ids[1]]
+    elseif #ids > 1 then
+      fail(("%q matches %d %s: %s"):format(query, #ids, what, table.concat(ids, ", ")))
+    end
+  end
+  fail(("no %s matches %q"):format(what, query))
+end
+
+local function resolve(query)
+  if not query then
+    fail("missing workspace\n" .. usage())
+  end
+  return unique(query, store.list(), function(ws)
+    return { ws.id, ws.name }
+  end, "workspace")
+end
+
+---@return table ws, isovim.Agent agent
+local function resolve_agent(query)
+  if not query then
+    fail("missing agent\n" .. usage())
+  end
+  local ws_query, agent_query = query:match("^(.*)/([^/]*)$")
+  local ws = resolve(ws_query or query)
+  local agents = store.agents(ws.id)
+  if not agent_query then
+    for _, agent in ipairs(agents) do
+      if not agent.hidden then
+        return ws, agent
+      end
+    end
+    return ws, agents[1] or fail(ws.name .. " has no agents")
+  end
+  return ws, unique(agent_query, agents, function(agent)
+    return { agent.id, agent.name }
+  end, "agent in " .. ws.name)
+end
+
+-- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
+-- sidebar lists them. This host's own name, or none, means here.
+---@return string? host, string query
+local function split_host(query)
+  local name, rest = (query or ""):match("^([%w_.-]+):(.+)$")
+  if not name then
+    return nil, query
+  end
+  local remote = require("isovim.remote")
+  local host, canonical = remote.host_of(name)
+  if canonical == remote.self() or name == vim.fn.hostname() then
+    return nil, rest
+  end
+  return host or fail(("no host named %s in %s"):format(name, require("isovim.config").path)), rest
+end
+
+-- An agent as a parent field names it: <ws>/<agent> by ids here, <host>:<ws>/<agent> elsewhere.
+local function parent_address(query)
+  local host, rest = split_host(query)
+  if host then
+    return query:match("^([^:]+):") .. ":" .. rest
+  end
+  local ws, agent = resolve_agent(rest)
+  return ws.id .. "/" .. agent.id
+end
+
+-- The agent running this, as a parent field names it; nil from a plain shell.
+local function caller_address()
+  local ws, agent = require("isovim.root").caller()
+  return ws and ws .. "/" .. agent
+end
+
+-- Runs Lua in the open TUI; returns false when it isn't open.
+local function tui(code, ...)
+  if not vim.uv.fs_stat(store.socket) then
+    return false
+  end
+  local ok, chan = pcall(vim.fn.sockconnect, "pipe", store.socket, { rpc = true })
+  if not ok or chan == 0 then
+    return false
+  end
+  local called, result = pcall(vim.rpcrequest, chan, "nvim_exec_lua", code, { ... })
+  vim.fn.chanclose(chan)
+  if not called then
+    fail("TUI error: " .. tostring(result))
+  end
+  return true, result
+end
+
+local function word(ws, agent)
+  if not panes.running(ws, agent) then
+    return "stopped"
+  end
+  return status.get(ws, agent) or "idle"
+end
+
+-- Waits until the hooks write a state accepted by `done`; false on timeout.
+local function await(ws, agent, timeout, done)
+  return vim.wait(timeout * 1000, function()
+    return done(status.state(ws, agent))
+  end, 200)
+end
+
+-- Codex draws its composer once it can take a prompt; a resumed one replays its transcript first.
+local function codex_ready(ws, agent, timeout)
+  return vim.wait(timeout * 1000, function()
+    return panes.capture(ws.id, agent.id, 0):find("for shortcuts") ~= nil
+  end, 200)
+end
+
+local function ensure_running(ws, agent)
+  if panes.running(ws.id, agent.id) then
+    -- It may have just been started elsewhere (iso receive); a busy one takes the prompt queued.
+    if agent.kind == "codex" then
+      codex_ready(ws, agent, 5)
+    end
+    return
+  end
+  local result = panes.start(ws.id, agent, ws.dir)
+  if result.code ~= 0 then
+    fail("could not start " .. agent.name .. ": " .. (result.stderr or ""))
+  end
+  -- Claude says when it is ready; Codex only opens its session on the first prompt, so wait for
+  -- its composer; give the rest a moment to draw a prompt.
+  if agent.kind == "codex" then
+    if not codex_ready(ws, agent, 30) then
+      fail(agent.name .. " did not start within 30s")
+    end
+  elseif not panes.reports(agent.kind) then
+    vim.uv.sleep(500)
+  elseif not await(ws.id, agent.id, 30, function(state)
+    return state ~= nil
+  end) then
+    fail(agent.name .. " did not start within 30s")
+  end
+end
+
+local function option(args, name, default)
+  for i, arg in ipairs(args) do
+    if arg == name then
+      table.remove(args, i)
+      return table.remove(args, i) or fail(name .. " needs a value")
+    end
+  end
+  return default
+end
+
+local function flag(args, name)
+  for i, arg in ipairs(args) do
+    if arg == name then
+      table.remove(args, i)
+      return true
+    end
+  end
+  return false
+end
+
+-- Runs the same command on the peer and ends with its output and exit code.
+local function forward(host, args)
+  local result = require("isovim.remote").run(host, args)
+  io.stdout:write(result.stdout or "")
+  io.stderr:write(result.stderr or "")
+  os.exit(result.code)
+end
+
+return {
+  out = out,
+  fail = fail,
+  usage = usage,
+  unique = unique,
+  resolve = resolve,
+  resolve_agent = resolve_agent,
+  split_host = split_host,
+  parent_address = parent_address,
+  caller_address = caller_address,
+  tui = tui,
+  word = word,
+  await = await,
+  ensure_running = ensure_running,
+  option = option,
+  flag = flag,
+  forward = forward,
+}

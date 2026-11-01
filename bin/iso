@@ -21,10 +21,15 @@ browser)
   shift
   exec node "$repo/bin/iso-browser.mjs" "$@"
   ;;
-ls | new | dir | open | rename | archive | archived | unarchive | move | restart | agent | rm | pr | prs | hide | unhide | attach | phone | send | msg | fork | pin | unpin | progress | autopin | autopr | transcript | ask | root | role | verify | checkstamp | status | wait | peek | find | doctor | version | task | pilot | help | -h | --help)
+-h | --help)
   NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"
   ;;
 esac
+
+# A command is a word with an entry in the command table; any other argument opens the TUI on it.
+if [[ "${1:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] && grep -qF "{ name = \"$1\"," "$repo/lua/isovim/cli/commands.lua"; then
+  NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"
+fi
 
 takeover=""
 if [ "${1:-}" = "--takeover" ]; then

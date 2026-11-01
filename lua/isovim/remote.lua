@@ -11,6 +11,15 @@ M.remote_bin = vim.env.ISOVIM_REMOTE_BIN or "~/.local/bin/iso"
 local TTL = 10
 local cache = {} ---@type table<string, {rows?: table[], at: integer, busy?: boolean}>
 
+-- Each peer's last listing on disk, <name>.json, for Tab completion (iso __complete), which never
+-- waits on ssh.
+M.cache_dir = require("isovim.store").root .. "/cache/remote"
+
+local function remember(name, rows)
+  vim.fn.mkdir(M.cache_dir, "p")
+  vim.fn.writefile({ vim.json.encode(rows) }, M.cache_dir .. "/" .. name .. ".json")
+end
+
 -- name -> ssh host, from the config's hosts (ISOVIM_PEERS="name=host,..." for pilots; "-" for none).
 ---@return table<string, string>
 function M.peers()
@@ -65,7 +74,12 @@ function M.list(name, host, on_update)
       local changed = vim.json.encode(new or false) ~= vim.json.encode(entry.rows or false)
       entry.rows, entry.at, entry.busy, entry.down = new, os.time(), nil, new == nil
       if changed then
-        vim.schedule(on_update)
+        vim.schedule(function()
+          if new then
+            remember(name, new)
+          end
+          on_update()
+        end)
       end
     end)
   end
@@ -97,6 +111,7 @@ function M.list_all_now(timeout)
     local decoded, rows = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
     if decoded and type(rows) == "table" then
       all[name] = rows
+      remember(name, rows)
     end
   end
   return all
