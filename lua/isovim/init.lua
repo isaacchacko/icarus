@@ -797,7 +797,12 @@ function M.open_remote(host, ssh, id, ws_name, agent_name)
   vim.api.nvim_buf_set_name(buf, name)
   vim.b[buf].isovim_agent_name = host .. " · " .. agent_name
   vim.b[buf].isovim_agent_kind = "host"
-  vim.keymap.set("t", "<Esc>", [[<C-\><C-n>]], { buffer = buf, desc = "isovim: leave the chat to normal mode" })
+  vim.keymap.set("t", "<Esc>", function()
+    if vim.b[buf].term_title == panes.fullscreen_title then
+      return vim.fn.chansend(vim.b[buf].terminal_job_id, "\27")
+    end
+    vim.cmd.stopinsert()
+  end, { buffer = buf, desc = "isovim: leave the chat to normal mode, or Esc to a full-screen program in it" })
   vim.keymap.set("t", "<C-q>", function()
     vim.fn.chansend(vim.b[buf].terminal_job_id, "\27")
   end, { buffer = buf, desc = "isovim: send Esc to the agent" })

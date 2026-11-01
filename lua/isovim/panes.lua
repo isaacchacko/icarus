@@ -232,6 +232,8 @@ function M.trust(dir)
   os.rename(tmp, M.claude_json)
 end
 
+M.fullscreen_title = "isovim fullscreen"
+
 local HOST_NVIM_ENV = { "NVIM", "NVIM_APPNAME", "MYVIMRC", "VIMRUNTIME", "NVIM_LOG_FILE" }
 
 ---@param agent isovim.Agent
@@ -272,6 +274,10 @@ function M.start(ws, agent, dir)
       tmux({ "set-hook", "-t", "=" .. session(ws, agent.id) .. ":", "pane-exited", "run-shell " .. vim.fn.shellescape(mark) })
     end
     tmux({ "set-option", "-g", "status", "off" })
+    -- An attached client (another host's chat, over ssh) can't see a full-screen program come and go
+    -- in the pane: the title tells it.
+    tmux({ "set-option", "-g", "set-titles", "on" })
+    tmux({ "set-option", "-g", "set-titles-string", "#{?alternate_on," .. M.fullscreen_title .. ",isovim}" })
     -- Claude warns without focus events.
     tmux({ "set-option", "-g", "focus-events", "on" })
   end
