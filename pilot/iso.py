@@ -8,10 +8,13 @@ read the screen (screen) and render it to PNG (screenshot). Run scripts with
 On macOS screenshot.py needs ~/.cache/isovim-test/nf351 (Nerd Fonts 3.5.1 symbols-only) for icons;
 on Linux it uses JetBrains Mono Nerd Font Mono."""
 
+import atexit
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -22,6 +25,109 @@ import screenshot
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "pilot" / "out"
+# Every process a world starts carries this in its env (tmux servers, the TUI and its nvim --embed
+# server, supervisors, fake agents), so stop() finds what outlived its tmux servers.
+MARKER = "ISOVIM_PILOT_WORLD"
+WORLDS = []
+
+
+def world_pids(tmp):
+    """The live processes of the world at tmp: those carrying its marker, or whose command line or cwd
+    names its dir. Never this process."""
+    tmp = str(tmp)
+    mark = f"{MARKER}={tmp}".encode()
+    pids = set()
+    if Path("/proc/self/environ").exists():
+        for proc in Path("/proc").iterdir():
+            if not proc.name.isdigit() or int(proc.name) == os.getpid():
+                continue
+            try:
+                if mark + b"\0" in (proc / "environ").read_bytes() + b"\0":
+                    pids.add(int(proc.name))
+                elif named(tmp, (proc / "cmdline").read_bytes().decode(errors="replace") + "\0", os.readlink(proc / "cwd")):
+                    pids.add(int(proc.name))
+            except OSError:
+                pass
+    else:
+        # macOS: ps -E prints each process's env after its command.
+        out = subprocess.run(["ps", "-E", "-ww", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            pid, _, rest = line.strip().partition(" ")
+            if pid.isdigit() and int(pid) != os.getpid() and (mark.decode() in rest or named(tmp, rest + " ", "")):
+                pids.add(int(pid))
+    return pids
+
+
+def named(tmp, cmdline, cwd):
+    """Whether a command line (args ended by NUL or space) or cwd names tmp or a path in it, not
+    another world whose name starts the same."""
+    return any(tmp + end in cmdline for end in ("/", "\0", " ")) or cwd == tmp or cwd.startswith(tmp + "/")
+
+
+def kill_pids(pids, grace=3):
+    """SIGTERM, then SIGKILL whatever is left after grace seconds: a TUI's nvim server busy in Lua
+    ignores its client going away, and one held 4 GB for days."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        deadline = time.time() + grace
+        while time.time() < deadline:
+            pids = {pid for pid in pids if alive(pid)}
+            if not pids:
+                return
+            time.sleep(0.05)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    # A zombie is gone but for its parent's wait.
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split(") ")[-1][0] != "Z"
+    except OSError:
+        return True
+
+
+def reap_stale():
+    """Stops the worlds whose pilot died without stopping them (SIGKILL, an OOM kill): their owner pid
+    is gone. A world still in use by another run is left alone."""
+    for tmp in Path(tempfile.gettempdir()).glob("iso-*"):
+        owner = tmp / "owner.pid"
+        try:
+            pid = int(owner.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if not alive(pid):
+            kill_pids(world_pids(tmp))
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _stop_all():
+    for world in list(WORLDS):
+        world.stop()
+
+
+def guard(tmp, owner, sockets):
+    """Run by a world's guardian (its own session, so a kill of the pilot's group spares it): once
+    the pilot that owns the world ends without stopping it, however it ended (a SIGTERM from a
+    timeout, which pynvim's event loop leaves at its default, a SIGKILL, the OOM killer), it ends
+    the world's processes and removes its dir. A world stopped as it should be just leaves."""
+    tmp = Path(tmp)
+    while tmp.exists() and alive(owner):
+        time.sleep(0.5)
+    if tmp.exists():
+        kill_pids(world_pids(tmp))
+        for name in sockets:
+            Iso.kill_tmux(name)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+atexit.register(_stop_all)
 
 
 class Iso:
@@ -29,7 +135,10 @@ class Iso:
         self.name = name
         self.cols, self.rows = cols, rows
         # Short and outside the scratch tree: unix socket paths cap near 104 bytes.
+        reap_stale()
         self.tmp = Path(tempfile.mkdtemp(prefix="iso-"))
+        (self.tmp / "owner.pid").write_text(str(os.getpid()))
+        WORLDS.append(self)
         self.ui = f"isot-ui-{os.getpid()}-{name}"[:60]
         # Never the caller's isovim identity: a pilot run from inside an agent would act as that agent.
         # Nor the Claude Code session it may run in: CLAUDECODE, CLAUDE_CODE_* (its messaging socket
@@ -42,6 +151,7 @@ class Iso:
         inherited = {k: v for k, v in os.environ.items() if kept(k)}
         self.env = {
             **inherited,
+            MARKER: str(self.tmp),
             "ISOVIM_HOME": str(self.tmp / "home"),
             # Never the real ~/.iso: a pilot that cleans up work must only see its own.
             "ISOVIM_WORK": str(self.tmp / "work"),
@@ -73,6 +183,14 @@ class Iso:
         self.env.pop("TMUX", None)
         (self.tmp / "claude.json").write_text("{}")
         self.nvim = None
+        # Not marked as the world's, and naming its dir only in its env, so the sweep spares it.
+        subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import iso, os, json;"
+             " iso.guard(os.environ['ISOVIM_PILOT_GUARD'], int(sys.argv[2]), json.loads(sys.argv[3]))",
+             str(Path(__file__).resolve().parent), str(os.getpid()), json.dumps([self.ui, self.env["ISOVIM_TMUX_SOCKET"]])],
+            env={k: v for k, v in os.environ.items() if k != MARKER} | {"ISOVIM_PILOT_GUARD": str(self.tmp)},
+            cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
 
     # lifecycle
 
@@ -111,14 +229,20 @@ class Iso:
         self.wait(gone, "the TUI to quit")
 
     def stop(self):
+        """Ends every process of the world, on success, failure or timeout alike (atexit and SIGTERM
+        call it too), then removes its dir. Safe to call twice."""
         if self.nvim:
             try:
                 self.nvim.close()
             except Exception:
                 pass
+            self.nvim = None
         for name in (self.ui, self.env["ISOVIM_TMUX_SOCKET"]):
             self.kill_tmux(name)
+        kill_pids(world_pids(self.tmp))
         shutil.rmtree(self.tmp, ignore_errors=True)
+        if self in WORLDS:
+            WORLDS.remove(self)
 
     @staticmethod
     def kill_tmux(name, timeout=10):
