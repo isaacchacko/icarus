@@ -1305,7 +1305,7 @@ local function refresh_now()
   rows.list = collect()
   render(wins)
   require("isovim.landing").refresh()
-  -- Agents come and go: so do their tabs.
+  -- The tab bar tidied: windows marked, no stray [No Name] tab (isovim.tabs).
   require("isovim.tabs").sync()
   local inbox_line = queued and line_of(rows.inbox, queued, ROW_ID.inbox)
   if inbox_line then

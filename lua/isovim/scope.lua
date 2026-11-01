@@ -129,8 +129,8 @@ function M.list(current, current_scope)
       end
     end
   end
-  -- A tab for each of its agents, opened or not (isovim.tabs).
-  require("isovim.tabs").sync(current_scope)
+  -- The tab bar tidied: no stray [No Name] tab (isovim.tabs).
+  require("isovim.tabs").sync()
 end
 
 ---@param is_sidebar fun(win: integer): boolean

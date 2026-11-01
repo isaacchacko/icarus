@@ -1,48 +1,32 @@
--- The tab bar (bufferline): what each tab is called and its glyph, their order, and a tab for every
--- agent of the current scope, opened or not.
---
--- An agent whose chat isn't open yet is a placeholder: a listed, empty buffer in the agent's scope
--- (b:isovim_placeholder "<ws>/<agent>") that attaches to nothing. Shown in a window (picked from the
--- tab bar, <S-h>/<S-l>, [b ]b), it opens the agent's chat there as Enter on its sidebar row does, and,
--- wiped once hidden, gives way to the chat's own buffer. M.sync keeps one tab per agent of the scope:
--- a placeholder for each agent with no chat buffer, none for one gone or hidden. Picking an ACP
--- chat's own tab opens it the same way, so its composer comes with it and the last chat's goes.
+-- The tab bar (bufferline): what each tab is called and its glyph, and their order. A tab is a view
+-- of a sidebar entry, as a file's buffer is a view of the file: the bar shows what you opened (an
+-- agent's chat, a surface, the landing, files), under its scope (isovim.scope). Closing one hides
+-- it and stops nothing; opening the entry again brings it back.
 --
 -- Order: the router first, then the scope's other agents by number, then surfaces (isovim.surface_view),
--- the landing, and anything else (files) as bufferline had it.
+-- the landing, and anything else (files) as bufferline had it. Picking an ACP chat's tab opens it as
+-- Enter on its sidebar row does, so its composer comes with it and the last chat's goes.
 --
 -- LazyVim's buffer and window keys work on these as on files (M.bufdelete, M.close_window, which
 -- the starter maps <leader>bd, <leader>bD, <leader>bo, <leader>wd and bufferline's close to): from
--- a composer, a queue or an input box they act on its chat or view. Closing an agent's tab (or a
--- placeholder's) closes its chat, composer and queue (isovim.acp.chat), and the agent's tab stays
--- out of the bar, its agent running, until you open it again (Enter on its row, a picker,
--- <leader>ib). A composer or queue whose chat shows nowhere closes, and nothing brings it back
--- until the chat is shown again.
+-- a composer, a queue or an input box they act on its chat or view. Closing an agent's tab closes
+-- its chat, composer and queue (isovim.acp.chat); the agent keeps running. A composer or queue whose
+-- chat shows nowhere closes, and nothing brings it back until the chat is shown again.
 --
--- Nothing opens a split by itself: a chat's window, a surface's or a placeholder's is where Snacks
--- pickers open what they pick (b:snacks_main; the changes view, the explorer, <leader>ff), replacing
--- it as :b does, and a composer whose chat another buffer replaced closes; picking the chat's tab
--- brings both back.
+-- Nothing opens a split by itself: a chat's window or a surface's is where Snacks pickers open what
+-- they pick (b:snacks_main; the changes view, the explorer, <leader>ff), replacing it as :b does,
+-- and a composer whose chat another buffer replaced closes; picking the chat's tab brings both back.
 local store = require("isovim.store")
 
 local M = {}
 
 local GROUP = vim.api.nvim_create_augroup("isovim_tabs", { clear = true })
 
--- Agents whose tab you closed ("<ws>/<agent>"): no placeholder for them until their chat opens. In
--- _G, so a hot reload keeps them closed.
-_G.isovim_tabs_dismissed = _G.isovim_tabs_dismissed or {}
-M.dismissed = _G.isovim_tabs_dismissed
-
--- The agent a buffer is the tab of: a chat's or a placeholder's.
+-- The agent a buffer is the tab of: its chat's.
 ---@return string? ws, string? agent
 function M.agent_of(buf)
   if not vim.api.nvim_buf_is_valid(buf) then
     return nil
-  end
-  local placeholder = vim.b[buf].isovim_placeholder
-  if placeholder then
-    return placeholder:match("^(.*)/([^/]+)$")
   end
   local ws = vim.b[buf].isovim_id
   if ws and not vim.b[buf].isovim_composer then
@@ -113,7 +97,6 @@ function M.before(a, b)
   return a.id < b.id
 end
 
--- A composer whose chat shows nowhere: left behind when its chat's window took another tab.
 -- A window that belongs to the buffer above it: a chat's composer or queue, a surface's input box.
 local function slot_buffer(buf)
   return vim.b[buf].isovim_composer or vim.b[buf].isovim_queue or vim.b[buf].isovim_surface_input
@@ -211,7 +194,7 @@ local function open_in(win, ws, agent)
   end
 end
 
--- Where Snacks pickers open a file: a chat's window, a surface's or a placeholder's, not a split.
+-- Where Snacks pickers open a file: a chat's window or a surface's, not a split.
 local function main_buffer(buf)
   if (M.agent_of(buf) or vim.b[buf].isovim_surface) and not vim.b[buf].snacks_main then
     vim.b[buf].snacks_main = true
@@ -277,10 +260,8 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
         end)
       end
     end
-    local placeholder = vim.b[ev.buf].isovim_placeholder
     -- An ACP chat entering a window without its composer: picked from the tab bar.
-    local acp = not placeholder and vim.b[ev.buf].isovim_acp
-    if not (placeholder or acp) or opening then
+    if not vim.b[ev.buf].isovim_acp or opening then
       -- Anything else in a chat's window: its composer goes with it.
       return require("isovim.safe").schedule("closing a stray composer", close_stray_composers)
     end
@@ -290,31 +271,21 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
         return
       end
       local ws, agent = M.agent_of(ev.buf)
-      if not ws then
-        return
+      local chat = ws and require("isovim.acp.chat").of_buf(ev.buf)
+      if chat and vim.fn.bufwinid(chat.composer) ~= -1 then
+        return close_stray_composers()
       end
-      if acp then
-        local chat = require("isovim.acp.chat").of_buf(ev.buf)
-        if chat and vim.fn.bufwinid(chat.composer) ~= -1 then
-          return close_stray_composers()
-        end
+      if ws then
+        open_in(win, ws, agent)
       end
-      open_in(win, ws, agent)
     end)
   end),
 })
 
--- Placeholders sync deletes itself don't count as closed by you.
-local quiet = false
-
 vim.api.nvim_create_autocmd("BufDelete", {
   group = GROUP,
   callback = function(ev)
-    local ws, agent = M.agent_of(ev.buf)
-    if ws and not quiet then
-      M.dismissed[ws .. "/" .. agent] = true
-    end
-    if ws or vim.b[ev.buf].isovim_surface or vim.bo[ev.buf].filetype == "isovim_landing" then
+    if M.agent_of(ev.buf) or vim.b[ev.buf].isovim_surface or vim.bo[ev.buf].filetype == "isovim_landing" then
       require("isovim.safe").schedule("tidying after a closed tab", function()
         close_stray_composers()
         fill_blank()
@@ -380,67 +351,17 @@ function M.close_window(win)
   vim.api.nvim_win_close(win, false)
 end
 
-local function placeholder(ws, agent, spec, scope_name)
-  local name = ("isovim-agent://%s/%s"):format(ws, agent)
-  local buf = vim.fn.bufnr(name)
-  if buf > 0 and vim.b[buf].isovim_placeholder then
-    return buf
-  end
-  buf = vim.api.nvim_create_buf(true, true)
-  vim.bo[buf].bufhidden = "wipe"
-  pcall(vim.api.nvim_buf_set_name, buf, name)
-  vim.bo[buf].modifiable = false
-  vim.b[buf].isovim_placeholder = ws .. "/" .. agent
-  vim.b[buf].snacks_main = true
-  vim.b[buf].isovim_scope = scope_name
-  vim.b[buf].isovim_agent_name, vim.b[buf].isovim_agent_kind = spec.name or agent, spec.kind or "claude"
-  return buf
-end
-
--- One tab per agent of the scope (default: the current one): a placeholder for each that has no
--- chat buffer, none for an agent gone or hidden; and the nameless empty buffer nvim starts with
--- goes once nothing shows it, so it isn't a stray [No Name] tab.
-function M.sync(scope_name)
-  local isovim = require("isovim")
-  scope_name = scope_name or isovim.current_scope
-  local scope = require("isovim.scope")
+-- Run as the scope changes and the sidebar refreshes: slots marked, chats' and surfaces' windows
+-- made Snacks' main ones, and the nameless empty buffer nvim starts with deleted once nothing shows
+-- it, so it isn't a stray [No Name] tab; also a placeholder tab for an unopened agent that an
+-- earlier isovim made, before a hot reload.
+function M.sync()
   mark_slots()
-  local chats, placeholders = {}, {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.b[buf].isovim_placeholder then
-      placeholders[vim.b[buf].isovim_placeholder] = buf
-    else
-      local ws, agent = M.agent_of(buf)
-      main_buffer(buf)
-      if ws and vim.api.nvim_buf_is_loaded(buf) then
-        chats[ws .. "/" .. agent] = true
-        -- Opened again: its tab is back for good.
-        M.dismissed[ws .. "/" .. agent] = nil
-      elseif blank(buf) and vim.bo[buf].buflisted and #vim.fn.win_findbuf(buf) == 0 then
-        pcall(vim.api.nvim_buf_delete, buf, {})
-      end
-    end
-  end
-  local wanted = {}
-  if scope_name then
-    for _, ws in ipairs(store.list()) do
-      for _, spec in ipairs(store.agents(ws.id)) do
-        local id = ws.id .. "/" .. spec.id
-        if not spec.hidden and not chats[id] and not M.dismissed[id] and scope.of_agent(ws.id, spec.id) == scope_name then
-          wanted[id] = placeholder(ws.id, spec.id, spec, scope_name)
-        end
-      end
-    end
-  end
-  -- A placeholder of another scope stays (unlisted) until its agent goes or opens.
-  for id, buf in pairs(placeholders) do
-    local ws, agent = id:match("^(.*)/([^/]+)$")
-    local spec = store.agent(ws, agent)
-    if not wanted[id] and (not spec or spec.hidden or chats[id] or vim.b[buf].isovim_scope == scope_name)
-      and #vim.fn.win_findbuf(buf) == 0 then
-      quiet = true
-      pcall(vim.api.nvim_buf_delete, buf, { force = true })
-      quiet = false
+    main_buffer(buf)
+    local hidden = #vim.fn.win_findbuf(buf) == 0
+    if hidden and (vim.b[buf].isovim_placeholder or blank(buf) and vim.bo[buf].buflisted) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = vim.b[buf].isovim_placeholder ~= nil })
     end
   end
   vim.cmd.redrawtabline()

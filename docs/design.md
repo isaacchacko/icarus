@@ -237,24 +237,26 @@ shows a "root mode" marker beside its count.
 
 ## The tab bar
 
-The tab bar holds the current scope (a repo, Root, General or Terminals): every agent of it, opened
-or not, named with its status mark as in the sidebar (`…` working, `●` unread, `●!` waiting on you),
-the router first and then the others by number; then the surfaces you opened, the landing and any
-files. Nothing opens a split by itself: a surface, a pinned file, a file a chat names (`gf`),
-Settings, the changes view's pick, a picker's or the explorer's file opens as a tab in the window
-you're in (the main one from the sidebar; the chat's from its composer), replacing what it shows as
-`:b` does, and the chat's composer goes with the chat. A markdown surface's input box stays under
-its view, part of its tab, as the composer is part of the chat's. Splits are yours to make
-(`:vsplit`, `<C-w>v`); the terminal toggle is the one isovim key that opens one. An agent whose chat isn't open is a placeholder that attaches to nothing until it's shown;
-picking any agent's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) opens its chat there with its composer,
-as Enter on its sidebar row does. Agents spawned and removed come and go, and switching scope swaps
-the set. The empty buffer nvim starts with goes once nothing shows it. LazyVim's buffer and window keys work on
-these as on files: `<leader>bd` (and a tab's x) closes an agent's tab, its chat, composer and queue,
-and the tab stays out of the bar, the agent running, until you open it again; on a surface it closes
-the view until it's reopened. `<leader>bo` closes every other tab, `<leader>bD` and `<leader>wd` close
-the window too while another editing window remains, and from a composer, queue or input box each
-acts on its chat or view. A composer or queue whose chat is no longer on screen closes and stays
-closed until the chat is shown again; a window a close leaves empty shows your last tab.
+A tab is a view of a sidebar entry, as a file's buffer is a view of the file. The tab bar shows what
+you opened, under the current scope (a repo, Root, General or Terminals): agents' chats (Enter on a
+row, a picker, `<leader>ib` / `<leader>ip`), named with their status mark as in the sidebar (`…`
+working, `●` unread, `●!` waiting on you), the router first and then the others by number; then
+surfaces, the landing and any files. Closing a tab (`<leader>bd`, `:bd`, its x) hides it as closing a
+file's buffer does: an agent keeps running and stays in the sidebar, its chat, composer and queue
+close, and opening it again brings the tab back; a surface closes until it's reopened.
+`<leader>bo` closes every other tab, `<leader>bD` and `<leader>wd` close the window too while another
+editing window remains, and from a composer, queue or input box each acts on its chat or view.
+Picking a chat's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) shows it with its composer, as Enter on
+its sidebar row does. A composer or queue whose chat is no longer on screen closes and stays closed
+until the chat is shown again; a window a close leaves empty shows your last tab. The empty buffer
+nvim starts with goes once nothing shows it.
+
+Nothing opens a split by itself: a surface, a pinned file, a file a chat names (`gf`), Settings, the
+changes view's pick, a picker's or the explorer's file opens as a tab in the window you're in (the
+main one from the sidebar; the chat's from its composer), replacing what it shows as `:b` does, and
+the chat's composer goes with the chat. A markdown surface's input box stays under its view, part of
+its tab, as the composer is part of the chat's. Splits are yours to make (`:vsplit`, `<C-w>v`); the
+terminal toggle is the one isovim key that opens one.
 
 ## Events
 
