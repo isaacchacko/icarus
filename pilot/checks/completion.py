@@ -44,6 +44,13 @@ try:
     assert not {"__complete", "autopin", "autopr", "progress", "checkstamp", "receive"} & set(values), values
     assert about["ls"].startswith("list agents"), about["ls"]
     assert complete("s")[0] == values, "the shell narrows, not iso"
+    assert {"worker", "router", "repo-root", "root", "spawn", "checkhealth"} <= set(values), values
+    assert "doctor" not in values, "doctor is checkhealth's hidden old name"
+    router, worker = complete("router", "")[0], complete("worker", "")[0]
+    assert {"ls", "msg", "pr", "spawn", "promote", "help"} <= set(router), router
+    assert "pr" not in worker and "promote" in worker, worker
+    assert set(complete("worker", "spawn", "--role", "")[0]) == {"root", "repo-root", "router", "worker"}
+    assert f"{ws}/main" in complete("worker", "peek", "")[0]
 
     values, about, _ = complete("send", "")
     assert {f"{ws}/main", f"{ws}/shell", "alpha/main", "alpha/shell", "cleo:abc123/main"} <= set(values), values
@@ -57,7 +64,7 @@ try:
     assert set(complete("archive", "")[0]) == {ws, "alpha"}
     assert set(complete("unarchive", "")[0]) == {other, "beta"}
     assert set(complete("agent", ws, "")[0]) == {"claude", "codex", "terminal", "command"}
-    assert set(complete("agent", ws, "claude", "--role", "")[0]) == {"root", "router", "worker"}
+    assert set(complete("agent", ws, "claude", "--role", "")[0]) == {"root", "repo-root", "router", "worker"}
     assert "--hidden" in complete("agent", ws, "claude", "--")[0]
     assert "--hidden" not in complete("agent", ws, "claude", "--hidden", "--")[0], "a used switch isn't offered again"
     assert complete("agent", ws, "claude", "--name", "x", "")[0] == [], "after a flag's value, the args go on"
