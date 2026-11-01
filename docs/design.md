@@ -254,9 +254,8 @@ one tab, isovim, in every scope.
 
 ```
 S (7) - swarming            ← style meter: live agents on this host
-Inbox 2                     ← other hosts' waiting items (Enter switches host)
+Inbox 1                     ← the shown host's: root surfaces + one row per busy repo
 ‹ macbook ›                 ← the host you're viewing (< >)
-  Inbox 1                   ← this host: root surfaces + one row per busy repo
   root  ⏺
   isovim ●                  ← repo header in its color; opens the router
     Inbox                   ← this repo's surfaces
@@ -268,6 +267,11 @@ cpu 12%  ram 18/24G         ← u to measure
 Settings
 ISOVIM 2de9e2b
 ```
+
+The top window is the Inbox of the host the list shows, so `<` and `>` switch it with the list (on
+another host it says whose, `Inbox 2 · cleopatra`); `<leader>ih` brings it back to this host. Enter
+on a busy repo opens that repo's Inbox in the list. There is no Inbox of the other hosts: their
+surfaces are reached by showing that host.
 
 Every Inbox shows only surfaces, and each surface type has its own row format. In root mode, an Inbox
 shows a "root mode" marker beside its count, and a question a root left to you says "yours".
@@ -390,7 +394,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | key | does |
 |---|---|
 | `n` | the next thing that needs you |
-| `i` / `h` / `I` | the repo / host / other-hosts Inbox |
+| `i` / `h` | the repo / host Inbox (the host's is the sidebar's top window) |
 | `r` | the router |
 | `R` | the nearest root |
 | `H` | the host root |

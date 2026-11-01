@@ -116,15 +116,11 @@ local function padded(text, width)
 end
 
 local function inbox_row()
-  local here, others = sidebar().inbox_counts()
-  if here + others == 0 then
+  local here = sidebar().inbox_count()
+  if here == 0 then
     return { { "Nothing waits on you.", "IsovimLandingPhrase" } }
   end
-  local row = { { tostring(here), here > 0 and "DiagnosticWarn" or "Comment" }, { " waiting on you here" } }
-  if others > 0 then
-    vim.list_extend(row, { { " · ", "Comment" }, { tostring(others), "DiagnosticWarn" }, { " on other hosts" } })
-  end
-  return vim.list_extend(row, { { "   i opens the Inbox", "IsovimLandingPhrase" } })
+  return { { tostring(here), "DiagnosticWarn" }, { " waiting on you here" }, { "   i opens the Inbox", "IsovimLandingPhrase" } }
 end
 
 -- The repos in rows of up to width cells, each in its glyph and color.

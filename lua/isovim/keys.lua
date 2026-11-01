@@ -347,7 +347,7 @@ function M.open_host_root()
   return root and open(root) or toast("No root on this host")
 end
 
--- The current repo's Inbox (repo), this host's (host) or the other hosts' (others), opened, the
+-- The current repo's Inbox (repo) or this host's (host, the sidebar's top window), opened, the
 -- cursor on its first surface waiting on you.
 local function inbox(which)
   return function()
@@ -395,7 +395,6 @@ M.GROUP = {
   end, "next agent that needs you" },
   { "i", inbox("repo"), "the repo's Inbox" },
   { "h", inbox("host"), "the host's Inbox" },
-  { "I", inbox("others"), "the other hosts' Inbox" },
   { "r", open_role("router", "router"), "the repo's router" },
   { "R", M.nearest_root, "the nearest root (repo-root, else host root)" },
   { "H", M.open_host_root, "the host root" },
