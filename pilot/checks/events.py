@@ -47,6 +47,22 @@ class Listener:
         minutes, seconds = out.split(":")
         return int(minutes) * 60 + float(seconds)
 
+    def following(self, log):
+        """Whether it has the log open, so every event from here on reaches it: it starts reading
+        at the log's end, and one published before then is (rightly) not news to it."""
+        fds = Path(f"/proc/{self.proc.pid}/fd")
+        if fds.exists():
+            paths = []
+            for fd in fds.iterdir():
+                try:
+                    paths.append(os.readlink(fd))
+                except OSError:
+                    pass
+        else:
+            out = subprocess.run(["lsof", "-p", str(self.proc.pid), "-Fn"], capture_output=True, text=True).stdout
+            paths = [line[1:] for line in out.splitlines() if line.startswith("n")]
+        return str(log.resolve()) in paths
+
     def stop(self):
         self.proc.terminate()
         self.proc.wait(5)
@@ -76,8 +92,18 @@ def listen(*args):
     return listener
 
 
+def settle():
+    """Waits until every listener still running follows the log, rather than sleeping on it: under
+    load a listener's start can take longer than any fixed nap."""
+    log = iso.tmp / "home" / "events" / "events.jsonl"
+    iso.wait(lambda: all(listener.following(log) for listener in listeners if listener.proc.poll() is None), "listeners following the log")
+
+
 try:
     ws = iso.cli("new", "alpha")
+    # The log to follow is there from the start, as it is once anything has been published.
+    (iso.tmp / "home" / "events").mkdir(parents=True, exist_ok=True)
+    (iso.tmp / "home" / "events" / "events.jsonl").touch()
     statuses = listen("agent.*.*.status")
     everything = listen("**")
     one_msg = listen("msg.*.*", "--once")
@@ -85,7 +111,7 @@ try:
     # A legacy agent's scope is its workspace: agent.<ws>.<agent>.*.
     in_ws = listen(f"agent.{enc(ws)}.*.*")
     crowd = [listen("**") for _ in range(5)]
-    time.sleep(1.5)
+    settle()
 
     # The TUI closed: the CLI and the hooks publish on their own.
     agent = iso.cli("agent", ws, "claude", "--name", "bee")
@@ -135,7 +161,7 @@ try:
     # the old one-part address is no topic.
     unencoded = listen("agent.owner/site.com.a0.status", "agent.*.com.a0.*", "agent.**.com.**", "agent.owner/**",
                        "agent.owner/site%2E*.**", "agent.owner/site%2Ecom/a0.status", "msg.owner/site%2Ecom/a0")
-    time.sleep(1.5)
+    settle()
     v2 = iso.cli("agent", str(site), "claude", "--v2", "--name", "dot")
     assert v2 == "owner/site.com/a0", v2
     iso.wait(lambda: has(dotted, f"agent.{dot}.spawned", addr=v2, scope="owner/site.com", id="a0", kind="claude"), "v2 spawned, encoded")
@@ -158,7 +184,7 @@ try:
     odd_topic = "agent.o/50%25%2Ex%252E.a1.status"
     assert f"agent.{at(odd)}.status" == odd_topic
     odd_listener = listen(odd_topic)
-    time.sleep(1.5)
+    settle()
     odd_state = iso.tmp / "home" / "run" / "odd" / "a1.state"
     odd_state.parent.mkdir(parents=True)
     subprocess.run([str(REPO / "bin" / "iso-hook"), "interrupt"],
@@ -193,7 +219,7 @@ try:
         f.write(filler)
     marked = [f"agent.{ws}.m{n}.status" for n in range(3)]
     marks = listen(*marked)
-    time.sleep(1.5)
+    settle()
     (iso.tmp / "home" / "run" / ws).mkdir(parents=True, exist_ok=True)
     for n in range(3):
         # As a hook would, for three made-up agents.
@@ -220,7 +246,7 @@ try:
     assert hook_event.keys() == lua_event.keys() and all(hook_event[k] == lua_event[k] for k in ("topic", "addr", "scope", "id")), odd_listener.lines
     tui_lifecycle = listen("agent.*.*.*")
     pr_events = listen("pr.**")
-    time.sleep(1.5)
+    settle()
     cee = iso.cli("agent", ws, "claude", "--name", "cee")
     iso.cli("send", cee, "hi there")
     iso.wait(lambda: has(tui_lifecycle, f"agent.{at(cee)}.status", state="idle"), "idle with the TUI open")
