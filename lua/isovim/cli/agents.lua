@@ -240,7 +240,7 @@ local function fork_acp(ws, agent, name, prompt, at, caller)
     fields.fork_seq, fields.fork_at = cut.upto, cut.messageId
   end
   local fork, err = store.add_agent(ws.id, { kind = agent.kind, name = name, prompt = prompt, acp = true,
-    parent = caller or from, read_only = agent.read_only or nil })
+    parent = caller or from, read_only = agent.read_only or nil, checkout = agent.checkout })
   if not fork then
     fail(err)
   end

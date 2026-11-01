@@ -167,6 +167,40 @@ try:
     iso.wait(lambda: any(e["seq"] > seq and e["kind"] == "turn" and e["state"] == "end" for e in entries("a2")), "its answer", 240)
     answer = said_after("a2", seq).lower()
     check("router" in answer and "plum" in answer, "real adapter: the promoted agent says it's a router, and keeps its context", answer)
+
+    print("\n# a worker the router spawns can't edit the user's clone")
+    kid_out = iso.tmp / "kid.txt"
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=app, capture_output=True, text=True).stdout.strip()
+    kid_task = (f"Use the Write tool to create the file {app / 'from-kid.txt'} containing the word hi. If the tool call is "
+                f"refused, do what the refusal says. Then run this with the Bash tool, once: git -C {app} commit --allow-empty -m kid "
+                "and if that is refused, don't try it again in any way. Reply with the word done.")
+    (iso.tmp / "kid-task.txt").write_text(kid_task)
+    spawn_kid = iso.tmp / "spawn-kid.sh"
+    spawn_kid.write_text(f'#!/bin/sh\nexec {BIN} router spawn --name kid "$(cat {iso.tmp / "kid-task.txt"})" > {kid_out} 2>&1\n')
+    spawn_kid.chmod(0o755)
+    ends, seq = len(turns("a2")), entries("a2")[-1]["seq"]
+    run("send", target_addr, f"Run exactly this command with the Bash tool, once: {spawn_kid}  Then reply with the word spawned.")
+    try:
+        iso.wait(lambda: len(turns("a2")) > ends and kid_out.exists() and kid_out.read_text().strip(), "the router's spawn", 240)
+    except AssertionError:
+        print("     router said:", said_after("a2", seq)[-600:])
+        raise
+    kid = kid_out.read_text().strip()
+    kid_id = kid.rsplit("/", 1)[-1]
+    kid_rec = json.loads((unit / "iso" / "agents" / f"{kid_id}.json").read_text()) if kid.startswith("acme/app/a") else {}
+    check(kid_rec.get("parent") == target_addr and kid_rec.get("checkout") == str(app.resolve()),
+          "real adapter: the router's worker records the router's clone as its checkout", (kid, kid_rec))
+    iso.wait(lambda: turns(kid_id), "the router's worker's turn", 300)
+    kid_w = unit / kid_id / "w"
+    check(not (app / "from-kid.txt").exists(), "real adapter: its Write in the user's clone is refused",
+          subprocess.run(["git", "status", "--short"], cwd=app, capture_output=True, text=True).stdout)
+    check((kid_w / "from-kid.txt").exists(), "real adapter: the worktree was made and the edit landed in its w/",
+          list(kid_w.rglob("from-kid.txt")) if kid_w.exists() else "no w")
+    check(subprocess.run(["git", "rev-parse", "HEAD"], cwd=app, capture_output=True, text=True).stdout.strip() == head,
+          "real adapter: its git commit in the user's clone is refused")
+    kid_journal = (unit / "iso" / "journal" / f"{kid_id}.jsonl").read_text()
+    check("isovim refused this command: `git commit` would change" in kid_journal,
+          "real adapter: the refusal reached it from the Bash hook", kid_journal[-800:])
     if os.environ.get("ISOVIM_ACP_REAL_SESSIONS", "1") == "1":
         print("\n# sessions (L2): a fork at a message and a whole one, AskUserQuestion through the Inbox")
 

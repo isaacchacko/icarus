@@ -154,10 +154,17 @@ ask)
 edit | bash)
   # A new-layout agent's first edit makes its worktree, and a read-only agent's edits (and git
   # commands that would change the base clone) are refused: exit 2 blocks the tool call, with what
-  # iso printed as the reason. Only a read-only agent's Bash calls are looked at.
+  # iso printed as the reason. A Bash call is looked at only when it names git: a mutating git
+  # command in a clone of the agent's repo outside its worktree is refused too.
   [ -z "$ISOVIM_ADDR" ] && exit 0
-  [ "$1" = bash ] && [ "$ISOVIM_READONLY" != 1 ] && exit 0
-  "$(dirname "$0")/iso" __pretool "$1"
+  input="$(cat)"
+  if [ "$1" = bash ]; then
+    case "$input" in
+    *git*) ;;
+    *) exit 0 ;;
+    esac
+  fi
+  printf %s "$input" | "$(dirname "$0")/iso" __pretool "$1"
   exit $?
   ;;
 interrupt) set_state idle ;;

@@ -84,7 +84,8 @@ local EVENTS = {
     -- Waiting on you: a question, or a plan to approve.
     { "ask", "AskUserQuestion|ExitPlanMode" },
     -- A new-layout agent's first edit makes its worktree (which can run the repo's worktree_setup),
-    -- and a read-only agent's edits and mutating git commands are refused (iso __pretool).
+    -- a read-only agent's edits and mutating git commands are refused, and so are any agent's
+    -- edits and mutating git commands in a clone of its repo outside its own w/ (iso __pretool).
     { "edit", M.edit_tools, 600 },
     { "bash", "Bash" },
   },

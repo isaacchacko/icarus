@@ -254,9 +254,16 @@ local function checkout_of(dir)
   return top and require("isovim.repos").of(top) and top or nil
 end
 
+-- The clone a new-layout agent in key was made from, while it's still a clone of key; nil otherwise.
+local function inherited_checkout(agent, key)
+  local dir = agent and agent.checkout
+  return dir and vim.fn.isdirectory(dir) == 1 and require("isovim.repos").of(dir) == key and dir or nil
+end
+
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no
 -- higher than its own). Each spawn is a new-layout agent over ACP, <repo key>/aN, in the repo
--- --repo names, else the spawner's (for the user, the clone the shell is in), else in General.
+-- --repo names, else the spawner's (for the user, the clone the shell is in; for an agent, the clone
+-- it was made from, recorded as the child's checkout too), else in General.
 -- --legacy (until the cutover) makes a workspace with one agent in claude's TUI, in the repo's
 -- dir, as spawns did before. --acp is the default now, and still accepted.
 function M.spawn(args)
@@ -282,7 +289,7 @@ function M.spawn(args)
   elseif legacy and kind ~= "claude" then
     fail("--legacy spawns claude in its TUI; --kind is for an agent over ACP")
   end
-  local address, mine, caller_ws = caller()
+  local address, mine, caller_ws, caller_id = caller()
   if address and RANK[role] > RANK[mine] then
     fail(("a %s spawns roles up to its own, and %s is higher"):format(mine, role))
   end
@@ -297,6 +304,11 @@ function M.spawn(args)
   local caller_key = caller_ws and store.v2(caller_ws) and store.canon(caller_ws) or nil
   if caller_key == store.ROOT then
     caller_key = nil
+  end
+  -- An agent's child in its repo is made from the clone its spawner was, as a user's spawn from
+  -- that clone would be (its base clone is seeded from it).
+  if not dir and not to_general and caller_key and not store.is_pseudo(caller_key) then
+    dir = inherited_checkout(store.agent(caller_ws, caller_id), caller_key)
   end
   local key = not legacy and (dir and require("isovim.repos").of(dir) or (not to_general and caller_key) or store.GENERAL) or nil
   check_unique(role, dir and repo_key(dir) or (key and not store.is_pseudo(key) and key or nil))

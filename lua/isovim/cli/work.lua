@@ -175,41 +175,101 @@ local function under(path, root)
   return vim.startswith(path, root .. "/") and path:sub(#root + 2) or nil
 end
 
+-- The clone of repo that path is in (the top of the nearest enclosing dir holding a .git whose
+-- origin is repo: a worktree, or a submodule's parent, too) and path relative to it; nil when none is.
+---@return string? top, string? rel
+local function clone_of(path, repo)
+  local dir = path
+  while dir and dir ~= "" do
+    if vim.uv.fs_stat(dir .. "/.git") and require("isovim.repos").of(dir) == repo then
+      return dir, under(path, dir)
+    end
+    local parent = vim.fs.dirname(dir)
+    dir = parent ~= dir and parent or nil
+  end
+end
+
+-- Whether path is somewhere the agent (aN in ws) never edits: the base clone, its record's checkout,
+-- or any other clone or worktree of its repo outside its own aN/w (yours anywhere, or another
+-- agent's), whatever its record says. Returns path relative to that clone and why; nil when it's none.
+---@return string? rel, string? why
+local function forbidden(path, ws, agent)
+  if under(path, store.dir(ws) .. "/" .. agent.id .. "/w") then
+    return nil
+  end
+  local base = agent.repo and require("isovim.repos").dir(agent.repo) .. "/base-clone"
+  local rel = under(path, base)
+  if rel then
+    return rel, "the base clone is shared and never edited"
+  end
+  local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
+  rel = checkout and under(path, checkout)
+  if rel then
+    return rel, ("%s is your user's own checkout, which agents never edit"):format(checkout)
+  end
+  local top
+  if agent.repo then
+    top, rel = clone_of(path, agent.repo)
+  end
+  if top then
+    return rel, ("%s is a clone of %s outside your worktree (your user's, or another agent's), which agents never edit")
+      :format(top, agent.repo)
+  end
+end
+
 -- git's subcommands that change a checkout or its refs, which a read-only agent may not run in the
--- base clone the others share. Listing ones (branch, tag, worktree list) and fetch are left alone.
+-- base clone the others share, and no agent runs in a clone of its repo outside its own worktree.
+-- Listing ones (branch, tag, worktree list) and fetch are left alone.
 local MUTATING_GIT = {}
 for _, name in ipairs({ "commit", "push", "pull", "checkout", "switch", "reset", "merge", "rebase", "stash", "add",
   "rm", "mv", "restore", "clean", "cherry-pick", "revert", "am", "apply", "gc", "prune", "update-ref" }) do
   MUTATING_GIT[name] = true
 end
 local GIT_VALUED = { ["-C"] = true, ["-c"] = true, ["--git-dir"] = true, ["--work-tree"] = true, ["--namespace"] = true }
+local GIT_DIRS = { ["-C"] = true, ["--git-dir"] = true, ["--work-tree"] = true }
 
--- The first mutating git subcommand command runs, as `git <sub>`; nil when there's none. Each
--- part between ; & | and newlines is looked at for a git call and its subcommand.
-local function mutating_git(command)
+-- Each mutating git call command makes, as {sub = "git <sub>", dir = the dir it acts on}: cwd, as a
+-- cd or pushd earlier in the command moves it, or what -C, --git-dir or --work-tree names. Each part
+-- between ; & | ( ) and newlines is looked at for a cd, or a git call and its subcommand.
+local function mutating_git(command, cwd)
+  local calls = {}
+  local function at(dir, word)
+    word = word:gsub("^['\"]", ""):gsub("['\"]$", "")
+    word = word == "~" and (vim.env.HOME or "/") or word:gsub("^~/", (vim.env.HOME or "") .. "/")
+    return word:sub(1, 1) == "/" and word or vim.fs.joinpath(dir, word)
+  end
   for part in (command or ""):gmatch("[^;&|\n()]+") do
     local words = vim.split(vim.trim(part), "%s+", { trimempty = true })
+    if (words[1] == "cd" or words[1] == "pushd") and words[2] ~= "-" then
+      cwd = words[2] and at(cwd, words[2]) or vim.env.HOME or cwd
+    end
     for i, word in ipairs(words) do
       if word == "git" or word:match("/git$") then
-        local j = i + 1
+        local dir, j = cwd, i + 1
         while words[j] and words[j]:sub(1, 1) == "-" do
-          j = j + (GIT_VALUED[words[j]] and 2 or 1)
+          local flag, value = words[j]:match("^(%-%-[%w-]+)=(.*)$")
+          if GIT_DIRS[flag or words[j]] and (value or words[j + 1]) then
+            dir = at(dir, value or words[j + 1])
+          end
+          j = j + ((not value and GIT_VALUED[words[j]]) and 2 or 1)
         end
         if words[j] and MUTATING_GIT[words[j]] then
-          return "git " .. words[j]
+          calls[#calls + 1] = { sub = "git " .. words[j], dir = real(vim.fs.normalize(dir)) }
         end
       end
     end
   end
+  return calls
 end
 
 -- iso __pretool edit|bash: iso-hook's PreToolUse for a new-layout agent (known by ancestry), the
 -- tool call as JSON on stdin. A read-only agent's edits, and its git commands that would change
--- the base clone, are refused. Another agent's first edit in its repo (under aN/, the base clone or the clone it was
--- made from) makes its worktree, aN/w, and is refused with where to make it instead: the edit
--- would otherwise land outside it, so the agent makes it again under w/. An edit in the base clone
--- or in the checkout it was made from (yours) is always refused, worktree or not; anything else goes
--- through, as edits outside the repo always do.
+-- the base clone, are refused. Another agent's first edit in its repo (under aN/, or in any clone or
+-- worktree of the repo: the base clone, the clone it was made from, yours anywhere, another agent's)
+-- makes its worktree, aN/w, and is refused with where to make it instead: the edit would otherwise
+-- land outside it, so the agent makes it again under w/. An edit in a clone of its repo outside its
+-- own w/ is always refused, worktree or not and whatever its record says, and so is a mutating git
+-- command there; anything else goes through, as edits outside the repo always do.
 M.__pretool = function(args)
   local which = args[1]
   local ws, id = require("isovim.root").caller()
@@ -218,16 +278,28 @@ M.__pretool = function(args)
     return
   end
   local ok, call = pcall(vim.json.decode, io.read("a") or "", { luanil = { object = true, array = true } })
-  local input = ok and type(call) == "table" and type(call.tool_input) == "table" and call.tool_input or {}
+  call = ok and type(call) == "table" and call or {}
+  local input = type(call.tool_input) == "table" and call.tool_input or {}
+  local cwd = type(call.cwd) == "string" and call.cwd or vim.uv.cwd()
+  local own = store.dir(ws) .. "/" .. agent.id
+  local w = own .. "/w"
   if which == "bash" then
-    local git_call = agent.read_only and mutating_git(input.command)
-    if git_call then
+    local calls = mutating_git(input.command, cwd)
+    if agent.read_only and calls[1] then
       refuse(("isovim refused this command: you are a read-only agent, working in %s's base clone, which other agents share, and `%s` would change it. Read, search and run what only reads; for a change, ask whoever started you for an agent with a worktree.")
-        :format(agent.repo or "your repo", git_call))
+        :format(agent.repo or "your repo", calls[1].sub))
+    end
+    for _, git_call in ipairs(calls) do
+      local _, why = forbidden(git_call.dir, ws, agent)
+      if why then
+        local there = vim.fn.isdirectory(w) == 1 and ("Your worktree is %s: run it there."):format(w)
+          or ("Make your worktree with iso %s wt (it prints its path) and run it there."):format(store.role(agent))
+        refuse(("isovim refused this command: `%s` would change %s, and %s. %s"):format(git_call.sub, git_call.dir, why, there))
+      end
     end
     return
   end
-  local tool = type(call) == "table" and call.tool_name or "this edit"
+  local tool = call.tool_name or "this edit"
   if agent.read_only then
     refuse(("isovim refused %s: you are a read-only agent, and your edits are refused. Read and search what you need; for a change, ask whoever started you for an agent with a worktree.")
       :format(tool))
@@ -236,34 +308,30 @@ M.__pretool = function(args)
   if type(file) ~= "string" or file == "" then
     return
   end
-  local cwd = type(call.cwd) == "string" and call.cwd or vim.uv.cwd()
   file = real(vim.fs.normalize(file:sub(1, 1) == "/" and file or vim.fs.joinpath(cwd, file)))
-  local own = store.dir(ws) .. "/" .. agent.id
-  local w = own .. "/w"
-  local base = agent.repo and require("isovim.repos").dir(agent.repo) .. "/base-clone"
-  local checkout = agent.checkout and vim.fn.isdirectory(agent.checkout) == 1 and agent.checkout or nil
-  local in_base = under(file, base)
-  local in_checkout = not in_base and checkout and under(file, checkout) or nil
-  local where = in_base and "the base clone is shared and never edited"
-    or ("%s is your user's own checkout, which agents never edit"):format(checkout)
+  local in_clone, where = forbidden(file, ws, agent)
   if vim.fn.isdirectory(w) == 1 then
-    local rel = in_base or in_checkout
-    if rel then
-      refuse(("isovim refused %s: %s. Your worktree is %s: make the edit to %s."):format(tool, where, w, vim.fs.joinpath(w, rel)))
+    if in_clone then
+      refuse(("isovim refused %s: %s. Your worktree is %s: make the edit to %s."):format(tool, where, w, vim.fs.joinpath(w, in_clone)))
     end
     return
   end
-  local rel = agent.repo and (under(file, own) or in_base or in_checkout)
+  -- Under aN/ before w/ exists, the path meant in w/ (so w/x when it already named w/x is x).
+  local mine = under(file, own)
+  mine = mine and (mine == "w" and "" or mine:gsub("^w/", ""))
+  local rel = agent.repo and (mine or in_clone)
   if not rel then
+    if in_clone then
+      refuse(("isovim refused %s: %s."):format(tool, where))
+    end
     return
   end
   local log = store.run_dir(ws) .. "/" .. agent.id .. ".worktree_setup.log"
   vim.fn.mkdir(store.run_dir(ws), "p")
   local path, branch, _, setup, offline = ensure_worktree(ws, agent, nil, log)
   if not path then
-    -- With no worktree to send it to, an edit under aN/ goes through; never one in the base clone
-    -- or your checkout.
-    if in_base or in_checkout then
+    -- With no worktree to send it to, an edit under aN/ goes through; never one in a clone of the repo.
+    if in_clone then
       refuse(("isovim refused %s: %s, and your worktree couldn't be made (%s)."):format(tool, where, branch))
     end
     return
