@@ -297,6 +297,14 @@ function M.agent_dir(ws, agent)
   return M.dir(ws) .. "/" .. agent
 end
 
+-- The project a workspace was made for: the repo its worktree came from, else its project dir; nil
+-- for a workspace in its own dir.
+function M.project(id)
+  local meta = read_meta(M.path(id)) or {}
+  local dir = meta.repo or meta.dir
+  return dir and vim.fs.normalize(dir) or nil
+end
+
 function M.update_meta(id, fields)
   local meta = read_meta(M.path(id)) or {}
   for key, value in pairs(fields) do

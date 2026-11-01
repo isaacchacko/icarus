@@ -330,7 +330,7 @@ local function local_rows(workspaces)
     end
   end
   if #workspaces == 0 then
-    items[1] = { kind = "hint", text = "no workspaces · a new · ? keys" }
+    items[1] = { kind = "hint", text = "no workspaces · s spawn · ? keys" }
   end
   return items
 end
@@ -886,24 +886,30 @@ local COLUMN_KEYS = {
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent or PR; a pinned file beside the chat, a folder in the explorer" },
   { "<Tab>", "isovim_toggle_expand", "expand or collapse the workspace" },
-  { "a", "isovim_add", "new workspace" },
-  { "A", "isovim_add_agent", "new agent in this workspace" },
+  { "s", "isovim_spawn", "spawn a worker in its repo (a new worktree), or in no repo" },
   { "t", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace or agent" },
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
-  { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
-  { "y", "isovim_yank_url", "copy the PR's URL" },
-  { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "move it to another host, or here" },
-  { "s", "isovim_sort", "sort by creation or by recent activity" },
+  { "x", "isovim_root_mode", "root mode on the repo (not yet)" },
+  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
+  { "y", "isovim_yank_url", "copy the PR's URL" },
+  { "c", "isovim_changes", "its changes since its base; on a PR, its Files changed tab" },
+  { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
+  { "S", "isovim_sort", "sort by creation or by recent activity" },
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
-  { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
-  { "T", "isovim_toggle_tasks", "show or hide agents' tasks" },
   { "P", "isovim_toggle_prs", "agents or PRs" },
-  { "b", "isovim_last_workspace", "back to the last workspace" },
+  { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
+}
+-- Keys on their way out: they still work, the first press in a session naming what replaced them.
+-- {key, action, replacement}
+local RETIRED_KEYS = {
+  { "a", "isovim_add", "s spawns" },
+  { "A", "isovim_add_agent", "s spawns" },
+  { "b", "isovim_last_workspace", "<leader>ib" },
+  { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
 }
 local INBOX_KEYS = {
   { "<cr>", "isovim_open_queued", "open that agent; on the title, collapse or expand the Inbox" },
@@ -923,10 +929,20 @@ local FOOTER_KEYS = {
 local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, terminals = TERMINAL_KEYS, footer = FOOTER_KEYS }
 
 local function map_keys(buf, role)
+  local function on_row(action)
+    return function()
+      M.actions[action]((rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]])
+    end
+  end
   for _, key in ipairs(vim.list_extend(vim.list_extend({}, COLUMN_KEYS), ROLE_KEYS[role] or {})) do
+    vim.keymap.set("n", key[1], on_row(key[2]), { buffer = buf, nowait = true, desc = "isovim: " .. key[3] })
+  end
+  for _, key in ipairs(role == "list" and RETIRED_KEYS or {}) do
+    local action = on_row(key[2])
     vim.keymap.set("n", key[1], function()
-      M.actions[key[2]]((rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]])
-    end, { buffer = buf, nowait = true, desc = "isovim: " .. key[3] })
+      require("isovim.keys").hint(key[1] .. " in the sidebar", key[3])
+      action()
+    end, { buffer = buf, nowait = true, desc = "isovim: retiring, " .. key[3] })
   end
 end
 
@@ -936,7 +952,7 @@ function M.help()
   local function section(title, keys)
     lines[#lines + 1] = "# " .. title
     for _, key in ipairs(keys) do
-      lines[#lines + 1] = ("  %-12s %s"):format(key[1], key[#key])
+      lines[#lines + 1] = ("  %-17s %s"):format(key[1], key[#key])
     end
     lines[#lines + 1] = ""
   end
@@ -947,16 +963,30 @@ function M.help()
   section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
-  local leader = {}
+  -- The live maps, so a key set elsewhere (the chat's own, LazyVim's ctrl+/) shows as it is; the
+  -- <leader>i group under its own heading.
+  local leader, group = {}, {}
+  local prefix = vim.pesc(vim.g.mapleader or "\\")
   for _, map in ipairs(vim.api.nvim_get_keymap("n")) do
     if map.desc and map.desc:match("^isovim: ") then
-      leader[#leader + 1] = { (map.lhs:gsub("^" .. vim.pesc(vim.g.mapleader or "\\"), "<leader>")), map.desc:sub(6) }
+      local lhs = map.lhs:gsub("^" .. prefix, "<leader>"):gsub("^<leader>" .. prefix, "<leader><leader>")
+      table.insert(vim.startswith(lhs, "<leader>i") and group or leader, { lhs, map.desc:sub(9) })
     end
   end
-  table.sort(leader, function(a, b)
-    return a[1] < b[1]
-  end)
+  for _, list in ipairs({ leader, group }) do
+    table.sort(list, function(a, b)
+      return a[1] < b[1]
+    end)
+  end
   section("Anywhere (normal mode)", leader)
+  section("<leader>i: isovim", group)
+  local retired = vim.tbl_map(function(key)
+    return { key[1], key[3] }
+  end, RETIRED_KEYS)
+  for _, key in ipairs(require("isovim.keys").RETIRED) do
+    retired[#retired + 1] = { "<leader>a" .. key[1], key[3] }
+  end
+  section("Retiring (they still work for now; use instead)", retired)
   lines[#lines] = nil
   Snacks.win({
     text = lines,
@@ -964,7 +994,7 @@ function M.help()
     title = " isovim keys ",
     title_pos = "center",
     border = "rounded",
-    width = 64,
+    width = math.min(80, vim.o.columns - 4),
     height = math.min(#lines, vim.o.lines - 4),
     wo = { wrap = false, conceallevel = 2 },
     keys = { q = "close", ["?"] = "close" },
@@ -1008,6 +1038,126 @@ local function step_host(by)
   end
   vim.api.nvim_win_set_cursor(windows().list, { 1, 0 })
   refresh_now()
+end
+
+-- The column's windows, opened first when the explorer or nothing has the sidebar's place.
+local function column()
+  if not windows().list then
+    local explorer = Snacks.picker.get({ source = "explorer" })[1]
+    if explorer then
+      explorer:close()
+    end
+    M.view = "workspaces"
+    M.open({ enter = false })
+  end
+  return windows()
+end
+
+-- The host list shows the host by places from the shown one (< and >), from anywhere.
+function M.step_host(by)
+  column()
+  step_host(by)
+end
+
+-- Into one of the column's windows (inbox, list, terminals, footer), from anywhere.
+function M.focus_window(role)
+  vim.cmd.stopinsert()
+  local win = column()[role]
+  if win then
+    vim.api.nvim_set_current_win(win)
+  end
+end
+
+-- Into the Inbox, expanded, on its first entry that want takes; on its title when none does.
+---@param want fun(entry): boolean
+function M.focus_inbox(want)
+  local wins = column()
+  if isovim.inbox_collapsed then
+    isovim.remember("inbox_collapsed", false)
+  end
+  refresh_now()
+  if not wins.inbox then
+    return
+  end
+  vim.cmd.stopinsert()
+  vim.api.nvim_set_current_win(wins.inbox)
+  local line = 1
+  for i, entry in ipairs(rows.inbox) do
+    if line == 1 and entry.kind ~= "inbox" and want(entry) then
+      line = i
+    end
+  end
+  vim.api.nvim_win_set_cursor(wins.inbox, { line, 0 })
+end
+
+-- A new workspace named name in dir ("" for its own dir): in a repo, a worktree of its own by
+-- default, a worktree of a branch or PR, or the checkout itself.
+local function new_workspace(name, dir)
+  if dir == nil then
+    return
+  end
+  dir = dir ~= "" and vim.fs.normalize(dir) or nil
+  if dir and vim.fn.isdirectory(dir) == 0 then
+    Snacks.notify.error(dir .. " is not a directory")
+    return
+  end
+  local function create(worktree)
+    -- Making a worktree fetches the default branch first, which can take a few seconds.
+    if worktree then
+      Snacks.notify.info("Making " .. name .. "'s worktree…", { title = "isovim", id = "isovim_worktree" })
+      vim.cmd.redraw()
+    end
+    local id, err = store.create(name, dir, worktree)
+    Snacks.notifier.hide("isovim_worktree")
+    if not id then
+      Snacks.notify.error("Could not make the worktree:\n" .. err)
+      return
+    end
+    -- A fresh worktree runs the repo's setup script (deps, .env) in a terminal of its own.
+    if worktree and require("isovim.scripts").start(id, "setup") then
+      Snacks.notify.info("Running " .. name .. "'s setup script", { title = "isovim" })
+    end
+    isovim.open(id)
+    isovim.refresh()
+  end
+  local worktree = require("isovim.worktree")
+  if not dir or not worktree.is_repo(dir) then
+    return create(false)
+  end
+  local choices = {
+    "New worktree on " .. worktree.branch_for(name),
+    "Worktree of a branch or PR…",
+    "Work in " .. vim.fn.fnamemodify(dir, ":~") .. " itself",
+  }
+  vim.ui.select(choices, { prompt = name }, function(_, i)
+    if i == 2 then
+      vim.ui.input({ prompt = "Branch, or PR number or URL: " }, function(ref)
+        if ref and vim.trim(ref) ~= "" then
+          create(vim.trim(ref))
+        end
+      end)
+    elseif i then
+      create(i == 1)
+    end
+  end)
+end
+
+-- Spawns a worker in the workspace's repo: a new-layout repo gets another agent; a workspace, a new
+-- workspace named as asked, in the repo its worktree came from (or its project dir); a workspace in
+-- no project, one in its own dir. With no workspace, a new one anywhere (it asks where).
+function M.spawn(ws)
+  if not ws then
+    return M.actions.isovim_add()
+  elseif store.v2(ws) then
+    return add_agent(ws, { kind = "claude" })
+  end
+  local scope = require("isovim.scope")
+  local project = store.project(ws)
+  vim.ui.input({ prompt = ("Spawn in %s: "):format(scope.label(scope.of_workspace(ws))) }, function(name)
+    if name and name ~= "" then
+      new_workspace(name, project or "")
+    end
+  end)
 end
 
 M.actions = {
@@ -1074,66 +1224,27 @@ M.actions = {
       end
       local TYPE, NONE = "another dir…", "none: its own dir"
       vim.list_extend(choices, { TYPE, NONE })
-      local function with_dir(dir)
-        if dir == nil then
-          return
-        end
-        dir = dir ~= "" and vim.fs.normalize(dir) or nil
-        if dir and vim.fn.isdirectory(dir) == 0 then
-          Snacks.notify.error(dir .. " is not a directory")
-          return
-        end
-        local function create(worktree)
-          -- Making a worktree fetches the default branch first, which can take a few seconds.
-          if worktree then
-            Snacks.notify.info("Making " .. name .. "'s worktree…", { title = "isovim", id = "isovim_worktree" })
-            vim.cmd.redraw()
-          end
-          local id, err = store.create(name, dir, worktree)
-          Snacks.notifier.hide("isovim_worktree")
-          if not id then
-            Snacks.notify.error("Could not make the worktree:\n" .. err)
-            return
-          end
-          -- A fresh worktree runs the repo's setup script (deps, .env) in a terminal of its own.
-          if worktree and require("isovim.scripts").start(id, "setup") then
-            Snacks.notify.info("Running " .. name .. "'s setup script", { title = "isovim" })
-          end
-          isovim.open(id)
-          isovim.refresh()
-        end
-        local worktree = require("isovim.worktree")
-        if not dir or not worktree.is_repo(dir) then
-          return create(false)
-        end
-        -- A repo: a worktree of its own by default, or the checkout itself.
-        local choices = {
-          "New worktree on " .. worktree.branch_for(name),
-          "Worktree of a branch or PR…",
-          "Work in " .. vim.fn.fnamemodify(dir, ":~") .. " itself",
-        }
-        vim.ui.select(choices, { prompt = name }, function(_, i)
-          if i == 2 then
-            vim.ui.input({ prompt = "Branch, or PR number or URL: " }, function(ref)
-              if ref and vim.trim(ref) ~= "" then
-                create(vim.trim(ref))
-              end
-            end)
-          elseif i then
-            create(i == 1)
-          end
-        end)
-      end
       vim.ui.select(choices, { prompt = "Project for " .. name }, function(choice)
         if choice == TYPE then
-          vim.ui.input({ prompt = "Project dir: ", completion = "dir" }, with_dir)
+          vim.ui.input({ prompt = "Project dir: ", completion = "dir" }, function(dir)
+            new_workspace(name, dir)
+          end)
         elseif choice == NONE then
-          with_dir("")
+          new_workspace(name, "")
         elseif choice then
-          with_dir(choice)
+          new_workspace(name, choice)
         end
       end)
     end)
+  end,
+  isovim_spawn = function(item)
+    if item and item.host then
+      return Snacks.notify.info(("That's on %s; spawn there"):format(item.host), { title = "isovim" })
+    end
+    M.spawn(item and item.ws or isovim.current)
+  end,
+  isovim_root_mode = function()
+    Snacks.notify.info("Root mode: not yet", { title = "isovim" })
   end,
   isovim_add_agent = function(item)
     if not item or not item.ws then

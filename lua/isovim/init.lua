@@ -18,7 +18,9 @@ M.show_prs = false -- every workspace lists its PRs instead of its agents
 M.show_ports = false -- rows show the ports their agents and terminals listen on
 M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
-M.recent = {} ---@type string[] workspace ids, most recently selected first (<leader>aw)
+M.recent = {} ---@type string[] workspace ids, most recently selected first
+M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib)
+M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
 M.inbox_collapsed = false -- the sidebar's Inbox shows only its title
 M.terminals_collapsed = false -- the sidebar's Terminals shows only its title
@@ -35,6 +37,7 @@ function M.remember(key, value)
     show_tasks = M.show_tasks,
     explorer_roots = M.explorer_roots,
     recent = M.recent,
+    recent_agents = M.recent_agents,
     expanded = M.expanded,
     inbox_collapsed = M.inbox_collapsed,
     terminals_collapsed = M.terminals_collapsed,
@@ -59,8 +62,26 @@ local function enter_dir(id)
   end
 end
 
--- Selecting a workspace scopes the buffer list to it and brings back its splits, keeping the
--- buffer just opened on screen; the sidebar's cursor follows.
+-- The scope a workspace's selection makes current: the scope of its buffer just opened (Root's for
+-- the root's chat), else the workspace's. A terminal keeps Terminals current only if it was.
+local function scope_for(id)
+  local buf = vim.api.nvim_get_current_buf()
+  scope.tag(buf, id, M.current_scope)
+  local of_buf = vim.b[buf].isovim_ws == id and vim.b[buf].isovim_scope or nil
+  if of_buf == scope.TERMINALS and M.current_scope ~= scope.TERMINALS then
+    of_buf = nil
+  end
+  return of_buf or (id and scope.of_workspace(id)) or scope.GENERAL
+end
+
+-- Lists only the scope's buffers (isovim.scope), leaving the splits as they are.
+function M.set_scope(name)
+  M.current_scope = name
+  scope.list(M.current, name)
+end
+
+-- Selecting a workspace scopes the buffer list to its scope (its repo, Root, General, Terminals) and
+-- brings back its splits, keeping the buffer just opened on screen; the sidebar's cursor follows.
 local function select(id)
   local switching = id ~= M.current
   if id then
@@ -73,7 +94,8 @@ local function select(id)
   -- The terminal's tab or window title says which workspace isovim is on.
   vim.o.title = true
   vim.o.titlestring = id and ("isovim · " .. store.name(id)) or "isovim"
-  scope.apply(id, is_sidebar)
+  M.current_scope = scope_for(id)
+  scope.apply(id, M.current_scope, is_sidebar)
   if switching and id then
     local buf = vim.api.nvim_get_current_buf()
     local want = vim.b[buf].isovim_ws == id and buf or nil
@@ -317,6 +339,10 @@ function M.open(ws, agent, win)
     map_chat_keys(buf)
   end
   status.mark_seen(ws, agent)
+  local key = ws .. "/" .. agent
+  M.recent_agents = vim.list_extend({ key }, vim.tbl_filter(function(other)
+    return other ~= key
+  end, vim.list_slice(M.recent_agents, 1, 50)))
   select(ws)
   -- The workspace's splits may have come back around it; the chat opened is the one to focus.
   local shown = vim.fn.bufwinid(buf)
@@ -511,6 +537,7 @@ function M.setup(opts)
   M.show_tasks = session.show_tasks or false
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
+  M.recent_agents = session.recent_agents or {}
   M.expanded = session.expanded or {}
   M.inbox_collapsed = session.inbox_collapsed or false
   M.terminals_collapsed = session.terminals_collapsed or false
@@ -522,40 +549,9 @@ function M.setup(opts)
   for _, lhs in ipairs({ "<leader>E", "<leader>fe", "<leader>fE" }) do
     vim.keymap.set("n", lhs, sidebar.files, { desc = "isovim: the workspace's files in the sidebar" })
   end
-  -- The sidebar's actions from anywhere, on the current workspace.
-  local function on_current(action)
-    return function()
-      if not M.current then
-        Snacks.notify.warn("No workspace selected")
-        return
-      end
-      sidebar.actions[action]({ ws = M.current, ws_name = store.name(M.current), kind = "workspace" })
-    end
-  end
-  for lhs, map in pairs({
-    ["<leader>at"] = { on_current("isovim_terminal"), "new terminal" },
-    ["<leader>aa"] = { on_current("isovim_add_agent"), "new agent" },
-    ["<leader>am"] = { on_current("isovim_move"), "move the workspace to another host" },
-    ["<leader>an"] = { sidebar.actions.isovim_add, "new workspace" },
-    ["<leader>aj"] = { M.next_needs_you, "jump to what needs you" },
-    ["<leader>ar"] = { M.run_script, "run the workspace's run script" },
-    ["<leader>aw"] = { M.switch_workspace, "switch workspace" },
-    ["<leader>ab"] = { M.last_workspace, "back to the last workspace" },
-    ["<leader>au"] = { M.unarchive, "unarchive a workspace" },
-    ["<leader>ad"] = { M.changes, "the workspace's changes since its base" },
-    ["<leader>af"] = { function()
-      M.find()
-    end, "find the agent that was on something, on any host" },
-    ["<leader>ao"] = { function()
-      M.open_port(M.current)
-    end, "open the workspace's dev server in the browser" },
-  }) do
-    vim.keymap.set("n", lhs, map[1], { desc = "isovim: " .. map[2] })
-  end
-
-  pcall(function()
-    require("which-key").add({ { "<leader>a", group = "isovim" } })
-  end)
+  -- LazyVim's <leader><leader>, <leader>ff, ... and the <leader>i group (isovim.keys). Set after
+  -- LazyVim's keys, so they replace them.
+  require("isovim.keys").setup()
   local group = vim.api.nvim_create_augroup("isovim", { clear = true })
   vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = require("isovim.meter").setup })
   vim.api.nvim_create_autocmd("BufEnter", {
@@ -565,11 +561,19 @@ function M.setup(opts)
       if ws then
         status.mark_seen(ws, vim.b[ev.buf].isovim_agent or "main")
       end
-      -- Reaching another workspace's buffer (e.g. with :b) selects that workspace.
-      scope.tag(ev.buf, M.current)
+      -- Reaching another workspace's buffer (e.g. with :b) selects that workspace; another scope's
+      -- (a file outside every repo, the root's chat) makes that scope current. A terminal is
+      -- visited without leaving the scope: Terminals becomes current only when picked.
+      scope.tag(ev.buf, M.current, M.current_scope)
       local tagged = vim.b[ev.buf].isovim_ws
+      local in_scope = vim.b[ev.buf].isovim_scope
       if tagged and tagged ~= "" and tagged ~= M.current then
         select(tagged)
+      elseif in_scope and in_scope ~= M.current_scope and in_scope ~= scope.TERMINALS then
+        M.set_scope(in_scope)
+        if ws then
+          sidebar.follow()
+        end
       elseif ws then
         sidebar.follow()
       end
@@ -700,7 +704,8 @@ function M.setup(opts)
   end
 
   enter_dir(M.current)
-  scope.apply(M.current, is_sidebar)
+  M.current_scope = M.current_scope or (M.current and scope.of_workspace(M.current)) or scope.GENERAL
+  scope.apply(M.current, M.current_scope, is_sidebar)
   notify_changes(true)
   -- Files agents edit reload in their buffers (autoread) as an agent's state moves and, while one
   -- works, every second; nvim alone only looks on focus and buffer events.

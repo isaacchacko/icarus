@@ -32,16 +32,18 @@ In the sidebar, `?` lists every key. The ones to start with:
 
 | key | does |
 |---|---|
-| `a` / `A` / `t` | new workspace / agent / terminal |
+| `s` / `t` | spawn a worker in the repo under the cursor / new terminal |
 | `Tab` | expand or collapse a workspace (all start collapsed) |
 | `Enter` | open the agent, PR or pin |
 | `d` | remove the agent or pin, or archive the workspace |
-| `P` / `H` / `L` / `T` | PRs, hidden agents, ports, tasks |
+| `P` / `H` / `L` | PRs, hidden agents, ports |
 | `E` / `W` | files / back to workspaces |
 | `<` / `>` | the previous / next host's workspaces |
-| `Ctrl-j` / `Ctrl-k` | between the Inbox, the workspaces and the footer |
+| `Ctrl-j` / `Ctrl-k` | between the Inbox, the workspaces, Terminals and the footer |
 | `<leader>e` | focus or close the sidebar |
 | `Ctrl-h` / `Ctrl-l` | between the sidebar and the chat |
+
+Anywhere, LazyVim's keys work on repos: `<leader><leader>` picks a repo (or Root, General, Terminals), `<leader>ff` / `<leader>/` find files in / grep the repo and its agents' transcripts, `<leader>,` lists the repo's buffers, `<leader>fr` recent agents (`<leader>fR` recent files). The `<leader>i` group reaches agents: `in` the next one that needs you, `ir` / `iR` / `iH` the repo's router / nearest root / host root, `iw` / `ia` / `ib` a worker in the repo / any agent / the previous one, `is` / `it` spawn / new terminal. The `<leader>a` keys from before still work for now and say which key replaced them.
 
 `iso help` lists the commands. For Tab completion of commands, agents, workspaces and hosts, add `source <(iso completion zsh)` to ~/.zshrc after compinit (bash: `eval "$(iso completion bash)"` in ~/.bashrc).
 

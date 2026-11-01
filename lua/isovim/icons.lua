@@ -16,6 +16,8 @@ M.map = {
   shell = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal
   command = { "\u{f018d}", "MiniIconsGrey" }, -- md-console
   script = { "\u{f06a9}", "Comment" }, -- md-robot: a pane a repo script started
+  root = { "\u{f01a5}", "Special" }, -- md-crown: Root, the host root's pseudo-repo
+  general = { "\u{f0ac}", "Directory" }, -- fa-globe: General, agents in no repo and files outside every repo
 }
 
 function M.setup()
