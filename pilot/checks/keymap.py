@@ -227,7 +227,12 @@ try:
     lua("require('isovim.root').raise(..., 'main', 'api?')", ws["api1"])
     lua("require('isovim.root').raise(..., 'main', 'web?')", ws["web2"])
     iso.wait(lambda: sum(r["status"] == "attention" for r in json.loads(iso.cli("ls", "--json"))) == 2, "two raised")
-    # Inboxes show only surfaces: a question in acme/web's.
+    # With no surface waiting, <leader>in opens a legacy agent that needs you.
+    open_agent(f"{ws['notes']}/main")
+    leader("i", "n")
+    iso.wait(lambda: shown() in (f"{ws['api1']}/main", f"{ws['web2']}/main"), "<leader>in: an agent that needs you")
+    check(True, "<leader>in opens an agent that needs you when no surface waits")
+    # Inboxes show only surfaces: a question in acme/web's, which <leader>in now opens first.
     web_iso = Path(iso.env["ISOVIM_WORK"]) / "acme" / "web" / "iso"
     web_iso.mkdir(parents=True, exist_ok=True)
     (web_iso / "q.surface").write_text(json.dumps({"type": "question", "question": "Merge web?", "options": [{"label": "yes"}]}))
@@ -235,8 +240,11 @@ try:
     iso.wait(lambda: any("Merge web?" in row for row in iso.sidebar()), "the question in web's Inbox")
     open_agent(f"{ws['notes']}/main")
     leader("i", "n")
-    iso.wait(lambda: shown() in (f"{ws['api1']}/main", f"{ws['web2']}/main"), "<leader>in: an agent that needs you")
-    check(True, "<leader>in opens what needs you")
+    iso.wait(lambda: "Merge web? ─" in iso.screen(), "<leader>in: the waiting question's picker")
+    check(True, "<leader>in opens the waiting surface first")
+    iso.keys("Escape")
+    iso.keys("Escape")
+    iso.wait(lambda: "Merge web? ─" not in iso.screen(), "the picker closed")
     open_agent(f"{ws['web1']}/main")
     leader("i", "i")
     iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "list", "the list focused")
