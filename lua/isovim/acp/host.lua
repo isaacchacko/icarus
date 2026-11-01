@@ -46,6 +46,7 @@ local imports = require("isovim.acp.imports")
 local log = require("isovim.acp.log")
 local sessions = require("isovim.acp.sessions")
 local asks_mod = require("isovim.acp.asks")
+local images = require("isovim.acp.images")
 local Client = require("isovim.acp.client")
 local auth = require("isovim.auth")
 
@@ -60,6 +61,7 @@ local M = {}
 ---@field message? string the message without its stamp, for its msg event
 ---@field publish? boolean whether to publish msg.<scope>.<id> (prompts from iso send/msg)
 ---@field via "iso"|"composer"|"spawn" where it came from: iso send/msg, the TUI's composer, iso spawn
+---@field images? isovim.acp.Image[] what it attaches, [Image #n] in its text for images[n]
 
 local S = {
   ws = nil, ---@type string
@@ -151,7 +153,7 @@ end
 
 local function queue_items()
   return vim.tbl_map(function(prompt)
-    return { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via }
+    return { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images }
   end, vim.tbl_filter(function(prompt)
     return not prompt.reload
   end, S.queue))
@@ -169,7 +171,7 @@ local function save_queue()
   for _, prompt in ipairs(S.queue) do
     if not prompt.reload then
       kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
-        message = prompt.message, via = prompt.via, role = prompt.role }
+        message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images }
     end
   end
   local path = queue_file(S.ws, S.agent)
@@ -377,7 +379,7 @@ deliver = function(prompt)
   local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
   snapshot = ok and snapshot or nil
   local entry = append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind,
-    stamp = prompt.stamp, via = prompt.via, role = prompt.role })
+    stamp = prompt.stamp, via = prompt.via, role = prompt.role, images = prompt.images })
   -- The role prompt a resumed session can't get any other way: said once it's in the journal.
   if prompt.via == "role" then
     local journaled = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
@@ -393,7 +395,8 @@ deliver = function(prompt)
   pcall(sessions.note, S.ws, S.agent, S.session, { title = (prompt.message or prompt.text):sub(1, 120) })
   set_state("working")
   out(("\n❯ %s%s\n"):format(prompt.from and ("(" .. prompt.from .. ") ") or "", prompt.text))
-  S.client:request("session/prompt", { sessionId = S.session, prompt = { { type = "text", text = prompt.text } } },
+  local takes_images = type(S.caps.promptCapabilities) == "table" and S.caps.promptCapabilities.image == true
+  S.client:request("session/prompt", { sessionId = S.session, prompt = images.blocks(prompt.text, prompt.images, takes_images) },
     function(result, err)
       turn_ended(prompt, result, err)
     end)
@@ -411,7 +414,8 @@ local function submit(prompt)
   if queued then
     S.queue[#S.queue + 1] = prompt
     save_queue()
-    append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, position = #S.queue })
+    append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images,
+      position = #S.queue })
     out(("\n(queued %d) %s\n"):format(#S.queue, prompt.text))
     return { id = prompt.id, queued = true, position = #S.queue }
   end
@@ -430,12 +434,14 @@ end
 -- What the socket answers: iso's CLI and the TUI call these (isovim.acp.call).
 local CALLS = {}
 
----@param payload {text: string, from?: string, kind?: string, stamp?: string, message?: string, publish?: boolean}
+-- Each image gets a chip in the text if it has none, so [Image #n] is always there for images[n].
+---@param payload {text: string, from?: string, kind?: string, stamp?: string, message?: string, publish?: boolean, images?: isovim.acp.Image[]}
 function CALLS.prompt(payload)
   if type(payload.text) ~= "string" or vim.trim(payload.text) == "" then
     error("a prompt needs text")
   end
-  return submit({ text = payload.text, from = payload.from, kind = payload.kind, stamp = payload.stamp,
+  local text, attached = images.renumber(payload.text, payload.images or {}, "append")
+  return submit({ text = text, from = payload.from, kind = payload.kind, stamp = payload.stamp, images = attached[1] and attached or nil,
     message = payload.message, publish = payload.publish, via = payload.publish and "iso" or "composer" })
 end
 
@@ -476,9 +482,10 @@ function CALLS.queue()
 end
 
 -- Replaces the queue with items, in their order: one with the id of a queued prompt keeps its
--- sender and takes the new text; one without an id is a new prompt of yours. A queued prompt left
--- out is dropped, unless known says which prompts the editor showed and it isn't one of them. Ids
--- no longer queued (sent meanwhile) are left out and reported as gone.
+-- sender and takes the new text, and its images whose chips the text still has; one without an id
+-- is a new prompt of yours. A queued prompt left out is dropped, unless known says which prompts
+-- the editor showed and it isn't one of them. Ids no longer queued (sent meanwhile) are left out
+-- and reported as gone.
 ---@param payload {items: {id?: string, text: string}[], known?: string[]}
 function CALLS.queue_set(payload)
   local by_id = {}
@@ -497,6 +504,10 @@ function CALLS.queue_set(payload)
         if text ~= prompt.text then
           -- Edited: a message's stamp no longer matches what it says, so it's yours now.
           prompt.text, prompt.from, prompt.kind, prompt.stamp, prompt.via = text, nil, nil, nil, "composer"
+          if prompt.images then
+            prompt.text, prompt.images = images.renumber(text, prompt.images)
+            prompt.images = prompt.images[1] and prompt.images or nil
+          end
         end
       else
         prompt = { id = next_id(), text = text, via = "composer" }

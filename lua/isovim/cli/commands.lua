@@ -266,17 +266,21 @@ M.list = {
     audience = "user",
     role_form = "msg",
     args = { "<address>", "<text>..." },
+    flags = { ["--image"] = "<path>" },
     help = [=[
-       iso send <agent> <text...>    type text into it and submit (starts it if needed); from
+       iso send <agent> [--image <file>]... <text...>
+                                     type text into it and submit (starts it if needed); from
                                      an agent it starts with isovim's stamp,
-                                     "[from <host>:<ws>/<agent> · m<id>]", to reply to]=],
+                                     "[from <host>:<ws>/<agent> · m<id>]", to reply to; each
+                                     --image attaches a png, jpeg, gif or webp as [Image #n]]=],
   },
   { name = "msg", module = "messaging",
     audience = "user",
     args = { "parent|children|<address>", "<text>..." },
+    flags = { ["--image"] = "<path>" },
     summary = "iso send to its parent, its children, or any agent",
     help = [=[
-       iso msg <parent|children|agent> <text...>
+       iso msg <parent|children|agent> [--image <file>]... <text...>
                                      iso send to the agent that started this one, to each agent
                                      it started, or to any agent]=],
   },

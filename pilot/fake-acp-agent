@@ -37,7 +37,8 @@ process in a process group of its own, still running after the turn.
 
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
-logged as an overlap: the client is meant to queue them."""
+logged as an overlap: the client is meant to queue them. It takes image blocks in a prompt
+(promptCapabilities.image), as the adapter does, unless $FAKE_ACP_NO_IMAGE is set."""
 
 import json
 import os
@@ -401,7 +402,7 @@ def handle(frame):
             "protocolVersion": 1,
             "agentCapabilities": {"loadSession": True,
                                   "sessionCapabilities": {"resume": {}, "fork": {}, "close": {}, "list": {}},
-                                  "promptCapabilities": {"image": False}},
+                                  "promptCapabilities": {"image": not os.environ.get("FAKE_ACP_NO_IMAGE")}},
             "agentInfo": {"name": "fake-acp", "version": "1"},
             "authMethods": [],
         }})

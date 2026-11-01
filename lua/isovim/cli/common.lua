@@ -217,16 +217,20 @@ end
 
 -- Gives the agent text as a prompt and publishes msg.<scope>.<id> with msg ({from, kind, id, text}):
 -- an ACP agent's supervisor takes it over its socket, queued while the agent works, and publishes
--- the event itself; any other agent has it typed into its pane.
+-- the event itself; any other agent has it typed into its pane, its images named by their paths.
+---@param images? isovim.acp.Image[]
 ---@return table? result an ACP agent's answer: {id, queued, position?}
-local function prompt(ws, agent, text, msg)
+local function prompt(ws, agent, text, msg, images)
   if agent.acp then
     local ok, result = require("isovim.acp").call(ws.id, agent.id, "prompt",
-      { text = text, from = msg.from, kind = msg.kind, stamp = msg.id, message = msg.text, publish = true })
+      { text = text, from = msg.from, kind = msg.kind, stamp = msg.id, message = msg.text, publish = true, images = images })
     if not ok then
       fail("could not reach " .. agent.name .. ": " .. tostring(result))
     end
     return result
+  end
+  if images and #images > 0 then
+    text = require("isovim.acp.images").blocks(text, images, false)[1].text
   end
   local result = panes.send(ws.id, agent.id, text)
   if result.code ~= 0 then

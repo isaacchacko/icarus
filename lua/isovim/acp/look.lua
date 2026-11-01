@@ -90,6 +90,7 @@ function M.groups(background)
     IsovimAcpNotice = { fg = c.dim },
     IsovimAcpDenied = { fg = c.error },
     IsovimAcpQueued = { fg = c.dim },
+    IsovimAcpImage = { fg = c.code, bold = true },
     IsovimAcpSpinner = { fg = c.accent },
     IsovimAcpSpinnerVerb = { fg = c.accent },
     IsovimAcpSpinnerNote = { fg = c.dim },

@@ -20,13 +20,17 @@ local commands = {}
 -- receiver can trust the stamp and answer to the address in it.
 -- Returns once a hooked agent has taken the prompt, so a following `iso wait` waits for the answer.
 ---@param kind "from"|"ask"
-local function deliver(query, text, kind)
+---@param images? isovim.acp.Image[] files on this host, so they don't go to another
+local function deliver(query, text, kind, images)
   local root = require("isovim.root")
   local from_ws, from_agent = root.caller()
   local from = from_ws and root.address(from_ws, from_agent)
   local host
   host, query = split_host(query)
   if host then
+    if images and #images > 0 then
+      fail("an image goes only to an agent on this host")
+    end
     if from then
       text = root.stamp(kind, from, host .. ":" .. query, text) .. " " .. text
     end
@@ -39,7 +43,7 @@ local function deliver(query, text, kind)
     text = stamp .. " " .. text
   end
   ensure_running(ws, agent)
-  local taken = c.prompt(ws, agent, text, { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message })
+  local taken = c.prompt(ws, agent, text, { from = from, kind = kind, id = stamp and stamp:match("(m%x+)%]$"), text = message }, images)
   -- An ACP agent has it once its supervisor answers: sent, or queued behind the running turn.
   if taken and taken.queued then
     io.stderr:write(("iso: %s is working; the message is queued (%d) for when its turn ends\n"):format(agent.name, taken.position))
@@ -50,24 +54,43 @@ local function deliver(query, text, kind)
   end
 end
 
+-- Each --image <file> attaches an image, as [Image #n] in the text.
+---@return isovim.acp.Image[]
+local function take_images(args)
+  local found = {}
+  local path = c.option(args, "--image")
+  while path do
+    path = vim.fn.fnamemodify(path, ":p")
+    local mime = require("isovim.acp.images").mime(path)
+    if not mime or vim.fn.filereadable(path) == 0 then
+      fail(path .. " is not a png, jpeg, gif or webp file")
+    end
+    found[#found + 1] = { path = path, mimeType = mime }
+    path = c.option(args, "--image")
+  end
+  return found
+end
+
 function commands.send(args)
+  local images = take_images(args)
   local query = table.remove(args, 1)
   local text = table.concat(args, " ")
   if not query or text == "" then
-    fail("usage: iso send <agent> <text...>")
+    fail("usage: iso send <agent> [--image <file>]... <text...>")
   end
-  deliver(query, text, "from")
+  deliver(query, text, "from", images)
 end
 
 -- iso send, with the agent's parent or children as the target; any other target is an agent.
 function commands.msg(args)
+  local images = take_images(args)
   local target = table.remove(args, 1)
   local text = table.concat(args, " ")
   if not target or text == "" then
-    fail("usage: iso msg <parent|children|agent> <text...>")
+    fail("usage: iso msg <parent|children|agent> [--image <file>]... <text...>")
   end
   if target ~= "parent" and target ~= "children" then
-    deliver(target, text, "from")
+    deliver(target, text, "from", images)
     return
   end
   local ws, agent = require("isovim.root").caller()
@@ -80,7 +103,7 @@ function commands.msg(args)
   end
   for _, address in ipairs(to) do
     out(address)
-    deliver(address, text, "from")
+    deliver(address, text, "from", images)
   end
 end
 

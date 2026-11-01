@@ -42,7 +42,8 @@
 -- column, chat → queue (while it shows) → composer, in normal mode in the chat and the queue and in
 -- both modes in the composer; <C-j> in the composer does nothing, as nothing is below it.
 -- <C-h> goes to the sidebar from all three, in insert mode too (<BS> is the backspace; <C-l> there
--- comes back typing). <leader>iq goes to the queue, opening it even when empty.
+-- comes back typing). <C-v> pastes an image (isovim.acp.images). <leader>iq goes to the queue,
+-- opening it even when empty.
 --
 -- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
 -- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
@@ -53,6 +54,7 @@ local acp = require("isovim.acp")
 local journal = require("isovim.acp.journal")
 local look = require("isovim.acp.look")
 local queue = require("isovim.acp.queue")
+local images = require("isovim.acp.images")
 local store = require("isovim.store")
 
 local M = {}
@@ -108,6 +110,7 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@field tools table<string, isovim.acp.ToolCall>
 ---@field queue {id: string, text: string}[] prompts waiting, as the queue window shows them
 ---@field history string[] your prompts, oldest first, for <Up>/<Down> in the composer
+---@field history_images table<string, isovim.acp.Image[]> the images of those that had any, by text
 ---@field recall? integer which of them the composer shows
 ---@field busy boolean
 ---@field since? number when the running turn started
@@ -509,6 +512,15 @@ local function prompt_lines(text)
   return lines
 end
 
+-- Each [Image #n] in lines (from row on) drawn as a chip.
+local function chips(buf, row, lines)
+  for i, line in ipairs(lines) do
+    for from, to in line:gmatch("()%[Image #%d+%]()") do
+      span(buf, row + i - 1, from - 1, to - 1, "IsovimAcpImage", 210)
+    end
+  end
+end
+
 -- Boxes: a permission or a question waiting on you, drawn as Claude draws them, and replaced by
 -- what you decided once you have.
 
@@ -791,9 +803,13 @@ function RENDER.prompt(chat, entry)
   for i = 2, #lines do
     span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
   end
+  chips(chat.buf, row, lines)
   mark_message(chat, row, mine)
   if mine and entry.text and chat.history[#chat.history] ~= entry.text then
     chat.history[#chat.history + 1] = entry.text
+  end
+  if mine and entry.images then
+    chat.history_images[entry.text] = entry.images
   end
 end
 
@@ -1026,6 +1042,7 @@ end
 
 local function reset(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.fresh = nil, {}, {}, {}, 0, true
+  chat.history_images = {}
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
   chat.busy, chat.handover = false, false
   if vim.api.nvim_buf_is_valid(chat.buf) then
@@ -1346,7 +1363,9 @@ function M.submit(composer)
     end
     return
   end
-  local ok, result = acp.call(chat.ws, chat.agent, "prompt", { text = text })
+  local attached
+  text, attached = images.collect(composer, text)
+  local ok, result = acp.call(chat.ws, chat.agent, "prompt", { text = text, images = attached })
   if not ok then
     vim.notify("isovim: could not send to " .. chat.agent .. ": " .. tostring(result), vim.log.levels.ERROR)
     return
@@ -1370,6 +1389,7 @@ local function recall(chat, dir)
   chat.recall = index <= #chat.history and index or nil
   local shown = chat.recall and vim.split(chat.history[chat.recall], "\n", { plain = true }) or { "" }
   vim.api.nvim_buf_set_lines(chat.composer, 0, -1, false, shown)
+  images.set(chat.composer, chat.recall and chat.history_images[chat.history[chat.recall]])
   vim.api.nvim_win_set_cursor(0, { #shown, #shown[#shown] })
   return true
 end
@@ -1547,7 +1567,7 @@ local function composer_hint(chat)
     return "  <CR> queues it · <C-c> interrupts · " .. (queue.window(chat) and up or "<leader>iq the queue · " .. up)
   end
   -- Where to go before what to type, so a narrow window cuts the latter.
-  return "  <CR> send · <S-CR> new line · " .. up .. " · <Up> earlier prompts · /new /resume /fork"
+  return "  <CR> send · <S-CR> new line · <C-v> image · " .. up .. " · <Up> earlier prompts · /new /resume /fork"
 end
 
 local function decorate_composer(chat)
@@ -1614,7 +1634,9 @@ local function make(ws, agent, old)
   -- No completion menu, whose keys would take <Up>, <Down> and <CR> (blink.cmp reads this).
   vim.b[composer].completion = false
 
-  local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, seq = 0,
+  images.setup(composer, store.path(ws) .. "/images")
+
+  local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, history_images = {}, seq = 0,
     fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
     kind = spec.kind or "claude" }
   if old then

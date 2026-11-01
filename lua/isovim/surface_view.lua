@@ -10,7 +10,8 @@
 -- (a1) dimmed. The input box is a buffer like the chat's composer, shown under the view and closed
 -- with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
 -- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
--- does, and starts the router if it isn't running.
+-- does, and starts the router if it isn't running. It takes images as the chat's composer does
+-- (isovim.acp.images), sent with iso send --image.
 --
 -- A question: who asked and what, its options numbered as the chat's question box draws them
 -- (isovim.acp.look's palette), answered in the buffer: <CR> on an option or its number picks it, or
@@ -22,6 +23,7 @@
 -- Each follows the file: each rescan that changes the surface (isovim.surfaces.watch) redraws it, a
 -- question answered elsewhere shows its answer, and one that's gone says so.
 local surfaces = require("isovim.surfaces")
+local images = require("isovim.acp.images")
 local store = require("isovim.store")
 local look = require("isovim.acp.look")
 
@@ -208,7 +210,7 @@ local function winbar(view)
     return view.entry.multi and " ↳ your own answer, with what's ticked · <CR> sends" or " ↳ your own answer · <CR> sends"
   end
   local reader = M.reader(view.repo)
-  return reader and (" ↳ to %s · <CR> sends"):format(reader:gsub("%%", "%%%%"))
+  return reader and (" ↳ to %s · <CR> sends · <C-v> image"):format(reader:gsub("%%", "%%%%"))
     or (" no router in %s to send to"):format(view.repo)
 end
 
@@ -494,6 +496,9 @@ end
 
 -- The keys of the view and its input box, and the box going with the view.
 local function bind(view)
+  if view.kind ~= "question" then
+    images.setup(view.input, surfaces.dir(view.repo) .. "/images")
+  end
   local function map(modes, lhs, fn, desc)
     vim.keymap.set(modes, lhs, fn, { buffer = view.input, nowait = true, desc = "isovim: " .. desc })
   end
@@ -626,11 +631,17 @@ function M.submit(view)
   if not reader then
     return vim.notify(("isovim: %s has no router to send to"):format(view.repo), vim.log.levels.WARN)
   end
-  local message = ("[on the %s surface %s] %s"):format(view.repo, view.name, text)
+  local attached
+  text, attached = images.collect(view.input, text)
+  local cmd = { require("isovim.panes").bin, "send", reader, ("[on the %s surface %s] %s"):format(view.repo, view.name, text) }
+  for _, image in ipairs(attached) do
+    vim.list_extend(cmd, { "--image", image.path })
+  end
   vim.api.nvim_buf_set_lines(view.input, 0, -1, false, { "" })
-  vim.system({ require("isovim.panes").bin, "send", reader, message }, { text = true }, vim.schedule_wrap(function(result)
+  vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
     if result.code ~= 0 then
       vim.api.nvim_buf_set_lines(view.input, 0, -1, false, vim.split(text, "\n", { plain = true }))
+      images.set(view.input, attached)
       vim.notify("isovim: could not send to " .. reader .. ": " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
     end
   end))

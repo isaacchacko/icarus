@@ -34,6 +34,7 @@ gets. It's a personal tool, not built for teams.
       journal/aN.jsonl           each agent's conversation as isovim events
       transcripts/               plain-text transcripts, for grep
       *.surface, *.md            surfaces; tasks.md is the Task Board
+      images/                    images pasted or dropped into an input box
     aN/w/                        an agent's worktree, made the first time it needs one
   root/  general/                the pseudo-repos, same shape
 ```
@@ -69,6 +70,13 @@ lifetimes, so agents outlive the TUI).
 - The queue shows by itself while prompts wait, between the chat and the input box (see The chat).
   It can be edited, reordered, cleared or "sent now" (which cancels the running turn).
 - A prompt that queues while you edit the queue isn't lost when you write it: it goes after yours.
+- A prompt can carry images, as Claude Code's does: each is a file under the repo's `iso/images/`,
+  shown in the text as `[Image #n]`, and travels by path (the queue and the journal keep paths, not
+  bytes). The supervisor reads them into ACP image blocks (base64 and mimeType) when the prompt goes,
+  if the adapter's `promptCapabilities.image` says it takes them (claude-agent-acp and codex-acp both
+  do; a Codex model without image input refuses the prompt), else it names the files in the text.
+  Deleting a chip, in the input box or in the queue's buffer, drops its image. `iso send|msg --image
+  <file>` attaches one.
 - Cancel is a protocol call.
 
 **Permissions.**
@@ -109,7 +117,12 @@ Everything drawn is a pure function of the journal, so a replay draws what live 
 
 The input box is another buffer under it, with full vim editing: Claude's spinner line above it
 while the agent works (its verb, the time, tokens, how to interrupt), a rule above and below it,
-`❯` before it and a hint under it.
+`❯` before it and a hint under it. It takes images as Claude's prompt does: `<C-v>` in insert mode
+pastes the clipboard's (pngpaste or osascript on macOS, wl-paste or xclip on Linux), and with no
+image there is vim's own `<C-v>`, so a literal insert still works; a path to an image pasted or
+dropped in (quoted, backslash-escaped or a `file://` URL), or typed and then sent, attaches that
+file, copied under `iso/images/` since a dragged screenshot is a temp file. Each shows as an
+`[Image #n]` chip, in the input box and in the chat. A surface's input box takes them the same way.
 
 While prompts wait, the queue shows between the two, in a window of its own: one prompt a line, as
 tall as its lines up to six, titled `queued · N`. It opens as the first prompt queues and closes when
@@ -155,7 +168,7 @@ them, and writes a `*.surface.error` beside any that's broken or whose target is
 
 | type | made by | shown as |
 |---|---|---|
-| markdown | the router writes `name.md` with frontmatter (`name`, `icon`, `color`, `consumable`) | rendered markdown and an input box; the router rewrites it in place |
+| markdown | the router writes `name.md` with frontmatter (`name`, `icon`, `color`, `consumable`) | rendered markdown and an input box (it takes images, as the chat's does); the router rewrites it in place |
 | question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
 | file / folder | `iso router surface file\|folder <path>` | opens beside the chat |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
@@ -297,6 +310,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 **In the input box**
 - `<CR>` sends; `<S-CR>` (or `<M-CR>`, for a terminal that can't send `<S-CR>`) adds a newline;
   `<Up>` / `<Down>` browse history when it's empty.
+- `<C-v>` pastes the clipboard's image (vim's own `<C-v>` when there's none).
 - `<Esc>` drops to normal mode; `<C-k>` goes up to the queue while it shows, else the chat, in either
   mode; `<C-j>` does nothing, as nothing is below it.
 
