@@ -102,9 +102,12 @@ try:
     a0_screen = iso.wait(lambda: (s := screen(iso, "iso2-acme+app+a0")) and "isovim verified" in s and s, "stamp verified")
     assert "[from pilothost:acme/app/a1 · m" in a0_screen, a0_screen
 
-    # Addresses: a repo key alone means its first agent; a host prefix naming this host is here.
-    assert iso.cli("status", "acme/app") == iso.cli("status", boss)
-    assert iso.cli("status", "pilothost:acme/app/a1") == iso.cli("status", kid)
+    # Addresses: a repo key alone means its first agent; a host prefix naming this host is here. Each
+    # pair of reads is of a status that can still move between them (a0's turn on the message, the
+    # kid's own turn ending, the open chat marking a0 seen), so the two are read until they agree.
+    for alias, address in (("acme/app", boss), ("pilothost:acme/app/a1", kid)):
+        iso.cli("wait", alias, "--timeout", "20")
+        iso.wait(lambda: iso.cli("status", alias) == iso.cli("status", address), f"{alias} read as {address}")
 
     # A restart resumes its conversation by session id: from the run dir, else from the record.
     claude_dir = iso.tmp / "claude"
