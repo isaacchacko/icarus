@@ -98,7 +98,7 @@ class Iso:
             except Exception:
                 pass
             self.nvim = None
-        subprocess.run(["tmux", "-L", self.ui, "kill-server"], capture_output=True)
+        self.kill_tmux(self.ui)
         lock = Path(self.env["ISOVIM_HOME"]) / "isovim.lock"
 
         def gone():
@@ -116,17 +116,34 @@ class Iso:
                 self.nvim.close()
             except Exception:
                 pass
-        # kill-server can leave the socket file behind; hundreds of them piled up in /tmp.
-        sockets = Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}"
         for name in (self.ui, self.env["ISOVIM_TMUX_SOCKET"]):
-            subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
-            (sockets / name).unlink(missing_ok=True)
+            self.kill_tmux(name)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def kill_tmux(name, timeout=10):
+        """Kills a tmux server and waits for its process to end: kill-server returns while the server
+        is still going down, and a client started then reaches the dying server and fails ("server
+        exited unexpectedly"). kill-server can leave the socket file behind; hundreds piled up in /tmp."""
+        pid = subprocess.run(["tmux", "-L", name, "display-message", "-p", "#{pid}"], capture_output=True, text=True).stdout.strip()
+        subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
+        deadline = time.time() + timeout
+        while pid.isdigit() and time.time() < deadline:
+            try:
+                os.kill(int(pid), 0)
+            except OSError:
+                break
+            time.sleep(0.05)
+        sockets = Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}"
+        (sockets / name).unlink(missing_ok=True)
 
     # driving
 
     def _tmux_ui(self, *args):
-        return subprocess.run(["tmux", "-L", self.ui, *args], env=self.env, capture_output=True, text=True, check=True)
+        result = subprocess.run(["tmux", "-L", self.ui, *args], env=self.env, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise AssertionError(f"tmux {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()}")
+        return result
 
     def keys(self, *keys):
         """tmux key names: "Enter", "Escape", "C-q", "a"."""
@@ -165,7 +182,7 @@ class Iso:
         """The TUI's screen; a check that hasn't started it (or whose TUI quit) gets a note instead."""
         try:
             return self._tmux_ui("capture-pane", "-p", "-t", "=0:").stdout
-        except subprocess.CalledProcessError:
+        except AssertionError:
             return "(no TUI)"
 
     def screenshot(self, label):

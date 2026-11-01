@@ -36,9 +36,10 @@ def open_workspace(iso, name):
 
 
 def restart(iso):
-    iso.nvim.close()
-    for name in (iso.ui, iso.env["ISOVIM_TMUX_SOCKET"]):
-        subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
+    """Both tmux servers down and the TUI gone before it starts again, as a new server's first client
+    can otherwise reach the old one on its way out."""
+    iso.close_tui()
+    iso.kill_tmux(iso.env["ISOVIM_TMUX_SOCKET"])
     Path(iso.env["ISOVIM_SOCK"]).unlink(missing_ok=True)
     iso.start()
 
