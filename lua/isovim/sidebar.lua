@@ -460,7 +460,9 @@ local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "
 -- filetype), so the column runs the screen's full height: the style meter, then the badges at the
 -- right. A statusline string; width: the cells it has. Short of room, the badges close up, then
 -- the meter's phrase is cut.
-function M.title(width)
+-- The tab line's title over the sidebar: the style meter and the toggles' badges, colored. Drawn
+-- through M.offset_text, since bufferline cuts text by its raw length, highlight codes and all.
+function M.title_colored(width)
   local on = {}
   for _, toggle in ipairs(TOGGLES) do
     if isovim[toggle[1]] then
@@ -487,6 +489,20 @@ function M.title(width)
     line[#line + 1] = "%#" .. chunk[2] .. "#" .. chunk[1]:gsub("%%", "%%%%")
   end
   return table.concat(line) .. "%#Title#" .. (" "):rep(width - used - #badges) .. badges
+end
+
+-- The same title as plain text, for a tab line set up before M.offset_text existed.
+function M.title(width)
+  return (M.title_colored(width):gsub("%%#[^#]*#", ""):gsub("%%%%", "%%"))
+end
+
+-- bufferline's offset text: a statusline expression whose source is padded to the width it draws.
+_G.isovim_title = function(width)
+  return require("isovim.sidebar").title_colored(width)
+end
+function M.offset_text(width)
+  local call = ("%%{%%v:lua.isovim_title(%d)"):format(width)
+  return call .. (" "):rep(width - #call - 2) .. "%}"
 end
 
 -- The Inbox: what waits on you on every host, under a title with the count. Collapsed, only the title.
