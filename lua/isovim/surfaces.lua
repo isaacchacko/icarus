@@ -1,0 +1,1007 @@
+-- Surfaces: the files in a repo's iso/ (~/iso/<owner>/<repo>/iso/, _/iso/ for no repo) that show the
+-- user something, written only by the repo's router. Only the top level of iso/ counts, so
+-- agents/, journal/ and transcripts/ never do:
+--   tasks.md        the Task Board: headings todo, doing, waiting, blocked, done (any level, any
+--                   case), one task a line under them ("- ", "* " and "[ ] " are dropped)
+--   <name>.md       a markdown surface, every other *.md. Optional YAML frontmatter, plain
+--                   key: value lines between --- lines: name (the row's title; else the file's),
+--                   icon (up to two cells), color (a palette name or #rrggbb), consumable (true:
+--                   gone from the Inbox once opened, until the router rewrites it)
+--   <name>.surface  JSON with a type, made by iso router surface:
+--                   question  {question, options: [{label, description?}], multi?, other?, created,
+--                             answer?: {labels, other?, by, at}}: answered with iso answer or
+--                             M.answer, then removed when its asker collects the answer
+--                   file      {path}, folder {path}: opens it; its target missing is an error
+--                   chat      {agent}: an agent's chat to look at; removed once opened (M.consume)
+-- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
+-- <file>.surface.error beside it (foo.surface's is foo.surface.error) saying why, rewritten as
+-- the reason changes and deleted once it's fixed or gone.
+--
+-- M.read parses a repo's surfaces and changes nothing. M.scan does that and reconciles: it
+-- writes the error files and publishes surface.<repo>.<name>.created|changed|removed against what
+-- the last scan saw (run/<repo>/surfaces.json), so whoever scans first, a CLI command or the
+-- TUI's watcher (M.watch), publishes each change once. answered and consumed come from M.answer
+-- and M.consume.
+--
+-- For the sidebar: M.watch(on_change) once at startup (on_change(repo, entries) after each
+-- rescan that changed something), M.repos() for the repos that have an iso/, M.list(repo) for an
+-- Inbox's rows (isovim.Surface below, sorted by file name; needs_you marks what waits on the user),
+-- M.open(entry) on Enter (consumes a chat or consumable markdown, answers a question with a
+-- picker), M.answer(entry, {labels, other?} or words) and M.consume(entry) directly.
+local store = require("isovim.store")
+local events = require("isovim.events")
+
+local M = {}
+
+M.statuses = { "todo", "doing", "waiting", "blocked", "done" }
+local STATUS = {}
+for _, status in ipairs(M.statuses) do
+  STATUS[status] = true
+end
+
+---@class isovim.Surface
+---@field repo string the repo key it's in
+---@field name string its file's stem: the topic part, and what iso answer takes
+---@field type "markdown"|"tasks"|"question"|"file"|"folder"|"chat"|"broken"
+---@field title string what its row says
+---@field file string the surface's own file
+---@field created number when it was first seen (or made), epoch seconds
+---@field needs_you boolean waiting on the user: a pending question, a chat, an unopened consumable
+---@field error? string why it's broken, as its error_file says
+---@field error_file string where that goes
+---@field icon? string markdown and tasks: from the frontmatter
+---@field color? string
+---@field consumable? boolean
+---@field consumed? boolean consumable and opened since it last changed
+---@field body? string markdown and tasks: the text after the frontmatter
+---@field tasks? {status: string, text: string, line: integer}[] tasks
+---@field counts? table<string, integer> tasks: how many under each heading
+---@field question? string question
+---@field options? {label: string, description?: string}[]
+---@field multi? boolean
+---@field other? boolean
+---@field answer? {labels: string[], other?: string, by: string, at: number}
+---@field path? string file, folder: the target
+---@field exists? boolean
+---@field agent? string chat: the agent's address
+
+-- A repo's iso/.
+function M.dir(repo)
+  return store.path(repo)
+end
+
+-- Where a broken surface's reason goes.
+function M.error_file(file)
+  return file:match("%.surface$") and file .. ".error" or file .. ".surface.error"
+end
+
+local function read_file(path)
+  local file = io.open(path, "rb")
+  if not file then
+    return nil
+  end
+  local text = file:read("*a")
+  file:close()
+  return text
+end
+
+-- Written to a hidden temp file and renamed over, so no reader (or watcher) sees half of it.
+local function write_file(path, text)
+  local tmp = ("%s/.%s.%d.tmp"):format(vim.fs.dirname(path), vim.fs.basename(path), vim.uv.os_getpid())
+  local file = assert(io.open(tmp, "wb"))
+  file:write(text)
+  file:close()
+  assert(vim.uv.fs_rename(tmp, path))
+end
+
+local function write_json(path, value)
+  write_file(path, vim.json.encode(value) .. "\n")
+end
+
+-- The repo keys with an iso/ under the work root; nothing below one is looked in.
+---@return string[]
+function M.repos()
+  local found = {}
+  local function walk(dir, key, depth)
+    if key and store.valid_key(key) and vim.fn.isdirectory(dir .. "/iso") == 1 then
+      found[#found + 1] = key
+      return
+    end
+    if depth == 4 then
+      return
+    end
+    for name, kind in vim.fs.dir(dir) do
+      if kind == "directory" and not vim.startswith(name, ".") then
+        walk(dir .. "/" .. name, key and key .. "/" .. name or name, depth + 1)
+      end
+    end
+  end
+  walk(store.work, nil, 0)
+  table.sort(found)
+  return found
+end
+
+-- frontmatter
+
+local function scalar(value)
+  local quoted = value:match('^"(.*)"$') or value:match("^'(.*)'$")
+  if quoted then
+    return quoted
+  end
+  value = value:gsub("%s+#.*$", "")
+  local lower = value:lower()
+  if lower == "true" or lower == "yes" then
+    return true
+  elseif lower == "false" or lower == "no" then
+    return false
+  end
+  return value
+end
+
+-- The fields between a first line of --- and the next ---, the text after, and the line the text
+-- starts on; or nil and why.
+---@return table? fields, string? body, integer|string start_or_error
+local function frontmatter(text)
+  local lines = vim.split(text, "\n", { plain = true })
+  if not (lines[1] or ""):match("^%-%-%-%s*\r?$") then
+    return {}, text, 1
+  end
+  local fields = {}
+  for i = 2, #lines do
+    local line = lines[i]:gsub("\r$", "")
+    if line:match("^%-%-%-%s*$") then
+      return fields, table.concat(vim.list_slice(lines, i + 1), "\n"), i + 1
+    elseif not line:match("^%s*$") and not line:match("^%s*#") then
+      local key, value = line:match("^([%w_-]+):%s*(.-)%s*$")
+      if not key then
+        return nil, nil, ("line %d of the frontmatter isn't key: value: %s"):format(i, line)
+      end
+      fields[key] = scalar(value)
+    end
+  end
+  return nil, nil, "the frontmatter opened by --- on line 1 is never closed by a --- line"
+end
+
+-- The frontmatter fields a markdown surface takes, onto the entry; nil, or what's wrong.
+local function apply_fields(entry, fields)
+  if fields.name ~= nil then
+    if type(fields.name) ~= "string" or fields.name == "" then
+      return "name is the row's title, a string"
+    end
+    entry.title = fields.name
+  end
+  if fields.icon ~= nil then
+    if type(fields.icon) ~= "string" or vim.fn.strdisplaywidth(fields.icon) > 2 then
+      return "icon is a string up to two cells wide"
+    end
+    entry.icon = fields.icon
+  end
+  if fields.color ~= nil then
+    local palette = require("isovim.repos").palette
+    local color = type(fields.color) == "string" and fields.color:lower() or ""
+    if not (palette[color] or color:match("^#%x%x%x%x%x%x$")) then
+      local names = vim.tbl_keys(palette)
+      table.sort(names)
+      return ("color is #rrggbb or one of %s, not %s"):format(table.concat(names, ", "), tostring(fields.color))
+    end
+    entry.color = color
+  end
+  if fields.consumable ~= nil then
+    if type(fields.consumable) ~= "boolean" then
+      return "consumable is true or false"
+    end
+    entry.consumable = fields.consumable
+  end
+end
+
+-- tasks.md's tasks, one a line under its status heading; nil and why.
+local function task_board(body, start)
+  local tasks, counts = {}, {}
+  for _, status in ipairs(M.statuses) do
+    counts[status] = 0
+  end
+  local section, heading
+  local lines = vim.split(body, "\n", { plain = true })
+  for i, raw in ipairs(lines) do
+    local line = raw:gsub("\r$", "")
+    local n = start + i - 1
+    local title = line:match("^#+%s+(.-)%s*#*%s*$")
+    if title then
+      heading = title
+      section = STATUS[title:lower()] and title:lower() or false
+    elseif not line:match("^%s*$") then
+      if section == nil then
+        return nil, ("line %d comes before any heading; tasks go under %s"):format(n, table.concat(M.statuses, ", "))
+      elseif section == false then
+        return nil, ("line %d is under %q, which isn't one of %s"):format(n, heading, table.concat(M.statuses, ", "))
+      end
+      local text = vim.trim(line):gsub("^[-*+]%s+", ""):gsub("^%[[ xX]%]%s*", "")
+      tasks[#tasks + 1] = { status = section, text = text, line = n }
+      counts[section] = counts[section] + 1
+    end
+  end
+  return tasks, counts
+end
+
+-- questions
+
+local QUESTION_KEYS = { question = true, options = true, multi = true, other = true, name = true }
+local OPTION_KEYS = { label = true, description = true }
+
+M.question_shape = "{question, options: [{label, description?}], multi?, other?, name?}"
+
+-- A question as iso router surface question takes it, checked: its question, options, multi and
+-- other, and the name it asked for; or nil and what's wrong.
+---@return table? question, string? err
+function M.validate_question(spec)
+  if type(spec) ~= "table" or (vim.islist(spec) and next(spec)) then
+    return nil, "a question is a JSON object " .. M.question_shape
+  end
+  for key in pairs(spec) do
+    if not QUESTION_KEYS[key] then
+      return nil, ("unknown key %q: a question is %s"):format(tostring(key), M.question_shape)
+    end
+  end
+  if type(spec.question) ~= "string" or vim.trim(spec.question) == "" then
+    return nil, "question is the text to ask, a string"
+  end
+  for _, key in ipairs({ "multi", "other" }) do
+    if spec[key] ~= nil and type(spec[key]) ~= "boolean" then
+      return nil, key .. " is true or false"
+    end
+  end
+  if spec.name ~= nil and (type(spec.name) ~= "string" or not spec.name:match("^[%w_-]+$")) then
+    return nil, "name is letters, digits, _ and -"
+  end
+  if type(spec.options) ~= "table" or not vim.islist(spec.options) or (#spec.options == 0 and not spec.other) then
+    return nil, "options is a list of {label, description?}, at least one unless other is true"
+  end
+  local options, seen = {}, {}
+  for i, option in ipairs(spec.options) do
+    if type(option) ~= "table" or vim.islist(option) then
+      return nil, ("option %d is an object {label, description?}"):format(i)
+    end
+    for key in pairs(option) do
+      if not OPTION_KEYS[key] then
+        return nil, ("option %d has an unknown key %q: an option is {label, description?}"):format(i, tostring(key))
+      end
+    end
+    if type(option.label) ~= "string" or vim.trim(option.label) == "" then
+      return nil, ("option %d's label is a string"):format(i)
+    elseif option.description ~= nil and type(option.description) ~= "string" then
+      return nil, ("option %d's description is a string"):format(i)
+    end
+    local label = vim.trim(option.label)
+    if seen[label:lower()] then
+      return nil, ("two options are labelled %q"):format(label)
+    end
+    seen[label:lower()] = true
+    options[i] = { label = label, description = option.description }
+  end
+  return {
+    question = vim.trim(spec.question),
+    options = options,
+    multi = spec.multi or false,
+    other = spec.other or false,
+  }, nil, spec.name
+end
+
+-- What makes two questions the same one: their text, options, multi and other.
+local function question_key(q)
+  local parts = { q.question, tostring(q.multi), tostring(q.other) }
+  for _, option in ipairs(q.options) do
+    parts[#parts + 1] = option.label .. "\31" .. (option.description or "")
+  end
+  return vim.fn.sha256(table.concat(parts, "\30"))
+end
+
+-- parsing
+
+local TYPES = { question = true, file = true, folder = true, chat = true }
+
+local function parse_surface(entry, text)
+  local ok, data = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
+  if not ok or type(data) ~= "table" then
+    entry.type = "broken"
+    return "isn't JSON: " .. (ok and "not an object" or tostring(data):gsub("^.-:%d+: ", ""))
+  elseif not TYPES[data.type] then
+    entry.type = "broken"
+    return ("its type is one of question, file, folder, chat, not %s"):format(tostring(data.type))
+  end
+  entry.type = data.type
+  entry.created = tonumber(data.created)
+  if data.type == "question" then
+    local q, err = M.validate_question({ question = data.question, options = data.options, multi = data.multi, other = data.other })
+    if not q then
+      return err
+    end
+    entry.title, entry.question, entry.options, entry.multi, entry.other = q.question, q.question, q.options, q.multi, q.other
+    entry.key = question_key(q)
+    if type(data.answer) == "table" then
+      entry.answer = data.answer
+    end
+    entry.needs_you = not entry.answer
+  elseif data.type == "file" or data.type == "folder" then
+    if type(data.path) ~= "string" or data.path == "" then
+      return "path is the " .. data.type .. "'s path, a string"
+    end
+    entry.path = vim.fs.normalize(data.path)
+    entry.title = vim.fs.basename(entry.path)
+    local stat = vim.uv.fs_stat(entry.path)
+    entry.exists = stat ~= nil
+    if not stat then
+      return entry.path .. " doesn't exist"
+    elseif data.type == "file" and stat.type == "directory" then
+      return entry.path .. " is a folder: make it a folder surface"
+    elseif data.type == "folder" and stat.type ~= "directory" then
+      return entry.path .. " isn't a folder: make it a file surface"
+    end
+  elseif data.type == "chat" then
+    if type(data.agent) ~= "string" then
+      return "agent is the agent's address, a string"
+    end
+    entry.agent = data.agent
+    entry.title = "chat · " .. data.agent
+    local ws, id = data.agent:match("^(.*)/([^/]+)$")
+    if not (ws and store.agent(ws, id)) then
+      return "there's no agent " .. data.agent
+    end
+    entry.needs_you = true
+  end
+end
+
+local function parse_markdown(entry, text)
+  local fields, body, start = frontmatter(text)
+  if not fields then
+    return start
+  end
+  entry.body = body
+  local err = apply_fields(entry, fields)
+  if err then
+    return err
+  end
+  if entry.type == "tasks" then
+    local tasks, counts = task_board(body, start)
+    if not tasks then
+      return counts
+    end
+    entry.tasks, entry.counts = tasks, counts
+  end
+end
+
+local function state_file(repo)
+  return store.run_dir(repo) .. "/surfaces.json"
+end
+
+local function read_state(repo)
+  local ok, value = pcall(vim.json.decode, read_file(state_file(repo)) or "")
+  return ok and type(value) == "table" and value or {}
+end
+
+-- The surface in iso/<base>, parsed; state is what the last scan saw.
+---@return isovim.Surface
+local function parse(repo, base, state, taken)
+  local file = M.dir(repo) .. "/" .. base
+  local text = read_file(file) or ""
+  local markdown = base:match("%.md$") ~= nil
+  local entry = {
+    repo = repo,
+    name = markdown and base:sub(1, -4) or base:sub(1, -9),
+    file = file,
+    base = base,
+    type = base == "tasks.md" and "tasks" or "markdown",
+    needs_you = false,
+    error_file = M.error_file(file),
+  }
+  entry.title = entry.type == "tasks" and "Task Board" or entry.name
+  local err
+  if markdown then
+    err = parse_markdown(entry, text)
+  elseif taken[entry.name] then
+    entry.type = "broken"
+    err = ("%s already has the name %s"):format(taken[entry.name], entry.name)
+  else
+    err = parse_surface(entry, text)
+  end
+  entry.error = err
+  entry.sig = vim.fn.sha256(text .. "\0" .. (err or ""))
+  local seen = state[base] or {}
+  entry.consumed = entry.consumable and seen.consumed == entry.sig or nil
+  if entry.type == "markdown" and entry.consumable and not entry.consumed and not err then
+    entry.needs_you = true
+  end
+  local stat = vim.uv.fs_stat(file)
+  entry.created = entry.created or seen.first or (stat and stat.mtime.sec) or os.time()
+  return entry
+end
+
+-- A repo's surfaces, parsed, by name; nothing is written.
+---@return isovim.Surface[]
+function M.read(repo, state)
+  state = state or read_state(repo)
+  local dir = M.dir(repo)
+  local bases, taken = {}, {}
+  for base, kind in vim.fs.dir(dir) do
+    if kind ~= "directory" and not vim.startswith(base, ".") then
+      if base:match("%.md$") then
+        bases[#bases + 1] = base
+        taken[base:sub(1, -4)] = base
+      elseif base:match("%.surface$") then
+        bases[#bases + 1] = base
+      end
+    end
+  end
+  table.sort(bases)
+  return vim.tbl_map(function(base)
+    return parse(repo, base, state, taken)
+  end, bases)
+end
+
+-- One surface by name; nil when it has none.
+---@return isovim.Surface?
+function M.get(repo, name)
+  return vim.iter(M.read(repo)):find(function(entry)
+    return entry.name == name
+  end)
+end
+
+-- Runs fn under the repo's surface lock, a dir only one process can make.
+local function locked(repo, fn)
+  local run = store.run_dir(repo)
+  vim.fn.mkdir(run, "p")
+  local lock = run .. "/surfaces.lock"
+  local deadline = vim.uv.hrtime() + 5e9
+  while not vim.uv.fs_mkdir(lock, 448) do
+    local stat = vim.uv.fs_stat(lock)
+    -- A holder that died: a scan takes milliseconds.
+    if (stat and os.time() - stat.mtime.sec > 30) or vim.uv.hrtime() > deadline then
+      vim.uv.fs_rmdir(lock)
+    else
+      vim.uv.sleep(10)
+    end
+  end
+  local ok, result = pcall(fn)
+  vim.uv.fs_rmdir(lock)
+  if not ok then
+    error(result, 0)
+  end
+  return result
+end
+
+local function publish(entry, what, details)
+  events.publish(events.topic("surface", entry.repo, entry.name, what), vim.tbl_extend("force", {
+    repo = entry.repo,
+    name = entry.name,
+    type = entry.type,
+    file = entry.file,
+    error = entry.error,
+  }, details or {}))
+end
+
+local function sync_error_files(repo, entries)
+  local sources = {}
+  for _, entry in ipairs(entries) do
+    sources[entry.error_file] = true
+    if entry.error then
+      local text = ("%s: %s\n"):format(entry.base, entry.error)
+      if read_file(entry.error_file) ~= text then
+        write_file(entry.error_file, text)
+      end
+    elseif vim.uv.fs_stat(entry.error_file) then
+      os.remove(entry.error_file)
+    end
+  end
+  local dir = M.dir(repo)
+  for base in vim.fs.dir(dir) do
+    if base:match("%.surface%.error$") and not sources[dir .. "/" .. base] then
+      os.remove(dir .. "/" .. base)
+    end
+  end
+end
+
+-- A repo's surfaces, as M.read gives them, after bringing its error files and events up to date.
+-- Changes to the surfaces named in quiet are taken in without a changed event (their writer
+-- published what happened).
+---@param quiet? table<string, true> base file names
+---@return isovim.Surface[]
+function M.scan(repo, quiet)
+  if vim.fn.isdirectory(M.dir(repo)) == 0 then
+    return {}
+  end
+  return locked(repo, function()
+    local state = read_state(repo)
+    local entries = M.read(repo, state)
+    sync_error_files(repo, entries)
+    local dirty, now, present = false, os.time(), {}
+    for _, entry in ipairs(entries) do
+      present[entry.base] = true
+      local seen = state[entry.base]
+      if not seen then
+        state[entry.base] = { sig = entry.sig, first = entry.created or now }
+        publish(entry, "created", { title = entry.title })
+        dirty = true
+      elseif seen.sig ~= entry.sig then
+        seen.sig = entry.sig
+        if not (quiet and quiet[entry.base]) then
+          publish(entry, "changed", { title = entry.title })
+        end
+        dirty = true
+      end
+      if state[entry.base].type ~= entry.type then
+        state[entry.base].type = entry.type
+        dirty = true
+      end
+    end
+    for base, seen in pairs(state) do
+      if not present[base] then
+        local markdown = base:match("%.md$")
+        publish({ repo = repo, name = markdown and base:sub(1, -4) or base:sub(1, -9), file = M.dir(repo) .. "/" .. base,
+          type = seen.type }, "removed")
+        state[base] = nil
+        dirty = true
+      end
+    end
+    if dirty then
+      write_json(state_file(repo), state)
+    end
+    return entries
+  end)
+end
+
+-- making them
+
+-- One surface by name, after a scan publishes what making it changed.
+local function scanned(repo, name)
+  return vim.iter(M.scan(repo)):find(function(entry)
+    return entry.name == name
+  end)
+end
+
+-- A name no surface in the repo has, from text: its words, lowercased, joined by -.
+local function free_name(repo, text)
+  local base = text:lower():gsub("[^%w]+", "-"):gsub("^%-+", ""):sub(1, 40):gsub("%-+$", "")
+  base = base ~= "" and base or "surface"
+  local dir = M.dir(repo)
+  local name, n = base, 1
+  while vim.uv.fs_stat(dir .. "/" .. name .. ".surface") or vim.uv.fs_stat(dir .. "/" .. name .. ".md") do
+    n = n + 1
+    name = ("%s-%d"):format(base, n)
+  end
+  return name
+end
+
+local function surface_file(repo, name)
+  return M.dir(repo) .. "/" .. name .. ".surface"
+end
+
+-- Writes a .surface for the repo, refusing a name a markdown surface or another type has.
+local function put(repo, name, data)
+  local dir = M.dir(repo)
+  if vim.uv.fs_stat(dir .. "/" .. name .. ".md") then
+    return nil, ("%s.md already has the name %s"):format(name, name)
+  end
+  vim.fn.mkdir(dir, "p")
+  write_json(surface_file(repo, name), data)
+  return true
+end
+
+-- Asks a question in the repo, or finds it asked already: by name (spec.name, or name), else by
+-- the same question, options, multi and other. A pending question of that name asked differently
+-- is reworded in place; an answered one keeps its answer.
+---@param spec table as M.validate_question takes it
+---@return isovim.Surface? entry, string how_or_err "asked", "reattached", "reworded", "kept" (answered
+--- before it was asked differently), or what's wrong
+function M.ask(repo, spec, name)
+  local q, err, asked_name = M.validate_question(spec)
+  if not q then
+    return nil, err
+  end
+  name = name or asked_name
+  local key = question_key(q)
+  local existing = vim.tbl_filter(function(entry)
+    return entry.type == "question" and (name and entry.name == name or (not name and entry.key == key))
+  end, M.read(repo))[1]
+  if name and not existing and vim.uv.fs_stat(surface_file(repo, name)) then
+    return nil, ("%s/%s is already a surface, and not a question"):format(repo, name)
+  end
+  local how = existing and existing.key ~= key and "kept" or "reattached"
+  if existing and existing.key ~= key and not existing.answer then
+    how = "reworded"
+    put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
+      other = q.other, created = existing.created })
+  elseif not existing then
+    how = "asked"
+    name = name or free_name(repo, q.question)
+    local ok, why = put(repo, name, { type = "question", question = q.question, options = q.options, multi = q.multi,
+      other = q.other, created = os.time() })
+    if not ok then
+      return nil, why
+    end
+  end
+  return scanned(repo, existing and existing.name or name), how
+end
+
+-- Points the repo's Inbox at a file or folder; its name defaults to the path's last part.
+---@param kind "file"|"folder"
+---@return isovim.Surface? entry, string? err
+function M.show(repo, kind, path, name)
+  path = vim.fs.normalize(vim.fn.fnamemodify(path, ":p")):gsub("(.)/$", "%1")
+  name = name or vim.fs.basename(path):gsub("[^%w._-]+", "-")
+  local current = M.get(repo, name)
+  if current and current.type ~= kind then
+    return nil, ("%s/%s is already a %s surface"):format(repo, name, current.type)
+  elseif not (current and current.path == path) then
+    local ok, err = put(repo, name, { type = kind, path = path, created = os.time() })
+    if not ok then
+      return nil, err
+    end
+  end
+  return scanned(repo, name)
+end
+
+-- Puts an agent's chat (its address) in the repo's Inbox; again brings it back if it was opened.
+---@return isovim.Surface? entry, string? err
+function M.chat(repo, address, name)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  name = name or ("chat-" .. (ws == repo and id or address):gsub("[^%w._-]+", "-"))
+  local current = M.get(repo, name)
+  if current and current.type ~= "chat" then
+    return nil, ("%s/%s is already a %s surface"):format(repo, name, current.type)
+  end
+  local ok, err = put(repo, name, { type = "chat", agent = address, created = os.time() })
+  if not ok then
+    return nil, err
+  end
+  return scanned(repo, name)
+end
+
+-- answering
+
+local function match_option(entry, word)
+  word = vim.trim(word)
+  local n = tonumber(word)
+  if n and entry.options[n] then
+    return entry.options[n].label
+  end
+  for _, option in ipairs(entry.options) do
+    if option.label:lower() == word:lower() then
+      return option.label
+    end
+  end
+end
+
+-- An answer to the question from what the user gave: one string (an option's label or number, or
+-- other text), or a list of them (several options for a multi question). For a multi question a
+-- list is first tried as one label, so unquoted words work.
+---@param value string|string[]
+---@return {labels: string[], other?: string}? answer, string? err
+function M.parse_answer(entry, value)
+  local words = type(value) == "table" and vim.list_slice(value, 1) or { value }
+  local joined = vim.trim(table.concat(words, " "))
+  if joined == "" then
+    return nil, "no answer given"
+  end
+  local whole = match_option(entry, joined)
+  if whole then
+    return { labels = { whole } }
+  elseif not entry.multi then
+    if entry.other then
+      return { labels = {}, other = joined }
+    end
+  else
+    local labels, rest = {}, {}
+    for _, word in ipairs(words) do
+      local label = match_option(entry, word)
+      if label and not vim.tbl_contains(labels, label) then
+        labels[#labels + 1] = label
+      elseif not label then
+        rest[#rest + 1] = word
+      end
+    end
+    if #rest == 0 then
+      return { labels = labels }
+    elseif entry.other then
+      return { labels = labels, other = table.concat(rest, " ") }
+    end
+  end
+  local listed = {}
+  for i, option in ipairs(entry.options) do
+    listed[#listed + 1] = ("%d. %s"):format(i, option.label)
+  end
+  return nil, ("%q isn't one of its options (%s)%s"):format(joined, table.concat(listed, ", "),
+    entry.multi and "; give several for a multi question" or "")
+end
+
+-- Answers a pending question: value as M.parse_answer takes it, or {labels, other?}. by is who
+-- answered ("user" by default, or an agent's address). Publishes surface.<repo>.<name>.answered.
+---@return {labels: string[], other?: string, by: string, at: number}? answer, string? err
+function M.answer(entry, value, by)
+  local current = M.get(entry.repo, entry.name)
+  if not current or current.type ~= "question" then
+    return nil, ("%s/%s isn't a question any more"):format(entry.repo, entry.name)
+  elseif current.answer then
+    return nil, ("%s/%s is already answered"):format(entry.repo, entry.name)
+  end
+  local answer, err
+  if type(value) == "table" and (value.labels or value.other) then
+    answer = { labels = {}, other = value.other ~= "" and value.other or nil }
+    for _, word in ipairs(value.labels or {}) do
+      local label = match_option(current, word)
+      if not label then
+        return nil, ("%q isn't one of its options"):format(word)
+      elseif not vim.tbl_contains(answer.labels, label) then
+        answer.labels[#answer.labels + 1] = label
+      end
+    end
+    if answer.other and not current.other then
+      return nil, "it takes only its options, not your own words"
+    elseif #answer.labels == 0 and not answer.other then
+      return nil, "no answer given"
+    elseif #answer.labels > 1 and not current.multi then
+      return nil, "it takes one option"
+    end
+  else
+    answer, err = M.parse_answer(current, value)
+  end
+  if not answer then
+    return nil, err
+  end
+  answer.by, answer.at = by or "user", os.time()
+  local data = vim.json.decode(read_file(current.file))
+  data.answer = answer
+  write_json(current.file, data)
+  M.scan(entry.repo, { [current.base] = true })
+  publish(current, "answered", { title = current.title, answer = answer })
+  return answer
+end
+
+-- The answer as its asker prints it: one chosen label a line, then any other text.
+function M.answer_text(answer)
+  local lines = vim.deepcopy(answer.labels or {})
+  if answer.other and answer.other ~= "" then
+    lines[#lines + 1] = answer.other
+  end
+  return table.concat(lines, "\n")
+end
+
+-- Takes an answered question's answer and removes it; nil while it's pending.
+---@return table? answer
+function M.collect(repo, name)
+  local entry = M.get(repo, name)
+  if not (entry and entry.type == "question" and entry.answer) then
+    return nil
+  end
+  os.remove(entry.file)
+  M.scan(repo)
+  return entry.answer
+end
+
+local notify ---@type fun(repo: string, entries: isovim.Surface[])? M.watch's on_change
+
+-- Takes a surface out of the Inbox because the user opened it: a chat is removed, a consumable
+-- markdown surface hidden until the router changes it. Publishes surface.<repo>.<name>.consumed.
+---@return boolean consumed
+function M.consume(entry)
+  if entry.type == "chat" then
+    os.remove(entry.file)
+    publish(entry, "consumed", { agent = entry.agent })
+    M.scan(entry.repo)
+    return true
+  elseif entry.type == "markdown" and entry.consumable and not entry.consumed then
+    locked(entry.repo, function()
+      local state = read_state(entry.repo)
+      state[entry.base] = vim.tbl_extend("force", state[entry.base] or { first = entry.created }, { consumed = entry.sig })
+      write_json(state_file(entry.repo), state)
+    end)
+    publish(entry, "consumed")
+    if M.cache[entry.repo] then
+      M.cache[entry.repo] = M.read(entry.repo)
+      if notify then
+        notify(entry.repo, M.cache[entry.repo])
+      end
+    end
+    return true
+  end
+  return false
+end
+
+-- the TUI
+
+M.cache = {} ---@type table<string, isovim.Surface[]> per repo, while watching
+
+-- A repo's surfaces: the watcher's while M.watch runs, else scanned now.
+---@return isovim.Surface[]
+function M.list(repo)
+  return M.cache[repo] or M.scan(repo)
+end
+
+-- Opens a surface in the TUI: a markdown surface, the Task Board, a file or a folder beside the
+-- chat; a chat in the chat window; a question as a picker, which answers it. Opening consumes
+-- what's consumable.
+function M.open(entry)
+  local isovim = require("isovim")
+  local function reveal(path)
+    if not pcall(isovim.reveal, entry.repo, path) then
+      vim.cmd.vsplit(vim.fn.fnameescape(path))
+    end
+  end
+  if entry.error then
+    vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
+  end
+  if entry.type == "markdown" or entry.type == "tasks" or entry.type == "broken" then
+    reveal(entry.file)
+    M.consume(entry)
+  elseif entry.type == "file" or entry.type == "folder" then
+    if entry.exists then
+      reveal(entry.path)
+    end
+  elseif entry.type == "chat" then
+    M.consume(entry)
+    local ws, id = entry.agent:match("^(.*)/([^/]+)$")
+    if ws then
+      isovim.open(ws, id)
+    end
+  elseif entry.type == "question" and not entry.answer then
+    M.pick(entry)
+  end
+end
+
+-- Answers a question with vim.ui.select: one option, or for a multi question options until Done;
+-- "Other..." asks for text where the question takes it.
+function M.pick(entry, on_done)
+  local chosen = {}
+  local function finish(other)
+    local answer, err = M.answer(entry, { labels = chosen, other = other })
+    if not answer then
+      vim.notify(err, vim.log.levels.ERROR)
+    end
+    if on_done then
+      on_done(answer)
+    end
+  end
+  local function ask()
+    local items = vim.tbl_filter(function(option)
+      return not vim.tbl_contains(chosen, option.label)
+    end, entry.options)
+    if entry.other then
+      items[#items + 1] = { label = "Other...", other = true }
+    end
+    if entry.multi and #chosen > 0 then
+      items[#items + 1] = { label = "Done", done = true }
+    end
+    vim.ui.select(items, {
+      prompt = entry.question .. (#chosen > 0 and (" (" .. table.concat(chosen, ", ") .. ")") or ""),
+      format_item = function(item)
+        return item.description and (item.label .. " · " .. item.description) or item.label
+      end,
+    }, function(item)
+      if not item then
+        return
+      elseif item.done then
+        finish()
+      elseif item.other then
+        vim.ui.input({ prompt = entry.question .. " " }, function(text)
+          if text and vim.trim(text) ~= "" then
+            finish(vim.trim(text))
+          end
+        end)
+      else
+        chosen[#chosen + 1] = item.label
+        if entry.multi then
+          vim.schedule(ask)
+        else
+          finish()
+        end
+      end
+    end)
+  end
+  ask()
+end
+
+local handles = {}
+
+function M.unwatch()
+  for key, handle in pairs(handles) do
+    if not handle:is_closing() then
+      handle:close()
+    end
+    handles[key] = nil
+  end
+  M.cache = {}
+end
+
+-- Watches every repo's iso/ (and the work root, its owners and repos, for new ones) and rescans a
+-- repo when its iso/ changes; every 5s it also looks for new repos and for file, folder and chat
+-- targets that came or went. on_change(repo, entries) runs after each rescan that saw a change.
+---@param on_change? fun(repo: string, entries: isovim.Surface[])
+function M.watch(on_change)
+  M.unwatch()
+  notify = on_change
+  local timers = {}
+  local function signature(entries)
+    return table.concat(vim.tbl_map(function(entry)
+      return entry.base .. entry.sig
+    end, entries), "\n")
+  end
+  local function rescan(repo)
+    local before = signature(M.cache[repo] or {})
+    M.cache[repo] = M.scan(repo)
+    if on_change and signature(M.cache[repo]) ~= before then
+      on_change(repo, M.cache[repo])
+    end
+  end
+  local discover
+  local function watch_dir(dir, on_event)
+    if handles[dir] then
+      return
+    end
+    local handle = assert(vim.uv.new_fs_event())
+    if handle:start(dir, {}, function(err)
+      if not err then
+        on_event()
+      end
+    end) then
+      handles[dir] = handle
+    else
+      handle:close()
+    end
+  end
+  local function soon(key, fn)
+    local timer = timers[key] or assert(vim.uv.new_timer())
+    timers[key] = timer
+    handles["timer:" .. key] = timer
+    timer:stop()
+    timer:start(100, 0, vim.schedule_wrap(fn))
+  end
+  discover = function()
+    vim.fn.mkdir(store.work, "p")
+    watch_dir(store.work, function()
+      soon("discover", discover)
+    end)
+    for owner, kind in vim.fs.dir(store.work) do
+      if kind == "directory" and not vim.startswith(owner, ".") then
+        watch_dir(store.work .. "/" .. owner, function()
+          soon("discover", discover)
+        end)
+        for repo, repo_kind in vim.fs.dir(store.work .. "/" .. owner) do
+          if repo_kind == "directory" and repo ~= "iso" and not vim.startswith(repo, ".") then
+            watch_dir(store.work .. "/" .. owner .. "/" .. repo, function()
+              soon("discover", discover)
+            end)
+          end
+        end
+      end
+    end
+    for _, repo in ipairs(M.repos()) do
+      if not M.cache[repo] then
+        watch_dir(M.dir(repo), function()
+          soon(repo, function()
+            rescan(repo)
+          end)
+        end)
+        rescan(repo)
+      end
+    end
+  end
+  discover()
+  local tick = assert(vim.uv.new_timer())
+  handles["timer:tick"] = tick
+  tick:start(5000, 5000, vim.schedule_wrap(function()
+    discover()
+    for repo, entries in pairs(M.cache) do
+      local stale = vim.iter(entries):any(function(entry)
+        if entry.type == "file" or entry.type == "folder" then
+          return (vim.uv.fs_stat(entry.path) ~= nil) ~= entry.exists
+        elseif entry.type == "chat" then
+          local ws, id = entry.agent:match("^(.*)/([^/]+)$")
+          return (ws and store.agent(ws, id) ~= nil) ~= (entry.error == nil)
+        end
+      end)
+      if stale then
+        rescan(repo)
+      end
+    end
+  end))
+end
+
+return M

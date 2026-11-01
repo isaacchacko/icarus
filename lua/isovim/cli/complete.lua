@@ -90,6 +90,13 @@ local KINDS = {
     for _, topic in ipairs(events.topics) do
       found[#found + 1] = { topic[1], topic[2] }
     end
+    local surfaces = require("isovim.surfaces")
+    for _, repo in ipairs(surfaces.repos()) do
+      found[#found + 1] = { events.topic("surface", repo) .. ".**", "every surface in " .. repo }
+      for _, entry in ipairs(surfaces.read(repo)) do
+        found[#found + 1] = { events.topic("surface", repo, entry.name) .. ".*", entry.title }
+      end
+    end
     local prs = {}
     for _, ws in ipairs(store.list()) do
       found[#found + 1] = { events.topic("agent", ws.id) .. ".**", "every agent in " .. ws.name }
@@ -129,6 +136,46 @@ local KINDS = {
       end
     end
   end,
+  -- Questions waiting on an answer, by name and by <repo>/<name>; then, after one, its options.
+  question = function(found)
+    local surfaces = require("isovim.surfaces")
+    for _, repo in ipairs(surfaces.repos()) do
+      for _, entry in ipairs(surfaces.read(repo)) do
+        if entry.type == "question" and not entry.answer then
+          found[#found + 1] = { entry.name, entry.question }
+          found[#found + 1] = { repo .. "/" .. entry.name, entry.question }
+        end
+      end
+    end
+  end,
+  option = function(found, before)
+    local surfaces = require("isovim.surfaces")
+    local repo, name = (before[1] or ""):match("^(.*)/([^/]+)$")
+    for _, key in ipairs(repo and { repo } or surfaces.repos()) do
+      for _, entry in ipairs(surfaces.read(key)) do
+        if entry.type == "question" and entry.name == (name or before[1]) then
+          for _, option in ipairs(entry.options) do
+            found[#found + 1] = { option.label, option.description }
+          end
+        end
+      end
+    end
+  end,
+  -- Repos with agents or surfaces here.
+  repo = function(found)
+    local seen = {}
+    for _, key in ipairs(require("isovim.surfaces").repos()) do
+      seen[key] = true
+    end
+    for _, ws in ipairs(store.list()) do
+      if store.v2(ws.id) then
+        seen[ws.id] = true
+      end
+    end
+    for key in pairs(seen) do
+      found[#found + 1] = { key }
+    end
+  end,
   command = function(found)
     for _, entry in ipairs(commands.list) do
       if not entry.hidden then
@@ -142,7 +189,8 @@ local DIRECTIVES = { path = ":files", dir = ":dirs" }
 
 -- What can stand for one word written as usage writes it ("parent|children|<address>").
 ---@return table[] candidates, string directive
-local function expand(pattern)
+---@param before? string[] the words already given for the command, which a kind may look at
+local function expand(pattern, before)
   local found, directive = {}, ":"
   for part in vim.gsplit((pattern or ""):gsub("%.%.%.$", ""), "|", { plain = true }) do
     local kind = part:match("^<(.+)>$")
@@ -151,7 +199,7 @@ local function expand(pattern)
         found[#found + 1] = { part }
       end
     elseif KINDS[kind] then
-      KINDS[kind](found)
+      KINDS[kind](found, before or {})
     else
       directive = DIRECTIVES[kind] or directive
     end
@@ -197,7 +245,7 @@ local function complete(spec, words)
   local args = spec.args or {}
   local last = args[#args]
   local pattern = args[#before + 1] or (last and last:match("%.%.%.$") and last)
-  return expand(pattern)
+  return expand(pattern, before)
 end
 
 -- After iso <role>: its actions, then what the action takes. iso root also still takes the old

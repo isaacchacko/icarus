@@ -6,8 +6,9 @@
 --   args      its words in order, as usage writes them: <kind>, literal|literal|<kind>, and a last
 --             one ending in ... repeats. Kinds are what Tab offers: ws, archived, agent (this host's),
 --             address (an agent here or <host>:<agent>), host, kind, role, command, topic (an
---             event pattern), action (the caller's repo's), path, dir, and text and n, which
---             offer nothing
+--             event pattern), action (the caller's repo's), repo, question (one waiting on an
+--             answer), option (the options of the question before it), path, dir, and text and n,
+--             which offer nothing
 --   flags     flag -> the kind of its value, or false for a flag without one
 --   subs      subcommand -> { args, flags }, for a command whose first word picks what it does
 --   help      its lines in `iso help`, verbatim; summary is its one line in completion, when the
@@ -33,7 +34,12 @@ end
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
   "version", "pilot", "fork", "spawn", "promote" }
-M.only = { worker = { "wt", "setup", "teardown", "run" }, router = { "pr", "wt", "setup", "teardown", "run" } }
+M.only = {
+  worker = { "wt", "setup", "teardown", "run" },
+  router = { "surface", "pr", "wt", "setup", "teardown", "run" },
+  ["repo-root"] = { "answer" },
+  root = { "answer" },
+}
 
 M.header = [=[
 usage: iso                           open the TUI (iso --takeover to steal it from another terminal)]=]
@@ -258,6 +264,18 @@ M.list = {
        iso ask <question...>         from an agent: ask the root; the root (or anyone, with no
                                      root) raises it to you, into the Inbox]=],
   },
+  { name = "answer", module = "surfaces",
+    audience = "user",
+    args = { "<question>", "<option>..." },
+    summary = "answer a question surface",
+    help = [=[
+       iso answer <question> [<answer...>]
+                                     answer a question surface (<repo>/<name> when
+                                     names repeat across repos): an option's label or
+                                     number, several for a multi question, or your own
+                                     words where it takes them; with no answer, print
+                                     the question and its options]=],
+  },
   { name = "root", module = "messaging",
     args = { "<address>" },
     flags = { ["--clear"] = false },
@@ -333,7 +351,8 @@ M.list = {
                                      for a Monitor); --once exits after the first. Topics:
                                      agent.<scope>.<id>.status|spawned|exited|promoted,
                                      msg.<scope>.<id>, pr.<owner/repo>.<n>.state|ci|review,
-                                     where an agent's scope is its repo (owner/repo, or _) and
+                                     surface.<owner/repo>.<name>.created|changed|removed|
+                                     answered|consumed, where an agent's scope is its repo (owner/repo, or _) and
                                      its id aN, or a legacy one's its workspace and agent ids.
                                      In a part "%" is written %25 and "." %2E
                                      (agent.owner/site%2Ecom.a3.status), and patterns match it
@@ -459,6 +478,12 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
+  -- A repo's surfaces, scanned, as JSON (isovim.surfaces): for scripts, checks and other hosts.
+  { name = "__surfaces", module = "surfaces",
+    args = { "<repo>..." },
+    hidden = true,
+    audience = "plumbing",
+  },
   -- The role warnings for a command bin/iso runs itself (iso browser).
   { name = "__warn", module = "roles",
     hidden = true,
@@ -468,7 +493,40 @@ M.list = {
 
 -- Actions that exist only under a role, written as `iso <action>` like the rest: iso <role> help
 -- puts the role in.
+local SURFACE_FLAGS = { ["--name"] = "<text>", ["--repo"] = "<repo>" }
 M.role_actions = {
+  surface = { name = "surface", module = "surfaces",
+    subs = {
+      question = { args = { "<path>" }, flags = SURFACE_FLAGS },
+      file = { args = { "<path>" }, flags = SURFACE_FLAGS },
+      folder = { args = { "<dir>" }, flags = SURFACE_FLAGS },
+      chat = { args = { "<agent>" }, flags = SURFACE_FLAGS },
+    },
+    summary = "put a question, a file or folder, or a chat in your repo's Inbox",
+    help = [=[
+       iso surface question <json|file|-> [--name n]
+                                     ask the user in your repo's Inbox: JSON {question,
+                                     options: [{label, description?}], multi?, other?,
+                                     name?}, checked at once. Blocks until it's
+                                     answered, then prints the answer (each label
+                                     chosen on a line, then any words of the user's)
+                                     and removes the question, so run it in the
+                                     background. Run again (same name or same
+                                     question), it reattaches, and an answer given
+                                     meanwhile comes back at once
+       iso surface file|folder <path> [--name n]
+                                     show a file or folder in your repo's Inbox; a
+                                     missing one gets a .surface.error beside it
+       iso surface chat <agent> [--name n]
+                                     point the user at an agent's chat; it leaves the
+                                     Inbox once they open it
+                                     These go in ~/iso/<owner>/<repo>/iso/, where you
+                                     also write <name>.md surfaces yourself (optional
+                                     frontmatter: name, icon, color, consumable) and
+                                     tasks.md, the Task Board (headings todo, doing,
+                                     waiting, blocked, done; one task a line). From a
+                                     shell, --repo owner/repo says whose]=],
+  },
   promote = { name = "promote", module = "roles",
     args = { "<agent>|router|repo-root|root", "router|repo-root|root", "<text>" },
     summary = "raise an agent (default: you) to router, repo-root or root",

@@ -13,6 +13,10 @@
 --   agent.<scope>.<id>.promoted  its role changed              {addr, scope, id, role, previous}
 --   msg.<scope>.<id>             a message was typed into it   {addr, scope, from, kind, id, text}
 --   pr.<repo>.<n>.state|ci|review   a registered PR changed   {repo, number, url, ws, title, ..., previous}
+--   surface.<repo>.<name>.created|changed|removed   a surface in the repo's iso/ came, changed or
+--                                went                          {repo, name, type, file, title, error?}
+--   surface.<repo>.<name>.answered   a question was answered   {..., answer: {labels, other?, by, at}}
+--   surface.<repo>.<name>.consumed   the user opened a chat or consumable surface (isovim.surfaces)
 -- So agent.<owner>/<repo>.** is everything about a repo's agents, agent.<ws>.*.status every state
 -- in a workspace, agent.*.*.status everyone's. Inside a part "%" is written %25 and then "." %2E
 -- (M.encode), so agent owner/site.com/a3's status is agent.owner/site%2Ecom.a3.status. Every
@@ -20,8 +24,8 @@
 -- way); patterns are matched against the encoded topic as given, never decoded, and the details
 -- carry addr (<scope>/<id>), scope and repo raw. An agent event's id is the agent's; a msg's id is
 -- its stamp's, as before, the agent's being the end of addr.
--- Surfaces (surface.*), the root's decisions (root.*) and other hosts (host.*, <host>: prefixes)
--- publish here too once they exist.
+-- The root's decisions (root.*) and other hosts (host.*, <host>: prefixes) publish here too once
+-- they exist.
 local store = require("isovim.store")
 
 local M = {}
@@ -40,6 +44,11 @@ M.topics = {
   { "pr.*.*.state", "a PR opened, merged, closed or left draft" },
   { "pr.*.*.ci", "a PR's checks changed" },
   { "pr.*.*.review", "a PR's review decision changed" },
+  { "surface.*.*.created", "a surface came into a repo's Inbox" },
+  { "surface.*.*.changed", "a surface changed" },
+  { "surface.*.*.removed", "a surface went" },
+  { "surface.*.*.answered", "a question surface was answered" },
+  { "surface.*.*.consumed", "the user opened a chat or consumable surface" },
   { "**", "everything" },
 }
 
