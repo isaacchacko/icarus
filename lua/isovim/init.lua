@@ -21,6 +21,7 @@ M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> works
 M.recent = {} ---@type string[] workspace ids, most recently selected first (<leader>aw)
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
 M.inbox_collapsed = false -- the sidebar's Inbox shows only its title
+M.terminals_collapsed = false -- the sidebar's Terminals shows only its title
 
 -- Persisted so a hot reload picks up where the old code left off.
 function M.remember(key, value)
@@ -36,6 +37,7 @@ function M.remember(key, value)
     recent = M.recent,
     expanded = M.expanded,
     inbox_collapsed = M.inbox_collapsed,
+    terminals_collapsed = M.terminals_collapsed,
   })
 end
 
@@ -511,6 +513,7 @@ function M.setup(opts)
   M.recent = session.recent or {}
   M.expanded = session.expanded or {}
   M.inbox_collapsed = session.inbox_collapsed or false
+  M.terminals_collapsed = session.terminals_collapsed or false
 
   local sidebar = require("isovim.sidebar")
   icons.setup()
@@ -813,7 +816,7 @@ function M.open_remote(host, ssh, id, ws_name, agent_name)
 end
 
 -- ctrl+/ as in LazyVim, but the terminal is the workspace's own (it outlives the TUI and shows in
--- the sidebar): a bottom split shows it, or hides it if it's on screen. Without a workspace,
+-- the sidebar's Terminals): a bottom split shows it, or hides it if it's on screen. Without a workspace,
 -- LazyVim's.
 function M.toggle_terminal()
   local ws = M.current

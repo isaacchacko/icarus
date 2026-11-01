@@ -250,6 +250,10 @@ function M.start(ws, agent, dir)
   if agent.kind == "claude" then
     M.trust(dir)
   end
+  -- A terminal belongs to no checkout: it opens in ~ wherever it was made from.
+  if agent.kind == "terminal" then
+    dir = vim.uv.os_homedir()
+  end
   vim.fn.mkdir(store.run_dir(ws), "p")
   -- A terminal's only state is "exited" (below), which must not outlive the shell it was about.
   if agent.kind == "terminal" or agent.kind == "command" then

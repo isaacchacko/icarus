@@ -15,6 +15,7 @@ M.map = {
   host = { "\u{f108}", "Title" }, -- fa-desktop
   shell = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal
   command = { "\u{f018d}", "MiniIconsGrey" }, -- md-console
+  script = { "\u{f06a9}", "Comment" }, -- md-robot: a pane a repo script started
 }
 
 function M.setup()

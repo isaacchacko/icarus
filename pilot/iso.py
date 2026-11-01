@@ -129,7 +129,7 @@ class Iso:
         return screenshot.render(ansi, OUT / f"{self.name}-{label}.png", self.cols, self.rows)
 
     def sidebar_win(self, role="list"):
-        """The sidebar column's window: title, inbox, list (the host list) or footer."""
+        """The sidebar column's window: inbox, list (the host list), terminals or footer."""
         return self.lua(
             "for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
             " if vim.b[vim.api.nvim_win_get_buf(w)].isovim_sidebar == ... then return w end end",

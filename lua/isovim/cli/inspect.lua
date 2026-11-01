@@ -31,6 +31,8 @@ function commands.ls(args)
         workspace = ws.name,
         agent = agent.name,
         kind = agent.kind,
+        -- Set on a repo script's pane (setup, run), which the sidebar lists under Terminals.
+        script = require("isovim.scripts").of(agent),
         role = store.role(agent),
         hidden = agent.hidden or false,
         status = running and (status.get(ws.id, agent.id) or "idle") or "stopped",

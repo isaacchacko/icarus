@@ -79,4 +79,11 @@ function M.start(ws, which)
   return agent.id
 end
 
+-- The script a pane started by M.start runs ("setup", "run"), known by the line M.start gives it;
+-- nil for any other agent.
+---@param agent isovim.Agent
+function M.of(agent)
+  return agent.kind == "command" and agent.cmd and agent.cmd:match("echo 'iso: the (%w+) script failed") or nil
+end
+
 return M
