@@ -442,15 +442,16 @@ end
 ---@field kind "claude"|"codex"|"shell"|"command"
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
----@field role? "root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+---@field role? "root"|"repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 ---@field read_only? boolean a new-layout agent that works in its repo's base clone
 ---@field repo? string a new-layout agent's repo key; nil in "_"
 ---@field created? integer when a new-layout agent was made
 ---@field session? string a new-layout agent's conversation id, as also kept in its run dir
 
--- The root sets the north star, the router is a repo's one interface to the user, workers do the work.
-M.roles = { "root", "router", "worker" }
+-- The root sets the north star, a repo-root holds one repo's, the router is a repo's one interface
+-- to the user, workers do the work.
+M.roles = { "root", "repo-root", "router", "worker" }
 
 ---@param agent isovim.Agent
 function M.role(agent)

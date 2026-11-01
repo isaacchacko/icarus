@@ -18,8 +18,17 @@ fi
 
 case "${1:-}" in
 browser)
+  NVIM_APPNAME=isovim nvim -l "$cli" __warn "$@" || true
   shift
   exec node "$repo/bin/iso-browser.mjs" "$@"
+  ;;
+worker | router | repo-root | root)
+  # iso <role> browser: the same browser, after the role check.
+  if [ "${2:-}" = browser ]; then
+    NVIM_APPNAME=isovim nvim -l "$cli" __warn "$@" || true
+    shift 2
+    exec node "$repo/bin/iso-browser.mjs" "$@"
+  fi
   ;;
 -h | --help)
   NVIM_APPNAME=isovim exec nvim -l "$cli" "$@"

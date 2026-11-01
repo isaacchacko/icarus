@@ -72,7 +72,7 @@ function commands.version()
 end
 
 -- What isovim needs, each with ok or what to do about it; peers must run the same isovim for moves.
-function commands.doctor()
+function commands.checkhealth()
   local problems = 0
   local function check(ok, what, fix)
     out(("%s %s%s"):format(ok and "ok  " or "FAIL", what, ok and "" or ("  -> " .. fix)))
@@ -129,6 +129,9 @@ function commands.doctor()
     os.exit(1)
   end
 end
+
+-- checkhealth's old name, hidden; drop it after 2026-12-01.
+commands.doctor = commands.checkhealth
 
 function commands.status(args)
   local host, query = split_host(args[1])

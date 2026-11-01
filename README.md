@@ -20,7 +20,7 @@ Needs nvim 0.11+, tmux 3+, git, jq, ripgrep, lsof, node, `gh` (signed in), and `
 ```sh
 git clone https://github.com/isaacchacko/isovim ~/isovim
 ln -s ~/isovim/bin/iso ~/.local/bin/iso
-iso doctor
+iso checkhealth
 iso
 ```
 
@@ -56,8 +56,9 @@ In the sidebar, `?` lists every key. The ones to start with:
 
 ### Agents working together
 
-- Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso ls`, `iso find`, `iso peek`, `iso wait`, `iso send`.
-- An agent that starts another (`iso agent`, `iso new`, `iso fork`) is its parent: `iso msg parent` and `iso msg children` reach them, and removing an agent hands its children to its own parent.
+- Agents run their commands under their role, `iso <worker|router|repo-root|root> <action>` (`iso worker help` lists a worker's), and bare `iso <command>` is yours. isovim checks the role against the agent's record and, for now, only warns on a mismatch, or when an agent runs a bare command.
+- Every agent can list, find, read, wait on and message the others, on this host or another, from the shell: `iso worker ls`, `find`, `peek`, `wait`, `msg`.
+- An agent that starts another (`iso <role> fork`, `iso agent`, `iso new`) is its parent: `iso <role> msg parent` and `msg children` reach them, and removing an agent hands its children to its own parent.
 - **A root, and stamps you can trust.** Name one agent the root (`iso root`). Workers `iso ask` it; the root raises what's yours with `iso ask`, and only those raises show in the Inbox. Every message between agents carries isovim's stamp, proven from the sending process, so a receiver is told which stamps are real and that only the root's speak for you; a typed or reused tag is called out.
 
 ### Other hosts
@@ -89,10 +90,10 @@ Everything lives in `~/.isovim/`:
     "repo_defaults": { "glyph": "\uf401", "palette": ["teal", "magenta", "#ff9e64"] }
   }
   ```
-  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told. `repo_defaults` is the glyph and the colors new repos are given (below); without it, the repo glyph and the twelve colors red to pink.
+  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `repo-root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told. `repo_defaults` is the glyph and the colors new repos are given (below); without it, the repo glyph and the twelve colors red to pink.
 - **`repos/<owner>/<repo>/config.json`** sets how a repo's workspaces show in the sidebar, picked by their git origin: `{"glyph": "\uf1d3", "color": "teal"}`. `color` is `#rrggbb` or one of red, orange, yellow, lime, green, teal, cyan, sky, blue, purple, magenta, pink. The first time isovim sees a repo without a `color`, it writes one into this file, with the default glyph if it has none: the palette's next color, the one at (number of repo configs that have a color) mod (palette size), so repos take the colors in the order they're first seen and wrap round. From then on the file decides, so edit it to change them. A file that isn't valid JSON is never written over.
 - **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes, once per quiet spell.
-- **Roles.** Every agent is a `worker` unless made a `root` (sets the north star) or `router` (a repo's one interface to you, running the swarm): `iso agent ... --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
+- **Roles.** Every agent is a `worker` unless made a `root` (sets the north star), `repo-root` (holds one repo's) or `router` (a repo's one interface to you, running the swarm): `iso agent ... --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
 - **`iso agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `iso ls --json` says when each agent was last active.
 
 A repo's workspace scripts, `setup`, `teardown` and `run` command lists in Superset's format, live in the same `repos/<owner>/<repo>/config.json`, beside `worktree_setup` and `actions` (name → command list) for commands still to come. A command whose first word is a file in that folder runs it, so scripts can sit beside the config (`"./setup.sh"`). The first time isovim looks for a repo's scripts and its config has none, it copies them from the repo's own `.isovim/config.json` (or a Superset `.superset/config.json`) and records `imported_from` and `imported_at`; it never imports again or writes over a key you set. A script the config lacks is still read from the repo's file.
