@@ -41,6 +41,20 @@ return {
   {
     "akinsho/bufferline.nvim",
     opts = function(_, opts)
+      -- The tab line always shows, starting right of the sidebar: over the sidebar is its title.
+      opts.options.always_show_bufferline = true
+      table.insert(opts.options.offsets, {
+        filetype = "isovim_sidebar",
+        text = function()
+          local sidebar = vim.tbl_filter(function(win)
+            return vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "isovim_sidebar"
+          end, vim.api.nvim_tabpage_list_wins(0))[1]
+          return require("isovim.sidebar").title(vim.api.nvim_win_get_width(sidebar) - 2)
+        end,
+        highlight = "Title",
+        text_align = "left",
+        separator = true,
+      })
       local default_icon = opts.options.get_element_icon
       opts.options.get_element_icon = function(element)
         if element.path:match("^isovim://") then

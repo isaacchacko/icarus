@@ -1,5 +1,5 @@
--- The sidebar: a column of windows (the title, the Inbox, one host's workspaces and agents, a
--- footer), and the file explorer that can take its place.
+-- The sidebar: a column of windows (the Inbox, one host's workspaces and agents, a footer) under its
+-- title in the tab line, and the file explorer that can take its place.
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
@@ -395,7 +395,7 @@ local function collect()
   return items or local_rows(workspaces)
 end
 
--- The column's windows by role (title, inbox, list, footer), found by their buffers' b:isovim_sidebar.
+-- The column's windows by role (inbox, list, footer), found by their buffers' b:isovim_sidebar.
 local function windows()
   local wins = {}
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -447,15 +447,16 @@ local rows = { list = {}, inbox = {}, footer = {} }
 -- H, P, L and T show in the title as badges while they're on.
 local TOGGLES = { { "show_hidden", "H" }, { "show_prs", "P" }, { "show_ports", "L" }, { "show_tasks", "T" } }
 
-local function title_line(width)
-  local badges = {}
+-- The column's title sits in the tab line, over the column (bufferline's offset for the sidebar's
+-- filetype), so the column runs the screen's full height. width: the cells it has.
+function M.title(width)
+  local badges = ""
   for _, toggle in ipairs(TOGGLES) do
     if isovim[toggle[1]] then
-      vim.list_extend(badges, { { " " }, { " " .. toggle[2] .. " ", "DiagnosticVirtualTextInfo" } })
+      badges = badges .. " " .. toggle[2]
     end
   end
-  local line = { { " ISOVIM", "Title" }, { (" "):rep(width - 8 - #badges * 2) } }
-  return vim.list_extend(line, badges)
+  return "ISOVIM" .. (" "):rep(width - 6 - #badges) .. badges
 end
 
 -- The Inbox: what waits on you on every host, under a title with the count. Collapsed, only the title.
@@ -526,10 +527,17 @@ local function footer_lines()
   }
 end
 
+local shown_title
+
 local function render(wins)
+  -- A title window from before the title moved to the tab line.
   if wins.title then
-    draw(wins.title, { title_line(vim.api.nvim_win_get_width(wins.title)) })
-    set_height(wins.title, 1)
+    pcall(vim.api.nvim_win_close, wins.title, true)
+  end
+  local title = wins.list and M.title(vim.api.nvim_win_get_width(wins.list) - 2)
+  if title ~= shown_title then
+    shown_title = title
+    vim.cmd.redrawtabline()
   end
   if wins.inbox then
     local lines = inbox_lines()
@@ -1114,14 +1122,13 @@ local function column_buffer(role)
   return buf
 end
 
--- The column on the left, top to bottom: the title, the Inbox, the host list and the footer. Only
--- the host list changes height with the screen.
+-- The column on the left, top to bottom: the Inbox, the host list and the footer, under its title
+-- in the tab line. Only the host list changes height with the screen.
 ---@param opts? {enter?: boolean}
 function M.open(opts)
   local wins = windows()
   if not wins.list then
     wins.list = vim.api.nvim_open_win(column_buffer("list"), false, { split = "left", win = -1, width = 40 })
-    wins.title = vim.api.nvim_open_win(column_buffer("title"), false, { split = "above", win = wins.list, height = 1 })
     wins.inbox = vim.api.nvim_open_win(column_buffer("inbox"), false, { split = "above", win = wins.list, height = 1 })
     wins.footer = vim.api.nvim_open_win(column_buffer("footer"), false, { split = "below", win = wins.list, height = 3 })
     for role, win in pairs(wins) do
