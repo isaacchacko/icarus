@@ -128,7 +128,12 @@ function M.base(name, checkout)
   local tmp = ("%s.%d.tmp"):format(path, vim.uv.os_getpid())
   vim.fn.delete(tmp, "rf")
   vim.fn.mkdir(vim.fs.dirname(path), "p")
-  local cloned = vim.system({ "git", "clone", "--quiet", "--reference", objects, "--dissociate", url, tmp }, { text = true }):wait()
+  -- A partial clone's objects can't be borrowed (the clone fails on its missing bases): the base
+  -- clone is cloned from origin with the same filter instead.
+  local filter = out(git(checkout, { "config", "--get", "remote.origin.partialclonefilter" }))
+  local clone = filter and { "git", "clone", "--quiet", "--filter=" .. filter, url, tmp }
+    or { "git", "clone", "--quiet", "--reference", objects, "--dissociate", url, tmp }
+  local cloned = vim.system(clone, { text = true }):wait()
   if cloned.code ~= 0 then
     vim.fn.delete(tmp, "rf")
     return nil, vim.trim(cloned.stderr)

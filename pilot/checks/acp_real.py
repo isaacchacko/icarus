@@ -25,7 +25,7 @@ if os.environ.get("ISOVIM_ACP_REAL") != "1":
     sys.exit(0)
 
 BIN = str(REPO / "bin" / "iso")
-DOT = f"{DOT}" if sys.platform == "darwin" else "●"
+DOT = "⏺" if sys.platform == "darwin" else "●"
 fails = []
 
 

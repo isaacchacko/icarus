@@ -591,6 +591,13 @@ local function move_work(opts)
   local panes = require("isovim.panes")
   local events = require("isovim.events")
   local from, to = store.old_work, store.new_work
+  -- Merged into itself, every file would be kept aside as if its place were taken. A TUI that
+  -- reloaded a store from between two versions once had both the same.
+  local real = from and vim.uv.fs_realpath(from)
+  if not from or from == to or (real and real == vim.uv.fs_realpath(to)) then
+    log(("refused to move the work root %s onto itself (%s)"):format(tostring(from), to))
+    return "done"
+  end
   log(("moving the work root %s to %s"):format(from, to))
 
   local agents = {}

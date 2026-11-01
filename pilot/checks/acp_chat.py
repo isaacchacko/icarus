@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from iso import REPO, Iso  # noqa: E402
 
 BIN = str(REPO / "bin" / "iso")
-DOT = f"{DOT}" if sys.platform == "darwin" else "●"
+DOT = "⏺" if sys.platform == "darwin" else "●"
 fails = []
 
 
