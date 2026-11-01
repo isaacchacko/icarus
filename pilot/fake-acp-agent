@@ -2,7 +2,8 @@
 """Stand-in for claude-agent-acp when piloting: an ACP agent on stdio (newline-delimited JSON-RPC)
 that answers like the adapter does, without the model.
 
-It answers initialize, session/new, session/resume, session/load and session/set_mode. A prompt
+It answers initialize, session/new, session/resume, session/load, session/fork (a new id),
+session/close and session/set_mode. A prompt
 streams a tool call (pending, then completed) and "reply to: <text>" in two chunks after
 $FAKE_AGENT_DELAY seconds, then ends the turn. "run <cmd>" runs a shell command as a tool would,
 a child of this process; "slow <n>" works for n seconds; "perm" asks for a permission and replies
@@ -179,14 +180,16 @@ def handle(frame):
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": 1,
-            "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}},
+            "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}, "close": {}, "fork": {}},
                                   "promptCapabilities": {"image": False}},
             "agentInfo": {"name": "fake-acp", "version": "1"},
             "authMethods": [],
         }})
     elif method == "session/new":
         send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "fake-" + uuid.uuid4().hex[:12]}})
-    elif method in ("session/resume", "session/load"):
+    elif method == "session/fork":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "fork-" + uuid.uuid4().hex[:12]}})
+    elif method in ("session/resume", "session/load", "session/close"):
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif method == "session/set_mode":
         update(params["sessionId"], {"sessionUpdate": "current_mode_update", "currentModeId": params.get("modeId")})

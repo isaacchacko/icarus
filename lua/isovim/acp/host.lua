@@ -56,6 +56,7 @@ local S = {
   prompted = false, -- whether the journal has a prompt yet, so the spawn's goes only once
   subscribers = {}, ---@type table<integer, true> RPC channels of chats that get each entry
   handover = nil, ---@type {pid: integer, transcript?: string, offset: integer}?
+  init = nil, ---@type table? what initialize answered: the agent's capabilities
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -95,10 +96,20 @@ local function set_state(state)
   status.set_state(S.ws, S.agent, state)
 end
 
+-- A promotion's pending reload (CALLS.reload) waits in the queue too, but isn't a prompt: the
+-- queue's readers never see it, and changing or clearing the queue keeps it first.
+local function reloads()
+  return vim.tbl_filter(function(prompt)
+    return prompt.reload
+  end, S.queue)
+end
+
 local function queue_items()
   return vim.tbl_map(function(prompt)
     return { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via }
-  end, S.queue)
+  end, vim.tbl_filter(function(prompt)
+    return not prompt.reload
+  end, S.queue))
 end
 
 -- The queue as it is now, after anything but a push (which journals a queued entry).
@@ -116,7 +127,7 @@ local function show_update(update)
   end
 end
 
-local deliver
+local deliver, reload
 
 -- The next queued prompt goes, unless the session isn't up (a handover, a restart).
 local function next_prompt()
@@ -145,6 +156,9 @@ end
 
 ---@param prompt isovim.acp.Prompt
 deliver = function(prompt)
+  if prompt.reload then
+    return reload()
+  end
   S.busy = true
   append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind, stamp = prompt.stamp,
     via = prompt.via })
@@ -196,6 +210,23 @@ function CALLS.prompt(payload)
     message = payload.message, publish = payload.publish, via = payload.publish and "iso" or "composer" })
 end
 
+-- Reloads the session with the agent's record as it is now, so a promoted agent gets its new
+-- role's prompt: queued behind the running turn like a prompt, and then_prompt (a prompt's
+-- payload, the promoter's message) is queued right after it, so it arrives after the reload.
+---@param payload {then_prompt?: table}
+function CALLS.reload(payload)
+  local queued = S.busy or not S.ready
+  if queued then
+    S.queue[#S.queue + 1] = { id = next_id(), reload = true, text = "(reload)", via = "iso" }
+  else
+    reload()
+  end
+  if payload.then_prompt then
+    CALLS.prompt(payload.then_prompt)
+  end
+  return { queued = queued }
+end
+
 function CALLS.status()
   return { state = status.state(S.ws, S.agent), ready = S.ready, busy = S.busy, queue = #S.queue, session = S.session,
     journal = S.writer.path, handover = S.handover ~= nil }
@@ -224,7 +255,7 @@ function CALLS.queue_set(payload)
   for _, prompt in ipairs(S.queue) do
     by_id[prompt.id] = prompt
   end
-  local queue, gone = {}, {}
+  local queue, gone = reloads(), {}
   for _, item in ipairs(payload.items or {}) do
     local text = type(item.text) == "string" and item.text or ""
     local prompt = item.id and by_id[item.id]
@@ -250,8 +281,9 @@ function CALLS.queue_set(payload)
 end
 
 function CALLS.queue_clear()
-  local cleared = #S.queue
-  S.queue = {}
+  local kept = reloads()
+  local cleared = #S.queue - #kept
+  S.queue = kept
   queue_changed()
   return { cleared = cleared }
 end
@@ -378,6 +410,52 @@ local function session_ready(how, fresh)
   end)
 end
 
+-- The session's own capabilities, from initialize.
+local function session_caps()
+  local caps = (S.init or {}).agentCapabilities or {}
+  return caps, type(caps.sessionCapabilities) == "table" and caps.sessionCapabilities or {}
+end
+
+-- A promotion's reload: closes the session and opens it again (resume, else load) with the
+-- record's role prompt, since the adapter keeps a live session's prompt. The queue waits on it.
+reload = function()
+  S.busy = true
+  S.spec = store.agent(S.ws, S.agent) or S.spec
+  local role = store.role(S.spec)
+  local caps, session = session_caps()
+  local method = session.resume and "session/resume" or (caps.loadSession and "session/load") or nil
+  local function done(err)
+    S.busy = false
+    if err then
+      notice(("could not reload the session as a %s (%s); iso restart %s/%s loads it"):format(role, err, S.ws, S.agent))
+    else
+      append("session", { how = "reload", sessionId = S.session, role = role, imports = S.imported })
+      notice("reloaded the session as a " .. role .. ", with that role's prompt")
+    end
+    next_prompt()
+  end
+  if not (session.close and method and S.session) then
+    return done("the agent can't close and reopen a session")
+  end
+  set_state("working")
+  S.client:request("session/close", { sessionId = S.session }, function(_, close_err)
+    if close_err then
+      return done(tostring(close_err.message))
+    end
+    S.replaying = method == "session/load"
+    S.client:request(method, { sessionId = S.session, cwd = S.cwd, mcpServers = {}, _meta = meta() },
+      function(_, err)
+        S.replaying = false
+        if err then
+          return done(tostring(err.message))
+        end
+        S.client:request("session/set_mode", { sessionId = S.session, modeId = "bypassPermissions" }, function()
+          done()
+        end)
+      end)
+  end)
+end
+
 local function new_session()
   S.client:request("session/new", { cwd = S.cwd, mcpServers = {}, _meta = meta() }, function(result, err)
     if err or not result or not result.sessionId then
@@ -389,11 +467,29 @@ local function new_session()
   end)
 end
 
+-- A fork's first session (a router or repo-root made root): a copy of the session it was forked
+-- from (spec.fork_of), opened with its own role prompt; a new one when the agent can't fork.
+local function fork_session()
+  local spec = S.spec
+  S.client:request("session/fork", { sessionId = spec.fork_of, cwd = S.cwd, mcpServers = {}, _meta = meta() },
+    function(result, err)
+      if err or not result or not result.sessionId then
+        notice(("could not fork session %s (%s); starting a new one"):format(spec.fork_of,
+          tostring(err and err.message or "no session id")))
+        return new_session()
+      end
+      remember_session(result.sessionId)
+      session_ready("fork", true)
+    end)
+end
+
 -- Resumes the recorded session: session/resume when the agent has it (no replay), else
 -- session/load with its replay left out of the journal; a new one when neither works.
 local function open_session(init)
   local id = store.session_id(S.ws, S.agent)
-  if not id then
+  if not id and S.spec.fork_of and select(2, session_caps()).fork then
+    return fork_session()
+  elseif not id then
     return new_session()
   end
   local caps = init.agentCapabilities or {}
@@ -439,6 +535,7 @@ local function start_adapter()
       notice("the agent did not initialize: " .. tostring(init_err and init_err.message))
       return M.shutdown(1)
     end
+    S.init = init
     open_session(init)
   end)
 end

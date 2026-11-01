@@ -635,7 +635,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       table.insert(groups, #groups, made)
     end
   end
-  local has_root = groups[1] and groups[1].kind == "root"
+  -- Root mode, as iso rootmode set it here; another host's is guessed from its roots.
+  local rootmode = not host and require("isovim.rootmode") or nil
+  local has_root = rootmode and rootmode.on("host") or (not rootmode and groups[1] and groups[1].kind == "root")
   if surfaces_by_key then
     local root_list = surfaces_by_key[ROOT_KEY] or {}
     local busy = {}
@@ -686,9 +688,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       if not collapsed then
         if surfaces_by_key and #list > 0 then
           local inbox_collapsed = is_collapsed(host, "repo_inbox", g.key)
-          local root_mode = vim.iter(agents):any(function(entry)
+          local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
             return entry.role == "repo-root"
-          end)
+          end))
           items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "repo_inbox", repo_key = g.key, count = waiting(list), root_mode = root_mode, collapsed = inbox_collapsed })
           if not inbox_collapsed then
             surface_rows(items, base_host, list, 2)

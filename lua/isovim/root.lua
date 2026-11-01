@@ -1,8 +1,10 @@
 -- The root: the one agent the user runs the others through. isovim stamps what agents send each
 -- other ([from <host>:<ws>/<agent> · m<id>], with "root" when the root sent it) and keeps a ledger of
 -- the stamps, so a receiver can tell a real stamp from a typed one. A stamp from the root carries
--- the user's delegated authority; workers ask the root with `iso ask`, and the root raises the
--- user's own decisions to them, which the Inbox shows.
+-- the user's delegated authority, which belongs to the host root: the agent here with the root
+-- role. The old `iso root` file (~/.isovim/root) names one only while no agent holds that role.
+-- Workers ask the root with `iso ask`, and the root raises the user's own decisions to them, which
+-- the Inbox shows.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 
@@ -19,8 +21,31 @@ function M.address(ws, agent)
   return ("%s:%s/%s"):format(self(), ws, agent)
 end
 
+-- The agent on this host with the root role, <ws>/<agent>. Looked up at most every half second:
+-- the sidebar asks for each agent it draws.
+local held = { at = 0 }
+---@return string?
+function M.holder()
+  local now = vim.uv.hrtime()
+  if now - held.at > 5e8 then
+    held.at, held.address = now, nil
+    for _, ws in ipairs(store.list()) do
+      for _, agent in ipairs(store.agents(ws.id)) do
+        if store.role(agent) == "root" then
+          held.address = ws.id .. "/" .. agent.id
+        end
+      end
+    end
+  end
+  return held.address
+end
+
 ---@return string? address of the root, <host>:<ws>/<agent>
 function M.get()
+  local holder = M.holder()
+  if holder then
+    return M.address(holder:match("^(.*)/([^/]+)$"))
+  end
   local ok, lines = pcall(vim.fn.readfile, M.file)
   local address = ok and vim.trim(lines[1] or "") or ""
   return address ~= "" and address or nil

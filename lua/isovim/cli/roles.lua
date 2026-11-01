@@ -153,6 +153,7 @@ local function holders(role, key, except)
   end
   return found
 end
+M.holders = holders
 
 -- One router per repo on a host, one repo-root per repo, one root per host. A router or repo-root
 -- belongs to a repo, so it needs one.
@@ -266,7 +267,7 @@ end
 local PROMOTIONS = {
   router = { worker = true },
   ["repo-root"] = { worker = true, router = true },
-  root = { worker = true, router = true },
+  root = { worker = true, router = true, ["repo-root"] = true },
 }
 
 -- The environment the finisher needs: where isovim keeps things, not who the agent is.
@@ -298,13 +299,17 @@ local function finish_later(address, promoter, reason)
   end
 end
 
-local function promoted_text(role, promoter, reason)
-  return ("You were promoted to %s by %s%s. You restarted as a %s on this conversation, with that role's prompt.")
-    :format(role, promoter, reason ~= "" and (": " .. reason) or "", role)
+local function promoted_text(role, promoter, reason, acp)
+  return ("You were promoted to %s by %s%s. %s on this conversation, with that role's prompt.")
+    :format(role, promoter, reason ~= "" and (": " .. reason) or "",
+      acp and "Your session was reloaded" or ("You restarted as a " .. role))
 end
 
--- A router made root: a fork of it (iso fork) becomes the root, and it stays the router.
+-- A router or repo-root made root: a fork of it (iso fork) becomes the root, and it keeps its
+-- role, so the repo keeps its router or repo root with the same context. An ACP agent's fork is
+-- the next aN beside it, whose supervisor forks the session (session/fork).
 local function fork_root(ws, agent, promoter, reason)
+  local from = store.role(agent)
   local session = store.session_id(ws.id, agent.id)
   if agent.kind ~= "claude" or not session then
     fail(("%s/%s has no Claude conversation to fork into the root"):format(ws.id, agent.id))
@@ -316,19 +321,47 @@ local function fork_root(ws, agent, promoter, reason)
     id = store.create(ws.name .. " root", dir ~= store.path(ws.id) and dir or nil)
     store.remove_agent(id, "main")
   end
-  local fork, err = store.add_agent(id, { kind = "claude", name = not store.v2(id) and agent.name or nil, role = "root" })
+  local fork, err = store.add_agent(id, { kind = "claude", name = not store.v2(id) and agent.name or nil, role = "root",
+    acp = agent.acp, checkout = agent.checkout })
   if not fork then
     fail(err)
   end
   store.update_agent(id, fork.id, { fork_of = session })
   local events = require("isovim.events")
-  events.publish_agent(id, fork.id, "promoted", { role = "root", previous = "router", fork_of = ws.id .. "/" .. agent.id })
+  events.publish_agent(id, fork.id, "promoted", { role = "root", previous = from, fork_of = ws.id .. "/" .. agent.id })
   local root_ws = c.resolve(id)
-  local text = ("You are a fork of the router %s/%s, made the root by %s%s. %s/%s stays the router; you have no parent.")
-    :format(ws.id, agent.id, promoter, reason ~= "" and (": " .. reason) or "", ws.id, agent.id)
+  local text = ("You are a fork of the %s %s/%s, made the root by %s%s. %s/%s stays the %s; you have no parent.")
+    :format(from, ws.id, agent.id, promoter, reason ~= "" and (": " .. reason) or "", ws.id, agent.id, from)
   send_as(promoter, root_ws, store.agent(id, fork.id), text)
   c.tui("require('isovim').refresh()")
-  out(("%s/%s is the root, forked from the router %s/%s, which stays the router"):format(id, fork.id, ws.id, agent.id))
+  out(("%s/%s is the root, forked from the %s %s/%s, which stays the %s"):format(id, fork.id, from, ws.id, agent.id, from))
+end
+
+-- An ACP agent's promotion: its supervisor reloads the session with the new role's prompt once
+-- the running turn ends, and then gives it the promoter's message, if someone else promoted it.
+-- One that isn't running gets the new prompt when it next starts, and the message then.
+local function reload(ws, agent, promoter, reason)
+  local acp = require("isovim.acp")
+  local message
+  if promoter then
+    local root = require("isovim.root")
+    local text = promoted_text(store.role(agent), promoter, reason, true)
+    local sender = root.address(promoter:match("^(.-)/(.*)$"))
+    local stamp = root.stamp("from", sender, root.address(ws.id, agent.id), text)
+    message = { text = stamp .. " " .. text, from = sender, kind = "from", stamp = stamp:match("(m%x+)%]$"), message = text,
+      publish = true }
+  end
+  if require("isovim.panes").running(ws.id, agent.id) and acp.wait_up(ws.id, agent.id, 10) then
+    local ok, err = acp.call(ws.id, agent.id, "reload", { then_prompt = message })
+    if not ok then
+      fail(("could not reach %s/%s to reload it: %s"):format(ws.id, agent.id, tostring(err)))
+    end
+    return
+  end
+  c.ensure_running(ws, agent)
+  if message then
+    c.prompt(ws, agent, message.text, { from = message.from, kind = "from", id = message.stamp, text = message.message })
+  end
 end
 
 -- iso <role> promote [<agent>] <role> ["reason"]: only agents promote, upward only.
@@ -359,7 +392,7 @@ function M.promote(args)
     fail(("%s is a %s, and only claude and codex agents have roles"):format(address, agent.kind))
   end
   check_unique(role, ws_key(ws), address)
-  if role == "root" and from == "router" then
+  if role == "root" and (from == "router" or from == "repo-root") then
     fork_root(ws, agent, promoter, reason)
     return
   end
@@ -369,6 +402,16 @@ function M.promote(args)
   end
   c.tui("require('isovim').refresh()")
   local by_other = promoter ~= address
+  if agent.acp then
+    reload(ws, store.agent(ws.id, agent.id), by_other and promoter or nil, reason)
+    if by_other then
+      out(("%s is now a %s. Once its turn ends, isovim reloads its session with that role's prompt and tells it you promoted it")
+        :format(address, role))
+    else
+      out(("You are now a %s. When this turn ends, isovim reloads your session with that role's prompt."):format(role))
+    end
+    return
+  end
   finish_later(address, by_other and promoter or nil, reason)
   if by_other then
     out(("%s is now a %s. Once it isn't working, isovim restarts it on its conversation as a %s and tells it you promoted it")

@@ -117,6 +117,11 @@ function commands.root(args)
     out(current or "no root")
     return
   end
+  local holder = root.holder()
+  if holder then
+    fail(("the host root is %s, the agent with the root role: your authority goes with it, not with "
+      .. "iso root"):format(holder))
+  end
   local target
   local host, rest = split_host(args[1])
   if args[1] == "--clear" then

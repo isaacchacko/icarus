@@ -61,6 +61,8 @@ end
 ---@field multi? boolean
 ---@field other? boolean
 ---@field answer? {labels: string[], other?: string, by: string, at: number}
+---@field routed? string question: the root it went to (isovim.rootmode), <ws>/<agent>; waits on it, not you
+---@field raised? boolean question: a root gave it back to you, so it isn't routed again
 ---@field path? string file, folder: the target
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
@@ -350,7 +352,9 @@ local function parse_surface(entry, text)
     if type(data.answer) == "table" then
       entry.answer = data.answer
     end
-    entry.needs_you = not entry.answer
+    entry.routed = type(data.to) == "string" and data.to or nil
+    entry.raised = data.raised == true or nil
+    entry.needs_you = not entry.answer and not entry.routed
   elseif data.type == "file" or data.type == "folder" then
     if type(data.path) ~= "string" or data.path == "" then
       return "path is the " .. data.type .. "'s path, a string"
@@ -642,7 +646,7 @@ function M.ask(repo, spec, name)
   if existing and existing.key ~= key and not existing.answer then
     how = "reworded"
     put(repo, existing.name, { type = "question", question = q.question, options = q.options, multi = q.multi,
-      other = q.other, created = existing.created })
+      other = q.other, created = existing.created, to = existing.routed, raised = existing.raised })
   elseif not existing then
     how = "asked"
     name = name or free_name(repo, q.question)
@@ -653,6 +657,23 @@ function M.ask(repo, spec, name)
     end
   end
   return scanned(repo, existing and existing.name or name), how
+end
+
+-- Sends a pending question to a root (its address), or with nil back to the user's Inbox; raised
+-- says a root gave it back, so it stays with the user.
+---@return isovim.Surface? entry, string? err
+function M.route(entry, to, raised)
+  local current = M.get(entry.repo, entry.name)
+  if not current or current.type ~= "question" or current.answer then
+    return nil, ("%s/%s isn't a pending question"):format(entry.repo, entry.name)
+  end
+  locked(entry.repo, function()
+    local data = vim.json.decode(read_file(current.file))
+    data.to = to
+    data.raised = raised or nil
+    write_json(current.file, data)
+  end)
+  return scanned(entry.repo, entry.name)
 end
 
 -- Points the repo's Inbox at a file or folder; its name defaults to the path's last part.

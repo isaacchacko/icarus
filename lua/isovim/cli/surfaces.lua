@@ -1,6 +1,7 @@
 -- Surfaces on the command line (isovim.surfaces): iso router surface question|file|folder|chat puts
 -- one in the router's repo's Inbox, iso answer answers a question (also iso <root|repo-root>
--- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first.
+-- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first. In root mode
+-- a question goes to the most specific active root instead of you (isovim.cli.rootmode).
 local store = require("isovim.store")
 local surfaces = require("isovim.surfaces")
 local c = require("isovim.cli.common")
@@ -8,6 +9,7 @@ local c = require("isovim.cli.common")
 local out = c.out
 local fail = c.fail
 local option = c.option
+local flag = c.flag
 
 local M = {}
 
@@ -111,6 +113,12 @@ local function question(args)
     fail(how)
   end
   local id = entry.repo .. "/" .. entry.name
+  local ws, agent = require("isovim.root").caller()
+  local was = entry.routed
+  local to = require("isovim.cli.rootmode").route_question(entry, ws and (ws .. "/" .. agent) or nil)
+  if to and to ~= was then
+    note(("root mode: %s went to the root %s, which answers it"):format(id, to))
+  end
   if how == "kept" then
     note(id .. " was answered before it was asked this way; its answer stands")
   elseif entry.answer then
@@ -191,18 +199,37 @@ local function print_question(entry)
   end
 end
 
--- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer.
+-- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes only
+-- the questions root mode gave it, and --raise to give one to the user instead.
 function M.answer(args)
+  local raise = flag(args, "--raise")
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
   local entry = find_question(query)
+  local id = entry.repo .. "/" .. entry.name
+  local ws, agent = require("isovim.root").caller()
+  local me = ws and (ws .. "/" .. agent)
+  if me and entry.routed ~= me and not entry.answer then
+    fail(("%s isn't yours to answer: it waits on %s"):format(id, entry.routed or "the user"))
+  end
+  if raise then
+    if not entry.routed then
+      fail(id .. " is waiting on the user already")
+    end
+    local raised, err = surfaces.route(entry, nil, true)
+    if not raised then
+      fail(err)
+    end
+    out(id .. " is in the user's Inbox now")
+    c.tui("require('isovim').refresh()")
+    return
+  end
   if #args == 0 then
     print_question(entry)
     fail(("usage: iso answer %s <answer...>"):format(query))
   elseif entry.answer then
     fail(("%s/%s is already answered: %s"):format(entry.repo, entry.name, surfaces.answer_text(entry.answer)))
   end
-  local ws, agent = require("isovim.root").caller()
-  local answer, err = surfaces.answer(entry, args, ws and (ws .. "/" .. agent) or "user")
+  local answer, err = surfaces.answer(entry, args, me or "user")
   if not answer then
     fail(err)
   end

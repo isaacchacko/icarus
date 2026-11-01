@@ -144,7 +144,9 @@ try:
     ws = {}
     for name, dir_ in (("web1", src / "web"), ("web2", src / "web"), ("api1", src / "api"), ("boss", None), ("notes", None)):
         ws[name] = iso.cli("new", name, *(["--dir", str(dir_)] if dir_ else []))
-    iso.cli("root", f"{ws['boss']}/main")
+    # boss holds the root role, and root mode is on for the host (as iso rootmode on host leaves it).
+    iso.cli("role", f"{ws['boss']}/main", "root")
+    (Path(iso.env["ISOVIM_HOME"]) / "rootmode.json").write_text(json.dumps({"host": {"agent": f"{ws['boss']}/main", "since": 0}, "repos": {}}))
     # acme/web's new layout: an ACP router (a0), a worker of the router's (a1), and a1's team (a2, a3).
     lead = iso.cli("spawn", "--acp", "--repo", str(src / "web"), "--name", "lead")
     check(lead == "acme/web/a0", "an ACP agent in acme/web", lead)
@@ -216,7 +218,7 @@ try:
     for text, what in (("? Ship the tab fix?", "question"), ("● chat", "chat"), ("P The plan", "markdown"), ("Task Board", "tasks")):
         check(text in inbox_rows or (what == "tasks" and "tasks" in inbox_rows.lower()), f"a {what} row", inbox_rows)
     check("2 options" in inbox_rows, "the question says how many options", inbox_rows)
-    # The host Inbox: busy repos, the root-mode marker (this host has a root).
+    # The host Inbox: busy repos, the root-mode marker (root mode is on for the host).
     host_end = first_root
     host_inbox = ls[:host_end]
     check("root mode" in host_inbox[0] and any("web" in l and "2" in l for l in host_inbox[1:])

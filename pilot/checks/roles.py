@@ -1,6 +1,6 @@
 """Roles on the command line: iso <role> <action> runs the bare command, the warn-only role checks
 (who is warned, and that every call still runs), role completion, iso spawn's and iso <role> promote's
-rules (the restart, the stamped message, the router made root by a fork), their events, checkhealth.
+rules (the restart, the stamped message, the router made root by a fork, repo-root -> root allowed), their events, checkhealth.
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/roles.py"""
 import json
 import subprocess
@@ -254,8 +254,6 @@ try:
     peek = iso.wait(lambda: (lambda p: p if "hook:" in p else None)(run("peek", W3, "-n", "40")[1]), "W3 hook", 20)
     check("verified" in peek.lower(), "the stamp is checked on arrival", peek[-600:])
     check(agents()[W3]["role"] == "repo-root" and agents()[W3].get("parent") is None, "W3 is a repo-root with no parent")
-    res = inside(A, f"worker promote {W3} root")
-    check(res[0][0] == 1 and "a repo-root isn't promoted to root" in res[0][2], "repo-root -> root isn't a promotion", res[0])
     # Router -> root: R gets forked; the fork is root, R stays router; the fork is told by A.
     ws_r = R.split("/")[0]
     (iso.tmp / "home" / "run" / ws_r).mkdir(parents=True, exist_ok=True)
@@ -275,6 +273,9 @@ try:
         check(f"You are a fork of the router {R}, made the root by {A}: the host needs one" in peek, "the fork is told who made it root and why", peek[-500:])
     res = inside(W4, "worker promote root")
     check(res[0][0] == 1 and "this host already has a root: " + str(fork) in res[0][2], "a second root is refused", res[0])
+    # repo-root -> root is a promotion (it forks, as rootmode.py checks on ACP); here the host has its root.
+    res = inside(A, f"worker promote {W3} root")
+    check(res[0][0] == 1 and "this host already has a root" in res[0][2], "repo-root -> root is a promotion, refused only by the one root", res[0])
     r = run("spawn", "--role", "root")
     check(r[0] == 1 and "this host already has a root" in r[2], "spawning a second root is refused", r)
 

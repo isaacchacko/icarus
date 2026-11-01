@@ -277,6 +277,7 @@ M.list = {
   { name = "answer", module = "surfaces",
     audience = "user",
     args = { "<question>", "<option>..." },
+    flags = { ["--raise"] = false },
     summary = "answer a question surface",
     help = [=[
        iso answer <question> [<answer...>]
@@ -284,7 +285,25 @@ M.list = {
                                      names repeat across repos): an option's label or
                                      number, several for a multi question, or your own
                                      words where it takes them; with no answer, print
-                                     the question and its options]=],
+                                     the question and its options. A root answers the
+                                     ones root mode gave it with iso <root|repo-root>
+                                     answer, and --raise gives one to the user instead]=],
+  },
+  { name = "rootmode", module = "rootmode",
+    audience = "user",
+    args = { "on|off", "host|<repo>" },
+    flags = { ["--task"] = "<text>" },
+    summary = "let a root answer the routers' questions, for a repo or the host",
+    help = [=[
+       iso rootmode on|off <repo|host> [--task "<description>"]
+                                     root mode: the routers' questions go to the most
+                                     specific active root (the repo's, else the host's)
+                                     instead of your Inbox. on spawns a worker over ACP
+                                     and promotes it (repo-root, or root for the host),
+                                     or uses the agent holding that role; --task is
+                                     its first message, guidance it narrows itself by,
+                                     raising what's outside it to you. off sends its
+                                     waiting questions on; the root keeps its role]=],
   },
   { name = "root", module = "messaging",
     args = { "<address>" },
@@ -580,12 +599,13 @@ M.role_actions = {
     help = [=[
        iso promote [<agent>] router|repo-root|root ["reason"]
                                      raise an agent (default: you): a worker to router when
-                                     it's in a git repo with no router here; a worker or router
-                                     to repo-root or root when there's none. No demotion. It
-                                     restarts on its conversation as the new role, and one you
-                                     promote gets a stamped message saying who and why. A
-                                     router made root is forked: the fork is the root, the
-                                     router stays]=],
+                                     it's in a repo with no router here; a worker or router
+                                     to repo-root, or any of those to root, when there's none.
+                                     No demotion. It restarts on its conversation as the new
+                                     role (an ACP agent's session reloads once its turn ends),
+                                     and one you promote gets a stamped message saying who and
+                                     why, after that. A router or repo-root made root is
+                                     forked: the fork is the root, the original keeps its role]=],
   },
   wt = { name = "wt", module = "work",
     flags = { ["--from"] = "<text>" },
