@@ -752,6 +752,7 @@ M.role_actions = {
       post = { args = { "<text>", "<text>..." }, flags = { ["--image"] = "<path>" } },
       resolve = { args = { "<text>", "<text>..." } },
       rename = { args = { "<text>", "<text>..." } },
+      ask = { args = { "<text>", "<path>" } },
       ls = { flags = { ["--all"] = false } },
       show = { args = { "<text>" } },
     },
@@ -771,6 +772,14 @@ M.role_actions = {
                                      worker finished that it was about
        iso thread resolve <id> [<outcome...>]
                                      resolve it, with its outcome; it leaves the list
+       iso thread ask <id> <json|file|->
+                                     ask the user in the thread, not the repo's
+                                     Inbox: the same JSON as surface question. It
+                                     waits in the thread (and the Inbox lists it,
+                                     root mode deciding it first as any question)
+                                     and blocks until it's answered, then prints the
+                                     answer, so run it in the background; run again,
+                                     it reattaches
        iso thread rename <id> <title...>
                                      a new title (posts already sent keep their tags)
        iso thread ls [--all]         the repo's open threads (--all: resolved too)

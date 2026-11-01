@@ -1297,6 +1297,63 @@ function RENDER.resolved(chat, entry)
   update_banner(chat)
 end
 
+-- A question the router asks in the thread (isovim.threads' ask): a box of the thread's style,
+-- its options numbered, answered as the chat's boxes are (its number and <CR> in the composer, <CR>
+-- on an option), through the question surface isovim.surfaces makes of it; once answered, one line.
+function RENDER.ask(chat, entry)
+  local boxes = require("isovim.boxes")
+  local name = chat.thread .. "-" .. entry.qid
+  local options = entry.options or {}
+  local box = { kind = "question", id = name, repo = chat.ws, names = { name }, other = { entry.other == true },
+    multi = { entry.multi == true }, texts = { entry.question or "" },
+    options = { vim.tbl_map(function(option)
+      return option.label
+    end, options) } }
+  local width = box_width(chat) - 4
+  local body = vim.tbl_map(function(line)
+    line.marks[#line.marks + 1] = { 0, #line.text, "IsovimPrTitle" }
+    return line
+  end, boxes.markdown(entry.question or "", width))
+  body[#body + 1] = boxes.seg("")
+  local first_option = #body + 1
+  for n, option in ipairs(options) do
+    body[#body + 1] = boxes.cat(boxes.seg(("%d. "):format(n), "IsovimAcpOptionNr"),
+      boxes.seg((entry.multi and "☐ " or "") .. (option.label or "")))
+    if option.description and option.description ~= "" then
+      body[#body + 1] = boxes.seg("   " .. option.description, "IsovimPrDim")
+    end
+  end
+  if entry.other then
+    body[#body + 1] = boxes.seg(("%d. your own words: %d <words>"):format(#options + 1, #options + 1), "IsovimPrDim")
+  end
+  if entry.multi then
+    body[#body + 1] = boxes.seg("any of them: their numbers, space between", "IsovimPrDim")
+  end
+  local who = (entry.by or "the router"):match("([^/]+)$")
+  local row = draw_box(chat, boxes.cat(boxes.seg("? ", "IsovimAcpAsk"), boxes.seg(who, "IsovimPrTitle"),
+    boxes.seg(" asks · " .. clock(entry.at), "IsovimPrDim")), body, "IsovimAcpAsk")
+  -- Each option's line, for <CR> on it; the box's extent, to put the answer in its place.
+  local line = row + first_option
+  for n, option in ipairs(options) do
+    local id = vim.api.nvim_buf_set_extmark(chat.buf, OPTIONS, line, 0, {})
+    chat.options[id] = { box = box, surface = 1, n = n }
+    line = line + 1 + ((option.description and option.description ~= "") and 1 or 0)
+  end
+  box.mark = vim.api.nvim_buf_set_extmark(chat.buf, BOXES, row, 0, { end_row = row + #body + 1, end_col = 0 })
+  chat.boxes[#chat.boxes + 1] = box
+end
+
+function RENDER.answered(chat, entry)
+  local name = chat.thread .. "-" .. entry.qid
+  for _, box in ipairs(vim.list_slice(chat.boxes, 1)) do
+    if box.id == name then
+      local answer = require("isovim.surfaces").answer_text({ labels = entry.labels or {}, other = entry.other }):gsub("\n", ", ")
+      local by = entry.by and entry.by ~= "user" and (" (" .. entry.by:match("([^/]+)$") .. ")") or ""
+      replace_box(chat, box, { ("? %s → %s%s"):format(box.texts[1], answer, by) }, "IsovimAcpNotice")
+    end
+  end
+end
+
 function RENDER.renamed(chat, entry)
   chat.title = entry.title or chat.title
   thread_tab(chat)
@@ -1441,6 +1498,9 @@ function M.bar_parts(chat)
       add(THREAD_GLYPH .. " a new thread in " .. chat.ws .. ": its title first", "IsovimAcpSpinner")
     elseif chat.renaming then
       add("✎ its new title: <CR> renames it · <C-c> keeps " .. (chat.title or chat.thread), "IsovimAcpSpinner")
+    elseif #chat.boxes > 0 then
+      add("? waiting for your answer", "IsovimAcpAsk")
+      add(" (its number and <CR>, or <CR> on an option; anything else posts)", "IsovimAcpSpinnerNote")
     elseif chat.busy then
       local sec, usec = vim.uv.gettimeofday()
       local secs = chat.since and math.max(0, math.floor(sec + usec / 1e6 - chat.since)) or 0
@@ -2379,6 +2439,7 @@ M.help_keys = {
   thread = {
     { "<CR>", "in its composer: post to the router (a new thread's first <CR> takes its title)" },
     { "r", "on the thread: resolve it, or open it again" },
+    { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
     { "", "otherwise as a chat: insert keys go to the draft, u undoes it, ]] [[ your posts" },
@@ -2414,6 +2475,8 @@ local RULE_LINE = { { RULE, "IsovimAcpRule" } }
 local function composer_hint(chat)
   if chat.pending_title then
     return "  <CR> starts the thread with this title · then your first post · <C-h> the sidebar"
+  elseif chat.thread and #chat.boxes > 0 then
+    return "  its number (or an option's name) and <CR> answers · anything else posts · <CR> on an option above"
   elseif chat.thread then
     return "  <CR> posts to the router · <S-CR> new line · <C-v> image · r on the thread resolves it · <C-h> the sidebar"
   end
@@ -3175,8 +3238,8 @@ local function show_thread(chat)
   return chat
 end
 
--- Opens thread id of repo.
-function M.open_thread(repo, id)
+-- Opens thread id of repo; at its question qid, if given (from the Inbox).
+function M.open_thread(repo, id, qid)
   local agent = "thread:" .. id
   local chat = M.get(repo, agent)
   if not chat then
@@ -3186,7 +3249,25 @@ function M.open_thread(repo, id)
     chat = make(repo, agent)
     chats[key(repo, agent)] = chat
   end
-  return show_thread(chat)
+  show_thread(chat)
+  local box = qid and vim.iter(chat.boxes):find(function(each)
+    return each.id == id .. "-" .. qid
+  end)
+  local at = box and vim.api.nvim_buf_get_extmark_by_id(chat.buf, BOXES, box.mark, {})[1]
+  if at then
+    -- In normal mode on the question, its options under the cursor.
+    vim.schedule(function()
+      vim.cmd.stopinsert()
+      local win = vim.fn.bufwinid(chat.buf)
+      if win ~= -1 then
+        pcall(vim.api.nvim_win_set_cursor, win, { at + 1, 0 })
+        vim.api.nvim_win_call(win, function()
+          vim.cmd("normal! zt")
+        end)
+      end
+    end)
+  end
+  return chat
 end
 
 -- A new thread in repo: its view opens with the composer asking for its title first.
@@ -3235,6 +3316,32 @@ function M.post_thread(chat, text)
     return
   elseif chat.resolved then
     return say("this thread is resolved: r on it opens it again", vim.log.levels.WARN)
+  end
+  -- While a question waits: a bare number (several, for a multi one), an option's label, or the
+  -- own-words number then words answers it; anything else is a post.
+  local box = chat.boxes[1]
+  if box then
+    local labels, answer = box.options[1], nil
+    local words = vim.split(text, "[%s,]+", { trimempty = true })
+    local n, rest = text:match("^(%d+)%s+(.+)$")
+    if n and tonumber(n) == #labels + 1 and box.other[1] then
+      answer = rest
+    elseif vim.iter(words):all(function(word)
+      return tonumber(word) ~= nil
+    end) or vim.iter(labels):any(function(label)
+      return label:lower() == text:lower()
+    end) then
+      answer = text
+    end
+    if answer then
+      local answered, err = M.answer(chat, answer, box)
+      if answered then
+        if err then
+          return say("could not answer: " .. err, vim.log.levels.WARN)
+        end
+        return M.set_draft(chat, { "" })
+      end
+    end
   end
   local attached
   text, attached = images.collect(chat.buf, text)

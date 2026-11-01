@@ -528,10 +528,43 @@ end
 function M.threads(repo)
   local threads = require("isovim.threads")
   local seen = threads.seen(repo)
-  return vim.tbl_map(function(info)
+  local list = {}
+  for _, info in ipairs(threads.list(repo)) do
     local file = threads.file(repo, info.id)
+    -- A reply you haven't read; a question waiting is in the Inbox as itself (below), the thread's
+    -- row saying so.
     local needs_you = info.last_reply > (seen[info.id] or 0)
-    return {
+    -- Its questions still waiting, each a question surface: the Inbox, root mode and iso answer
+    -- take them as any question, and their answers go back into the thread (M.answer).
+    for _, q in ipairs(info.questions) do
+      if not q.answer then
+        local entry = {
+          repo = repo,
+          name = info.id .. "-" .. q.qid,
+          base = "threads/" .. info.id .. ".jsonl#" .. q.qid,
+          type = "question",
+          file = file,
+          error_file = "",
+          title = q.question,
+          question = q.question,
+          options = q.options,
+          multi = q.multi,
+          other = q.other,
+          asker = q.by,
+          raised = q.raised or nil,
+          raised_by = q.raised and q.raised_by or nil,
+          why = q.raised and q.why or nil,
+          key = question_key(q),
+          created = q.at or 0,
+          thread = { id = info.id, title = info.title, qid = q.qid },
+        }
+        entry.deciding = require("isovim.rootmode").root_for(entry)
+        entry.needs_you = not entry.deciding
+        entry.sig = vim.fn.sha256(vim.json.encode({ q.question, q.options, q.raised or false, info.title }))
+        list[#list + 1] = entry
+      end
+    end
+    list[#list + 1] = {
       repo = repo,
       name = info.id,
       base = "threads/" .. info.id .. ".jsonl",
@@ -543,9 +576,12 @@ function M.threads(repo)
       posts = info.posts,
       working = info.working,
       needs_you = needs_you,
-      sig = vim.fn.sha256(("%s|%d|%s|%s|%s"):format(info.title, info.posts, tostring(info.working), info.status, tostring(needs_you))),
+      pending = info.pending,
+      sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d"):format(info.title, info.posts, tostring(info.working), info.status,
+        tostring(needs_you), info.pending)),
     }
-  end, threads.list(repo))
+  end
+  return list
 end
 
 -- One surface by name; nil when it has none.
@@ -746,6 +782,10 @@ function M.raise(entry, by, why)
     return nil, ("%s/%s isn't a pending question"):format(entry.repo, entry.name)
   end
   locked(entry.repo, function()
+    if current.thread then
+      require("isovim.threads").raise(entry.repo, current.thread.id, current.thread.qid, by, why)
+      return
+    end
     local data = vim.json.decode(read_file(current.file))
     data.raised, data.raised_by, data.why = true, by, why
     write_json(current.file, data)
@@ -907,6 +947,15 @@ function M.answer(entry, value, by)
     return nil, err
   end
   answer.by, answer.at = by or "user", os.time()
+  if current.thread then
+    -- Asked in a thread: its answer goes there, where the asker's thread ask waits for it.
+    locked(entry.repo, function()
+      require("isovim.threads").answer(entry.repo, current.thread.id, current.thread.qid, answer)
+      publish(current, "answered", { title = current.title, answer = answer })
+    end)
+    M.scan(entry.repo)
+    return answer
+  end
   local data = vim.json.decode(read_file(current.file))
   data.answer = answer
   -- Written and published under the scan lock: the asker can collect the answer (removing the
@@ -1164,6 +1213,9 @@ function M.open(entry)
     if ws then
       isovim.open(ws, id)
     end
+  elseif entry.type == "question" and entry.thread then
+    -- Asked in a thread: the thread, at the question, answered there.
+    require("isovim.acp.chat").open_thread(entry.repo, entry.thread.id, entry.thread.qid)
   elseif entry.type == "question" then
     -- A buffer of its own that answers it, then shows the answer.
     require("isovim.surface_view").open(entry)

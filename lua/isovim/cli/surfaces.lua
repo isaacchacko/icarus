@@ -367,7 +367,7 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | rename <id> <title...> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   if sub ~= "ls" and sub ~= "show" then
@@ -411,6 +411,30 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s is resolved"):format(repo, id))
+  elseif sub == "ask" then
+    local id = table.remove(args, 1) or fail(usage)
+    local qid, how = threads.ask(repo, id, question_spec(args), me)
+    if not qid then
+      fail(how)
+    end
+    surfaces.scan(repo)
+    c.tui("require('isovim.surfaces').recheck()")
+    if how == "reattached" then
+      note(("reattached to %s#%s's %s"):format(repo, id, qid))
+    end
+    -- Blocks until it's answered (the user, or a root in root mode), then prints the answer.
+    while true do
+      local q = vim.iter(threads.questions(threads.read(repo, id) or {})):find(function(each)
+        return each.qid == qid
+      end)
+      if not q then
+        fail(("%s#%s's %s is gone"):format(repo, id, qid))
+      elseif q.answer then
+        surfaces.scan(repo)
+        return out(surfaces.answer_text(q.answer))
+      end
+      vim.uv.sleep(500)
+    end
   elseif sub == "rename" then
     local id = args[1] or fail(usage)
     local title, err = threads.rename(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
@@ -436,6 +460,14 @@ function M.thread(args)
       elseif entry.kind == "post" then
         out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
         out(entry.text)
+      elseif entry.kind == "ask" then
+        out(("\n%s asks (%s): %s"):format(entry.by or "?", entry.qid, entry.question or ""))
+        for n, option in ipairs(entry.options or {}) do
+          out(("  %d. %s%s"):format(n, option.label, option.description and (" · " .. option.description) or ""))
+        end
+      elseif entry.kind == "answered" then
+        out(("[%s answered by %s: %s]"):format(entry.qid, entry.by or "?", table.concat(entry.labels or {}, ", ")
+          .. (entry.other and (" " .. entry.other) or "")))
       elseif entry.kind == "renamed" then
         out(("\n[renamed %q by %s]"):format(entry.title or "", entry.by or "?"))
       elseif entry.kind == "resolved" or entry.kind == "reopened" then

@@ -401,6 +401,10 @@ function M.surface_chunks(entry)
   end
   local row = { { glyph, hl }, { " " }, { title, title_hl } }
   if kind == "question" then
+    -- Asked in a thread: which one.
+    if entry.thread then
+      row[#row + 1] = { " · in " .. (entry.thread.title or entry.thread.id), "Comment" }
+    end
     if entry.answer then
       row[#row + 1] = { "  answered", "Comment" }
     elseif entry.options then
@@ -432,7 +436,9 @@ function M.surface_chunks(entry)
   elseif kind == "thread" then
     -- How many posts, the router's turn on it, a reply of the router's you haven't read.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
-    if entry.working then
+    if (entry.pending or 0) > 0 then
+      row[#row + 1] = { "  ? waiting on you", "DiagnosticWarn" }
+    elseif entry.working then
       row[#row + 1] = { "  working…", "Comment" }
     elseif entry.needs_you then
       row[#row + 1] = { "  new reply", "DiagnosticWarn" }

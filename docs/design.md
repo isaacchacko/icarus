@@ -225,6 +225,18 @@ host; General, Root and Terminals have none, and starting one there says why.
   `iso router thread new "<title>" ["first post"]` rather than bury it in its chat, and resolves one
   with `iso router thread resolve <id> ["outcome"]`; `thread ls [--all]` and `thread show <id>` read
   them, which any role may; only routers (and you, from a shell) make, post and resolve.
+- **Questions in a thread:** `iso router thread ask <id> <json|file|->` asks the user in the thread
+  rather than the repo's Inbox: the same JSON as `surface question`, appended as `ask {qid, question,
+  options, multi, other, by}`, and it blocks until it's answered, then prints the answer (run it in
+  the background; run again, it reattaches). It draws in the thread as a box of the thread's style,
+  its options numbered with their descriptions, ☐ for a multi one, a line for your own words; you
+  answer as the chat's boxes are answered, its number and `<CR>` in the composer (an option's name
+  too, or the own-words number then words) or `<CR>` on an option, and anything else you type is a
+  post. Once answered (`answered {qid, labels, other?, by}`) it's one line, `? question → answer`.
+  Each question still waiting is a question surface (`<id>-<qid>`, its file the thread's), so the
+  repo's and the host's Inbox list it (`? question · in <thread title>`), `<CR>` there opening the
+  thread at it, `<leader>in` walks to it, root mode decides or raises it (`raised {qid, by, why}`)
+  and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many

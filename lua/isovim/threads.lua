@@ -9,6 +9,12 @@
 --   {kind = "post", by = "user"|<agent address>, text, at, images?}
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
 --   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
+--   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
+--   {kind = "answered", qid, labels, other?, by, at}, {kind = "raised", qid, by, why?, at}
+-- A question asked in a thread lives there, not in the repo: isovim.surfaces lists each one still
+-- waiting as a question surface (named <id>-<qid>, its file the thread's), so the Inbox, root mode
+-- and iso answer take it as any question; its answer is appended here, where the asker's thread
+-- ask waits for it.
 --   {kind = "working", state = "start"|"end", at}   the router's turn on one of its posts
 -- A post of the user's goes to the router as a prompt tagged "[thread <repo>#<id> "<title>"]";
 -- the supervisor (isovim.acp.host) marks that turn working in the thread and posts the turn's last
@@ -79,8 +85,32 @@ function M.summary(entries)
       info.working = entry.state == "start"
     end
   end
+  info.questions = M.questions(entries)
+  info.pending = #vim.tbl_filter(function(q)
+    return not q.answer
+  end, info.questions)
   return info
 end
+
+-- The thread's questions, in order: each ask with its answer and raise, if any.
+function M.questions(entries)
+  local list, by_qid = {}, {}
+  for _, entry in ipairs(entries) do
+    if entry.kind == "ask" and type(entry.qid) == "string" then
+      local q = { qid = entry.qid, question = entry.question, options = entry.options or {}, multi = entry.multi == true,
+        other = entry.other == true, by = entry.by, at = entry.at, seq = entry.seq }
+      list[#list + 1] = q
+      by_qid[entry.qid] = q
+    elseif entry.kind == "answered" and by_qid[entry.qid] then
+      by_qid[entry.qid].answer = { labels = entry.labels or {}, other = entry.other, by = entry.by, at = entry.at }
+    elseif entry.kind == "raised" and by_qid[entry.qid] then
+      local q = by_qid[entry.qid]
+      q.raised, q.raised_by, q.why = true, entry.by, entry.why
+    end
+  end
+  return list
+end
+
 
 -- The repo's threads, newest first, as M.summary says (resolved ones only with all).
 function M.list(repo, all)
@@ -148,6 +178,41 @@ local function exists(repo, id)
     return nil, ("%s has no thread %s"):format(repo, id)
   end
   return entries
+end
+
+-- Asks a question in the thread (spec as isovim.surfaces.validate_question takes it), or finds it
+-- asked there already, the same question with the same options: its qid, and how ("asked",
+-- "reattached").
+---@return string? qid, string how_or_err
+function M.ask(repo, id, spec, by)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  local q, why = require("isovim.surfaces").validate_question(spec)
+  if not q then
+    return nil, why
+  end
+  local n = 0
+  for _, each in ipairs(M.questions(entries)) do
+    if each.question == q.question and vim.deep_equal(each.options, q.options) and each.multi == q.multi and each.other == q.other then
+      return each.qid, "reattached"
+    end
+    n = math.max(n, tonumber(each.qid:match("^q(%d+)$")) or 0)
+  end
+  local qid = "q" .. (n + 1)
+  append(repo, id, { kind = "ask", qid = qid, question = q.question, options = q.options, multi = q.multi, other = q.other, by = by })
+  return qid, "asked"
+end
+
+-- The answer to question qid ({labels, other?, by}), appended.
+function M.answer(repo, id, qid, answer)
+  return append(repo, id, { kind = "answered", qid = qid, labels = answer.labels, other = answer.other, by = answer.by })
+end
+
+-- Question qid given to the user by a root (root mode's raise).
+function M.raise(repo, id, qid, by, why)
+  return append(repo, id, { kind = "raised", qid = qid, by = by, why = why })
 end
 
 -- A post in the thread.
