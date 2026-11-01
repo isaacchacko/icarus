@@ -12,8 +12,8 @@
 13. A markdown surface and the Task Board open rendered (no frontmatter; the board drawn by isovim,
     not render-markdown: the sections that hold tasks, a glyph per status, `code` and owners like (a1)
     drawn, wrapped tasks hung, "## Doing (2)" read as doing, one that doesn't parse shown as it is and
-    marked broken in the sidebar) with an input box under them whose text goes to the repo's router's
-    queue and that closes with the view and comes back under it, and the view follows the file;
+    marked broken in the sidebar, alone with no input box), the markdown one with an input box under
+    it whose text goes to the repo's router's queue, and the view follows the file;
     an agent removed with no parent hands its children to the repo's router; autopr registers nothing
     for a new-layout agent. (root.<scope>.raised|decided are checked in rootmode.py.)
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/fixes_c.py"""
@@ -140,7 +140,7 @@ def fake_log():
 def task_board_view():
     """The Task Board drawn by surface_view, not by render-markdown: a heading's first word names its
     status, `code` and an owner like (a1) are drawn, wrapped tasks hang, a board that doesn't parse
-    says so in the view and the sidebar, and the input box goes wherever the view goes."""
+    says so in the view and the sidebar."""
     iso_dir = work / "acme" / "web" / "iso"
 
     def board_after(text, what):
@@ -202,48 +202,6 @@ def task_board_view():
     board_after("# todo\n# doing\n- Landing page on TUI start (a1)\n# waiting\n# blocked\n- Cutover on victoria (a6)\n# done\n",
                 lambda b: "Blocked  1" in b)
     iso.screenshot("task-board")
-    # The input box goes with the view: another buffer in its window, or the window closed, closes the
-    # box (it stayed, under whatever took the window); opened again, it's under the view.
-    def boxes():
-        return lua("""
-          local view = require('isovim.surface_view').views['acme/web/tasks']
-          local win, input = vim.fn.bufwinid(view.buf), vim.fn.bufwinid(view.input)
-          local below = win ~= -1 and input ~= -1 and vim.fn.win_screenpos(input)[1] == vim.fn.win_screenpos(win)[1] + vim.api.nvim_win_get_height(win) + 1
-            and vim.fn.win_screenpos(input)[2] == vim.fn.win_screenpos(win)[2]
-          return { view = win ~= -1, input = input ~= -1, below = below }
-        """)
-
-    def reopen():
-        lua("""
-          local entry = vim.iter(require('isovim.surfaces').list('acme/web')):find(function(e) return e.name == 'tasks' end)
-          require('isovim.surface_view').open(entry)
-        """)
-    check(boxes() == {"view": True, "input": True, "below": True}, "the box under the view", boxes())
-    lua("vim.api.nvim_win_set_buf(vim.fn.bufwinid(require('isovim.surface_view').views['acme/web/tasks'].buf), vim.api.nvim_create_buf(true, true))")
-    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to close", 5)
-    check(not gone["view"], "another buffer in the view's window closes its box", gone)
-    reopen()
-    check(boxes() == {"view": True, "input": True, "below": True}, "opened again, the box is under the view", boxes())
-    lua("vim.api.nvim_win_close(vim.fn.bufwinid(require('isovim.surface_view').views['acme/web/tasks'].buf), false)")
-    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to close", 5)
-    check(not gone["view"], ":q on the view closes its box", gone)
-    reopen()
-    check(boxes() == {"view": True, "input": True, "below": True}, "and it comes back under it", boxes())
-    # The view and its box alone beside the sidebar: :q on the view leaves an empty window, as isovim
-    # would quit once the box closed too.
-    lua("""
-      local view = require('isovim.surface_view').views['acme/web/tasks']
-      local keep = { [vim.fn.bufwinid(view.buf)] = true, [vim.fn.bufwinid(view.input)] = true }
-      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if not keep[win] and not require('isovim').is_sidebar(win) then vim.api.nvim_win_close(win, true) end
-      end
-      vim.api.nvim_set_current_win(vim.fn.bufwinid(view.buf))
-    """)
-    iso.keys(":q", "Enter")
-    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to go", 5)
-    alone = lua("local n = 0 for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
-                " if not require('isovim').is_sidebar(w) then n = n + 1 end end return n")
-    check(not gone["view"] and alone == 1, ":q on the view alone leaves an empty window, isovim still up", (gone, alone))
 
 
 try:

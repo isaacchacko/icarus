@@ -1,13 +1,13 @@
 -- A surface as you see it on Enter: rendered, not the raw file, in a buffer of its own beside the
 -- chat (or in the main window).
 --
--- A markdown surface or the Task Board, with an input box under it. A markdown surface is a
--- read-only markdown buffer (render-markdown draws it, as LazyVim's markdown extra sets it up), its
--- body without its frontmatter. The Task Board is drawn here instead, as markdown would draw the
--- router's words as markup (<C-j> as an HTML tag) and every task as a bullet and an empty checkbox
--- whatever its status: the sections that hold tasks, each task after its status's glyph (the
--- sidebar's), wrapped lines hung under its text, `code` drawn as code and an owner at the end like
--- (a1) dimmed. The input box is a buffer like the chat's composer, shown under the view and closed
+-- A markdown surface: a read-only markdown buffer (render-markdown draws it, as LazyVim's markdown
+-- extra sets it up), its body without its frontmatter, with an input box under it. The Task Board,
+-- alone in its window with no input box: drawn here instead, as markdown would draw the router's
+-- words as markup (<C-j> as an HTML tag) and every task as a bullet and an empty checkbox whatever
+-- its status: the sections that hold tasks, each task after its status's glyph (the sidebar's),
+-- wrapped lines hung under its text, `code` drawn as code and an owner at the end like (a1)
+-- dimmed. The input box is a buffer like the chat's composer, shown under the view and closed
 -- with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
 -- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
 -- does, and starts the router if it isn't running. It takes images as the chat's composer does
@@ -34,7 +34,7 @@ local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"question"
+---@field kind "markdown"|"tasks"|"question"
 ---@field buf integer the rendered view
 ---@field input integer the input box
 ---@field under? integer the window the input box was opened under
@@ -496,7 +496,7 @@ end
 
 -- The keys of the view and its input box, and the box going with the view.
 local function bind(view)
-  if view.kind ~= "question" then
+  if view.kind == "markdown" then
     images.setup(view.input, surfaces.dir(view.repo) .. "/images")
   end
   local function map(modes, lhs, fn, desc)
@@ -552,7 +552,7 @@ local function bind(view)
     on("q", function()
       close(view)
     end, "close")
-  else
+  elseif view.kind == "markdown" then
     for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
       vim.keymap.set("n", lhs, function()
         local win = vim.fn.bufwinid(view.input)
@@ -596,7 +596,7 @@ local function make(entry)
     return view
   end
   local question = entry.type == "question"
-  view = { repo = entry.repo, name = entry.name, kind = question and "question" or "markdown", chosen = {} }
+  view = { repo = entry.repo, name = entry.name, kind = entry.type, chosen = {} }
   if question then
     view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
     vim.b[view.buf].completion = false
@@ -696,8 +696,8 @@ local function place(buf)
   return win, true
 end
 
--- Opens the surface rendered, beside the chat, with its input box under it (a question's only
--- while it waits and takes your own words).
+-- Opens the surface rendered, beside the chat, with its input box under it: a markdown surface's
+-- always, a question's while it waits and takes your own words, the Task Board's never.
 ---@param entry isovim.Surface
 function M.open(entry)
   local view = make(entry)
@@ -716,12 +716,13 @@ function M.open(entry)
   end
   view_window(win, question, entry.type == "tasks")
   -- Its box under it, moved there if it shows anywhere else.
+  local boxed = view.kind == "markdown" or (question and entry.other and pending(view))
   local input_win = vim.fn.bufwinid(view.input)
-  if input_win ~= -1 and view.under ~= win then
+  if input_win ~= -1 and (view.under ~= win or not boxed) then
     pcall(vim.api.nvim_win_close, input_win, true)
     input_win = -1
   end
-  if input_win == -1 and (not question or (entry.other and pending(view))) then
+  if input_win == -1 and boxed then
     input_win = vim.api.nvim_open_win(view.input, false, { split = "below", win = win, height = 3 })
     view.under = win
   end
@@ -741,7 +742,7 @@ function M.open(entry)
     end
     return view
   end
-  if entry.type == "tasks" then
+  if view.kind == "tasks" then
     return view
   end
   -- render-markdown loads on the first markdown buffer and skips that one (its FileType has gone
@@ -767,6 +768,14 @@ function M.rebind()
               vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)
             end
           end
+        end
+      end
+      -- A Task Board opened before it had a kind of its own was a markdown one, with a box.
+      if view.kind == "markdown" and view.name == "tasks" then
+        view.kind = "tasks"
+        local input_win = vim.fn.bufwinid(view.input)
+        if input_win ~= -1 then
+          pcall(vim.api.nvim_win_close, input_win, true)
         end
       end
       bind(view)
