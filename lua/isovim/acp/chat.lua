@@ -41,7 +41,8 @@
 -- your earlier prompts while it's empty, <Esc> normal mode. <C-j> and <C-k> walk down and up the
 -- column, chat → queue (while it shows) → composer, in normal mode in the chat and the queue and in
 -- both modes in the composer; <C-j> in the composer does nothing, as nothing is below it.
--- <leader>iq goes to the queue, opening it even when empty.
+-- <C-h> goes to the sidebar from all three, in insert mode too (<BS> is the backspace; <C-l> there
+-- comes back typing). <leader>iq goes to the queue, opening it even when empty.
 --
 -- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
 -- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
@@ -1436,6 +1437,7 @@ local function map_chat(chat)
     end
     M.focus_composer(chat.ws, chat.agent)
   end, "down to the queue while it shows, else the composer")
+  require("isovim").map_to_sidebar(buf)
 end
 
 local function map_composer(chat)
@@ -1474,6 +1476,7 @@ local function map_composer(chat)
       vim.api.nvim_set_current_win(win)
     end
   end, "up to the queue while it shows, else the chat")
+  require("isovim").map_to_sidebar(buf, { "n", "i" })
 end
 
 -- The chat's, the queue's and the composer's keys, for the help (`?` in the sidebar).
@@ -1485,12 +1488,14 @@ M.help_keys = {
     { "i a o <CR>", "type to the agent (<CR> on a box's option answers with it)" },
     { "<C-c>", "cancel the agent's turn" },
     { "<C-j>", "down to the queue while it shows, else the composer" },
+    { "<C-h>", "the sidebar, on the row you left (<C-l> there comes back)" },
   },
   queue = {
     { "edit, :w", "edit, reorder or delete lines; :w makes it the queue" },
     { "<CR>", "send the prompt on the line now (cancels the turn)" },
     { "q", "hide the queue until another prompt queues" },
     { "<C-k> / <C-j>", "up to the chat / down to the composer" },
+    { "<C-h>", "the sidebar, in insert mode too (<C-l> there comes back)" },
     { "<leader>iq", "go to the queue, opening it even when empty" },
   },
   composer = {
@@ -1500,6 +1505,7 @@ M.help_keys = {
     { "<C-c>", "cancel the turn (or the rewind you're editing)" },
     { "<C-k>", "up to the queue while it shows, else the chat" },
     { "<C-j>", "nothing: the composer is the bottom" },
+    { "<C-h>", "the sidebar, in insert mode too, in place of backspace (<BS>); <C-l> there comes back typing" },
   },
 }
 
@@ -1534,13 +1540,14 @@ local function show_top_rule(chat)
 end
 
 local function composer_hint(chat)
-  local up = queue.window(chat) and "<C-k> the queue" or "<C-k> the chat"
+  local up = (queue.window(chat) and "<C-k> the queue" or "<C-k> the chat") .. " · <C-h> the sidebar"
   if #chat.boxes > 0 then
     return "  type its number and <CR> to answer · or <CR> on an option in the chat · <leader>in the Inbox"
   elseif chat.busy then
     return "  <CR> queues it · <C-c> interrupts · " .. (queue.window(chat) and up or "<leader>iq the queue · " .. up)
   end
-  return "  <CR> send · <S-CR> new line · /new /resume /fork · <Up> earlier prompts · " .. up
+  -- Where to go before what to type, so a narrow window cuts the latter.
+  return "  <CR> send · <S-CR> new line · " .. up .. " · <Up> earlier prompts · /new /resume /fork"
 end
 
 local function decorate_composer(chat)

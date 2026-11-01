@@ -300,6 +300,15 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 - `<Esc>` drops to normal mode; `<C-k>` goes up to the queue while it shows, else the chat, in either
   mode; `<C-j>` does nothing, as nothing is below it.
 
+**Into the sidebar and back**
+- `<C-h>` goes to the sidebar from anything in the main column (a chat, the queue, the input box,
+  a surface or question and its input box), in insert mode too: in the input box it takes the place of vim's backspace,
+  which is `<BS>`. It lands in the sidebar window you were last in (the list at first), on the row
+  you left there, found by what it stands for (an agent, repo, surface or PR) since rows move as
+  the list refreshes; if that row is gone, on the agent you came from, then its repo.
+- `<C-l>` from the sidebar goes back to the window you came from, typing again where you were if
+  you were (the main window if it shows something else now).
+
 **In the sidebar**
 
 | key | does |
@@ -307,6 +316,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `<CR>` / `<Tab>` | open / collapse |
 | `<` / `>` | switch host |
 | `<C-j>` / `<C-k>` | move between windows |
+| `<C-l>` | back to the window you came from |
 | `s` / `t` | spawn / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |
 | `x` | root mode |

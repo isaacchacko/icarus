@@ -206,6 +206,7 @@ local function buffer(ws, agent)
   map("<C-j>", function()
     require("isovim.acp.chat").focus_composer(q.ws, q.agent)
   end, "down to the composer")
+  require("isovim").map_to_sidebar(buf, { "n", "i" })
   return buf, q
 end
 

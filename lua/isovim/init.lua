@@ -156,10 +156,21 @@ local function chat_buf(ws, agent)
   return live, stale
 end
 
--- Whichever the sidebar is showing: the host list or the explorer.
+-- Whichever the sidebar is showing: the host list (the window of it you were last in, on the row
+-- you left) or the explorer. Leaves insert or terminal mode; <C-l> there comes back to it.
 local function focus_sidebar()
-  vim.cmd.stopinsert()
   require("isovim.sidebar").focus()
+end
+M.focus_sidebar = focus_sidebar
+
+-- <C-h> to the sidebar from a buffer of the main column (a composer, an ACP chat, a surface view
+-- and its input box), in normal mode and each other mode given; in insert mode it takes the place
+-- of vim's backspace there (<BS> still deletes). Through require, so a map made before a hot
+-- reload runs the new code.
+function M.map_to_sidebar(buf, modes)
+  vim.keymap.set(modes or "n", "<C-h>", function()
+    require("isovim").focus_sidebar()
+  end, { buffer = buf, nowait = true, desc = "isovim: go to the sidebar" })
 end
 
 -- Claude runs no hook when Esc interrupts it, so its spinner would spin on until the next prompt.
@@ -695,6 +706,15 @@ function M.setup(opts)
         end
       elseif ws then
         sidebar.follow()
+      end
+    end,
+  })
+  -- The sidebar's window and row you leave, for <C-h> to come back to (isovim.sidebar.focus).
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = group,
+    callback = function()
+      if vim.b.isovim_sidebar then
+        require("isovim.sidebar").remember_row()
       end
     end,
   })

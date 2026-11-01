@@ -1229,6 +1229,9 @@ local function render(wins)
   end
 end
 
+-- The fields that keep a row of the other windows through redraws (the list's are its kind's).
+local ROW_ID = { inbox = { "host", "repo_key", "name" }, terminals = { "host", "ws", "agent" }, footer = {} }
+
 local function line_of(list, item, fields)
   for i, row in ipairs(list) do
     local same = row.kind == item.kind
@@ -1261,6 +1264,27 @@ end
 -- Set by an action that wants the cursor on another row once the list redraws.
 local keep
 
+-- Where you last left the column (the role of its window and the row there) and the window you
+-- came into it from (its buffer, whether you were typing, the cursor). Kept through hot reloads.
+_G.isovim_sidebar_left = _G.isovim_sidebar_left or {}
+local left = _G.isovim_sidebar_left
+
+-- On leaving one of the column's windows (init.lua's WinLeave).
+function M.remember_row()
+  local role = vim.b.isovim_sidebar
+  left.role, left.item = role, (rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]]
+end
+
+-- Leaving the main column for the sidebar: the window, mode and cursor <C-l> brings back.
+local function leave_main()
+  local win = vim.api.nvim_get_current_win()
+  if not isovim.is_sidebar(win) then
+    left.from = { win = win, buf = vim.api.nvim_win_get_buf(win), cursor = vim.api.nvim_win_get_cursor(win),
+      insert = vim.api.nvim_get_mode().mode:match("^[it]") ~= nil }
+  end
+  vim.cmd.stopinsert()
+end
+
 -- Rows can shift (activity sort, the Inbox, subtitles), so a cursor keeps its row's item, not its
 -- line number.
 local function refresh_now()
@@ -1276,11 +1300,11 @@ local function refresh_now()
   rows.list = collect()
   render(wins)
   require("isovim.landing").refresh()
-  local inbox_line = queued and line_of(rows.inbox, queued, { "host", "repo_key", "name" })
+  local inbox_line = queued and line_of(rows.inbox, queued, ROW_ID.inbox)
   if inbox_line then
     vim.api.nvim_win_set_cursor(wins.inbox, { inbox_line, 0 })
   end
-  local terminal_line = terminal and line_of(rows.terminals, terminal, { "host", "ws", "agent" })
+  local terminal_line = terminal and line_of(rows.terminals, terminal, ROW_ID.terminals)
   if terminal_line then
     vim.api.nvim_win_set_cursor(wins.terminals, { terminal_line, 0 })
   end
@@ -1385,7 +1409,7 @@ end
 local COLUMN_KEYS = {
   { "<c-j>", "isovim_window_down", "to the window below" },
   { "<c-k>", "isovim_window_up", "to the window above" },
-  { "<c-l>", "isovim_focus_chat", "to the chat" },
+  { "<c-l>", "isovim_focus_chat", "back to the window you came from (<C-h> there), typing again if you were" },
   { "<", "isovim_prev_host", "the host list shows the previous host" },
   { ">", "isovim_next_host", "the host list shows the next host" },
   { "u", "isovim_usage", "measure the shown host's CPU and RAM (in the footer)" },
@@ -1578,7 +1602,7 @@ end
 
 -- Into one of the column's windows (inbox, list, terminals, footer), from anywhere.
 function M.focus_window(role)
-  vim.cmd.stopinsert()
+  leave_main()
   local win = column()[role]
   if win then
     vim.api.nvim_set_current_win(win)
@@ -2113,8 +2137,18 @@ M.actions = {
   isovim_explorer = function()
     M.show_explorer()
   end,
+  -- Back to the window you came from, typing again where you were if you were; one that shows
+  -- something else since, the main window.
   isovim_focus_chat = function()
-    vim.api.nvim_set_current_win(isovim.main_win())
+    local from = left.from
+    if not (from and vim.api.nvim_win_is_valid(from.win) and vim.api.nvim_win_get_buf(from.win) == from.buf) then
+      return vim.api.nvim_set_current_win(isovim.main_win())
+    end
+    vim.api.nvim_set_current_win(from.win)
+    if from.insert then
+      pcall(vim.api.nvim_win_set_cursor, from.win, from.cursor)
+      vim.cmd.startinsert({ bang = from.cursor[2] >= #vim.api.nvim_get_current_line() })
+    end
   end,
   isovim_last_workspace = function()
     isovim.last_workspace()
@@ -2217,14 +2251,35 @@ function M.close()
   end
 end
 
--- Into the sidebar: the host list, or the explorer in its place.
+-- Into the sidebar: the host list, or the explorer in its place. The column's window you were last
+-- in (the list at first), on the row you left there, found again by what it stands for, since rows
+-- move as the list refreshes and follow() moves the list's cursor while you're away. A row that's
+-- gone gives way to the agent's in the window you came from, then to its repo's.
 function M.focus()
+  if isovim.is_sidebar(vim.api.nvim_get_current_win()) then
+    return
+  end
+  leave_main()
   local explorer = Snacks.picker.get({ source = "explorer" })[1]
-  local list = windows().list
   if explorer then
-    explorer:focus("list")
-  elseif list then
-    vim.api.nvim_set_current_win(list)
+    return explorer:focus("list")
+  end
+  local wins = windows()
+  local role = wins[left.role] and left.role or "list"
+  if not wins[role] then
+    return
+  end
+  vim.api.nvim_set_current_win(wins[role])
+  local line = left.role == role and left.item and line_of(rows[role], left.item, ROW_ID[role])
+  if not line and role == "list" then
+    local buf = left.from and vim.api.nvim_buf_is_valid(left.from.buf) and left.from.buf
+    local ws = buf and (vim.b[buf].isovim_ws or vim.b[buf].isovim_id) or isovim.current
+    local agent = buf and vim.b[buf].isovim_agent
+    line = (agent and line_of(rows.list, { kind = "agent", ws = ws, agent = agent }))
+      or (ws and line_of(rows.list, { kind = "repo", repo_key = M.group_key(ws) }))
+  end
+  if line then
+    vim.api.nvim_win_set_cursor(wins[role], { line, 0 })
   end
 end
 

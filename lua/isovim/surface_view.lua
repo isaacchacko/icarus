@@ -509,6 +509,8 @@ local function bind(view)
       vim.api.nvim_set_current_win(win)
     end
   end, "go to the surface")
+  require("isovim").map_to_sidebar(view.input, { "n", "i" })
+  require("isovim").map_to_sidebar(view.buf)
   if view.kind == "question" then
     local function on(lhs, fn, desc)
       vim.keymap.set("n", lhs, fn, { buffer = view.buf, nowait = true, desc = "isovim: " .. desc })
