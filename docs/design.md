@@ -258,14 +258,17 @@ words point at what they mention and you go there with a key (isovim.links):
 | `iso:page/<repo>/<name>[#c4]` | the page, at the comment |
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
 
-In a chat, a thread, a page and a PR's view each address is drawn over as a chip: the target's
-glyph, a short label and how it is (an agent working or idle, a PR's state, a thread open or
-resolved, a page waiting on you, a file missing), drawn again as you come back to the buffer. The
-chip is an overlay as wide as the address, so nothing moves or rewraps; in a box (a thread's post,
-a PR's description) the address is first swapped for a token as wide as a chip (`iso:@<n>` and
-no-break spaces) that the box's wrapping never cuts, its address kept for the session. `<Tab>` in
-normal mode with the cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` is
-vim's own (`<C-i>`, the jump forward). `iso <role> link <thing>` prints the address of an agent
+In a chat, a thread, a page and a PR's view each address is drawn as a chip in its place: the
+target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread open
+or resolved, a page waiting on you, a file missing), the line exactly as long as the chip. A side
+table (an extmark per chip) keeps which address each one is, for `<Tab>`, `gf` and a yank, which
+gives back the address. A chip whose target changed is drawn again, its line with it, as you come
+back to the buffer. In the chat a line's addresses become chips once the line has all come (one
+still streaming may be cut by a chunk); in a box (a thread's post, a PR's description) the chip's
+words are joined by no-break spaces so the box's wrapping keeps it whole; a page's comments quote
+and find their lines by the page's own text, addresses and all. `<Tab>` in normal mode with the
+cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` is vim's own (`<C-i>`, the
+jump forward). `iso <role> link <thing>` prints the address of an agent
 (`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or
 surface (its name) or a path; `iso router surface link <address|thing> [label]` lists a link under
 the repo's Files, `<CR>` opening it. The router's role prompt tells it to link what it mentions.

@@ -6,11 +6,13 @@
 --   iso:surface/<repo>/<name>             a surface (the Task Board is tasks, the PRs PRs)
 --   iso:page/<repo>/<name>[#c4]           a page, at a comment
 --   iso:file/<path>                       a file or folder (absolute; ~ is home)
--- In a chat, a thread, a page or a PR's view each address is drawn over (an overlay as wide as the
--- address, so nothing moves or rewraps) as a chip: the target's glyph, a short label and how it is
--- (an agent working or idle, a PR's state and CI, a thread open or resolved, a file missing). <Tab>
--- in normal mode with the cursor on one opens its target as a tab, gf too; elsewhere <Tab> is
--- vim's own (<C-i>, the jump forward). A router surfaces one with iso router surface link, a row
+-- In a chat, a thread, a page or a PR's view each address is drawn as a chip in its place: the
+-- target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread
+-- open or resolved, a file missing), the line exactly as long as the chip, and a side table (an
+-- extmark per chip) keeps which address each one is, for <Tab>, gf and a yank, which gives the
+-- address. A chip whose target changed (an agent now idle) is drawn again as you come back to its
+-- buffer. <Tab> in normal mode with the cursor on one opens its target as a tab, gf too; elsewhere
+-- <Tab> is vim's own (<C-i>, the jump forward). A router surfaces one with iso router surface link, a row
 -- under Files, and prints one with iso <role> link <thing>.
 local store = require("isovim.store")
 
@@ -19,42 +21,16 @@ local M = {}
 local NS = vim.api.nvim_create_namespace("isovim_links")
 
 -- Where an address ends: before white space, a closing bracket or quote, or trailing punctuation.
-local PATTERN = "()(iso:[%a@][^%s%)%]>\"'`]+)"
+local PATTERN = "()(iso:%a+/[^%s%)%]>\"'`]+)"
 local NBSP = "\194\160"
+M.NBSP = NBSP
 
--- Addresses drawn in a box (isovim.boxes: a thread's post, a PR's description) are swapped for a
--- token as wide as a chip, iso:@<n> and no-break spaces, so the box's wrapping never cuts one in
--- two; the token keeps the address here, for this session (a box is drawn again from its source).
-_G.isovim_link_tokens = _G.isovim_link_tokens or { by_address = {}, list = {} }
-local tokens = _G.isovim_link_tokens
-local TOKEN_WIDTH = 28
-
-function M.compact(text)
-  return ((text or ""):gsub("iso:%a+/[^%s%)%]>\"'`]+", function(raw)
-    local addr = raw:gsub("[%.,;:!?]+$", "")
-    local tail = raw:sub(#addr + 1)
-    local n = tokens.by_address[addr]
-    if not n then
-      tokens.list[#tokens.list + 1] = addr
-      n = #tokens.list
-      tokens.by_address[addr] = n
-    end
-    local token = "iso:@" .. n
-    return token .. NBSP:rep(math.max(1, math.min(TOKEN_WIDTH, vim.fn.strdisplaywidth(addr)) - #token)) .. tail
-  end))
-end
-
--- The addresses in a line: {from, to, address} (byte columns, to exclusive); a token's, its address.
+-- The addresses written in a line: {from, to, address} (byte columns, to exclusive).
 function M.find(line)
   local found = {}
   for from, raw in line:gmatch(PATTERN) do
     raw = raw:gsub("[%.,;:!?]+$", "")
-    local clean = raw:gsub(NBSP, "")
-    local n = clean:match("^iso:@(%d+)$")
-    clean = n and tokens.list[tonumber(n)] or clean
-    if clean and not clean:match("^iso:@") then
-      found[#found + 1] = { from - 1, from - 1 + #raw, clean }
-    end
+    found[#found + 1] = { from - 1, from - 1 + #raw, raw }
   end
   return found
 end
@@ -177,58 +153,144 @@ function M.resolve(addr)
   return nil, "isovim doesn't know links to " .. p.kind
 end
 
--- The chip over an address: as wide as the address, so nothing moves; cut with … when it doesn't fit.
-local function chip(addr, width)
+-- A chip's parts, {text, hl}: the target's glyph, its label, how it is; an address that leads
+-- nowhere, a warning glyph and the address. sep joins them (a no-break space keeps a box's
+-- wrapping from cutting one).
+function M.parts(addr, sep)
+  sep = sep or " "
   local target = M.resolve(addr)
-  local parts = target and {
-    { target.glyph .. " ", target.hl or "Special" },
-    { target.label, "IsovimLink" },
-    target.status and { " · " .. target.status, target.status_hl or "Comment" } or nil,
-  } or { { "\u{f127} ", "DiagnosticWarn" }, { addr:gsub("^iso:", ""), "DiagnosticWarn" } }
-  local out, left = {}, width
-  for _, part in ipairs(parts) do
-    if left <= 0 then
-      break
-    end
-    local text = part[1]
-    if vim.fn.strdisplaywidth(text) > left then
-      while vim.fn.strdisplaywidth(text) > left - 1 do
-        text = vim.fn.strcharpart(text, 0, vim.fn.strchars(text) - 1)
-      end
-      text = text .. "…"
-    end
-    out[#out + 1] = { text, part[2] }
-    left = left - vim.fn.strdisplaywidth(text)
+  if not target then
+    return { { "\u{f127}" .. sep, "DiagnosticWarn" }, { (addr:gsub("^iso:", "")), "DiagnosticWarn" } }
   end
-  if left > 0 then
-    out[#out + 1] = { (" "):rep(left) }
+  local label = target.label:gsub(" ", sep)
+  local parts = { { target.glyph .. sep, target.hl or "Special" }, { label, "IsovimLink" } }
+  if target.status then
+    parts[#parts + 1] = { sep .. "·" .. sep .. target.status:gsub(" ", sep), target.status_hl or "Comment" }
   end
-  return out
+  return parts
+end
+
+function M.chip(addr, sep)
+  return table.concat(vim.tbl_map(function(part)
+    return part[1]
+  end, M.parts(addr, sep)))
 end
 
 vim.api.nvim_set_hl(0, "IsovimLink", { default = true, link = "Underlined" })
 
--- Draws the links in rows from..to (0-based, to exclusive; -1 the end) of buf as chips.
-function M.decorate(buf, from, to)
+-- The side table: which address each chip drawn in a buffer is, by its extmark.
+_G.isovim_links = _G.isovim_links or {}
+local drawn = _G.isovim_links
+
+-- Notes that the chip at row, col..end_col of buf is addr (its parts' highlights drawn there too).
+function M.register(buf, row, col, end_col, addr, parts)
+  drawn[buf] = drawn[buf] or {}
+  local id = vim.api.nvim_buf_set_extmark(buf, NS, row, col, { end_col = end_col, right_gravity = false,
+    end_right_gravity = true })
+  drawn[buf][id] = addr
+  local at = col
+  for _, part in ipairs(parts or M.parts(addr)) do
+    pcall(vim.api.nvim_buf_set_extmark, buf, NS, row, at, { end_col = math.min(at + #part[1], end_col), hl_group = part[2],
+      priority = 300 })
+    at = at + #part[1]
+  end
+  return id
+end
+
+-- Writes into buf with fn: the buffer made modifiable meanwhile (the chat passes its own writer,
+-- which keeps its guard and following right).
+local function plain_write(buf)
+  return function(fn)
+    local was = vim.bo[buf].modifiable
+    vim.bo[buf].modifiable = true
+    pcall(fn)
+    vim.bo[buf].modifiable = was
+    vim.bo[buf].modified = false
+  end
+end
+
+-- Draws the addresses written in rows from..to (0-based, to exclusive; -1 the end) of buf as
+-- chips, each in place of its address. write(fn) makes the change (default: modifiable meanwhile).
+function M.substitute(buf, from, to, write)
   if not vim.api.nvim_buf_is_loaded(buf) then
     return
   end
-  from, to = from or 0, to or -1
-  vim.api.nvim_buf_clear_namespace(buf, NS, from, to)
-  for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, from, to, false)) do
-    if line:find("iso:", 1, true) then
-      for _, link in ipairs(M.find(line)) do
-        local width = vim.fn.strdisplaywidth(line:sub(link[1] + 1, link[2]))
-        pcall(vim.api.nvim_buf_set_extmark, buf, NS, from + i - 1, link[1], { end_col = link[2],
-          virt_text = chip(link[3], width), virt_text_pos = "overlay", hl_mode = "combine", priority = 300 })
+  write = write or plain_write(buf)
+  from = from or 0
+  -- The whole buffer drawn again (a view's redraw): its old chips went with its old lines.
+  if from == 0 and (to or -1) == -1 then
+    vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
+    drawn[buf] = nil
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, from, to or -1, false)
+  for i, line in ipairs(lines) do
+    local found = line:find("iso:", 1, true) and M.find(line) or {}
+    for j = #found, 1, -1 do
+      local link, row = found[j], from + i - 1
+      local parts = M.parts(link[3])
+      local text = table.concat(vim.tbl_map(function(part)
+        return part[1]
+      end, parts))
+      write(function()
+        vim.api.nvim_buf_set_text(buf, row, link[1], row, link[2], { text })
+      end)
+      M.register(buf, row, link[1], link[1] + #text, link[3], parts)
+    end
+  end
+end
+-- Kept under its old name for the views that call it.
+M.decorate = M.substitute
+
+-- The chips drawn in buf again where what they say changed (an agent now idle, a thread resolved):
+-- each one's line changes length with it.
+function M.refresh(buf, write)
+  if not (drawn[buf] and vim.api.nvim_buf_is_loaded(buf)) then
+    return
+  end
+  write = write or plain_write(buf)
+  -- Over a copy: drawing a chip again takes its old entry out and puts a new one in.
+  for id, addr in pairs(vim.deepcopy(drawn[buf])) do
+    local mark = vim.api.nvim_buf_get_extmark_by_id(buf, NS, id, { details = true })
+    -- Gone with its text (a chat drawn again, a line rewritten): forgotten, never written back.
+    if not mark[1] or (mark[3].end_col or mark[2]) <= mark[2] or (mark[3].end_row or mark[1]) ~= mark[1] then
+      if mark[1] then
+        vim.api.nvim_buf_del_extmark(buf, NS, id)
+      end
+      drawn[buf][id] = nil
+    else
+      local row, col, end_col = mark[1], mark[2], mark[3].end_col or mark[2]
+      local now = vim.api.nvim_buf_get_text(buf, row, col, row, end_col, {})[1] or ""
+      local sep = now:find("\194\160", 1, true) and "\194\160" or " "
+      local parts = M.parts(addr, sep)
+      local text = table.concat(vim.tbl_map(function(part)
+        return part[1]
+      end, parts))
+      if text ~= now then
+        for _, other in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, { row, col }, { row, end_col }, { overlap = false })) do
+          if other[3] >= col and other[3] < end_col then
+            vim.api.nvim_buf_del_extmark(buf, NS, other[1])
+            drawn[buf][other[1]] = nil
+          end
+        end
+        write(function()
+          vim.api.nvim_buf_set_text(buf, row, col, row, end_col, { text })
+        end)
+        M.register(buf, row, col, col + #text, addr, parts)
       end
     end
   end
 end
 
--- The address under the cursor in the current window, if any.
+-- The chip (or address written out) under the cursor in the current window, if any.
 function M.at_cursor()
+  local buf = vim.api.nvim_get_current_buf()
   local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, { row - 1, 0 }, { row - 1, -1 }, { details = true })) do
+    local addr = (drawn[buf] or {})[mark[1]]
+    if addr and col >= mark[3] and col < (mark[4].end_col or mark[3]) then
+      return addr
+    end
+  end
   local line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1] or ""
   for _, link in ipairs(M.find(line)) do
     if col >= link[1] and col < link[2] then
@@ -249,9 +311,38 @@ function M.open(addr)
   return true
 end
 
+-- A yank over chips gives their addresses: each chip on the yanked lines, its text replaced.
+local function yanked(buf)
+  local event = vim.v.event
+  if event.operator ~= "y" or not drawn[buf] then
+    return
+  end
+  local first, last = vim.fn.line("'[") - 1, vim.fn.line("']") - 1
+  local contents = vim.deepcopy(event.regcontents)
+  local changed = false
+  for row = first, last do
+    local i = row - first + 1
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, { row, 0 }, { row, -1 }, { details = true })) do
+      local addr = drawn[buf][mark[1]]
+      if addr and contents[i] then
+        local chip = vim.api.nvim_buf_get_text(buf, row, mark[3], row, mark[4].end_col or mark[3], {})[1] or ""
+        local s = chip ~= "" and contents[i]:find(chip, 1, true)
+        if s then
+          contents[i] = contents[i]:sub(1, s - 1) .. addr .. contents[i]:sub(s + #chip)
+          changed = true
+        end
+      end
+    end
+  end
+  if changed then
+    vim.fn.setreg(event.regname ~= "" and event.regname or '"', contents, event.regtype)
+  end
+end
+
 -- <Tab> on a link opens it, else it's vim's own (the jump forward); gf too, unless the buffer maps
--- gf itself (the chat's gf asks M.at_cursor first). Their chips are drawn again on entering it.
-function M.attach(buf)
+-- gf itself (the chat's gf asks M.at_cursor first). Its chips are drawn again on coming back to it,
+-- and a yank of them gives their addresses. write as M.substitute takes it.
+function M.attach(buf, write)
   vim.keymap.set("n", "<Tab>", function()
     local addr = M.at_cursor()
     if addr then
@@ -268,11 +359,26 @@ function M.attach(buf)
       pcall(vim.cmd, "normal! gf")
     end, { buffer = buf, desc = "isovim: open the link (or file) under the cursor" })
   end
+  local group = vim.api.nvim_create_augroup("isovim_links_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd("BufEnter", {
-    group = vim.api.nvim_create_augroup("isovim_links_" .. buf, { clear = true }),
+    group = group,
     buffer = buf,
     callback = function()
-      require("isovim.links").decorate(buf)
+      require("isovim.safe").wrap("a buffer's links", require("isovim.links").refresh)(buf, write)
+    end,
+  })
+  vim.api.nvim_create_autocmd("TextYankPost", {
+    group = group,
+    buffer = buf,
+    callback = function()
+      require("isovim.safe").wrap("a yank's links", yanked)(buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = group,
+    buffer = buf,
+    callback = function()
+      drawn[buf] = nil
     end,
   })
 end

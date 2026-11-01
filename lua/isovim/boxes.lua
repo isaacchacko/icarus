@@ -53,7 +53,7 @@ function M.cat(...)
   local out = { text = "", marks = {} }
   for _, part in ipairs({ ... }) do
     for _, mark in ipairs(part.marks) do
-      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3] }
+      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3], mark[4] }
     end
     out.text = out.text .. part.text
   end
@@ -77,7 +77,7 @@ function M.fit(line, width)
   local out = { text = text .. "…", marks = {} }
   for _, mark in ipairs(line.marks) do
     if mark[1] < #text then
-      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3] }
+      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3], mark[4] }
     end
   end
   return out
@@ -110,9 +110,20 @@ end
 -- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them.
 function M.markdown(text, width)
   local look = require("isovim.acp.look")
-  -- Its iso: addresses as tokens that wrap whole, drawn over as chips (isovim.links).
-  text = require("isovim.links").compact(text)
-  local body = vim.split(vim.trim((text or ""):gsub("\r", "")), "\n", { plain = true })
+  -- Its iso: addresses as chips in their place (isovim.links), joined by no-break spaces so the
+  -- wrapping keeps each whole; found again in the lines below to mark them with their address.
+  local links = require("isovim.links")
+  local chips = {}
+  text = (text or ""):gsub("iso:%a+/[^%s%)%]>\"'`]+", function(raw)
+    local addr = raw:gsub("[%.,;:!?]+$", "")
+    local parts = links.parts(addr, links.NBSP)
+    local chip = table.concat(vim.tbl_map(function(part)
+      return part[1]
+    end, parts))
+    chips[#chips + 1] = { chip = chip, addr = addr, parts = parts }
+    return chip .. raw:sub(#addr + 1)
+  end)
+  local body = vim.split(vim.trim(text:gsub("\r", "")), "\n", { plain = true })
   local out, fenced, i = {}, false, 1
   local function wrapped(line, base)
     local plain, spans = look.plain(line)
@@ -175,6 +186,25 @@ function M.markdown(text, width)
         wrapped(heading or line, heading and "IsovimAcpHeading" or nil)
       end
       i = i + 1
+    end
+  end
+  -- Each chip's parts highlighted, and the whole of it marked with its address (mark[4]).
+  for _, line in ipairs(out) do
+    for _, each in ipairs(chips) do
+      local from = 1
+      while true do
+        local s, e = line.text:find(each.chip, from, true)
+        if not s then
+          break
+        end
+        local at = s - 1
+        for _, part in ipairs(each.parts) do
+          line.marks[#line.marks + 1] = { at, at + #part[1], part[2] }
+          at = at + #part[1]
+        end
+        line.marks[#line.marks + 1] = { s - 1, e, nil, each.addr }
+        from = e + 1
+      end
     end
   end
   return out

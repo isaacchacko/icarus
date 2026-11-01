@@ -128,7 +128,7 @@ local function render(view, data, width)
     levels[#lines] = level or "1"
     rows[#lines] = row
     for _, mark in ipairs(line.marks) do
-      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3] }
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3], mark[4] }
     end
   end
   width = math.max(48, width - 1)
@@ -342,7 +342,12 @@ local function draw(view)
   vim.bo[view.buf].modified = false
   vim.api.nvim_buf_clear_namespace(view.buf, NS, 0, -1)
   for _, mark in ipairs(marks) do
-    pcall(vim.api.nvim_buf_set_extmark, view.buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
+    if mark[5] then
+      -- A link's chip (isovim.boxes put it there): which address it is, for <Tab> (isovim.links).
+      require("isovim.links").register(view.buf, mark[1], mark[2], mark[3], mark[5], {})
+    elseif mark[4] then
+      pcall(vim.api.nvim_buf_set_extmark, view.buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
+    end
   end
   -- What the fetch is doing, after the title: refreshing, or that gh couldn't (the cache stays).
   local note = view.refreshing and "  refreshing…" or view.failed and "  couldn't refresh · r tries again"

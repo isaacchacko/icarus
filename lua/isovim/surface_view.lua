@@ -365,7 +365,10 @@ local function draw_surface(view, entry)
   set_lines(view.buf, lines, marks)
   if view.kind == "page" then
     view.page_offset = (entry.body_line or 1) - 1 - (entry.error and 1 or 0)
+    view.source_lines = lines
     require("isovim.pages").draw(view)
+    -- Its iso: addresses as chips in their place (isovim.links); the comments go by the lines above.
+    require("isovim.links").substitute(view.buf)
   end
 end
 

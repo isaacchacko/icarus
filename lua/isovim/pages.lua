@@ -309,7 +309,9 @@ function M.draw(view, entry)
     return
   end
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  -- The page's own lines, as surface_view drew them before its links became chips: what comments
+  -- quote and are found again by.
+  local lines = view.source_lines or vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local comments = M.comments(view.repo, view.name)
   view.page_offset = entry and entry.body_line and entry.body_line - 1 or view.page_offset or 0
   view.opened_comments = view.opened_comments or {}
@@ -328,7 +330,6 @@ function M.draw(view, entry)
   table.sort(view.placed, function(a, b)
     return a.first < b.first
   end)
-  require("isovim.links").decorate(buf)
 end
 
 -- The comment under the cursor (on one of its lines), if any.
@@ -369,7 +370,7 @@ end
 
 -- Comments on the lines first..last of the view (1-based rows).
 local function comment_on(view, first, last)
-  local lines = vim.api.nvim_buf_get_lines(view.buf, 0, -1, false)
+  local lines = view.source_lines or vim.api.nvim_buf_get_lines(view.buf, 0, -1, false)
   local offset = view.page_offset or 0
   to_input(view, { quote = table.concat(vim.list_slice(lines, first, last), "\n"), from = first + offset,
     to = last + offset, heading = M.heading_at(lines, first) })

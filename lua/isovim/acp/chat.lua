@@ -464,9 +464,12 @@ local draw_tables
 local function add_lines(chat, lines, hl)
   local row
   edit(chat, function(buf)
-    -- The agent's message ends here: a table it ended on is whole.
+    -- The agent's message ends here: a table it ended on is whole, its last line's links too.
     if chat.block == "agent" then
       draw_tables(chat, true)
+      require("isovim.links").substitute(buf, body_end(chat) - 1, body_end(chat), function(write)
+        write()
+      end)
     end
     row = chat.fresh and 0 or body_end(chat)
     vim.api.nvim_buf_set_lines(buf, row, chat.fresh and 1 or row, false, lines)
@@ -523,8 +526,6 @@ local function markup(chat, from, to)
       vim.api.nvim_buf_set_extmark(buf, MD, from + row - 1, c[1], { end_col = c[2], conceal = "" })
     end
   end
-  -- Its iso: addresses as chips (isovim.links).
-  require("isovim.links").decorate(buf, from, to + 1)
 end
 
 -- How wide a table may be drawn: the text width of the widest window showing a chat (this one's
@@ -630,6 +631,11 @@ local function add_text(chat, text)
     markup(chat, from, body_end(chat) - 1)
     if #parts > 1 then
       draw_tables(chat, false)
+      -- Its lines that have all come: their iso: addresses as chips (isovim.links). The one still
+      -- streaming waits, an address in it maybe cut by a chunk.
+      require("isovim.links").substitute(buf, from, body_end(chat) - 1, function(write)
+        write()
+      end)
     end
   end)
 end
@@ -1147,7 +1153,12 @@ function RENDER.prompt(chat, entry)
     span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
   end
   chips(chat.buf, row, lines)
-  require("isovim.links").decorate(chat.buf, row, row + #lines)
+  -- Its iso: addresses as chips (isovim.links).
+  edit(chat, function(buf)
+    require("isovim.links").substitute(buf, row, row + #lines, function(fn)
+      fn()
+    end)
+  end)
   mark_message(chat, row, mine)
   if mine and entry.text and chat.history[#chat.history] ~= entry.text then
     chat.history[#chat.history + 1] = entry.text
@@ -1241,13 +1252,17 @@ local function draw_box(chat, title, body, border, tint, mine)
   end, lines))
   for i, line in ipairs(lines) do
     for _, mark in ipairs(line.marks) do
-      span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
+      if mark[4] then
+        -- A link's chip (isovim.boxes put it there): which address it is, for <Tab>.
+        require("isovim.links").register(chat.buf, row + i - 1, mark[1], mark[2], mark[4], {})
+      elseif mark[3] then
+        span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
+      end
     end
   end
   if tint then
     line_hl(chat.buf, row, #lines, tint)
   end
-  require("isovim.links").decorate(chat.buf, row, row + #lines)
   mark_message(chat, row, mine)
   return row
 end
@@ -2413,14 +2428,7 @@ local function map_keys(chat)
   map("n", "<C-o>", function()
     toggle_all(chat)
   end, "open every tool call's output and thought, or collapse them all")
-  -- An iso: link under the cursor opens its target (isovim.links); <Tab> elsewhere is vim's own.
-  map("n", "<Tab>", function()
-    local addr = require("isovim.links").at_cursor()
-    if addr then
-      return require("isovim.links").open(addr)
-    end
-    vim.api.nvim_feedkeys(vim.v.count1 .. vim.keycode("<C-i>"), "n", false)
-  end, "open the link under the cursor (else jump forward)")
+  -- An iso: link under the cursor opens its target (isovim.links, which maps <Tab> too).
   map("n", "gf", function()
     local addr = require("isovim.links").at_cursor()
     if addr then
@@ -2672,6 +2680,11 @@ local function bind(chat)
     end),
   })
   map_keys(chat)
+  -- Its links' <Tab>, chips drawn again on coming back, yanks giving addresses (isovim.links),
+  -- written as the drawing writes the conversation.
+  require("isovim.links").attach(buf, function(fn)
+    edit(chat, fn)
+  end)
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = GROUP,
     buffer = buf,
