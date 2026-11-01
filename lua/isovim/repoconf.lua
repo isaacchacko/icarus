@@ -8,7 +8,7 @@
 --                   imported_from and imported_at record the one import from the repo's own files.
 --   base-clone/     a clone of origin, detached at its default branch, which new-layout agents'
 --                   worktrees are made from; made by M.base on request
--- and, for the repo's work, ~/iso/<owner>/<repo>/ ($ISOVIM_WORK), whose iso/ holds isovim's own files.
+-- and, for the repo's work, ~/.iso/<owner>/<repo>/ ($ISOVIM_WORK), whose iso/ holds isovim's own files.
 -- Every write isovim makes here goes to the other hosts too, base-clone/ aside (isovim.sync).
 local repos = require("isovim.repos")
 local store = require("isovim.store")
@@ -148,7 +148,7 @@ function M.base(name, checkout)
   return path
 end
 
--- ~/iso/<name>/, where the repo's work lives, with iso/ (and its transcripts/) made if missing.
+-- ~/.iso/<name>/, where the repo's work lives, with iso/ (and its transcripts/) made if missing.
 function M.work(name)
   local dir = ("%s/%s"):format(store.work, name)
   vim.fn.mkdir(dir .. "/iso/transcripts", "p")

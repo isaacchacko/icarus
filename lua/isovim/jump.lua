@@ -1,5 +1,5 @@
 -- iso jump: a drill-down through everything isovim keeps on disk, one level at a time. The top level
--- is your config (~/.isovim), the owners under the work root (~/iso), and the pseudo-repos Root and
+-- is your config (~/.isovim), the owners under the work root (~/.iso), and the pseudo-repos Root and
 -- General when they have a dir; then an owner's repos; then a repo's agents, its iso/, its config and
 -- base clone; then an agent's dirs (its worktree w/). Each level starts with `.` (this dir) and `..`
 -- (up a level). Picking `.` or a row with nothing below it ends the jump on that dir.

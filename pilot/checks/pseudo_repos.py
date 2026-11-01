@@ -1,4 +1,4 @@
-"""The pseudo-repos general/ and root/ as real keys, and the one-time move of the old ~/iso/_/.
+"""The pseudo-repos general/ and root/ as real keys, and the one-time move of the old ~/.iso/_/.
 
 A spawn in no repo is general/aN; iso rootmode on host spawns the host root as root/aN. An old world
 made by the isovim from before (its tree unpacked from git at $PSEUDO_OLD_REV, default 68cd736):

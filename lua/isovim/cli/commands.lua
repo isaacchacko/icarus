@@ -183,7 +183,7 @@ M.list = {
                                      the role prompt it's told (prompts in ~/.isovim/config.json).
                                      Its parent is the agent running this (iso new and iso fork
                                      set it too), or --parent. --v2 (trying out the new layout)
-                                     makes it <owner>/<repo>/aN in ~/iso/<owner>/<repo>/aN, for
+                                     makes it <owner>/<repo>/aN in ~/.iso/<owner>/<repo>/aN, for
                                      <ws> given as owner/repo or a dir in that repo (_ outside
                                      one); --read-only starts it in the repo's base clone]=],
   },
@@ -477,6 +477,11 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
+  -- The move of an old work root or _/ (isovim.migrate), started apart from an agent that found one.
+  { name = "__migrate", module = "lifecycle",
+    hidden = true,
+    audience = "plumbing",
+  },
   -- iso-hook's PreToolUse for edit tools and Bash: a new-layout agent's first edit makes its
   -- worktree; a read-only agent's edits, and any agent's in a clone of a repo isovim knows outside
   -- its own worktree, are refused (isovim.cli.work).
@@ -497,7 +502,7 @@ M.list = {
        iso version                   the isovim commit this runs]=],
   },
   { name = "task", module = "agents",
-    retired = "the repo's Task Board, ~/iso/<owner>/<repo>/iso/tasks.md",
+    retired = "the repo's Task Board, ~/.iso/<owner>/<repo>/iso/tasks.md",
     subs = {
       set = {
         args = { "<text>", "<text>..." },
@@ -643,7 +648,7 @@ M.role_actions = {
        iso surface chat <agent> [--name n]
                                      point the user at an agent's chat; it leaves the
                                      Inbox once they open it
-                                     These go in ~/iso/<owner>/<repo>/iso/, where you
+                                     These go in ~/.iso/<owner>/<repo>/iso/, where you
                                      also write <name>.md surfaces yourself (optional
                                      frontmatter: name, icon, color, consumable) and
                                      tasks.md, the Task Board (headings todo, doing,

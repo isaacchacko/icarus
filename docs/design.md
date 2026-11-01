@@ -27,7 +27,7 @@ gets. It's a personal tool, not built for teams.
     config.json                  glyph, color, setup / teardown / worktree_setup / run / actions
     base-clone/                  detached at origin's default branch; read-only agents work here
   events/events.jsonl            the event bus
-~/iso/
+~/.iso/
   <owner>/<repo>/
     iso/
       agents/aN.json             agent records (role, parent, session id, read-only, state)
@@ -40,6 +40,11 @@ gets. It's a personal tool, not built for teams.
 
 - Agent numbers are never reused.
 - `root` and `general` are reserved; a real owner with one of those names gets a suffixed folder.
+- The work root was `~/iso`, which a shell with AUTO_CD (oh-my-zsh's default) enters when `iso` is
+  typed in `~`. The first `iso` command or TUI start that finds it moves it to `~/.iso`, every agent
+  at the same address: chat agents restart there on their sessions, worktrees are repaired, terminals
+  keep running. With an agent mid-turn (or claude logged out) it waits, and `~/iso` stays the work
+  root until it moves.
 - Config syncs to the other hosts (`~/.isovim/repos/` and `config.json`, skipping `base-clone/`) on
   every write.
 

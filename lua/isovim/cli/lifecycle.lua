@@ -132,4 +132,10 @@ function commands.__sync()
   pcall(require("isovim.sync").run)
 end
 
+-- What an agent that found a move to make starts apart from itself (isovim.migrate.run).
+function commands.__migrate()
+  local ok, result = pcall(require("isovim.migrate").run, { wait = 1 })
+  out(ok and result or ("failed: " .. tostring(result)))
+end
+
 return commands

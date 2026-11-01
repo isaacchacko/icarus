@@ -1,4 +1,4 @@
--- Surfaces: the files in a repo's iso/ (~/iso/<owner>/<repo>/iso/, or a pseudo-repo's: root/iso/ for
+-- Surfaces: the files in a repo's iso/ (~/.iso/<owner>/<repo>/iso/, or a pseudo-repo's: root/iso/ for
 -- the host root, general/iso/ for no repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
 -- agents/, journal/ and transcripts/ never do:
 --   tasks.md        the Task Board: headings todo, doing, waiting, blocked, done (any level, any
@@ -967,6 +967,13 @@ end
 
 local handles = {}
 
+-- Watches again from the work root as it is now, if watching (the work root moved: isovim.migrate).
+function M.rewatch()
+  if next(handles) then
+    M.watch(notify)
+  end
+end
+
 function M.unwatch()
   for key, handle in pairs(handles) do
     if not handle:is_closing() then
@@ -1028,7 +1035,12 @@ function M.watch(on_change)
     timer:start(100, 0, vim.schedule_wrap(fn))
   end
   discover = function()
-    vim.fn.mkdir(store.work, "p")
+    -- Never an old work root again, once isovim.migrate has moved it from under this process.
+    if store.work == store.new_work then
+      vim.fn.mkdir(store.work, "p")
+    elseif not vim.uv.fs_stat(store.work) then
+      return
+    end
     watch_dir(store.work, function()
       soon("discover", discover)
     end)

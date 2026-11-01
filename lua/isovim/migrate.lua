@@ -1,8 +1,15 @@
--- The one-time move of the old ~/iso/_/ (general's key before it was "general") to general/ and
--- root/. Agents in no repo used to live in _/ and be addressed _/aN, the host root among them; now
--- they live in general/ (general/aN) and the host root in root/ (root/aN). The TUI's start and every
--- iso command call M.run, which costs one stat when there's nothing to move, and is safe to run any
--- number of times: it takes a lock, and once _/ is gone there's nothing left to do.
+-- The one-time moves of the old work root, ~/iso, to ~/.iso (move_work, first), and of the old _/
+-- (general's key before it was "general") to general/ and root/. Agents in no repo used to live in
+-- _/ and be addressed _/aN, the host root among them; now they live in general/ (general/aN) and the
+-- host root in root/ (root/aN). The TUI's start and every iso command call M.run, which costs a stat
+-- or two when there's nothing to move, and is safe to run any number of times: it takes a lock, and
+-- once ~/iso and _/ are gone there's nothing left to do. Run inside an agent, whose stop would end
+-- it partway, it starts `iso __migrate` apart from the agent's processes instead.
+--
+-- The work root moves whole: a rename, every agent at the same address. Its running chat agents
+-- stop and start again from ~/.iso, as the agents in _/ do below (waiting the same way), and its
+-- worktrees are repaired; terminals, commands and script panes keep running. Until it has moved,
+-- ~/iso stays the work root (store.refresh_work).
 --
 -- Each agent in _/ goes to root/ when it holds the root role (a script pane goes with the agent it
 -- runs for), else to general/. Its number stays unless the folder it goes to has had that number
@@ -48,9 +55,9 @@ local function is_dir(path)
   return stat ~= nil and stat.type == "directory"
 end
 
--- Whether there's an old _/ to move.
+-- Whether there's an old work root or an old _/ to move.
 function M.pending()
-  return is_dir(old_dir())
+  return store.old_work_live() or is_dir(old_dir())
 end
 
 -- Whether a move is going on now (the reaper waits for it).
@@ -236,6 +243,26 @@ local function copy_claude_sessions(record, new_dir)
   end
 end
 
+-- A worktree moved from old_w to w, made known to its repo again. Run in the worktree, git finds the
+-- repo by the worktree's .git file and fixes the repo's link back; a .git file with a relative path
+-- (worktree.useRelativePaths) no longer reaches the repo from here, so then it's run from the repo,
+-- found from where the worktree was.
+local function repair_worktree(w, old_w)
+  local repaired = vim.system({ "git", "-C", w, "worktree", "repair" }, { text = true }):wait()
+  if repaired.code ~= 0 then
+    local ok, lines = pcall(vim.fn.readfile, w .. "/.git")
+    local gitdir = ok and (lines[1] or ""):match("^gitdir:%s*(.-)%s*$")
+    if gitdir and not vim.startswith(gitdir, "/") then
+      gitdir = vim.fs.normalize(old_w .. "/" .. gitdir)
+    end
+    local common = gitdir and gitdir:match("^(.*)/worktrees/[^/]+$")
+    if common then
+      repaired = vim.system({ "git", "--git-dir", common, "worktree", "repair", w }, { text = true }):wait()
+    end
+  end
+  log(("repaired the worktree %s: %s"):format(w, repaired.code == 0 and "ok" or vim.trim(repaired.stderr or "")))
+end
+
 -- The move itself, under the lock. Returns "done" or "deferred".
 local function move(opts)
   local panes = require("isovim.panes")
@@ -385,8 +412,7 @@ local function move(opts)
     local w = dir .. "/" .. new .. "/w"
     local dotgit = lstat(w .. "/.git")
     if dotgit and dotgit.type == "file" then
-      local repaired = vim.system({ "git", "-C", w, "worktree", "repair" }, { text = true }):wait()
-      log(("repaired the worktree %s: %s"):format(w, repaired.code == 0 and "ok" or vim.trim(repaired.stderr or "")))
+      repair_worktree(w, old .. "/" .. agent.id .. "/w")
     end
     for _, sub in ipairs({ "journal", "transcripts" }) do
       for _, name in ipairs(names(old_iso .. "/" .. sub)) do
@@ -494,16 +520,254 @@ local function move(opts)
   return "done", map
 end
 
--- Moves an old _/ if there is one. opts.wait: seconds to wait for another process's move (default
--- 20); opts.force: move even with an agent mid-turn. Returns "none", "done", "deferred" or "locked",
--- and on "done" the map of old addresses to new ones.
+-- The keys' folders under dir that have records (iso/agents/), as store's walk finds them.
+local function key_folders(dir)
+  local found = {}
+  local function walk(path, folder, depth)
+    if folder and is_dir(path .. "/iso/agents") then
+      found[#found + 1] = folder
+      return
+    end
+    if depth == 4 then
+      return
+    end
+    for _, name in ipairs(names(path)) do
+      if not vim.startswith(name, ".") and is_dir(path .. "/" .. name) then
+        walk(path .. "/" .. name, folder and folder .. "/" .. name or name, depth + 1)
+      end
+    end
+  end
+  walk(dir, nil, 0)
+  return found
+end
+
+-- value with every path under one of froms put under to instead, in its strings at any depth; and
+-- whether anything changed.
+local function repath(value, froms, to)
+  if type(value) == "string" then
+    for _, from in ipairs(froms) do
+      if value == from or vim.startswith(value, from .. "/") then
+        return to .. value:sub(#from + 1), true
+      end
+    end
+    return value, false
+  elseif type(value) ~= "table" then
+    return value, false
+  end
+  local changed = false
+  for k, v in pairs(value) do
+    local new, did = repath(v, froms, to)
+    if did then
+      value[k], changed = new, true
+    end
+  end
+  return value, changed
+end
+
+local function repath_file(path, froms, to)
+  local value = lstat(path) and read_json(path)
+  if not value then
+    return
+  end
+  local new, changed = repath(value, froms, to)
+  if changed then
+    write_json(path, new)
+    log(("updated the paths in %s"):format(path))
+  end
+end
+
+-- The move of the old work root, ~/iso, to ~/.iso (store.new_work), under the lock. Agents keep
+-- their addresses; only the path changes. A running chat agent is stopped first and started again
+-- there, resuming its session (with Claude's transcript copied to the project dir it now runs in),
+-- and waits like the move of _/ does: on one mid-turn or a login that's gone. Terminals, commands
+-- and script panes keep running: a renamed folder takes their cwd with it. An old _/ goes along,
+-- its agents left running for the move of _/ right after, which restarts them where they land.
+-- With ~/.iso there already (or a folder left in ~/iso by a process that still had the old path)
+-- the two are merged: what's in ~/.iso stays, and what can't go in is kept aside (keep_aside). An
+-- agent whose record is in ~/.iso already runs from there, so it isn't stopped. Then the paths
+-- kept in records (a spawn's checkout), surfaces, pins, layouts and the TUI's session say ~/.iso.
+-- Returns "done" or "deferred".
+local function move_work(opts)
+  local panes = require("isovim.panes")
+  local events = require("isovim.events")
+  local from, to = store.old_work, store.new_work
+  log(("moving the work root %s to %s"):format(from, to))
+
+  local agents = {}
+  for _, folder in ipairs(key_folders(from)) do
+    for _, name in ipairs(names(from .. "/" .. folder .. "/iso/agents")) do
+      local id = name:match("^(a%d+)%.json$")
+      local record = id and read_json(from .. "/" .. folder .. "/iso/agents/" .. name)
+      if record then
+        local key = store.folder_key(folder)
+        local old = key == OLD
+        local agent = { folder = folder, key = key, id = id, record = record }
+        local there = lstat(to .. "/" .. folder .. "/iso/agents/" .. name) ~= nil
+        agent.session = old and ("iso2-%s+%s"):format(OLD, id) or panes.encode(key, id)
+        agent.live = not there and record.kind ~= "terminal" and record.kind ~= "command" and not record.of
+          and panes.raw_running(agent.session)
+        agent.restarts = agent.live and not old
+        local file = io.open((old and store.run .. "/" .. OLD or store.run_dir(key)) .. "/" .. id .. ".state")
+        agent.state = file and file:read("*l") or nil
+        if file then
+          file:close()
+        end
+        agents[#agents + 1] = agent
+      end
+    end
+  end
+  -- One in _/ isn't stopped here, but the move of _/ right after restarts it, and would wait on it.
+  for _, agent in ipairs(agents) do
+    if agent.live and BUSY[agent.state or ""] and not (opts and opts.force) then
+      log(("deferred: %s/%s is %s; the move waits until no agent there is mid-turn"):format(agent.key, agent.id, agent.state))
+      return "deferred"
+    end
+    local blocked = agent.live and require("isovim.auth").restart_blocked(agent.record)
+    if blocked then
+      log(("deferred: %s/%s is running and would restart, but %s; nothing moves until it's logged in"):format(agent.key,
+        agent.id, blocked))
+      return "deferred"
+    end
+  end
+
+  for _, agent in ipairs(agents) do
+    if agent.restarts then
+      local pid = panes.raw_pid(agent.session)
+      vim.fn.mkdir(store.run_dir(agent.key), "p")
+      vim.fn.writefile({}, panes.stopped_file(agent.key, agent.id))
+      panes.raw_kill(agent.session)
+      local gone = not pid or vim.wait(10000, function()
+        return vim.uv.kill(pid, 0) ~= 0
+      end, 100)
+      if not gone then
+        pcall(vim.uv.kill, pid, "sigkill")
+      end
+      log(("stopped %s/%s (tmux session %s, pane pid %s)"):format(agent.key, agent.id, agent.session, tostring(pid)))
+    end
+  end
+
+  -- Whatever goes wrong, the agents it stopped start again, wherever they are then.
+  local moved, err = pcall(function()
+    -- The old root's paths as they may be kept: as given, as it resolves, and from ~.
+    local froms = { from }
+    local real = vim.uv.fs_realpath(from)
+    if real and real ~= from then
+      froms[#froms + 1] = real
+    end
+    local home = vim.fs.normalize("~")
+    if vim.startswith(from, home .. "/") then
+      froms[#froms + 1] = "~" .. from:sub(#home + 1)
+    end
+    -- The agents' worktrees, aN/w, by where they are now.
+    local worktrees = {}
+    for _, folder in ipairs(key_folders(from)) do
+      for _, name in ipairs(names(from .. "/" .. folder)) do
+        if number(name) and lstat(from .. "/" .. folder .. "/" .. name .. "/w/.git") then
+          worktrees[#worktrees + 1] = folder .. "/" .. name .. "/w"
+        end
+      end
+    end
+
+    if lstat(to) then
+      merge(from, to, "work")
+    else
+      vim.fn.mkdir(vim.fs.dirname(to), "p")
+      local ok, err = vim.uv.fs_rename(from, to)
+      log(ok and ("moved %s to %s"):format(from, to) or ("could not move %s to %s (%s): merging it in"):format(from, to, err))
+      if not ok then
+        merge(from, to, "work")
+      end
+    end
+    if lstat(from) then
+      keep_aside(from, "work")
+    end
+    store.refresh_work()
+
+    for _, rel in ipairs(worktrees) do
+      local dotgit = lstat(to .. "/" .. rel .. "/.git")
+      if dotgit and dotgit.type == "file" then
+        repair_worktree(to .. "/" .. rel, from .. "/" .. rel)
+      end
+    end
+    for _, folder in ipairs(key_folders(to)) do
+      local iso = to .. "/" .. folder .. "/iso"
+      for _, name in ipairs(names(iso .. "/agents")) do
+        if name:match("^a%d+%.json$") then
+          repath_file(iso .. "/agents/" .. name, froms, to)
+        end
+      end
+      for _, name in ipairs(names(iso)) do
+        if name:match("%.surface$") or name == ".isovim.json" or name == "layout.json" then
+          repath_file(iso .. "/" .. name, froms, to)
+        end
+      end
+      -- Merged, a folder's counter may be below a number the other side gave out.
+      local key = store.folder_key(folder)
+      if key ~= OLD then
+        local _, floor, counter = taken_in(key)
+        if floor > counter then
+          vim.fn.writefile({ tostring(floor) }, iso .. "/next")
+          log(("%s/iso/next is %d"):format(key, floor))
+        end
+      end
+    end
+    repath_file(store.session_file, froms, to)
+
+    for _, agent in ipairs(agents) do
+      if agent.record.kind == "claude" and agent.key ~= OLD then
+        copy_claude_sessions(agent.record, store.agent_dir(agent.key, agent.id))
+      end
+    end
+  end)
+  store.refresh_work()
+
+  for _, agent in ipairs(agents) do
+    if agent.restarts then
+      local record = store.agent(agent.key, agent.id)
+      if record then
+        events.publish_agent(agent.key, agent.id, "exited", { reason = "migrated", from = from })
+        local result = panes.start(agent.key, record, store.agent_dir(agent.key, agent.id))
+        log(("started %s/%s again (session %s): %s"):format(agent.key, agent.id, tostring(record.session),
+          result.code == 0 and "ok" or ("failed: " .. tostring(result.stderr))))
+      end
+    end
+  end
+  if not moved then
+    error(err)
+  end
+  log(("done: the work root is %s"):format(to))
+  return "done"
+end
+
+-- Moves an old work root and an old _/ if there are. opts.wait: seconds to wait for another
+-- process's move (default 20); opts.force: move even with an agent mid-turn. Returns "none", "done",
+-- "deferred" or "locked", and on "done" the map of old addresses to new ones (empty when only the
+-- work root moved).
 ---@param opts? {wait?: number, force?: boolean}
 ---@return "none"|"done"|"deferred"|"locked", table<string, string>?
 function M.run(opts)
   if not M.pending() then
+    store.refresh_work()
     return "none"
   end
   vim.fn.mkdir(store.root, "p")
+  -- Inside an agent (a hook, or a command it runs) the move would stop the agent, and this process
+  -- with it, partway through: it's left to one of its own, out of the agent's process tree, started
+  -- at most every 10s.
+  if (vim.env.ISOVIM_ADDR or "") ~= "" and not M.busy() then
+    local stamp = store.run .. "/migrate.started"
+    local stat = vim.uv.fs_stat(stamp)
+    if not stat or os.time() - stat.mtime.sec >= 10 then
+      vim.fn.mkdir(store.run, "p")
+      vim.fn.writefile({}, stamp)
+      log("started the move apart from " .. vim.env.ISOVIM_ADDR .. ", as it runs inside an agent")
+      pcall(vim.system, { require("isovim.panes").bin, "__migrate" },
+        { detach = true, stdin = false, stdout = false, stderr = false, env = { ISOVIM_ADDR = "" } })
+    end
+    return "deferred"
+  elseif (vim.env.ISOVIM_ADDR or "") ~= "" then
+    return "locked"
+  end
   local deadline = vim.uv.hrtime() + (opts and opts.wait or 20) * 1e9
   while not vim.uv.fs_mkdir(M.lock, 448) do
     local stat = vim.uv.fs_stat(M.lock)
@@ -517,8 +781,16 @@ function M.run(opts)
     end
   end
   local ok, result, map = pcall(function()
-    if not M.pending() then
-      return "none"
+    store.refresh_work()
+    local moved = "none"
+    if store.old_work_live() then
+      moved = move_work(opts)
+      if moved == "deferred" then
+        return "deferred"
+      end
+    end
+    if not is_dir(old_dir()) then
+      return moved, moved == "done" and vim.empty_dict() or nil
     end
     return move(opts)
   end)

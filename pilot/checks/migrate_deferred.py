@@ -1,4 +1,4 @@
-"""A deferred move of the old ~/iso/_/ leaves it fully live.
+"""A deferred move of the old ~/.iso/_/ leaves it fully live.
 
 An old world made by the isovim from before general/ and root/ (its tree unpacked from git at
 $PSEUDO_OLD_REV, default 68cd736): the host root at _/a0 and a worker at _/a1, both running, and an

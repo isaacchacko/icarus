@@ -547,11 +547,34 @@ function M.reveal(ws, path)
 end
 
 ---@param opts? {reload?: boolean}
--- Moves an old ~/iso/_/ (isovim.migrate). One that waits on a busy agent is tried again every 20s;
--- once it's done, the chats of agents that moved open at their new addresses.
+-- After the work root moved from before (here or in another process): where explorers were left,
+-- the surfaces' watches and the sidebar follow it.
+local function work_moved(before)
+  if store.work == before then
+    return
+  end
+  for _, root in pairs(M.explorer_roots) do
+    for _, field in ipairs({ "cwd", "file" }) do
+      local path = root[field]
+      if type(path) == "string" and (path == before or vim.startswith(path, before .. "/")) then
+        root[field] = store.work .. path:sub(#before + 1)
+      end
+    end
+  end
+  local surfaces = package.loaded["isovim.surfaces"]
+  if surfaces and surfaces.rewatch then
+    pcall(surfaces.rewatch)
+  end
+  pcall(M.refresh)
+end
+
+-- Moves an old ~/iso to ~/.iso and an old _/ (isovim.migrate). One that waits on a busy agent is
+-- tried again every 20s; once it's done, the chats of agents that moved open at their new addresses.
 function M.migrate()
   local migrate = require("isovim.migrate")
+  local before = store.work
   local ok, result, map = pcall(migrate.run, { wait = 5 })
+  work_moved(before)
   if ok and result == "done" and map then
     local chat = require("isovim.acp.chat")
     for from, to in pairs(map) do
@@ -574,13 +597,24 @@ function M.migrate()
   if ok and (result == "deferred" or result == "locked") then
     if not _G.isovim_migrate_timer then
       _G.isovim_migrate_timer = vim.uv.new_timer()
-      _G.isovim_migrate_timer:start(20000, 20000, vim.schedule_wrap(function()
+      -- Whether another process made the move is looked at every 5s (a stat or two while the old
+      -- root still holds work, a glob or two), so this process isn't long on a work root that's
+      -- gone; the move is tried again every 20s.
+      local ticks = 0
+      _G.isovim_migrate_timer:start(5000, 5000, vim.schedule_wrap(function()
+        ticks = ticks + 1
+        -- Another process made the move: the work root is the new one now.
+        local before = store.work
+        store.refresh_work()
+        work_moved(before)
         if not require("isovim.migrate").pending() then
           _G.isovim_migrate_timer:close()
           _G.isovim_migrate_timer = nil
           return
         end
-        require("isovim").migrate()
+        if ticks % 4 == 0 then
+          require("isovim").migrate()
+        end
       end))
     end
   end

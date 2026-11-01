@@ -123,7 +123,7 @@ function commands.phone()
 end
 
 -- With --v2 (or a repo key that already has agents) the agent is a new-layout one: <key>/aN in
--- ~/iso/<key>/, for the repo of a dir or a repo named as owner/repo, or in _ outside any repo.
+-- ~/.iso/<key>/, for the repo of a dir or a repo named as owner/repo, or in _ outside any repo.
 function commands.agent(args)
   local name = option(args, "--name")
   local cmd = option(args, "--cmd")

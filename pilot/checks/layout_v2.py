@@ -1,6 +1,6 @@
 """The new layout, opt-in (iso agent --v2): an agent in a repo is <owner>/<repo>/aN, with its own dir
-~/iso/<owner>/<repo>/aN/, its record in ~/iso/<owner>/<repo>/iso/agents/aN.json and a tmux session
-iso2-<owner>+<repo>+aN; one outside any repo is general/aN under ~/iso/general/. aN numbers come from a per-repo
+~/.iso/<owner>/<repo>/aN/, its record in ~/.iso/<owner>/<repo>/iso/agents/aN.json and a tmux session
+iso2-<owner>+<repo>+aN; one outside any repo is general/aN under ~/.iso/general/. aN numbers come from a per-repo
 counter and are never given out twice, even after the agent and the counter file go. The sidebar,
 iso ls and --json list them beside legacy workspaces; a restart resumes the conversation by session
 id (from the run dir, or the record when the run dir lost it); iso msg parent from a child reaches its
@@ -155,7 +155,7 @@ try:
     assert iso.cli("agent", "acme/app", "terminal") == "acme/app/a4"
     assert not (records / "a0.json").exists() and not (records / "a1.json").exists()
 
-    # Outside any repo: general/aN under ~/iso/general/ ("_", its old name, still reads as general).
+    # Outside any repo: general/aN under ~/.iso/general/ ("_", its old name, still reads as general).
     loose = iso.cli("agent", str(plain), "terminal", "--v2", "--name", "loose")
     assert loose == "general/a0", loose
     assert (work / "general" / "a0").is_dir() and (work / "general" / "iso" / "agents" / "a0.json").exists()

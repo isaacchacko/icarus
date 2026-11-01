@@ -8,8 +8,50 @@ M.session_file = M.root .. "/session.json"
 M.lock_file = M.root .. "/isovim.lock"
 -- Unix sockets cap paths near 104 bytes, so tests with a deep ISOVIM_HOME set ISOVIM_SOCK.
 M.socket = vim.env.ISOVIM_SOCK or M.root .. "/nvim.sock"
--- Where agents' work lives (~/iso/<owner>/<repo>/...); pilots point it into their tmp dir.
-M.work = vim.env.ISOVIM_WORK or vim.fs.normalize("~/iso")
+-- Where agents' work lives (~/.iso/<owner>/<repo>/...); pilots point it into their tmp dir. It was
+-- ~/iso before, and a dir named iso in ~ is what a shell with AUTO_CD (oh-my-zsh's default) cds into
+-- when `iso` is typed there. isovim.migrate moves an old ~/iso to ~/.iso; until it has, the work
+-- root is still the old one, so a move that waits on a busy agent leaves every agent where it is.
+-- With ISOVIM_WORK set (pilots) there's no old root unless ISOVIM_OLD_WORK names one.
+local function env(name)
+  local value = vim.env[name]
+  return value ~= nil and value ~= "" and value or nil
+end
+M.new_work = env("ISOVIM_WORK") or vim.fs.normalize("~/.iso")
+M.old_work = env("ISOVIM_OLD_WORK") or (not env("ISOVIM_WORK") and vim.fs.normalize("~/iso")) or nil
+if M.old_work == M.new_work then
+  M.old_work = nil
+end
+
+-- Whether dir holds isovim's work: a key's iso/agents/ in it, at any depth a key can be (general/,
+-- root/, owner/repo/, up to host/group/sub/repo/).
+local function holds_work(dir)
+  local stat = dir and vim.uv.fs_lstat(dir)
+  if not stat or stat.type ~= "directory" then
+    return false
+  end
+  for depth = 1, 4 do
+    if #vim.fn.glob(dir .. ("/*"):rep(depth) .. "/iso/agents", false, true) > 0 then
+      return true
+    end
+  end
+  return false
+end
+
+-- Whether the old work root still holds work, its move to the new one deferred (or going on).
+function M.old_work_live()
+  return holds_work(M.old_work)
+end
+
+-- The work root now: the old one while it holds work and the new one doesn't yet. A new one that's
+-- there but holds no work (a dir something wrote a file into, say) doesn't count, so nothing in
+-- the old one goes unseen; and one left behind after the move (by a process that still had the old
+-- path) doesn't take over from the new one: the next isovim.migrate.run merges it in.
+function M.refresh_work()
+  M.work = M.old_work_live() and not holds_work(M.new_work) and M.old_work or M.new_work
+  return M.work
+end
+M.refresh_work()
 
 local META = ".isovim.json"
 
@@ -25,15 +67,15 @@ local META = ".isovim.json"
 -- workspace id does (store.list, run dirs, tmux names), so an agent's address is <key>/aN. A
 -- workspace id is six hex digits, never holding a "/" nor being a pseudo-repo's name, so the two
 -- can't be confused.
--- "_" was general's key before; isovim.migrate moves an old ~/iso/_/ to general/ and root/ on the
--- first start. Until it has, _ is a key of its own, read from ~/iso/_/ as the old isovim wrote it
+-- "_" was general's key before; isovim.migrate moves an old <work>/_/ to general/ and root/ on the
+-- first start. Until it has, _ is a key of its own, read from <work>/_/ as the old isovim wrote it
 -- (M.old_live): a deferred move (an agent mid-turn, or claude logged out) leaves its agents fully
 -- live at _/aN. Once _/ is gone, _ is read as general wherever one is typed (M.canon, and
 -- M.canon_address for _/aN, which isovim.migrate may have moved to root/ or renumbered).
 M.GENERAL, M.ROOT, M.OLD = "general", "root", "_"
 M.pseudo = { general = true, root = true }
 
--- Whether the old ~/iso/_/ is still there, its move to general/ and root/ deferred (or going on).
+-- Whether the old <work>/_/ is still there, its move to general/ and root/ deferred (or going on).
 function M.old_live()
   local stat = vim.uv.fs_lstat(M.work .. "/" .. M.OLD)
   return stat ~= nil and stat.type == "directory"

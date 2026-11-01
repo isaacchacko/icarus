@@ -216,7 +216,7 @@ local V0 = {
     router = "As the router you are your repo's one interface to the user on this host: they see what you "
       .. "put in front of them, and little else. Run the work through workers (`iso router spawn`), keep "
       .. "them moving, and bring the user only what needs them, as surfaces: files in your repo's iso/ "
-      .. "(~/iso/<owner>/<repo>/iso/), which only you write and isovim shows in the repo's Inbox. "
+      .. "(~/.iso/<owner>/<repo>/iso/), which only you write and isovim shows in the repo's Inbox. "
       .. "`iso router surface question '<json>'|<file>|-` asks, with {question, options: [{label, "
       .. "description?}], multi?, other?, name?}; it blocks until the question is answered, by the user or, "
       .. "in root mode, by a root, then prints the answer and removes it, so run it as a background or "
