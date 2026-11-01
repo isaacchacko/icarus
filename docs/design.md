@@ -263,6 +263,14 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `H` / `P` / `L` | toggles |
 | `?` | help |
 
+`m` sends the row under the cursor to a host picked from the peers (this one left out), by `iso move`.
+On a repo's header (or General's) it sends every agent of the repo (`iso move <owner>/<repo> <host>
+--all`): parents first, so workers keep their router there; terminals stay. All of them are checked
+before any goes, and the host asked, so a refusal (an agent mid-turn, a root, uncommitted work, the
+host unreachable) says why and moves none. Once they're there the list shows that host, on the
+repo. On an agent's row it moves that agent alone, like every other row key acting on its row; on
+another host's agent it brings it here.
+
 ## Cutover
 
 v0 starts fresh rather than migrating.

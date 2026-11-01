@@ -1249,6 +1249,7 @@ local function refresh_now()
   if not wins.list then
     return
   end
+  local wanted = keep
   local before = keep or rows.list[vim.api.nvim_win_get_cursor(wins.list)[1]]
   local queued = wins.inbox and rows.inbox[vim.api.nvim_win_get_cursor(wins.inbox)[1]]
   local terminal = wins.terminals and rows.terminals[vim.api.nvim_win_get_cursor(wins.terminals)[1]]
@@ -1269,6 +1270,9 @@ local function refresh_now()
   local line = line_of(rows.list, before)
   if line then
     vim.api.nvim_win_set_cursor(wins.list, { line, 0 })
+  elseif before == wanted and rows.list[1] and rows.list[1].kind == "hint" then
+    -- Another host's list still on its way: the row wanted waits for it.
+    keep = before
   end
 end
 
@@ -1375,7 +1379,7 @@ local LIST_KEYS = {
   { "r", "isovim_rename", "rename the workspace or agent" },
   { "d", "isovim_delete", "remove the agent or pinned path, or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
-  { "m", "isovim_move", "move it to another host, or here" },
+  { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the host Inbox or General: the host)" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser; on a PR, the PR" },
   { "y", "isovim_yank_url", "copy the PR's URL" },
@@ -1990,7 +1994,9 @@ M.actions = {
     local kind = item and KINDS[item.kind]
     return kind and kind.delete and kind.delete(item)
   end,
-  -- m moves the workspace to another host; its agents resume there (iso move).
+  -- m sends the row to another host, picked from the peers (iso move): on a repo's header every
+  -- agent of the repo (iso move --all), on an agent's row that agent alone, on a legacy workspace
+  -- the workspace. Its agents resume there. A repo that went whole is shown under that host.
   isovim_move = function(item)
     if not item or not item.ws then
       return
@@ -1998,27 +2004,32 @@ M.actions = {
       return isovim.move_here(item)
     end
     local peers = remote.peers()
-    local hosts = vim.tbl_keys(peers)
+    local hosts = vim.tbl_filter(function(name)
+      return name ~= remote.self()
+    end, vim.tbl_keys(peers))
     if #hosts == 0 then
       Snacks.notify.error("No other hosts in " .. require("isovim.config").path)
       return
     end
-    local ws, name = item.ws, item.ws_name
-    -- A new-layout agent moves on its own, by its address; a repo header moves nothing.
+    local ws, name, all = item.ws, item.ws_name, false
     if store.v2(item.ws) then
-      if not item.agent or item.legacy_main then
-        return Snacks.notify.info("m moves one agent: put the cursor on its row", { title = "isovim" })
+      if item.kind == "repo" then
+        all = true
+        name = item.ws == GENERAL_KEY and "general" or item.ws
+      elseif not item.agent or item.legacy_main then
+        return
+      else
+        ws, name = item.ws .. "/" .. item.agent, item.name or (item.ws .. "/" .. item.agent)
       end
-      ws, name = item.ws .. "/" .. item.agent, item.name or (item.ws .. "/" .. item.agent)
     end
     table.sort(hosts)
-    vim.ui.select(hosts, { prompt = "Move " .. name .. " to" }, function(host)
+    vim.ui.select(hosts, { prompt = (all and "Send %s's agents to" or "Move %s to"):format(name) }, function(host)
       if not host then
         return
       end
       local function move(force)
         Snacks.notify.info(("Moving %s to %s…"):format(name, host), { title = "isovim" })
-        local cmd = { panes.bin, "move", ws, peers[host], force and "--force" or nil }
+        local cmd = { panes.bin, "move", ws, peers[host], all and "--all" or (force and "--force") or nil }
         vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
           local busy = result.stderr:match("iso: (.- is working)")
           if busy then
@@ -2027,11 +2038,20 @@ M.actions = {
             end)
             return
           elseif result.code ~= 0 then
-            Snacks.notify.error(vim.trim(result.stderr))
+            Snacks.notify.error(vim.trim(result.stderr), { title = "isovim" })
+            isovim.refresh()
             return
           end
           remote.invalidate(host)
-          isovim.toast(("%s moved to %s"):format(name, host))
+          if all then
+            local n = select(2, (result.stdout or ""):gsub(" as ", ""))
+            isovim.toast(("%s moved to %s (%d agent%s)"):format(name, host, n, n == 1 and "" or "s"))
+            -- Followed there: the list shows that host, the cursor on the repo once it's listed.
+            vim.g.isovim_sidebar_host = host
+            keep = { kind = "repo", host = host, repo_key = item.repo_key }
+          else
+            isovim.toast(("%s moved to %s"):format(name, host))
+          end
           isovim.refresh()
         end))
       end

@@ -145,7 +145,7 @@ M.list = {
   { name = "move", module = "workspaces",
     audience = "user",
     args = { "<ws>", "<host>" },
-    flags = { ["--force"] = false },
+    flags = { ["--force"] = false, ["--all"] = false },
     help = [=[
        iso move <ws> <host> [--force]   move it to another host (ssh name); its agents resume
                                      there. --force moves it even while an agent is working
@@ -154,7 +154,11 @@ M.list = {
                                      queue and session go, its worktree's branch is pushed and
                                      made again there as aN/w, and it resumes there. Refused
                                      mid-turn, with uncommitted work, and for roots; it keeps
-                                     its aN unless that host has used it, and prints its address]=],
+                                     its aN unless that host has used it, and prints its address
+       iso move <owner>/<repo> <host> --all
+                                     move every agent of the repo (or general), each as above,
+                                     parents first; its terminals stay. All are checked first,
+                                     and the host asked, so a refusal moves none of them]=],
   },
   { name = "agent", module = "agents",
     audience = "user",

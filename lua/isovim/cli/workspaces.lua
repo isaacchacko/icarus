@@ -83,7 +83,22 @@ end
 
 function commands.move(args)
   local force = flag(args, "--force")
+  local all = flag(args, "--all")
   local host = args[2] or fail("usage: iso move <ws|owner/repo/aN> <host>")
+  -- --all: every agent of a new-layout repo (or general), checked first so a refusal moves none.
+  if all then
+    local key = store.canon(args[1])
+    if not store.valid_key(key) or not vim.uv.fs_stat(store.dir(key)) then
+      fail(("--all moves a repo's agents: %q isn't a repo here (owner/repo, or general)"):format(args[1]))
+    end
+    local ok, message = require("isovim.move").send_repo(key, host)
+    tui("require('isovim').refresh()")
+    if not ok then
+      fail(("could not move %s to %s: %s"):format(key, host, message))
+    end
+    out(("%s moved to %s: %s"):format(key, host, message))
+    return
+  end
   -- A new-layout agent moves on its own, by its exact address; it's never moved mid-turn.
   if args[1] and args[1]:find("/", 1, true) then
     local ws, agent = resolve_agent(args[1], true)

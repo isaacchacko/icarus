@@ -545,31 +545,61 @@ local function answers(key, spec)
   return false, ("its supervisor here didn't answer as ready within %ds%s"):format(timeout, said)
 end
 
--- Moves the new-layout agent key/agent to host (an ssh name): see the top of this file.
+-- Why the new-layout agent key/agent can't move as it is now, or nil: a terminal or script pane, a
+-- root, an agent in the old _/, one mid-turn or handed over, or a worktree with uncommitted changes
+-- or on a detached HEAD. Nothing here touches the other host.
 ---@param agent isovim.Agent
----@return boolean ok, string message the address it has there, or why not
-function M.send_agent(key, agent, host)
+---@return string? why
+function M.refusal(key, agent)
   local id = agent.id
   local address = key .. "/" .. id
   local role = store.role(agent)
   if agent.of or not (agent.kind == "claude" or agent.kind == "codex") then
-    return false, address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
+    return address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
   elseif role == "root" or role == "repo-root" then
-    return false, ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
+    return ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
   elseif store.canon(key) == store.OLD then
-    return false, address .. " is in the old _/, whose move to general/ and root/ waits (~/.isovim/migrate.log): move it once that's done"
+    return address .. " is in the old _/, whose move to general/ and root/ waits (~/.isovim/migrate.log): move it once that's done"
   end
   local running = panes.running(key, id)
   if running and agent.acp then
     local up, state = require("isovim.acp").call(key, id, "status")
     if up and type(state) == "table" and state.handover then
-      return false, address .. " is handed over to Claude's screen; quit claude there first"
+      return address .. " is handed over to Claude's screen; quit claude there first"
     elseif up and type(state) == "table" and state.busy then
-      return false, address .. " is mid-turn; wait for its turn to end, or cancel it (C-c in its chat)"
+      return address .. " is mid-turn; wait for its turn to end, or cancel it (C-c in its chat)"
     end
   elseif running and require("isovim.status").get(key, id) == "working" then
-    return false, address .. " is mid-turn; wait for its turn to end, or cancel it"
+    return address .. " is mid-turn; wait for its turn to end, or cancel it"
   end
+  local w = store.dir(key) .. "/" .. id .. "/w"
+  if is_dir(w) then
+    -- Untracked and ignored files go along as files, with the rest of aN/.
+    local _, dirty = run_git(w, { "status", "--porcelain", "--untracked-files=no" })
+    if dirty ~= "" then
+      return ("%s's worktree (%s) has uncommitted changes; commit them first, since the move takes its branch")
+        :format(address, store.home_relative(w))
+    end
+    local _, current = run_git(w, { "branch", "--show-current" })
+    if current == "" then
+      return ("%s's worktree is on a detached HEAD; put it on a branch first"):format(address)
+    end
+  end
+end
+
+-- Moves the new-layout agent key/agent to host (an ssh name): see the top of this file.
+-- opts.parent: its parent's address there, for a parent that went ahead of it (M.send_repo).
+---@param agent isovim.Agent
+---@param opts? {parent?: string}
+---@return boolean ok, string message the address it has there, or why not
+function M.send_agent(key, agent, host, opts)
+  local id = agent.id
+  local address = key .. "/" .. id
+  local refused = M.refusal(key, agent)
+  if refused then
+    return false, refused
+  end
+  local running = panes.running(key, id)
   local blocked = running and remote_blocked(host, agent)
   if blocked then
     return false, blocked .. "; it stays running here"
@@ -578,16 +608,7 @@ function M.send_agent(key, agent, host)
   local w = store.dir(key) .. "/" .. id .. "/w"
   local branch
   if is_dir(w) then
-    -- Untracked and ignored files go along as files, with the rest of aN/.
-    local _, dirty = run_git(w, { "status", "--porcelain", "--untracked-files=no" })
-    if dirty ~= "" then
-      return false, ("%s's worktree (%s) has uncommitted changes; commit them first, since the move takes its branch")
-        :format(address, store.home_relative(w))
-    end
     local _, current = run_git(w, { "branch", "--show-current" })
-    if current == "" then
-      return false, ("%s's worktree is on a detached HEAD; put it on a branch first"):format(address)
-    end
     branch = current
     local pushed, _, err = run_git(w, { "push", "--quiet", "origin", "HEAD:refs/heads/" .. branch }, 120000)
     if not pushed then
@@ -606,7 +627,9 @@ function M.send_agent(key, agent, host)
   end
   -- Its parent here is named with this host from there.
   local parent = manifest.record.parent
-  if parent and not parent:find(":", 1, true) then
+  if opts and opts.parent then
+    manifest.record.parent = opts.parent
+  elseif parent and not parent:find(":", 1, true) then
     manifest.record.parent = manifest.from .. ":" .. parent
   end
   manifest.record.branch = nil
@@ -719,6 +742,80 @@ function M.send_agent(key, agent, host)
     end
   end
   return true, there
+end
+
+-- Moves every agent of the new-layout key (a repo, or general) to host, each as M.send_agent moves
+-- one; its terminals and script panes stay. Each is checked first (M.refusal), and the other host
+-- asked that it answers and that a running agent's claude or codex is logged in there, so a refusal
+-- leaves all of them here as they were. Parents go before their children, which keep them there.
+-- A failure partway (a copy, say) stops it there: what went is said, and the rest stay here.
+---@return boolean ok, string message what moved, or why not
+function M.send_repo(key, host)
+  local agents = vim.tbl_filter(function(agent)
+    return not agent.of and (agent.kind == "claude" or agent.kind == "codex")
+  end, store.agents(key))
+  if #agents == 0 then
+    return false, key .. " has no agents that move"
+  end
+  for _, agent in ipairs(agents) do
+    local refused = M.refusal(key, agent)
+    if refused then
+      return false, refused .. "; nothing moved"
+    end
+  end
+  local cmd = ("%s %s %s"):format(M.ssh, vim.fn.shellescape(host), vim.fn.shellescape(M.remote_bin .. " version"))
+  local reached = vim.system({ "bash", "-c", cmd }, { text = true, timeout = 30000 }):wait()
+  if reached.code ~= 0 then
+    local why = vim.trim((reached.stderr or "") .. (reached.stdout or ""))
+    return false, ("%s didn't answer (%s); nothing moved"):format(host, why ~= "" and why or ("exit " .. reached.code))
+  end
+  local asked = {}
+  for _, agent in ipairs(agents) do
+    local kind = require("isovim.auth").kind_of(agent)
+    if kind and not asked[kind] and panes.running(key, agent.id) then
+      asked[kind] = true
+      local blocked = remote_blocked(host, agent)
+      if blocked then
+        return false, blocked .. "; nothing moved"
+      end
+    end
+  end
+  -- Parents first; each child's parent there is where its parent went.
+  local members, order = {}, {}
+  for _, agent in ipairs(agents) do
+    members[key .. "/" .. agent.id] = agent
+  end
+  local placed = {}
+  while #order < #agents do
+    local before = #order
+    for _, agent in ipairs(agents) do
+      local parent = members[agent.parent or ""]
+      if not placed[agent.id] and (not parent or placed[parent.id]) then
+        placed[agent.id] = true
+        order[#order + 1] = agent
+      end
+    end
+    -- A loop of parents (never made, but a record can say anything) goes in any order.
+    if #order == before then
+      for _, agent in ipairs(agents) do
+        if not placed[agent.id] then
+          placed[agent.id] = true
+          order[#order + 1] = agent
+        end
+      end
+    end
+  end
+  local there, moved = {}, {}
+  for _, agent in ipairs(order) do
+    local ok, message = M.send_agent(key, agent, host, { parent = there[agent.parent or ""] })
+    if not ok then
+      local went = #moved > 0 and ("; %s moved, the rest stay here"):format(table.concat(moved, ", ")) or "; nothing moved"
+      return false, message .. went
+    end
+    there[key .. "/" .. agent.id] = message
+    moved[#moved + 1] = ("%s/%s as %s"):format(key, agent.id, message)
+  end
+  return true, table.concat(moved, ", ")
 end
 
 -- This host's base clone of repo, made from origin's url when there's no checkout here to make it
