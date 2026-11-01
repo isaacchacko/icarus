@@ -87,6 +87,10 @@ if [ -f "$lock" ]; then
       echo "isovim is already open (pid $pid). Run 'iso --takeover' to close it and open here." >&2
       exit 1
     fi
+    # The TUI's nvim server (its child) can outlive it by a moment, and an nvim that exits removes
+    # its socket's path, by then the new TUI's: so the takeover waits for the server too, and kills
+    # it if it hangs on (SIGKILL removes nothing).
+    servers="$(pgrep -P "$pid" 2>/dev/null || true)"
     kill -TERM "$pid"
     for _ in $(seq 50); do
       kill -0 "$pid" 2>/dev/null || break
@@ -96,6 +100,13 @@ if [ -f "$lock" ]; then
       echo "isovim (pid $pid) did not quit." >&2
       exit 1
     fi
+    for server in $servers; do
+      for _ in $(seq 30); do
+        kill -0 "$server" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -KILL "$server" 2>/dev/null || true
+    done
   fi
 fi
 

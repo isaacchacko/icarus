@@ -1383,6 +1383,12 @@ end
 local last_titles, ticks = nil, 0
 function M.poll()
   ticks = ticks + 1
+  -- The socket's file gone while this TUI still listens on it (an older nvim exiting removes the
+  -- path it listened on, whoever binds it now): bound again, so iso and the hooks reach it.
+  if not vim.uv.fs_stat(store.socket) and vim.tbl_contains(vim.fn.serverlist(), store.socket) then
+    pcall(vim.fn.serverstop, store.socket)
+    pcall(vim.fn.serverstart, store.socket)
+  end
   local now = vim.json.encode(panes.titles())
   if now ~= last_titles then
     last_titles = now
