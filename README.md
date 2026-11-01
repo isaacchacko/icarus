@@ -56,8 +56,10 @@ In the sidebar, `s` spawns a worker in the repo under the cursor and opens its c
 - Each message is drawn as Claude draws it: `❯` your prompts, `⏺` the agent's text, `✻` thinking, tool calls one line each with their output folded under `⎿` (`za` opens one), diffs colored inline, Bash output streaming, a spinner while it works. It streams token by token and follows the bottom only when you're there.
 - The input box is a buffer under the chat, with full vim editing. A prompt sent while the agent works, yours or another agent's, is queued and goes when its turn ends; `<leader>iq` opens the queue to edit, reorder or clear (`:w`), and `Enter` on a line sends it now, cancelling the running turn.
 - `iso attach <agent>` opens the same chat and input box in a minimal nvim, from any terminal or over ssh; `iso phone` picks an agent, needs-you first, and attaches. `iso handover <agent>` gives the session to Claude's own screen (`claude --resume` in its pane) and takes it back when Claude exits.
-- Sessions run in bypass mode and survive: a restarted agent loads its session, and `iso <role> fork` copies one.
-- Landing now: fork up to a message (`<leader>if`); rewind (`<leader>iu`), which edits one of your earlier prompts, forks before it, sends the edited prompt and restores the files from per-turn snapshots; `/new`, `/clear`, `/resume` and `/fork` done by isovim (every other slash command goes to the agent); and a structured question or permission request from an agent becoming a question surface in its repo's Inbox, with your answer going back to it. Until then those keys say "not yet" and permission requests are denied.
+- Sessions run in bypass mode and survive: a restarted agent resumes its session. `iso fork <agent> [--at <seq>]`, or `<leader>if` on a message in its chat, makes the repo's next aN from a copy of the session, whole or up to that message, its chat starting with the history it forked.
+- Rewind: `<leader>iu` on one of your earlier prompts puts it in the input box; sending the edited prompt forks the session before it, puts the files back to the git snapshot taken before that turn (under `refs/isovim/snapshots/`, your HEAD and index untouched), and sends it.
+- `/new` and `/clear` start a new session, `/resume` picks one of the agent's sessions, and `/fork` forks it whole; every other slash command goes to the agent.
+- A question an agent asks (AskUserQuestion), and a permission request that still arrives, become question surfaces in its repo's Inbox, and your answer goes back to it.
 
 ### Keys
 
