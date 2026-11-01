@@ -53,8 +53,9 @@
 -- you can edit it.
 --
 -- Keys, anywhere in the buffer: ]] [[ your own prompts, ]m [m any message, za zo zc the output of
--- the tool call under the cursor, gf the file on the line, <C-c> cancels the turn (or drops a
--- rewind), u <C-r> your draft's undo and redo. On the conversation, <CR> answers with the box option
+-- the tool call under the cursor, <C-o> every tool call's and thought's (open while any is
+-- collapsed, else collapse; those to come follow it), gf the file on the line, <C-c> cancels the
+-- turn (or drops a rewind), u <C-r> your draft's undo and redo. On the conversation, <CR> answers with the box option
 -- under the cursor, else goes to the composer; in the composer it sends (queued while the agent
 -- works; an answer while a box waits on you), in insert mode too, where <S-CR> (or <M-CR>) is a new
 -- line, <Up> <Down> your earlier prompts while it's empty, <C-v> pastes an image
@@ -98,7 +99,7 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@field terminal table<string, string> terminal id -> output so far
 ---@field exit? integer
 ---@field body integer how many lines of output it has under it
----@field open? boolean opened (za) or collapsed by you; nil: as it shows by default (a diff open)
+---@field open? boolean opened (za) or collapsed by you; nil: as <C-o> last set them all, else as it shows by default (a diff open)
 ---@field more integer how many lines of output are left out while it's collapsed
 ---@field can_open? boolean it has output to show
 ---@field tool? string the tool's own name (_meta.claudeCode.toolName)
@@ -140,6 +141,7 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@field busy boolean
 ---@field since? number when the running turn started
 ---@field handover boolean the session is on Claude's own screen (iso handover)
+---@field all_open? boolean <C-o>'s choice, for every call you haven't opened or collapsed yourself, those to come too
 ---@field chan? integer the subscription to the supervisor
 ---@field timer? uv.uv_timer_t
 
@@ -550,9 +552,11 @@ end
 -- Tool calls, thinking: blocks drawn in place, whose output collapses (za)
 
 ---@param call isovim.acp.ToolCall
-local function is_open(call, kind, count)
+local function is_open(chat, call, kind, count)
   if call.open ~= nil then
     return call.open
+  elseif chat.all_open ~= nil then
+    return chat.all_open
   end
   return look.open_by_default(kind, count)
 end
@@ -590,7 +594,7 @@ local function draw_tool(chat, call)
     spans[2] = { #GLYPH.message + 1, #GLYPH.message + 1 + #name, "IsovimAcpToolTitle" }
     rows, kind = look.body(call, dirs(chat))
   end
-  local open = is_open(call, kind, #rows)
+  local open = is_open(chat, call, kind, #rows)
   local shown = rows
   call.more = 0
   if not open then
@@ -1409,6 +1413,34 @@ local function fold(chat, cmd)
   end
 end
 
+local placed
+
+-- <C-o>: every tool call's output and every thought opened while any is collapsed, else all
+-- collapsed; and those still to come, until <C-o> again (za on one still sets that one). Drawn as
+-- one change, the cursor kept on the call it was in.
+local function toggle_all(chat)
+  local calls = placed(chat)
+  local open = false
+  for _, call in ipairs(calls) do
+    if call.can_open and call.more > 0 then
+      open = true
+    end
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local here = row < chat.lines and vim.api.nvim_buf_get_extmarks(chat.buf, TOOLS, { row, 0 }, 0, { limit = 1 })[1]
+  chat.all_open = open
+  edit(chat, function()
+    for _, call in ipairs(calls) do
+      call.open = nil
+      draw_tool(chat, call)
+    end
+  end)
+  local at = here and vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, here[1], {})[1]
+  if at and at < row then
+    vim.api.nvim_win_set_cursor(0, { at + 1, 0 })
+  end
+end
+
 local function cancel(chat)
   local ok, result = acp.call(chat.ws, chat.agent, "cancel")
   if not ok then
@@ -1981,6 +2013,10 @@ local function map_keys(chat)
       fold(chat, cmd)
     end, "fold the tool call under the cursor")
   end
+  -- Normal mode only: in insert mode <C-o> is vim's, one normal command from the draft.
+  map("n", "<C-o>", function()
+    toggle_all(chat)
+  end, "open every tool call's output and thought, or collapse them all")
   map("n", "gf", function()
     open_file(chat)
   end, "open the file on the line as a tab")
@@ -1993,6 +2029,7 @@ M.help_keys = {
     { "]] / [[", "your next / previous prompt" },
     { "]m / [m", "the next / previous message" },
     { "za zo zc", "fold the tool call's output under the cursor" },
+    { "<C-o>", "open every tool call's output and thought, or collapse them all (those to come too)" },
     { "i a o O I A c C <CR>", "on the conversation: to the end of your draft, typing (<CR> on a box's option answers with it)" },
     { "u / <C-r>", "undo / redo in the composer, never the conversation" },
     { "<C-c>", "cancel the agent's turn (or the rewind you're editing)" },
@@ -2426,7 +2463,7 @@ function M.fork_at_cursor()
 end
 
 -- The tool calls and thoughts drawn in the chat, top to bottom.
-local function placed(chat)
+placed = function(chat)
   local calls = vim.tbl_filter(function(call)
     return call.mark ~= nil
   end, vim.tbl_values(chat.tools or {}))
@@ -2437,6 +2474,20 @@ local function placed(chat)
     return row(a) < row(b)
   end)
   return calls
+end
+
+-- old's choice of which calls show their output (opened, by place, and <C-o>'s), on chat drawn again
+-- from the same journal, as one change.
+local function keep_open(chat, old, opened)
+  chat.all_open = old.all_open
+  edit(chat, function()
+    for i, call in ipairs(placed(chat)) do
+      if call.open ~= opened[i] or chat.all_open ~= nil then
+        call.open = opened[i]
+        draw_tool(chat, call)
+      end
+    end
+  end)
 end
 
 -- The chat made again by the current code on its own buffer (its keys, autocmds and drawing then
@@ -2483,12 +2534,7 @@ remake = function(old, lines)
   if old.undo and vim.deep_equal(old.undo.states[old.undo.at], draft(chat)) then
     chat.undo = old.undo
   end
-  for i, call in ipairs(placed(chat)) do
-    if opened[i] ~= nil and call.open ~= opened[i] then
-      call.open = opened[i]
-      draw_tool(chat, call)
-    end
-  end
+  keep_open(chat, old, opened)
   chats[k] = chat
   local count_now = vim.api.nvim_buf_line_count(chat.buf)
   for win, view in pairs(views) do
@@ -2572,12 +2618,7 @@ local function swap(build)
   chat.last = vim.api.nvim_buf_get_lines(buf, chat.lines - 1, chat.lines, false)[1] or ""
   chat.tick = vim.api.nvim_buf_get_changedtick(buf)
   chat.rewind, chat.recall, chat.undo = old.rewind, old.recall, old.undo or chat.undo
-  for i, call in ipairs(placed(chat)) do
-    if opened[i] ~= nil and call.open ~= opened[i] then
-      call.open = opened[i]
-      draw_tool(chat, call)
-    end
-  end
+  keep_open(chat, old, opened)
   bind(chat)
   guard(chat)
   chats[k] = chat

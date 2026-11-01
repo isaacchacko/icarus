@@ -119,7 +119,7 @@ side by side):
 - each tool call one line as Claude names it, `Update(app.py)`, `Bash(./count.sh)`, its bullet
   colored by status, and what came back under `⎿`: a read's line count, an edit's diff numbered from
   the file's lines on red and green with the changed words brighter and the code highlighted, a
-  command's first lines and `… +N lines` (`za` opens and closes any of them);
+  command's first lines and `… +N lines` (`za` opens and closes any of them, `<C-o>` all of them);
 - thinking dimmed and collapsed, the todo list as Claude's, the turn's summary after it;
 - a permission or a question as Claude's numbered box, answered by its number in the input box or
   `<CR>` on an option (or from its question surface in the Inbox), then put away;
@@ -390,7 +390,9 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 
 **In the chat** (the conversation and, at its end, the input box: one buffer)
 - `]]` / `[[` jump between your prompts; `]m` / `[m` between any messages.
-- `za` folds; `<C-c>` cancels; `gf` opens a file; `u` / `<C-r>` undo and redo in the input box.
+- `za` folds; `<C-o>` opens every tool call's output and thought while any is collapsed, else
+  collapses them all, and the ones that come after follow it until `<C-o>` again (`za` still
+  folds one); `<C-c>` cancels; `gf` opens a file; `u` / `<C-r>` undo and redo in the input box.
 - On the conversation, `i` `a` `o` `O` `I` `A` `c` `s` `C` `S` `R` and `<CR>` go to the end of
   your draft, typing (`<CR>` on a box's option answers with it); `<C-j>` goes down to the input box.
 
