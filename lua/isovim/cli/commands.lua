@@ -619,12 +619,6 @@ M.list = {
     hidden = true,
     audience = "plumbing",
   },
-  -- Tells a repo's root of its new questions, in root mode (a scan that sees one runs it).
-  { name = "__rootmode-tell", module = "rootmode",
-    args = { "<repo>" },
-    hidden = true,
-    audience = "plumbing",
-  },
   -- Whether claude or codex is logged in here, as JSON (isovim.auth): for iso move to ask the host
   -- an agent moves to.
   { name = "__auth", module = "inspect",

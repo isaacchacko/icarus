@@ -534,17 +534,9 @@ local function sync_error_files(repo, entries)
   end
 end
 
--- In root mode, the repo's root is told of new questions by iso __rootmode-tell, run on the tmux
--- server so neither the scan nor whoever asked waits on it.
-local function tell_root(repo)
-  if require("isovim.rootmode").route(repo) then
-    require("isovim.panes").later({ "__rootmode-tell", repo }, store.run .. "/rootmode.log")
-  end
-end
-
 -- A repo's surfaces, as M.read gives them, after bringing its error files and events up to date.
 -- Changes to the surfaces named in quiet are taken in without a changed event (their writer
--- published what happened). A new question open to roots tells the repo's root, in root mode.
+-- published what happened).
 ---@param quiet? table<string, true> base file names
 ---@return isovim.Surface[]
 function M.scan(repo, quiet)
@@ -552,8 +544,7 @@ function M.scan(repo, quiet)
   if vim.fn.isdirectory(M.dir(repo)) == 0 then
     return {}
   end
-  local asked = false
-  local entries = locked(repo, function()
+  return locked(repo, function()
     local state = read_state(repo)
     local entries = M.read(repo, state)
     sync_error_files(repo, entries)
@@ -564,7 +555,6 @@ function M.scan(repo, quiet)
       if not seen then
         state[entry.base] = { sig = entry.sig, first = entry.created or now }
         publish(entry, "created", { title = entry.title })
-        asked = asked or (entry.type == "question" and not entry.answer and not entry.raised)
         dirty = true
       elseif seen.sig ~= entry.sig then
         seen.sig = entry.sig
@@ -592,10 +582,6 @@ function M.scan(repo, quiet)
     end
     return entries
   end)
-  if asked then
-    tell_root(repo)
-  end
-  return entries
 end
 
 -- making them
@@ -688,18 +674,21 @@ function M.raise(entry)
   return scanned(entry.repo, entry.name)
 end
 
--- The repo's pending questions open to a root that no root was told of yet, marked told now (in
--- the scan's state, not the surface), so each is handed out once whoever asks. all marks every
--- one told and returns them all, told before or not (root mode turning on lists what waits).
+-- The repo's pending questions open to a root that keep picks (the ones a root is in charge of)
+-- and nobody told it of yet, marked told now (in the scan's state, not the surface), so each is
+-- handed out once whoever asks. all returns them told before or not (root mode turning on lists
+-- what waits).
+---@param keep fun(entry: isovim.Surface): boolean
 ---@return isovim.Surface[]
-function M.take_untold(repo, all)
+function M.take_untold(repo, keep, all)
   repo = canon(repo)
   return locked(repo, function()
     local state = read_state(repo)
     local taken = {}
     for _, entry in ipairs(M.read(repo, state)) do
       local seen = state[entry.base]
-      if entry.type == "question" and not entry.answer and not entry.raised and seen and (all or not seen.told) then
+      if entry.type == "question" and not entry.answer and not entry.raised and seen and (all or not seen.told)
+        and keep(entry) then
         seen.told = true
         taken[#taken + 1] = entry
       end

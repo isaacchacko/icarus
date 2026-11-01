@@ -141,10 +141,11 @@ function M.parse_since(text)
 end
 
 -- Calls on_event(line, event) for each event from now on, or from `since` (epoch seconds, read back
--- through the previous log too), and never returns. Each change to the folder wakes it once.
+-- through the previous log too), from the event loop, and returns. Each change to the folder wakes
+-- it once.
 ---@param on_event fun(line: string, event: table)
 ---@param since? number
-function M.follow(on_event, since)
+function M.watch(on_event, since)
   local fd, inode, offset, partial
   local function emit(line)
     local ok, event = pcall(vim.json.decode, line)
@@ -213,6 +214,11 @@ function M.follow(on_event, since)
   end
   open(since ~= nil)
   drain()
+end
+
+-- M.watch, for a process that does nothing else (iso listen): it never returns.
+function M.follow(on_event, since)
+  M.watch(on_event, since)
   for _, name in ipairs({ "sigterm", "sigint", "sighup" }) do
     vim.uv.new_signal():start(name, function()
       os.exit(0)

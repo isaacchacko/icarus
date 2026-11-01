@@ -207,7 +207,10 @@ box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-yo
     first answer wins, and reaches the asker the same way whoever gave it.
   - The root in charge of a question (the repo's root, else the host root, never the one that asked
     it) is told of each new one, in one message per batch, and when root mode turns on gets one
-    message listing those already waiting.
+    message listing those already waiting. The telling is a subscription: a root's ACP supervisor
+    listens on the event bus for its Inboxes' question surfaces, a few seconds after the last,
+    and catches up on start with those asked while it was down, so it doesn't matter who asked or
+    scanned a question, or on what code. Each question is told once (marked in the scan's state).
   - A root leaves a question to you with `--raise`: it's marked yours (the sidebar says "yours")
     and no root answers it after. An ACP agent's permission requests are yours from the start, since
     they let it run a tool its mode stopped.

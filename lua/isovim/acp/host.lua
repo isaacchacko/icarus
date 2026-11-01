@@ -99,6 +99,7 @@ local S = {
   code = {}, ---@type table<string, string> each isovim file it runs, as it was when it started on it (code_stat)
   code_due = false, -- a restart onto changed code waits its turn (check_code)
   broken = nil, ---@type string? the changed file that doesn't compile, said once
+  inbox = false, -- subscribed to the Inbox as a root (subscribe_inbox)
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -839,10 +840,24 @@ local function role_changed(resumed, how, last)
   return how == "fork" or resumed == "restart"
 end
 
+-- A root (or repo-root, from its first session as one) subscribes to the Inbox: while root mode
+-- has it clear one, it's told of each new question there as a message (isovim.rootmode.listen).
+local function subscribe_inbox()
+  local role = store.role(S.spec)
+  if S.inbox or (role ~= "root" and role ~= "repo-root") then
+    return
+  end
+  S.inbox = true
+  require("isovim.rootmode").listen(S.ws .. "/" .. S.agent, function(text)
+    submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
+  end)
+end
+
 -- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session
 -- entry. resumed: it carries an earlier session's system prompt (resume, load, fork); "restart" for
 -- the agent's own session reopened as its supervisor starts.
 local function session_ready(how, fresh, extra, resumed)
+  subscribe_inbox()
   local last = last_recorded() or (how == "fork" and S.source_entry or nil)
   local tell = role_changed(resumed, how, last)
   append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported,

@@ -5,9 +5,9 @@
 -- leaves that to you). iso rootmode off just stops telling it of questions. iso rootmode on host
 -- takes the place of a root the iso root file names, and tells it so.
 --
--- The root and you share the Inbox. The root is told of each new question open to roots (one
--- message per batch, by iso __rootmode-tell, which a scan that sees one starts), and of those
--- already waiting when root mode turns on (one message listing them). It answers with iso <role>
+-- The root and you share the Inbox. The root is told of each new question open to roots by its
+-- own supervisor's subscription (isovim.rootmode.listen, one message per batch), and of those
+-- already waiting when root mode turns on (one message listing them, from here). It answers with iso <role>
 -- answer <question> <answer>, which reaches the asker as yours does (a router blocked in iso router
 -- surface question, an ACP agent's supervisor), or leaves it to you with --raise.
 local store = require("isovim.store")
@@ -35,84 +35,13 @@ local function send(address, text, from)
     { from = sender, kind = "from", id = stamp and stamp:match("(m%x+)%]$"), text = text })
 end
 
-local function label(scope)
-  return scope == "host" and "this host" or scope
-end
+local label = rootmode.label
 
 -- The --task text, as the root's first message.
 local function task_text(scope, task)
   return ("Root mode is on for %s, and you are its %s. Your task, as guidance (you decide what falls "
     .. "outside it, and leave that to the user with iso %s answer <question> --raise):\n\n%s")
     :format(label(scope), scope == "host" and "host root" or "repo root", rootmode.role(scope), task)
-end
-
--- The questions as their root gets them: each with its options, then how to answer.
-local function questions_text(intro, entries, scope)
-  local role = rootmode.role(scope)
-  local lines = { intro }
-  for _, entry in ipairs(entries) do
-    lines[#lines + 1] = ("[question %s/%s, from %s] %s%s"):format(entry.repo, entry.name, entry.asker or "a shell",
-      entry.question, entry.multi and " (pick any)" or "")
-    for i, opt in ipairs(entry.options) do
-      lines[#lines + 1] = ("  %d. %s%s"):format(i, opt.label, opt.description and (" · " .. opt.description) or "")
-    end
-    if entry.other then
-      lines[#lines + 1] = "  (or your own words)"
-    end
-  end
-  lines[#lines + 1] = ("Answer what you can stand behind with `iso %s answer <repo>/<name> <answer...>`; leave "
-    .. "the rest to the user with `iso %s answer <repo>/<name> --raise`. The user may answer first: the first "
-    .. "answer wins."):format(role, role)
-  local mode = rootmode.entry(scope)
-  if mode and mode.task then
-    lines[#lines + 1] = "Your task (raise what's outside it): " .. mode.task
-  end
-  return table.concat(lines, "\n")
-end
-
--- Tells each root of the questions it's in charge of, one message per root; intro(scope) opens it.
--- A root the message can't reach is skipped: the questions wait in the Inbox all the same.
-local function tell(entries, intro)
-  local by_root, order = {}, {}
-  for _, entry in ipairs(entries) do
-    local address, scope = rootmode.root_for(entry)
-    if address then
-      if not by_root[address] then
-        by_root[address] = { scope = scope, entries = {} }
-        order[#order + 1] = address
-      end
-      table.insert(by_root[address].entries, entry)
-    end
-  end
-  for _, address in ipairs(order) do
-    local group = by_root[address]
-    local ok, err = c.try(send, address, questions_text(intro(group.scope, #group.entries), group.entries, group.scope))
-    if not ok then
-      io.stderr:write(("iso: root mode: could not tell %s of %d question(s): %s\n"):format(address, #group.entries, err))
-    end
-  end
-end
-
--- iso __rootmode-tell <repo>: tells the repo's root of its questions no root was told of yet.
--- A scan that sees a new question starts it; the pause lets an ACP agent's several questions, asked
--- one surface at a time, go in one message.
-M["__rootmode-tell"] = function(args)
-  local repo = surfaces.key(args[1] or fail("usage: iso __rootmode-tell <repo>")) or fail("no repo " .. args[1])
-  vim.uv.sleep(1500)
-  tell(surfaces.take_untold(repo), function(_, n)
-    return ("%s in %s's Inbox, which root mode has you clear with the user:")
-      :format(n == 1 and "A new question" or (n .. " new questions"), repo == store.ROOT and "Root" or repo)
-  end)
-end
-
--- The questions waiting in the scope's Inbox (every repo's, for the host) when root mode turns on,
--- marked told so the new root hears of each once.
-local function waiting(scope)
-  local list = {}
-  for _, repo in ipairs(scope == "host" and surfaces.repos() or { scope }) do
-    vim.list_extend(list, surfaces.take_untold(repo, true))
-  end
-  return list
 end
 
 -- A scope from what was typed: host (or root), owner/repo, or a dir in a repo.
@@ -164,14 +93,18 @@ local function tell_replaced(before, scope, address)
   end
 end
 
--- Tells the scope's root of the questions already waiting, in one message.
+-- Tells the scope's root of every question waiting in its Inbox (every repo's, for the host), in
+-- one message, marking them told so its subscription (rootmode.listen) doesn't tell them again.
 local function tell_waiting(scope, address)
-  tell(vim.tbl_filter(function(entry)
-    return rootmode.root_for(entry) == address
-  end, waiting(scope)), function(_, n)
-    return ("Root mode is on for %s: you clear its Inbox with the user. %s waiting there now:")
-      :format(label(scope), n == 1 and "One question is" or (n .. " questions are"))
-  end)
+  local list = rootmode.take(address, scope == "host" and surfaces.repos() or { scope }, true)
+  if list and #list > 0 then
+    local ok, err = c.try(send, address, rootmode.questions_text(("Root mode is on for %s: you clear its Inbox with "
+      .. "the user. %s waiting there now:"):format(label(scope), #list == 1 and "One question is"
+      or (#list .. " questions are")), list, scope))
+    if not ok then
+      io.stderr:write(("iso: root mode: could not tell %s of the %d waiting question(s): %s\n"):format(address, #list, err))
+    end
+  end
 end
 
 local function on(scope, task)
