@@ -8,6 +8,7 @@ local M = {}
 M.map = {
   workspace = { "\u{f07b}", "Directory" }, -- fa-folder
   workspace_current = { "\u{f07c}", "Directory" }, -- fa-folder_open
+  repo = { "\u{f401}", "Directory" }, -- oct-repo
   claude = { "\u{ec82}", "IsovimClaude" }, -- cod-claude
   codex = { "\u{ec81}", "MiniIconsGrey" }, -- cod-openai
   terminal = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal

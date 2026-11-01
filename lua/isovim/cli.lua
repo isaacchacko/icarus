@@ -230,6 +230,8 @@ function commands.ls(args)
   local titles = panes.titles()
   local rows = {}
   for _, ws in ipairs(store.list()) do
+    -- Its git origin ("owner/repo") and how this host draws it: {name, glyph, color}.
+    local repo = require("isovim.repos").for_dir(ws.dir)
     for _, agent in ipairs(store.agents(ws.id)) do
       local running = sessions[ws.id] and sessions[ws.id][agent.id]
       rows[#rows + 1] = {
@@ -244,6 +246,7 @@ function commands.ls(args)
         -- When anything last happened in it (epoch seconds), for scripts that wait for quiet.
         active = running or nil,
         dir = ws.dir,
+        repo = repo,
         tasks = agent.tasks,
       }
     end

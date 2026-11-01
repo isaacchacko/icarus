@@ -8,6 +8,7 @@ local prs = require("isovim.prs")
 local icons = require("isovim.icons")
 local diffstat = require("isovim.diffstat")
 local remote = require("isovim.remote")
+local repos = require("isovim.repos")
 local isovim = require("isovim")
 
 local M = {}
@@ -48,6 +49,9 @@ local KINDS = {
   workspace = {
     format = function(item)
       local folder, folder_hl = icons.get(item.ws == isovim.current and "workspace_current" or "workspace")
+      if item.repo then
+        folder, folder_hl = item.repo.glyph, item.repo.hl
+      end
       local chevron = isovim.expanded[item.ws] and "▾ " or "▸ "
       local row = { { chevron, "Comment" }, { folder, folder_hl }, { " " }, { item.ws_name, item.running and "Directory" or "Comment" } }
       if item.added and item.added + item.removed > 0 then
@@ -214,6 +218,13 @@ local function add_tasks(items, base, agent)
   under(nil, 0)
 end
 
+-- How a workspace row draws its repo, from repos.style here or from another host's `iso ls`; hosts
+-- from before repos send none, and their rows keep the folder.
+local function repo_mark(style)
+  local hl = type(style) == "table" and type(style.glyph) == "string" and repos.highlight(style.color)
+  return hl and { glyph = style.glyph, hl = hl } or nil
+end
+
 -- This host's rows: each workspace with its agents, or its PRs while P is on; a collapsed workspace
 -- (the default) only its own row.
 local function local_rows(workspaces)
@@ -222,7 +233,7 @@ local function local_rows(workspaces)
   for _, ws in ipairs(workspaces) do
     local base = { ws = ws.id, ws_name = ws.name }
     local added, removed = diffstat.get(ws.dir, M.refresh)
-    local row = { kind = "workspace", running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents) }
+    local row = { kind = "workspace", running = ws.running, added = added, removed = removed, status = most_urgent(ws.agents), repo = repo_mark(repos.for_dir(ws.dir)) }
     items[#items + 1] = vim.tbl_extend("force", base, row)
     local open = isovim.expanded[ws.id]
     if open and isovim.show_prs then
@@ -278,7 +289,7 @@ local function remote_rows(name, ssh, rows)
     local ws_id = row.id:match("^[^/]+")
     local agent = remote_agent(row)
     if not by_ws[ws_id] then
-      by_ws[ws_id] = { name = row.workspace, agents = {} }
+      by_ws[ws_id] = { name = row.workspace, agents = {}, repo = row.repo }
       order[#order + 1] = ws_id
     end
     if not agent.hidden or isovim.show_hidden then
@@ -289,7 +300,7 @@ local function remote_rows(name, ssh, rows)
   for _, ws_id in ipairs(order) do
     local ws = by_ws[ws_id]
     local base = { host = name, ssh = ssh, ws = name .. ":" .. ws_id, ws_name = ws.name, remote_ws = ws_id }
-    items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", running = ws.running, status = most_urgent(ws.agents) })
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "workspace", running = ws.running, status = most_urgent(ws.agents), repo = repo_mark(ws.repo) })
     for _, agent in ipairs(isovim.expanded[base.ws] and ws.agents or {}) do
       items[#items + 1] = vim.tbl_extend("force", base, {
         kind = "agent",
