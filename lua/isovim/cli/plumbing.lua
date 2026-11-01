@@ -99,11 +99,23 @@ function commands.transcript(args)
   out(require("isovim.transcript").write(ws.id, agent.id) or "")
 end
 
--- iso update: the open TUI fetches its origin now and pulls what it finds (isovim.update), in the
--- background, so this returns at once. bin/iso-hook runs it after an agent's git push.
+-- iso update: fast-forwards the checkout isovim runs from to origin's default branch, as the TUI's
+-- own check does (isovim.update), from any process, an agent's included, with or without the TUI
+-- open; then an open TUI says so and hot reloads or restarts onto it. bin/iso-hook runs it after an
+-- agent's git push. Fails when it can't update (local changes, another branch, diverged, offline).
 function commands.update()
-  local open = tui("require('isovim.update').check()")
-  out(open and "isovim is checking for an update" or "isovim isn't open")
+  local update = require("isovim.update")
+  if not update.enabled then
+    return out("isovim's self-update is off (ISOVIM_SELF_UPDATE=0)")
+  end
+  local result = update.pull_now()
+  if result.state == "updated" then
+    tui("require('isovim.update').pulled(...)", result)
+  end
+  if result.state == "declined" or result.state == "offline" then
+    fail(update.describe(result))
+  end
+  out(update.describe(result))
 end
 
 return commands

@@ -508,8 +508,10 @@ M.list = {
   { name = "update", module = "plumbing",
     audience = "plumbing",
     help = [=[
-       iso update                    ask the open TUI to look for a new isovim now (it also does
-                                     every minute, and after an agent's git push)]=],
+       iso update                    fast-forward the checkout isovim runs from to origin's main
+                                     (only when clean and on main), then the open TUI hot reloads
+                                     or restarts onto it; run it after you push to isovim's main
+                                     (the TUI also looks every minute)]=],
   },
   { name = "task", module = "agents",
     retired = "the repo's Task Board, ~/.iso/<owner>/<repo>/iso/tasks.md",

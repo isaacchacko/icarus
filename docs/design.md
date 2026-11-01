@@ -254,7 +254,7 @@ streams the matching events, with `*` matching one part and `**` any number.
 **Every role:**
 - talking and watching: `msg`, `ls`, `status`, `peek`, `wait`, `find`, `transcript`, `listen`
 - tools: `browser`, `pilot` (one holder at a time), `spawn`, `promote`, `restart`, `fork`, `checkhealth`,
-  `version`, `update` (the open TUI looks for a new isovim now)
+  `version`, `update` (pulls isovim's own checkout; run after pushing to isovim's main)
 
 **Router and worker:** `wt`, `setup`, `teardown`, `run <action>`, resolved for the calling agent.
 
@@ -406,11 +406,14 @@ needs one restart to get it.
 
 isovim keeps the checkout it runs from up to date itself (`isovim.update`), so nobody has to quit,
 pull and start it again. The edit guard still refuses agents' writes and git commands there: the
-pull is the TUI's own, the user's process, not an agent's.
+pull is the TUI's own, or `iso update`'s, one isovim command, not an agent's git.
 - **When it looks:** the TUI fetches origin's default branch (`origin/HEAD`, else `main`) 5s after it
   starts and every minute after, in the background with a 30s timeout and no prompts. `iso update`
-  (`iso <role> update`, any role) asks it to look now over its socket, and `bin/iso-hook` runs it
-  after any agent's Bash call that pushes (`git ... push`), so a push to main lands within seconds.
+  (`iso <role> update`, any role, and the prompt every agent gets says to run it after pushing to
+  isovim's main) makes the same pull itself, TUI open or not, prints what happened (it fails when it
+  can't pull), and then hands an update to an open TUI over its socket, which says so and hot
+  reloads or arms its restart as for its own. `bin/iso-hook` runs it after any agent's Bash call
+  that pushes (`git ... push`), so a push to main lands within seconds.
   `<leader>iU` looks now and says what it found. An offline fetch is quiet.
 - **When it pulls:** a fast-forward (`git merge --ff-only`), only when the checkout is on the
   default branch, no tracked file has changes (untracked ones, `.claude/` and `.vibe-wise/`, are

@@ -51,83 +51,131 @@ local function needs_restart(file)
   return file == "bin/iso" or (vim.startswith(file, "starter/") and file ~= "starter/lua/config/keymaps.lua")
 end
 
--- Runs git in the checkout and, inside a coroutine, yields until it's done.
-local function git(...)
+local GIT_ENV = { GIT_TERMINAL_PROMPT = "0", GIT_SSH_COMMAND = vim.env.GIT_SSH_COMMAND or "ssh -o BatchMode=yes" }
+
+local function result_of(r)
+  return r.code == 0, vim.trim(r.stdout or ""), vim.trim(r.stderr or "")
+end
+
+-- Runs git in the checkout and, inside a coroutine, yields until it's done (the TUI's, which mustn't block).
+local function git_async(...)
   local co = coroutine.running()
-  local env = { GIT_TERMINAL_PROMPT = "0", GIT_SSH_COMMAND = vim.env.GIT_SSH_COMMAND or "ssh -o BatchMode=yes" }
-  vim.system({ "git", "-C", M.repo, ... }, { text = true, timeout = TIMEOUT, env = env }, function(result)
+  vim.system({ "git", "-C", M.repo, ... }, { text = true, timeout = TIMEOUT, env = GIT_ENV }, function(r)
     vim.schedule(function()
-      coroutine.resume(co, result)
+      coroutine.resume(co, r)
     end)
   end)
-  local result = coroutine.yield()
-  return result.code == 0, vim.trim(result.stdout or ""), vim.trim(result.stderr or "")
+  return result_of(coroutine.yield())
 end
 
--- Why it isn't updating, said once; a check run by hand (verbose) always says what it found.
-local function decline(reason, verbose)
-  if verbose or state.said ~= reason then
-    notify("isovim isn't updating itself: " .. reason, "warn")
-  end
-  state.said = reason
+-- Runs git in the checkout and waits (iso update's).
+local function git_sync(...)
+  return result_of(vim.system({ "git", "-C", M.repo, ... }, { text = true, timeout = TIMEOUT, env = GIT_ENV }):wait())
 end
 
-local function update(verbose)
+---@class isovim.Pull
+---@field state "updated"|"current"|"ahead"|"declined"|"offline"
+---@field reason? string why it declined, or the fetch's error
+---@field count? string how many commits an update brought
+---@field subject? string the newest one's "<sha> <subject>"
+---@field restart? string[] what it changed that needs a restart
+
+-- Fetches origin's default branch (origin/HEAD, else main) and fast-forwards the checkout to it, when
+-- it's on that branch, no tracked file has changes and it's behind, not diverged. git is git_async
+-- or git_sync. Never stashes, resets or rebases.
+---@return isovim.Pull
+local function pull(git)
   local has_head, origin_head = git("symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
   local branch = has_head and origin_head:match("^origin/(.+)$") or "main"
   local upstream = "origin/" .. branch
   local fetched, _, fetch_err = git("fetch", "--quiet", "origin", branch)
-  -- Offline is no news: only a check you asked for says so.
   if not fetched then
-    return verbose and notify("isovim couldn't fetch origin: " .. fetch_err, "warn")
+    return { state = "offline", reason = fetch_err }
   end
   local _, head = git("rev-parse", "HEAD")
   local _, target = git("rev-parse", upstream)
   if head == target then
-    state.said = nil
-    return verbose and notify("isovim is up to date")
+    return { state = "current" }
   end
   local on_branch, current = git("symbolic-ref", "--short", "-q", "HEAD")
   if not on_branch then
-    return decline(("its checkout's HEAD is detached, not on %s"):format(branch), verbose)
+    return { state = "declined", reason = ("its checkout's HEAD is detached, not on %s"):format(branch) }
   elseif current ~= branch then
-    return decline(("its checkout is on %s, not %s"):format(current, branch), verbose)
+    return { state = "declined", reason = ("its checkout is on %s, not %s"):format(current, branch) }
   elseif not git("merge-base", "--is-ancestor", "HEAD", upstream) then
     if git("merge-base", "--is-ancestor", upstream, "HEAD") then
-      state.said = nil
-      return verbose and notify(("isovim is ahead of %s: nothing to pull"):format(upstream))
+      return { state = "ahead", reason = ("ahead of %s: nothing to pull"):format(upstream) }
     end
-    return decline(("its checkout has diverged from %s"):format(upstream), verbose)
+    return { state = "declined", reason = ("its checkout has diverged from %s"):format(upstream) }
   end
   local _, changes = git("status", "--porcelain", "--untracked-files=no")
   if changes ~= "" then
-    return decline("its checkout has local changes", verbose)
+    return { state = "declined", reason = "its checkout has local changes" }
   end
   local _, names = git("diff", "--name-only", "HEAD", upstream)
   local _, count = git("rev-list", "--count", "HEAD.." .. upstream)
-  local files = vim.split(names, "\n", { trimempty = true })
-  local restart = vim.tbl_filter(needs_restart, files)
-  -- Set before the pull, so isovim.reload's toast for starter/ knows the restart is coming.
-  local pending = state.restart
-  if #restart > 0 and M.can_restart then
-    state.restart = vim.list_extend(vim.deepcopy(pending or {}), restart)
-  end
   local merged, _, merge_err = git("merge", "--ff-only", "--quiet", upstream)
   if not merged then
-    state.restart = pending
-    return decline("the fast-forward failed: " .. (merge_err:match("[^\n]+") or "?"), verbose)
+    return { state = "declined", reason = "the fast-forward failed: " .. (merge_err:match("[^\n]+") or "?") }
   end
-  state.said = nil
   local _, subject = git("log", "-1", "--format=%h %s", upstream)
+  local files = vim.split(names, "\n", { trimempty = true })
+  return { state = "updated", count = count, subject = subject, restart = vim.tbl_filter(needs_restart, files) }
+end
+
+-- One line for what a pull did, as iso update prints it and the TUI's toast starts.
+function M.describe(result)
+  if result.state == "updated" then
+    return ("isovim updated (%s commit%s): %s"):format(result.count, result.count == "1" and "" or "s", result.subject:sub(1, 80))
+  elseif result.state == "current" then
+    return "isovim is up to date"
+  elseif result.state == "ahead" then
+    return "isovim is " .. result.reason
+  elseif result.state == "offline" then
+    return "isovim couldn't fetch origin: " .. result.reason
+  end
+  return "isovim isn't updating itself: " .. result.reason
+end
+
+-- What the TUI does with a pull, its own or iso update's: says what happened (a reason it declined
+-- once, and only a check you asked for, verbose, says there was nothing to do or the fetch failed),
+-- and after an update that needs a restart, arms it. lua/ hot reloads through isovim.reload.
+function M.pulled(result, verbose)
+  if result.state == "declined" then
+    if verbose or state.said ~= result.reason then
+      notify(M.describe(result), "warn")
+    end
+    state.said = result.reason
+    return
+  elseif result.state ~= "offline" then
+    state.said = nil
+  end
+  if result.state ~= "updated" then
+    return verbose and notify(M.describe(result), result.state == "offline" and "warn" or "info")
+  end
+  local restart = result.restart or {}
   local note = ""
   if #restart > 0 then
     note = M.can_restart and "\nit restarts onto it once you've been idle a moment"
       or "\nquit and run iso to apply it (this isovim was started before it could restart itself)"
   end
-  notify(("isovim updated (%s commit%s): %s"):format(count, count == "1" and "" or "s", subject:sub(1, 80)) .. note)
+  if #restart > 0 and M.can_restart then
+    state.restart = vim.list_extend(state.restart or {}, restart)
+  end
+  notify(M.describe(result) .. note)
   if #restart > 0 and M.can_restart then
     M.arm()
   end
+end
+
+-- iso update: the pull itself, run by any process (an agent's, with or without a TUI open).
+---@return isovim.Pull
+function M.pull_now()
+  return pull(git_sync)
+end
+
+local function update(verbose)
+  M.pulled(pull(git_async), verbose)
 end
 
 -- Fetches and, when it can, fast-forwards. Never blocks: git runs in the background. verbose says
