@@ -257,6 +257,7 @@ S (7) - swarming            ← style meter: live agents on this host
 Inbox 1                     ← the shown host's: root surfaces + one row per busy repo
 ‹ macbook ›                 ← the host you're viewing (< >)
   root  ⏺
+    Inbox                   ← the root's surfaces (Task Board, markdown, files, questions)
   isovim ●                  ← repo header in its color; opens the router
     Inbox                   ← this repo's surfaces
     router · rework vocab

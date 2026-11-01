@@ -671,6 +671,11 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
   -- Root mode, as iso rootmode set it here; another host's is guessed from its roots.
   local rootmode = not host and require("isovim.rootmode") or nil
   local has_root = rootmode and rootmode.on("host") or (not rootmode and groups[1] and groups[1].kind == "root")
+  -- The root's surfaces have their Inbox under the root's row, as a repo's do, even with no root
+  -- left to head it.
+  if surfaces_by_key and #(surfaces_by_key[ROOT_KEY] or {}) > 0 and not (groups[1] and groups[1].kind == "root") then
+    table.insert(groups, 1, { key = ROOT_KEY, kind = "root", name = "root", agents = {} })
+  end
   if surfaces_by_key then
     local root_list = surfaces_by_key[ROOT_KEY] or {}
     local busy = {}
@@ -685,7 +690,8 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     local collapsed = is_collapsed(host, "inbox")
     inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = count, root_mode = has_root, collapsed = collapsed })
     -- Exactly what needs you, as the count: the root's surfaces with needs_you (a question a root is
-    -- still deciding has none) and the repos with any; a repo's others stay in its own Inbox.
+    -- still deciding has none) and the repos with any. All of them are in the root's and each repo's
+    -- own Inbox in the list.
     if not collapsed then
       surface_rows(inbox, base_host, vim.tbl_filter(function(entry)
         return entry.needs_you
@@ -702,6 +708,18 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       for i, entry in ipairs(agents) do
         items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+      end
+      -- Its Inbox, as a repo's: all its surfaces (the Task Board, markdown, files, questions), while
+      -- the top window keeps only those that need you.
+      if #list > 0 then
+        if #agents == 0 then
+          items[#items + 1] = { kind = "hint", text = "root (none here now)" }
+        end
+        local inbox_collapsed = is_collapsed(host, "repo_inbox", ROOT_KEY)
+        items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "repo_inbox", repo_key = ROOT_KEY, count = waiting(list), root_mode = has_root, collapsed = inbox_collapsed })
+        if not inbox_collapsed then
+          surface_rows(items, base_host, list, 2)
+        end
       end
     -- General shows on this host even when empty, so s on it spawns a general/aN.
     elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
@@ -1739,8 +1757,6 @@ function M.focus_inbox(which)
   end
   if not key then
     return Snacks.notify.info("No repo selected", { title = "isovim" })
-  elseif key == ROOT_KEY then
-    return M.focus_inbox("host")
   end
   M.reveal_repo_inbox(nil, key)
   local here = vim.api.nvim_win_get_cursor(0)[1]
