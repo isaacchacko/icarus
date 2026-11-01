@@ -472,6 +472,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `b` | the previous agent |
 | `p` | the previous repo, at the agent last open there |
 | `P` | pick a repo (Root, General and Terminals among them) |
+| `o` | the current repo's PRs surface |
 | `g` / `T` | general / terminals |
 | `s` / `t` | spawn / new terminal |
 | `x` | root mode for this repo |
@@ -530,6 +531,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `o` / `c` | open the port / changes |
 | `u` | measure CPU/RAM |
 | `H` / `L` | toggles |
+| `P` | the row's repo's PRs surface (the root's on its rows; on General or Terminals, the current repo's); one with none registered says so |
 | `?` | help |
 
 `m` sends the row under the cursor to a host picked from the peers (this one left out), by `iso move`.

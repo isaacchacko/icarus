@@ -268,7 +268,7 @@ local function prs_board(entry)
   end
   if #lines == 1 then
     add("")
-    add("No PRs from the last day.", "Comment")
+    add(entry.registered == 0 and "No PRs registered here yet (iso <role> pr registers one)." or "No PRs from the last day.", "Comment")
   end
   return lines, marks, rows
 end
@@ -975,7 +975,7 @@ function M.rebind()
       for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
         views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
       end
-      local entry = view.kind == "prs" and surfaces.prs_entry(view.repo) or surfaces.get(view.repo, view.name)
+      local entry = view.kind == "prs" and surfaces.prs_entry(view.repo, true) or surfaces.get(view.repo, view.name)
       -- One opened before views had tabs gets its own.
       if vim.b[view.buf].isovim_scope == nil then
         vim.b[view.buf].isovim_scope = view.repo
@@ -1003,7 +1003,7 @@ end
 function M.refresh_prs()
   for _, view in pairs(M.views) do
     if view.kind == "prs" and vim.api.nvim_buf_is_valid(view.buf) then
-      local entry = surfaces.prs_entry(view.repo)
+      local entry = surfaces.prs_entry(view.repo, true)
       if entry then
         tab(view, entry)
         draw_surface(view, entry)

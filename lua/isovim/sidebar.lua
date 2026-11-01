@@ -1520,6 +1520,7 @@ local LIST_KEYS = {
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
+  { "P", "isovim_open_prs", "the PRs surface of the row's repo (the root's on its rows; on General or Terminals, the current repo's)" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
 -- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
@@ -1536,11 +1537,18 @@ local FOOTER_KEYS = {
 local ROLE_KEYS = { list = LIST_KEYS, footer = FOOTER_KEYS }
 M.COLUMN_KEYS, M.LIST_KEYS = COLUMN_KEYS, LIST_KEYS
 
+-- Keys that would edit, swallowed in the column's buffers where nothing else maps them: on a
+-- read-only buffer they only flash an error (P, put before, did after the sidebar's P toggle went).
+local SWALLOWED = { "p", "P", "i", "I", "a", "A", "o", "O", "x", "X", "d", "D", "c", "C", "s", "S", "J", "r", "R", ".", "~", "=", "<C-r>", "<Del>" }
+
 local function map_keys(buf, role)
   local function on_row(action)
     return function()
       M.actions[action]((rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]])
     end
+  end
+  for _, key in ipairs(SWALLOWED) do
+    vim.keymap.set("n", key, "<Nop>", { buffer = buf, nowait = true, desc = "which_key_ignore" })
   end
   for _, key in ipairs(vim.list_extend(vim.list_extend({}, COLUMN_KEYS), ROLE_KEYS[role] or {})) do
     vim.keymap.set("n", key[1], on_row(key[2]), { buffer = buf, nowait = true, desc = "isovim: " .. key[3] })
@@ -2194,6 +2202,15 @@ M.actions = {
     refresh_now()
   end,
   isovim_toggle_hidden = toggle("show_hidden"),
+  -- P: the PRs surface of the row's repo, or the root's; from General, Terminals or a row of
+  -- neither, the current scope's.
+  isovim_open_prs = function(item)
+    local key = item and (item.repo_key or item.group_key or (item.ws and not item.host and M.group_key(item.ws)))
+    if not key or key == GENERAL_KEY or item.kind == "terminals" or item.kind == "terminal" then
+      key = nil
+    end
+    require("isovim.keys").prs(key)
+  end,
   isovim_toggle_ports = toggle("show_ports"),
   isovim_toggle_tasks = toggle("show_tasks"),
   isovim_explorer = function()

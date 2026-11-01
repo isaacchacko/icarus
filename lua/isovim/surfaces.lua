@@ -915,9 +915,10 @@ local DAY = 24 * 3600
 -- registered it, grouped open, draft, merged and closed; one merged or closed over a day ago drops
 -- off. It waits on you while a PR does (isovim.prs.needs_you), with how many.
 ---@return isovim.Surface?
-function M.prs_entry(repo)
+---@param empty? boolean an entry even with no PRs registered (P and <leader>io open it, saying so)
+function M.prs_entry(repo, empty)
   local urls = store.prs(repo)
-  if #urls == 0 then
+  if #urls == 0 and not empty then
     return nil
   end
   local prs = require("isovim.prs")
@@ -946,6 +947,7 @@ function M.prs_entry(repo)
     needs_you = waiting > 0,
     waiting = waiting,
     count = shown,
+    registered = #urls,
     groups = groups,
     sig = vim.fn.sha256(vim.json.encode({ groups, waiting })),
   }

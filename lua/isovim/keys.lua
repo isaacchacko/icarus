@@ -550,6 +550,18 @@ function M.jump()
   })
 end
 
+-- A repo's PRs surface (the current scope's when key is nil: the root's in Root, the workspace's repo
+-- in Terminals), opened as a tab; one with none registered says so.
+---@param key? string a repo key, or "root"
+function M.prs(key)
+  if not key then
+    local here = current_scope()
+    key = here == scope.TERMINALS and isovim().current and require("isovim.sidebar").group_key(isovim().current) or here
+  end
+  local surfaces = require("isovim.surfaces")
+  surfaces.open(surfaces.prs_entry(key, true))
+end
+
 -- The prompt queue of the ACP agent whose chat you're in, else the one on screen: its window under
 -- the chat, opened even when nothing waits.
 function M.prompt_queue()
@@ -642,6 +654,9 @@ M.GROUP = {
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
   { "P", M.pick_repo, "pick a repo (or Root, General, Terminals)" },
+  { "o", function()
+    M.prs()
+  end, "the repo's PRs surface" },
   { "p", M.previous_repo, "the previous repo (at the agent you last had open there)" },
   { "g", function()
     M.select_scope(scope.GENERAL)
