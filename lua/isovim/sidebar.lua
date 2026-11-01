@@ -1508,8 +1508,8 @@ function M.help()
   section("Chat (normal mode)", isovim.chat_normal_keys)
   local acp_keys = require("isovim.acp.chat").help_keys
   section("ACP chat", acp_keys.chat)
-  section("Prompt queue (between the chat and the input box, while prompts wait)", acp_keys.queue)
-  section("Input box (the composer)", acp_keys.composer)
+  section("Prompt queue (under the chat, while prompts wait)", acp_keys.queue)
+  section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   -- The live maps, so a key set elsewhere (the chat's own, LazyVim's ctrl+/) shows as it is; the
   -- <leader>i group under its own heading.
   local leader, group = {}, {}

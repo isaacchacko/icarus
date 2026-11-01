@@ -1,8 +1,9 @@
--- An ACP agent's prompt queue, shown on its own while prompts wait: a window between the chat and
--- its composer (above every window showing the composer, in the TUI and in iso attach), as tall as
--- its lines up to a few, titled "queued · N". It opens as the first prompt queues and closes when
--- the queue empties; q hides it until another prompt queues. <leader>iq goes to it, opening it even
--- when nothing waits so you can add a line. <C-k> goes up to the chat, <C-j> down to the composer.
+-- An ACP agent's prompt queue, shown on its own while prompts wait: a window under the chat's (under
+-- every window showing the chat, in the TUI and in iso attach), right below the composer at the
+-- chat's bottom, as tall as its lines up to a few, titled "queued · N". It opens as the first prompt
+-- queues and closes when the queue empties; q hides it until another prompt queues. <leader>iq
+-- goes to it, opening it even when nothing waits so you can add a line. <C-k> goes up to the
+-- composer.
 --
 -- It's a buffer you edit: one queued prompt a line, as "#<n> <text>" (a prompt's new lines shown as
 -- ⏎). Edit a line's text, reorder lines (dd p), delete them, or add a line of your own (no #n),
@@ -14,7 +15,7 @@
 -- after yours.
 --
 -- The window isn't part of a layout (isovim.layout leaves it out): the chat brings it back
--- wherever its composer shows (M.sync).
+-- wherever it shows (M.sync).
 local acp = require("isovim.acp")
 
 local M = {}
@@ -38,9 +39,17 @@ local function notify(text, level)
   vim.notify("isovim: " .. text, level or vim.log.levels.INFO)
 end
 
+-- This load of the module: a queue buffer bound by an older one (before a hot reload) has its keys
+-- and autocmds made again by this code as it's found.
+local GEN = {}
+local bind
+
 local function find(ws, agent)
   for buf, q in pairs(queues) do
     if vim.api.nvim_buf_is_valid(buf) and q.ws == ws and q.agent == agent then
+      if q.gen ~= GEN then
+        bind(buf, q)
+      end
       return buf, q
     end
   end
@@ -150,19 +159,36 @@ local function buffer(ws, agent)
   pcall(vim.api.nvim_buf_set_name, buf, ("isovim-acp://%s/%s/queue"):format(ws, agent))
   q = { ws = ws, agent = agent, ids = {} }
   queues[buf] = q
+  bind(buf, q)
+  return buf, q
+end
+
+local GROUP = vim.api.nvim_create_augroup("isovim_acp_queue", { clear = false })
+
+-- The queue buffer's autocmds and keys, made again by each load of the module (find).
+bind = function(buf, q)
+  q.gen = GEN
+  for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
+    if au.group == nil or au.group == GROUP then
+      vim.api.nvim_del_autocmd(au.id)
+    end
+  end
   vim.api.nvim_create_autocmd("BufWriteCmd", {
+    group = GROUP,
     buffer = buf,
     callback = function()
       write(buf)
     end,
   })
   vim.api.nvim_create_autocmd("BufWipeout", {
+    group = GROUP,
     buffer = buf,
     callback = function()
       queues[buf] = nil
     end,
   })
   vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = GROUP,
     buffer = buf,
     callback = function()
       queue_window(vim.api.nvim_get_current_win())
@@ -170,6 +196,7 @@ local function buffer(ws, agent)
   })
   -- Opened empty by <leader>iq and left without adding a line: it goes.
   vim.api.nvim_create_autocmd("WinLeave", {
+    group = GROUP,
     buffer = buf,
     callback = function()
       if q.pinned and not vim.bo[buf].modified then
@@ -197,56 +224,37 @@ local function buffer(ws, agent)
     end
   end, "hide the queue until another prompt queues")
   map("<C-k>", function()
-    local chat = chat_of(q)
-    local win = chat and vim.fn.bufwinid(chat.buf) or -1
-    if win ~= -1 then
+    local win = vim.w.isovim_queue_under
+    if win and vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_set_current_win(win)
     end
-  end, "up to the chat")
-  map("<C-j>", function()
     require("isovim.acp.chat").focus_composer(q.ws, q.agent)
-  end, "down to the composer")
+  end, "up to the composer")
+  pcall(vim.keymap.del, "n", "<C-j>", { buffer = buf })
   require("isovim").map_to_sidebar(buf, { "n", "i" })
-  return buf, q
 end
 
--- The queue window above the composer window cwin, if it has one.
-local function above(buf, cwin)
+-- The queue window under the chat's window cwin, if it has one.
+local function under(buf, cwin)
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    if vim.w[win].isovim_queue_above == cwin then
+    if vim.w[win].isovim_queue_under == cwin then
       return win
     end
   end
 end
 
--- Closing or opening a window takes rows from its neighbours; the composers keep theirs.
-local function keeping_composers(chat, fn)
-  local heights = {}
-  for _, cwin in ipairs(vim.fn.win_findbuf(chat.composer)) do
-    heights[cwin] = vim.api.nvim_win_get_height(cwin)
-  end
-  fn()
-  for cwin, height in pairs(heights) do
-    if vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_height(cwin) ~= height then
-      pcall(vim.api.nvim_win_set_height, cwin, height)
-    end
-  end
-end
-
-local function close(chat, win)
+local function close(win)
   if win == vim.api.nvim_get_current_win() then
-    local cwin = vim.w[win].isovim_queue_above
+    local cwin = vim.w[win].isovim_queue_under
     if cwin and vim.api.nvim_win_is_valid(cwin) then
       vim.api.nvim_set_current_win(cwin)
     end
   end
-  keeping_composers(chat, function()
-    pcall(vim.api.nvim_win_close, win, false)
-  end)
+  pcall(vim.api.nvim_win_close, win, false)
 end
 
--- Shows or hides the agent's queue window above each window showing its composer, as the queue
--- (the chat's, from its journal) says: there while prompts wait, or while you're editing it.
+-- Shows or hides the agent's queue window under each window showing its chat, as the queue (the
+-- chat's, from its journal) says: there while prompts wait, or while you're editing it.
 ---@param chat isovim.acp.Chat
 function M.sync(chat)
   local buf, q = find(chat.ws, chat.agent)
@@ -259,10 +267,10 @@ function M.sync(chat)
   end
   local editing = buf and vim.bo[buf].modified and vim.fn.bufwinid(buf) ~= -1
   local want = (count > 0 or (q and q.pinned) or editing) and not (q and q.hidden)
-  local composers = vim.api.nvim_buf_is_valid(chat.composer) and vim.fn.win_findbuf(chat.composer) or {}
-  if not want or #composers == 0 then
+  local chats = vim.api.nvim_buf_is_valid(chat.buf) and vim.fn.win_findbuf(chat.buf) or {}
+  if not want or #chats == 0 then
     for _, win in ipairs(buf and vim.fn.win_findbuf(buf) or {}) do
-      close(chat, win)
+      close(win)
     end
     return
   end
@@ -272,13 +280,11 @@ function M.sync(chat)
   end
   -- A narrow window cuts the help, not the count (%<).
   local bar = ("%%#IsovimAcpSpinnerNote# queued · %d %%<%%#IsovimAcpHint#  %s"):format(count, M.help)
-  for _, cwin in ipairs(composers) do
-    local win = above(buf, cwin)
+  for _, cwin in ipairs(chats) do
+    local win = under(buf, cwin)
     if not win then
-      keeping_composers(chat, function()
-        win = vim.api.nvim_open_win(buf, false, { split = "above", win = cwin, height = 2 })
-      end)
-      vim.w[win].isovim_queue_above = cwin
+      win = vim.api.nvim_open_win(buf, false, { split = "below", win = cwin, height = 2 })
+      vim.w[win].isovim_queue_under = cwin
     end
     -- Gone already if opening it set off something that closed it.
     if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
@@ -287,17 +293,15 @@ function M.sync(chat)
       local ok, measured = pcall(vim.api.nvim_win_text_height, win, {})
       local height = math.max(1, math.min(MAX_HEIGHT, ok and measured.all or 1)) + 1
       if vim.api.nvim_win_get_height(win) ~= height then
-        keeping_composers(chat, function()
-          vim.api.nvim_win_set_height(win, height)
-        end)
+        vim.api.nvim_win_set_height(win, height)
       end
     end
   end
-  -- One whose composer went elsewhere (another agent's chat took its window, or it closed).
+  -- One whose chat went elsewhere (another agent's chat took its window, or it closed).
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    local cwin = vim.w[win].isovim_queue_above
-    if not (cwin and vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_buf(cwin) == chat.composer) then
-      close(chat, win)
+    local cwin = vim.w[win].isovim_queue_under
+    if not (cwin and vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_buf(cwin) == chat.buf) then
+      close(win)
     end
   end
 end
@@ -315,12 +319,13 @@ function M.refresh(chat)
   M.sync(chat)
 end
 
--- The queue window above the chat's composer, while one shows (for <C-j> and <C-k>).
+-- The queue window under the chat's window (the one you're in, else the first), while one shows
+-- (for <C-j>).
 ---@param chat isovim.acp.Chat
 function M.window(chat)
   local buf = find(chat.ws, chat.agent)
-  local cwin = vim.fn.bufwinid(chat.composer)
-  return buf and cwin ~= -1 and above(buf, cwin) or nil
+  local cwin = vim.api.nvim_get_current_buf() == chat.buf and vim.api.nvim_get_current_win() or vim.fn.bufwinid(chat.buf)
+  return buf and cwin ~= -1 and under(buf, cwin) or nil
 end
 
 -- <leader>iq: goes to the agent's queue, opening it even when nothing waits.

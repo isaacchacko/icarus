@@ -1,7 +1,7 @@
--- iso attach on an ACP agent: a minimal nvim (no config, no plugins) showing just the agent's chat
--- and composer (isovim.acp.chat), as the TUI does, from any terminal or over ssh. It talks to the
--- agent's supervisor like the TUI does, so it can run beside an open TUI. Closing the chat (or
--- :qa) quits.
+-- iso attach on an ACP agent: a minimal nvim (no config, no plugins) showing just the agent's chat,
+-- its composer at its end (isovim.acp.chat), as the TUI does, from any terminal or over ssh. It
+-- talks to the agent's supervisor like the TUI does, so it can run beside an open TUI. Closing the
+-- chat (or :qa) quits.
 local M = {}
 
 -- The command iso attach runs: this tree's isovim on the runtimepath of a clean nvim.
@@ -14,7 +14,7 @@ end
 function M.run(ws, agent)
   vim.g.mapleader = " "
   vim.o.termguicolors = true
-  -- One status line at the bottom, naming the agent; the bar above the composer says what it does.
+  -- One status line at the bottom, naming the agent; the bar over the composer says what it does.
   vim.o.laststatus = 3
   vim.o.ruler = false
   vim.o.showmode = true
@@ -26,7 +26,7 @@ function M.run(ws, agent)
   local chat = require("isovim.acp.chat").open(ws, agent, vim.api.nvim_get_current_win())
   -- The empty buffer nvim started with goes.
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if buf ~= chat.buf and buf ~= chat.composer and vim.api.nvim_buf_get_name(buf) == "" then
+    if buf ~= chat.buf and vim.api.nvim_buf_get_name(buf) == "" then
       pcall(vim.api.nvim_buf_delete, buf, { force = true })
     end
   end

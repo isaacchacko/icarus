@@ -67,7 +67,7 @@ lifetimes, so agents outlive the TUI).
 **Prompts and messages.**
 - A prompt sent while the agent is busy is **queued** and delivered when its turn ends. This covers
   yours and other agents' alike, so nothing is ever typed into a shared box.
-- The queue shows by itself while prompts wait, between the chat and the input box (see The chat).
+- The queue shows by itself while prompts wait, in a window under the chat (see The chat).
   It can be edited, reordered, cleared or "sent now" (which cancels the running turn).
 - A prompt that queues while you edit the queue isn't lost when you write it: it goes after yours.
 - A prompt can carry images, as Claude Code's does: each is a file under the repo's `iso/images/`,
@@ -125,45 +125,63 @@ side by side):
   `<CR>` on an option (or from its question surface in the Inbox), then put away;
 - Claude's colors, for dark and light backgrounds;
 - streamed token by token, following the bottom only when you're there: while its end is on screen
-  (a long line's last wrapped row too), and in the chat while your cursor is on its last line;
+  (a long line's last wrapped row too), and in the window you're in while your cursor is in the
+  input box;
 - long lines wrap; there's no sideways scrolling.
 Everything drawn is a pure function of the journal, so a replay draws what live drew.
 
-The input box is another buffer under it, with full vim editing: Claude's spinner line above it
-while the agent works (its verb, the time, tokens, how to interrupt), a rule above and below it,
-`❯` before it and a hint under it. It takes images as Claude's prompt does: `<C-v>` in insert mode
-pastes the clipboard's (pngpaste or osascript on macOS, wl-paste or xclip on Linux), and with no
-image there is vim's own `<C-v>`, so a literal insert still works; a path to an image pasted or
-dropped in (quoted, backslash-escaped or a `file://` URL), or typed and then sent, attaches that
-file, copied under `iso/images/` since a dragged screenshot is a temp file. Each shows as an
-`[Image #n]` chip, in the input box and in the chat. A surface's input box takes them the same way.
-A paste doesn't block: the statusline shows `󰋩 pasting image ▰▰▰▱▱▱` (filling with the bytes copied
-for a file, sweeping while the clipboard is read) until the chip lands where `<C-v>` was pressed,
-or says for a few seconds why it failed.
+The input box (the composer) is the same buffer's last lines, under the conversation, so motions,
+`/` search, visual selections and yanks run across the conversation and your draft alike. It's
+drawn as Claude's prompt: Claude's spinner line above it while the agent works (its verb, the
+time, tokens, how to interrupt), a rule above and below it, `❯` before it and a hint under it, all
+virtual text, so only what you type is text there. Normal mode works anywhere as in any buffer;
+`i a o O I A c s C S R gi gI` on the conversation (and `c s C S R I A` on a selection there) take
+you to the end of your draft, typing, and in the input box they're vim's own (a key a plugin
+maps, as LazyVim's flash maps `s`, is left to it). The conversation is read-only: the buffer is
+modifiable only while your cursor, and a selection's other end, is in the input box, so `dd`,
+`x` or `p` on it is refused, and a change that still reaches it (`dk` from the input box's first
+line, `:%s`) is caught as it happens and the chat drawn again from the journal, your draft as it
+was before that change. `<BS>`, `<C-w>` and `<C-u>` stop at the input box's start, and `<Up>`
+there stays (or walks your earlier prompts while the box is empty).
 
-While prompts wait, the queue shows between the two, in a window of its own: one prompt a line, as
-tall as its lines up to six, titled `queued · N`. It opens as the first prompt queues and closes when
-the last one goes; `q` hides it until another queues. It's a buffer you edit: change, reorder or
-delete lines, or add one, and `:w` makes it the queue; `<CR>` on a line sends that prompt now. A
-redraw never touches it while you're editing it, nor closes it. It isn't part of a saved layout: the
-chat brings it back wherever its input box shows, so switching workspaces, opening another agent or
-restarting leaves no stray queue window.
+Output streams in above the input box, which moves down without moving your cursor in your text.
+nvim's undo records rows, which that would throw off, so the buffer keeps none: the draft's own
+states are kept, one per change in normal mode and one per insert, and `u` / `<C-r>` (`g-` /
+`g+`) step through them, so `u` undoes your typing and never what streamed in. Following the end
+means the input box at the window's bottom with the conversation's end right above it; a window
+scrolled up shows the spinner line as its winbar, with `↓ more below`, as the input box is out of
+sight there. Sending a prompt or an answer takes every window to the end.
 
-The column is always the chat, the queue while it shows, and the input box at the bottom, six lines
-tall. A drag on a separator, `:resize` or a restored layout can't change the input box's height, and
-a window that would come between them or under them (a split opened from the chat) goes beside the
-chat instead.
+The input box takes images as Claude's prompt does: `<C-v>` in insert mode pastes the clipboard's
+(pngpaste or osascript on macOS, wl-paste or xclip on Linux), and with no image there is vim's own
+`<C-v>`, so a literal insert still works; a path to an image pasted or dropped in (quoted,
+backslash-escaped or a `file://` URL), or typed and then sent, attaches that file, copied under
+`iso/images/` since a dragged screenshot is a temp file. Each shows as an `[Image #n]` chip, in the
+input box and in the chat. A paste made up on the conversation goes into the input box, at its end.
+A surface's input box (a buffer of its own) takes them the same way. A paste doesn't block: the
+statusline shows `󰋩 pasting image ▰▰▰▱▱▱` (filling with the bytes copied for a file, sweeping while
+the clipboard is read) until the chip lands where `<C-v>` was pressed, or says for a few seconds why
+it failed.
 
-`<C-j>` / `<C-k>` walk down and up the column, chat → queue → input box, as they walk the sidebar's
-windows; with no queue showing they go straight between the chat and the input box.
+While prompts wait, the queue shows in a window of its own under the chat's, right below the input
+box: one prompt a line, as tall as its lines up to six, titled `queued · N`. It opens as the first
+prompt queues and closes when the last one goes; `q` hides it until another queues. It's a buffer
+you edit: change, reorder or delete lines, or add one, and `:w` makes it the queue; `<CR>` on a line
+sends that prompt now. A redraw never touches it while you're editing it, nor closes it. It isn't
+part of a saved layout: the chat brings it back under each window that shows it, so switching
+workspaces, opening another agent or restarting leaves no stray queue window.
 
-Closing the chat's tab (`Snacks.bufdelete`, `:bd`) closes the chat whole, its input box and queue
-with it; opening it again draws it afresh from the journal. (`:bd` unloads rather than wipes, and an
+`<C-j>` / `<C-k>` walk down and up the column, as they walk the sidebar's windows: from the
+conversation `<C-j>` goes to the input box (typing), from the input box to the queue while it shows;
+`<C-k>` goes from the queue to the input box and from the input box up to the conversation's end.
+
+Closing the chat's tab (`Snacks.bufdelete`, `:bd`) closes the chat whole, its queue with it;
+opening it again draws it afresh from the journal. (`:bd` unloads rather than wipes, and an
 unloaded scratch buffer comes back as an empty file with a swap file.) Following and measuring skip
 a window that's gone, shows another buffer or has no rows.
 
-`iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat and input
-box, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.
+`iso attach <agent>` opens a minimal nvim attached to that agent's supervisor: the same chat, input
+box and all, from any terminal or over ssh. `iso phone` picks an agent (needs-you first) and attaches.
 
 ## Roles and root mode
 
@@ -194,7 +212,7 @@ Surfaces are files in a repo's `iso/`, written only by its router. isovim watche
 them, and writes a `*.surface.error` beside any that's broken or whose target is gone. A markdown
 surface, the Task Board or a question opens as a tab of its own in its repo's scope, named as its
 Inbox row is (Task Board, the surface's title, the question's name) after the row's glyph; closing
-the tab closes it and its input box, which, like the chat's composer, has no tab. The landing is
+the tab closes it and its input box, which has no tab. The landing is
 one tab, isovim, in every scope.
 
 | type | made by | shown as |
@@ -242,21 +260,20 @@ you opened, under the current scope (a repo, Root, General or Terminals): agents
 row, a picker, `<leader>ib` / `<leader>ip`), named with their status mark as in the sidebar (`…`
 working, `●` unread, `●!` waiting on you), the router first and then the others by number; then
 surfaces, the landing and any files. Closing a tab (`<leader>bd`, `:bd`, its x) hides it as closing a
-file's buffer does: an agent keeps running and stays in the sidebar, its chat, composer and queue
-close, and opening it again brings the tab back; a surface closes until it's reopened.
-`<leader>bo` closes every other tab, `<leader>bD` and `<leader>wd` close the window too while another
-editing window remains, and from a composer, queue or input box each acts on its chat or view.
-Picking a chat's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) shows it with its composer, as Enter on
-its sidebar row does. A composer or queue whose chat is no longer on screen closes and stays closed
-until the chat is shown again; a window a close leaves empty shows your last tab. The empty buffer
-nvim starts with goes once nothing shows it.
+file's buffer does: an agent keeps running and stays in the sidebar, its chat and queue close, and
+opening it again brings the tab back; a surface closes until it's reopened. `<leader>bo` closes every
+other tab, `<leader>bD` and `<leader>wd` close the window too while another editing window remains,
+and from a queue or input box each acts on its chat or view. Picking a chat's tab (or `<S-h>` /
+`<S-l>`, `[b` / `]b`) shows it whole, its input box at its end. A queue whose chat is no longer on
+screen closes and stays closed until the chat is shown again; a window a close leaves empty shows
+your last tab. The empty buffer nvim starts with goes once nothing shows it.
 
 Nothing opens a split by itself: a surface, a pinned file, a file a chat names (`gf`), Settings, the
 changes view's pick, a picker's or the explorer's file opens as a tab in the window you're in (the
-main one from the sidebar; the chat's from its composer), replacing what it shows as `:b` does, and
-the chat's composer goes with the chat. A markdown surface's input box stays under its view, part of
-its tab, as the composer is part of the chat's. Splits are yours to make (`:vsplit`, `<C-w>v`); the
-terminal toggle is the one isovim key that opens one.
+main one from the sidebar), replacing what it shows as `:b` does; the chat's input box is its own
+buffer's end, so it goes with it. A markdown surface's input box stays under its view, part of its
+tab. Splits are yours to make (`:vsplit`, `<C-w>v`); the terminal toggle is the one isovim key that
+opens one.
 
 ## Events
 
@@ -353,25 +370,26 @@ and agents, and everything isovim-specific lives under `<leader>i`.
   `p` pick a repo, `j` jump, `i` the host's Inbox, `t` a terminal, `m` send a repo to a host, `?` help.
   `<leader>il` brings it back. It belongs to no workspace, so no layout keeps it.
 
-**In the chat**
+**In the chat** (the conversation and, at its end, the input box: one buffer)
 - `]]` / `[[` jump between your prompts; `]m` / `[m` between any messages.
-- `za` folds; `i` / `a` / `o` / `<CR>` go to the input box; `<C-c>` cancels; `gf` opens a file.
-- `<C-j>` goes down to the queue while it shows, else to the input box.
+- `za` folds; `<C-c>` cancels; `gf` opens a file; `u` / `<C-r>` undo and redo in the input box.
+- On the conversation, `i` `a` `o` `O` `I` `A` `c` `s` `C` `S` `R` and `<CR>` go to the end of
+  your draft, typing (`<CR>` on a box's option answers with it); `<C-j>` goes down to the input box.
 
 **In the queue**
 - Edit lines and `:w`; `<CR>` sends the prompt on the line now; `q` hides it.
-- `<C-k>` goes up to the chat, `<C-j>` down to the input box.
+- `<C-k>` goes up to the input box.
 
 **In the input box**
 - `<CR>` sends; `<S-CR>` (or `<M-CR>`, for a terminal that can't send `<S-CR>`) adds a newline;
   `<Up>` / `<Down>` browse history when it's empty.
 - `<C-v>` pastes the clipboard's image (vim's own `<C-v>` when there's none).
-- `<Esc>` drops to normal mode; `<C-k>` goes up to the queue while it shows, else the chat, in either
-  mode; `<C-j>` does nothing, as nothing is below it.
+- `<Esc>` drops to normal mode; `<C-k>` goes up to the conversation's end and `<C-j>` down to the
+  queue while it shows, in either mode.
 
 **Into the sidebar and back**
-- `<C-h>` goes to the sidebar from anything in the main column (a chat, the queue, the input box,
-  a surface or question and its input box), in insert mode too: in the input box it takes the place of vim's backspace,
+- `<C-h>` goes to the sidebar from anything in the main column (a chat and its input box, the queue,
+  a surface or question and its input box), in insert mode too: in an input box it takes the place of vim's backspace,
   which is `<BS>`. It lands in the sidebar window you were last in (the list at first), on the row
   you left there, found by what it stands for (an agent, repo, surface or PR) since rows move as
   the list refreshes; if that row is gone, on the agent you came from, then its repo.
@@ -409,9 +427,11 @@ The TUI watches its own source (`isovim.reload`): `lua/isovim/` and every direct
 each directory has its own and one made later (a pull's) is watched as it appears.
 - **Hot reloads:** any `.lua` under `lua/isovim/`, `acp/` and `cli/` included, and `reload.lua`
   itself. Every isovim module is unloaded and `setup` runs again. What's on screen takes the new
-  code: an open chat is made again on its own buffers and drawn again from its journal, keeping
-  each window's scroll, the composer's text, the tool calls and thoughts you opened or collapsed and
-  a rewind you're editing; surface views and the sidebar re-bind their keys and redraw; timers call
+  code: an open chat is made again on its own buffer and drawn again from its journal, keeping
+  each window's scroll, your draft, its undo and your cursor in it, the tool calls and thoughts you
+  opened or collapsed and a rewind you're editing (a chat from before its input box joined its
+  buffer gives that box's text and images to the one buffer); surface views and the sidebar re-bind
+  their keys and redraw; timers call
   through `require`, and the ones that hold a closure (the migrate timer, the chat's spinner) are
   replaced. `starter/lua/config/keymaps.lua` runs again.
 - **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim

@@ -4,18 +4,18 @@
 -- it and stops nothing; opening the entry again brings it back.
 --
 -- Order: the router first, then the scope's other agents by number, then surfaces (isovim.surface_view),
--- the landing, and anything else (files) as bufferline had it. Picking an ACP chat's tab opens it as
--- Enter on its sidebar row does, so its composer comes with it and the last chat's goes.
+-- the landing, and anything else (files) as bufferline had it. An ACP chat's tab is the whole chat,
+-- its composer at its end; picking it marks the agent seen.
 --
 -- LazyVim's buffer and window keys work on these as on files (M.bufdelete, M.close_window, which
 -- the starter maps <leader>bd, <leader>bD, <leader>bo, <leader>wd and bufferline's close to): from
--- a composer, a queue or an input box they act on its chat or view. Closing an agent's tab closes
--- its chat, composer and queue (isovim.acp.chat); the agent keeps running. A composer or queue whose
--- chat shows nowhere closes, and nothing brings it back until the chat is shown again.
+-- a queue or an input box they act on its chat or view. Closing an agent's tab closes its chat and
+-- queue (isovim.acp.chat); the agent keeps running. A queue whose chat shows nowhere closes, and
+-- nothing brings it back until the chat is shown again.
 --
 -- Nothing opens a split by itself: a chat's window or a surface's is where Snacks pickers open what
--- they pick (b:snacks_main; the changes view, the explorer, <leader>ff), replacing it as :b does,
--- and a composer whose chat another buffer replaced closes; picking the chat's tab brings both back.
+-- they pick (b:snacks_main; the changes view, the explorer, <leader>ff), replacing it as :b does;
+-- picking the chat's tab brings it back.
 local store = require("isovim.store")
 
 local M = {}
@@ -29,7 +29,7 @@ function M.agent_of(buf)
     return nil
   end
   local ws = vim.b[buf].isovim_id
-  if ws and not vim.b[buf].isovim_composer then
+  if ws then
     return ws, vim.b[buf].isovim_agent or "main"
   end
 end
@@ -97,9 +97,9 @@ function M.before(a, b)
   return a.id < b.id
 end
 
--- A window that belongs to the buffer above it: a chat's composer or queue, a surface's input box.
+-- A window that belongs to the buffer above it: a chat's queue, a surface's input box.
 local function slot_buffer(buf)
-  return vim.b[buf].isovim_composer or vim.b[buf].isovim_queue or vim.b[buf].isovim_surface_input
+  return vim.b[buf].isovim_queue or vim.b[buf].isovim_surface_input
 end
 
 -- An empty, nameless, unmodified buffer, as nvim starts with.
@@ -108,7 +108,7 @@ local function blank(buf)
     and vim.api.nvim_buf_line_count(buf) == 1 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
 end
 
--- The windows you edit in: not the sidebar, a float, a composer, a queue or an input box.
+-- The windows you edit in: not the sidebar, a float, a queue or an input box.
 local function editing_windows()
   local isovim = require("isovim")
   return vim.tbl_filter(function(win)
@@ -140,13 +140,10 @@ local function fill_blank()
   end
 end
 
--- The buffer a composer, a queue or an input box belongs to: its chat's, its view's; else buf.
+-- The buffer a queue or an input box belongs to: its chat's, its view's; else buf.
 function M.owner(buf)
   local chat_mod = package.loaded["isovim.acp.chat"]
-  if vim.b[buf].isovim_composer and chat_mod then
-    local chat = chat_mod.of_buf(buf)
-    return chat and chat.buf or buf
-  elseif vim.b[buf].isovim_queue and chat_mod then
+  if vim.b[buf].isovim_queue and chat_mod then
     local ws, agent = vim.api.nvim_buf_get_name(buf):match("^isovim%-acp://(.*)/([^/]+)/queue$")
     local chat = ws and chat_mod.get(ws, agent)
     return chat and chat.buf or buf
@@ -157,13 +154,13 @@ function M.owner(buf)
   return buf
 end
 
--- A composer or queue (also a closed chat's) whose chat shows nowhere: closed. Its chat's window
--- took another tab, or was closed.
-local function close_stray_composers()
+-- A queue (also a closed chat's) whose chat shows nowhere: closed. Its chat's window took another
+-- tab, or was closed.
+local function close_strays()
   local closed = false
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     local buf = vim.api.nvim_win_get_buf(win)
-    if vim.b[buf].isovim_composer or vim.b[buf].isovim_queue then
+    if vim.b[buf].isovim_queue then
       local owner = M.owner(buf)
       if (owner == buf or vim.fn.bufwinid(owner) == -1) and #editing_windows() == 0 then
         -- The last window beside the sidebar (:bd or :q on its chat closed the chat's): it shows your
@@ -188,7 +185,7 @@ local function open_in(win, ws, agent)
   opening = true
   local ok, err = pcall(require("isovim").open, ws, agent, win)
   opening = false
-  close_stray_composers()
+  close_strays()
   if not ok then
     vim.notify("isovim: could not open " .. ws .. "/" .. agent .. ": " .. tostring(err), vim.log.levels.ERROR)
   end
@@ -202,9 +199,8 @@ local function main_buffer(buf)
 end
 
 -- Marks the windows showing one (w:isovim_slot), so a tab picked in one is caught: bufferline's
--- click and :buffer put the tab's buffer in the current window, and from the composer that put a
--- chat into the composer's six rows, which then got a composer of its own under it, and the
--- composer's snap-back moved what was left between beside the chat: more windows each switch.
+-- click and :buffer put the tab's buffer in the current window, and from the queue or an input box
+-- that put a chat into its few rows, under the window it belongs to: more windows each switch.
 local function mark_slots()
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     if slot_buffer(vim.api.nvim_win_get_buf(win)) and not vim.w[win].isovim_slot then
@@ -214,7 +210,7 @@ local function mark_slots()
 end
 
 -- A tab's buffer that landed in a slot goes to the main window instead (an agent's chat opened there,
--- as its tab does) and the slot closes, so the main area stays one chat and its composer, or one
+-- as its tab does) and the slot closes, so the main area stays one chat (its queue under it), or one
 -- other buffer.
 local function redirect(slot_win, buf)
   if not vim.api.nvim_win_is_valid(slot_win) or vim.api.nvim_win_get_buf(slot_win) ~= buf then
@@ -241,7 +237,7 @@ local function redirect(slot_win, buf)
   elseif vim.api.nvim_buf_is_valid(buf) then
     vim.api.nvim_win_set_buf(target, buf)
   end
-  close_stray_composers()
+  close_strays()
 end
 
 vim.api.nvim_create_autocmd("WinEnter", { group = GROUP, callback = mark_slots })
@@ -255,30 +251,16 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
     end
     for _, win in ipairs(vim.fn.win_findbuf(ev.buf)) do
       if vim.w[win].isovim_slot then
-        return require("isovim.safe").schedule("moving a tab out of a composer", function()
+        return require("isovim.safe").schedule("moving a tab out of a queue or input box", function()
           redirect(win, ev.buf)
         end)
       end
     end
-    -- An ACP chat entering a window without its composer: picked from the tab bar.
-    if not vim.b[ev.buf].isovim_acp or opening then
-      -- Anything else in a chat's window: its composer goes with it.
-      return require("isovim.safe").schedule("closing a stray composer", close_stray_composers)
+    -- An ACP chat is whole in its window, its composer at its end: picked from the tab bar, it's seen.
+    local ws, agent = M.agent_of(ev.buf)
+    if vim.b[ev.buf].isovim_acp and ws and not opening then
+      require("isovim.status").mark_seen(ws, agent)
     end
-    local win = vim.fn.bufwinid(ev.buf)
-    require("isovim.safe").schedule("opening a tab's chat", function()
-      if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= ev.buf or vim.w[win].isovim_slot then
-        return
-      end
-      local ws, agent = M.agent_of(ev.buf)
-      local chat = ws and require("isovim.acp.chat").of_buf(ev.buf)
-      if chat and vim.fn.bufwinid(chat.composer) ~= -1 then
-        return close_stray_composers()
-      end
-      if ws then
-        open_in(win, ws, agent)
-      end
-    end)
   end),
 })
 
@@ -287,7 +269,7 @@ vim.api.nvim_create_autocmd("BufDelete", {
   callback = function(ev)
     if M.agent_of(ev.buf) or vim.b[ev.buf].isovim_surface or vim.bo[ev.buf].filetype == "isovim_landing" then
       require("isovim.safe").schedule("tidying after a closed tab", function()
-        close_stray_composers()
+        close_strays()
         fill_blank()
       end)
     end
@@ -297,8 +279,8 @@ vim.api.nvim_create_autocmd("BufDelete", {
 vim.api.nvim_create_autocmd("WinClosed", {
   group = GROUP,
   callback = function()
-    require("isovim.safe").schedule("closing a stray composer", function()
-      if close_stray_composers() then
+    require("isovim.safe").schedule("closing a stray queue", function()
+      if close_strays() then
         fill_blank()
       end
     end)
@@ -306,7 +288,7 @@ vim.api.nvim_create_autocmd("WinClosed", {
 })
 
 -- <leader>bd, bufferline's close (and <leader>bD with window): closes the tab of buf (default: the
--- current one, or what its composer, queue or input box belongs to) as Snacks.bufdelete does, the
+-- current one, or what its queue or input box belongs to) as Snacks.bufdelete does, the
 -- window showing what you used before; with window, its windows close too while another editing
 -- window remains.
 function M.bufdelete(buf, opts)
@@ -326,7 +308,7 @@ function M.bufdelete(buf, opts)
   Snacks.bufdelete(buf)
 end
 
--- <leader>bo: every tab but the current one's (its chat's, from a composer) closes.
+-- <leader>bo: every tab but the current one's (its chat's, from its queue) closes.
 function M.bufdelete_others()
   local keep = M.owner(vim.api.nvim_get_current_buf())
   Snacks.bufdelete({ filter = function(buf)
@@ -334,8 +316,8 @@ function M.bufdelete_others()
   end })
 end
 
--- <leader>wd: the window closes, with its chat's composer and queue (from either, the chat's
--- window), while another editing window remains; else it stays, as vim's last window does.
+-- <leader>wd: the window closes, with its chat's queue (from the queue, the chat's window), while
+-- another editing window remains; else it stays, as vim's last window does.
 function M.close_window(win)
   win = win or vim.api.nvim_get_current_win()
   local owner = M.owner(vim.api.nvim_win_get_buf(win))

@@ -7,8 +7,7 @@
 -- words as markup (<C-j> as an HTML tag) and every task as a bullet and an empty checkbox whatever
 -- its status: the sections that hold tasks, each task after its status's glyph (the sidebar's),
 -- wrapped lines hung under its text, `code` drawn as code and an owner at the end like (a1)
--- dimmed. The input box is a buffer like the chat's composer, shown under the view and closed
--- with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
+-- dimmed. The input box is a buffer of its own, shown under the view and closed with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
 -- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
 -- does, and starts the router if it isn't running. It takes images as the chat's composer does
 -- (isovim.acp.images), sent with iso send --image.
@@ -438,7 +437,7 @@ local function step(view, dir)
   vim.api.nvim_win_set_cursor(0, { line, 3 })
 end
 
--- q: the window it took shows what it showed before (a chat comes back with its composer).
+-- q: the window it took shows what it showed before.
 local function close(view)
   close_input(view)
   local win = vim.fn.bufwinid(view.buf)

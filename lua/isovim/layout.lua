@@ -139,8 +139,8 @@ local function alive(node)
   return { node[1], children }
 end
 
--- The chat columns are put right once the layout is rebuilt: the composers at their height, the
--- queue windows left out back above them.
+-- The chat windows get their queue windows, left out of the layout, back under them once it's
+-- rebuilt.
 local function settle()
   local chat = package.loaded["isovim.acp.chat"]
   if chat then

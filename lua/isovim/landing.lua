@@ -301,21 +301,12 @@ local function create()
   return buf
 end
 
--- Where the page goes: the window in focus, or the editing area's when the sidebar has it. Over an
--- ACP chat it takes the chat's window and closes its composer, as another agent's chat would.
+-- Where the page goes: the window in focus, or the editing area's when the sidebar has it.
 local function target()
   local isovim = require("isovim")
   local win = vim.api.nvim_get_current_win()
   if isovim.is_sidebar(win) then
     win = isovim.main_win()
-  end
-  local chat = require("isovim.acp.chat").of_buf(vim.api.nvim_win_get_buf(win))
-  if chat then
-    local chat_win, composer_win = vim.fn.bufwinid(chat.buf), vim.fn.bufwinid(chat.composer)
-    win = chat_win ~= -1 and chat_win or win
-    if composer_win ~= -1 and composer_win ~= win then
-      pcall(vim.api.nvim_win_close, composer_win, false)
-    end
   end
   return win
 end

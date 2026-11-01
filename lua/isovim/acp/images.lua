@@ -1,5 +1,5 @@
--- Images in what you send an agent, as Claude Code's prompt takes them. In a composer (the chat's,
--- or a surface's input box) <C-v> in insert mode pastes the clipboard's image, or, with no image
+-- Images in what you send an agent, as Claude Code's prompt takes them. In a box (the chat's
+-- composer, the last lines of its buffer, or a surface's input box) <C-v> in insert mode pastes the clipboard's image, or, with no image
 -- there, is vim's own <C-v>; a path to an image pasted or dropped in (a terminal types a drop as a
 -- bracketed paste of its path, often quoted or backslash-escaped) attaches that file, and so does
 -- one typed in, once you send. Each shows in the box as a chip, [Image #n], text you edit like any
@@ -27,7 +27,7 @@ local MIME = { png = "image/png", jpg = "image/jpeg", jpeg = "image/jpeg", gif =
 ---@field path string
 ---@field mimeType string
 
----@type table<integer, {dir: string, images: table<integer, isovim.acp.Image>, next: integer}>
+---@type table<integer, {dir: string, images: table<integer, isovim.acp.Image>, next: integer, first?: fun(): integer, enter?: fun()}>
 _G.isovim_acp_images = _G.isovim_acp_images or {}
 local boxes = _G.isovim_acp_images
 
@@ -243,13 +243,19 @@ local function copy(from, to, job, done)
   end)
 end
 
+-- The box's first row: 0, or for the chat's composer the row after the conversation.
+local function first(box)
+  return box.first and box.first() or 0
+end
+
 local function highlight(buf)
   local box = boxes[buf]
+  local top = first(box)
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
-  for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, top, -1, false)) do
     for from, n, to in line:gmatch("()%[Image #(%d+)%]()") do
       if box.images[tonumber(n)] then
-        vim.api.nvim_buf_set_extmark(buf, NS, row - 1, from - 1, { end_col = to - 1, hl_group = "IsovimAcpImage" })
+        vim.api.nvim_buf_set_extmark(buf, NS, top + row - 1, from - 1, { end_col = to - 1, hl_group = "IsovimAcpImage" })
       end
     end
   end
@@ -339,7 +345,11 @@ local function finish(job, image, err)
   local n = box.next
   box.images[n], box.next = image, n + 1
   local chip = M.chip(n) .. " "
+  -- The chat's buffer is read-only while your cursor is up in its conversation.
+  local modifiable = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_text(buf, row, col, row, col, { chip })
+  vim.bo[buf].modifiable = modifiable
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     local cursor = vim.api.nvim_win_get_cursor(win)
     if cursor[1] - 1 == row and cursor[2] >= col then
@@ -422,22 +432,35 @@ function M.set(buf, images)
 end
 
 -- Makes buf a box that takes images, saved under dir. Again (a hot reload's rebind) it maps <C-v>
--- again and keeps what's attached.
-function M.setup(buf, dir)
+-- again and keeps what's attached. A box that's the buffer's last lines (the chat's composer) says
+-- where it starts (opts.first, a row) and how to put the cursor in it (opts.enter), for a paste
+-- made above it.
+---@param opts? {first?: fun(): integer, enter?: fun()}
+function M.setup(buf, dir, opts)
   vim.keymap.set("i", "<C-v>", function()
     M.paste_clipboard(buf)
   end, { buffer = buf, desc = "isovim: paste the clipboard's image (else insert a key literally)" })
-  if boxes[buf] then
-    return
+  opts = opts or {}
+  local box = boxes[buf]
+  if box then
+    box.first, box.enter = opts.first, opts.enter
+    -- One moved here (M.move) is watched here from now on.
+    if not box.moved then
+      return
+    end
+    box.moved = nil
+  else
+    box = { dir = dir, images = {}, next = 1, first = opts.first, enter = opts.enter }
+    boxes[buf] = box
   end
-  boxes[buf] = { dir = dir, images = {}, next = 1 }
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
     group = GROUP,
     buffer = buf,
     callback = function()
       -- Emptied (sent, or cleared): the next image is #1 again.
-      if vim.api.nvim_buf_line_count(buf) == 1 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == "" then
-        boxes[buf].images, boxes[buf].next = {}, 1
+      local top = first(box)
+      if vim.api.nvim_buf_line_count(buf) == top + 1 and vim.api.nvim_buf_get_lines(buf, top, top + 1, false)[1] == "" then
+        box.images, box.next = {}, 1
       end
       highlight(buf)
     end,
@@ -451,12 +474,26 @@ function M.setup(buf, dir)
   })
 end
 
+-- A box's images go with its text to another buffer (the chat's composer, which was a buffer of its
+-- own, now the chat's last lines); setup then watches it there.
+function M.move(from, to)
+  if boxes[from] and not boxes[to] then
+    boxes[to], boxes[from] = boxes[from], nil
+    boxes[to].moved = true
+  end
+end
+
 -- A paste into a box that's nothing but image paths (a file dropped on the terminal) attaches them.
+-- One made above the box (on the chat's conversation) goes into it, at the end.
 local paste = _G.isovim_acp_paste or vim.paste
 _G.isovim_acp_paste = paste
 vim.paste = function(lines, phase)
   local buf = vim.api.nvim_get_current_buf()
-  local found = boxes[buf] and phase == -1 and M.paths(table.concat(lines, "\n"))
+  local box = boxes[buf]
+  if box and box.enter and (phase == -1 or phase == 1) and vim.api.nvim_win_get_cursor(0)[1] <= first(box) then
+    box.enter()
+  end
+  local found = box and phase == -1 and M.paths(table.concat(lines, "\n"))
   if not found then
     return paste(lines, phase)
   end

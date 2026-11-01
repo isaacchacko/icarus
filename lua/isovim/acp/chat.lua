@@ -1,7 +1,7 @@
--- An ACP agent's chat: a buffer drawn from its journal (isovim.acp.journal) to look like Claude's
--- screen, and a composer below it whose text goes to the agent's supervisor over its socket when
--- sent, so nothing an agent sends ever lands in what you're typing. The TUI and iso attach
--- (isovim.acp.attach) both show it.
+-- An ACP agent's chat: one buffer, the conversation drawn from its journal (isovim.acp.journal) to
+-- look like Claude's screen, and under it the composer, the lines you type, whose text goes to the
+-- agent's supervisor over its socket when sent, so nothing an agent sends ever lands in what you're
+-- typing. The TUI and iso attach (isovim.acp.attach) both show it.
 --
 -- Where entries come from: the journal is replayed from the start and then followed, so closing
 -- and reopening rebuilds the chat as it was; and the chat subscribes to the supervisor, which
@@ -26,28 +26,42 @@
 -- call places and the message marks are extmarks. Long lines wrap under their text (breakindent),
 -- never sideways. Collapsing is the chat's own (a call's output is left out of the buffer until
 -- opened), not nvim's folds, which nvim doesn't update while you type in the composer; so it holds
--- in every window and in iso attach, and needs no window state. The view follows new output in a
--- window that shows the chat's end (the last row of its last line, however many rows it wraps
--- over), its end kept on the window's bottom row; wherever its cursor is while you're in the
--- composer, on the last line while you're in the chat. One scrolled up, or whose cursor you moved
--- up, stays where it is, and the composer's bar says there's more below until a window shows the
--- end again; sending a prompt or an answer takes every window to the end. The composer is Claude's
--- prompt: its bar is Claude's spinner line while the agent works (glyph, verb, time, tokens, <C-c>
--- to interrupt) and says how many prompts wait; a rule above and below it, ❯ before it and a hint
--- under it. While prompts wait, the queue shows in a window of its own between the chat and the
--- composer (isovim.acp.queue), where you can edit it. The column stays chat, queue, composer, the
--- composer a fixed height (M.settle).
+-- in every window and in iso attach, and needs no window state.
 --
--- Chat keys: ]] [[ your own prompts, ]m [m any message, za zo zc the output of the tool call under
--- the cursor, i a o the composer, <CR> too (or, on a box's option, that answer), <C-c> cancels the
--- turn, gf the file on the line. Composer keys: <CR> sends (queued while the agent works; an answer
--- while a box waits on you), <S-CR> (or <M-CR>) a new line, <C-c> cancels the turn, <Up> <Down>
--- your earlier prompts while it's empty, <Esc> normal mode. <C-j> and <C-k> walk down and up the
--- column, chat → queue (while it shows) → composer, in normal mode in the chat and the queue and in
--- both modes in the composer; <C-j> in the composer does nothing, as nothing is below it.
--- <C-h> goes to the sidebar from all three, in insert mode too (<BS> is the backspace; <C-l> there
--- comes back typing). <C-v> pastes an image (isovim.acp.images). <leader>iq goes to the queue,
--- opening it even when empty.
+-- The composer is the buffer's last lines (from chat.lines, the conversation's count, on), drawn
+-- as Claude's prompt: above it a blank line, its bar (Claude's spinner line while the agent works:
+-- glyph, verb, time, tokens, <C-c> to interrupt; how many prompts wait) and a rule; ❯ before its
+-- first line; a rule and a hint under it; all virtual text. It's the one place you can change:
+-- the buffer is modifiable only while the cursor (and, in visual mode, the selection's other end)
+-- is in the composer, so dd, x or p on the conversation is refused as in any read-only buffer, and
+-- the keys that start typing (i a o O I A c s C S R gi gI, and c s C S R I A on a selection) take
+-- you from the conversation to the end of your draft, typing. A change that still reaches the
+-- conversation (dk from the composer's first line, :%s) is caught as it happens (on_bytes) and the
+-- chat is drawn again from its journal, the draft as it was before that change. The conversation
+-- streams in above the composer, which moves down under your cursor without moving it in your
+-- text. nvim's undo records rows, which that would throw off, so the buffer has none: the draft's
+-- own states are kept (one per change in normal mode, one per insert) and u <C-r> step through
+-- them, so u undoes your typing and never the conversation.
+--
+-- The view follows new output in a window that shows the buffer's end (the composer's hint, under
+-- the last row of its last line however many rows that wraps over), keeping it on the window's
+-- bottom row, so the conversation's end sits right above the composer; in the window you're in,
+-- only while its cursor is in the composer. One scrolled up, or whose cursor you moved up into the
+-- conversation, stays where it is, its winbar showing the composer's bar and "↓ more below" until
+-- it shows the end again; sending a prompt or an answer takes every window to the end. While
+-- prompts wait, the queue shows in a window of its own under the chat's (isovim.acp.queue), where
+-- you can edit it.
+--
+-- Keys, anywhere in the buffer: ]] [[ your own prompts, ]m [m any message, za zo zc the output of
+-- the tool call under the cursor, gf the file on the line, <C-c> cancels the turn (or drops a
+-- rewind), u <C-r> your draft's undo and redo. On the conversation, <CR> answers with the box option
+-- under the cursor, else goes to the composer; in the composer it sends (queued while the agent
+-- works; an answer while a box waits on you), in insert mode too, where <S-CR> (or <M-CR>) is a new
+-- line, <Up> <Down> your earlier prompts while it's empty, <C-v> pastes an image
+-- (isovim.acp.images). <C-j> and <C-k> walk the column: from the conversation down to the
+-- composer, from the composer down to the queue (while it shows) and up to the conversation's
+-- end. <C-h> goes to the sidebar, in insert mode too (<BS> is the backspace; <C-l> there comes back
+-- typing). <leader>iq goes to the queue, opening it even when empty.
 --
 -- Sessions: /new and /clear start a new session, /resume picks one the agent had (the history
 -- picker; /resume <id> goes straight there), /fork [name] forks the agent whole into a new one;
@@ -98,8 +112,14 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@class isovim.acp.Chat
 ---@field ws string
 ---@field agent string
----@field buf integer
----@field composer integer
+---@field buf integer the conversation, then the composer
+---@field lines integer how many lines the conversation has: the composer starts on the next
+---@field last string the conversation's last line as drawn, for the guard
+---@field edit_from? integer while the conversation is being drawn: the buffer's line count before
+---@field undo {states: string[][], at: integer} the composer's states, for u and <C-r>
+---@field dead? boolean made again (a hot reload, a repair) or closed: its buffer's callbacks let go
+---@field broken? boolean a change reached the conversation: it's being drawn again
+---@field tick? integer the buffer's changedtick after the drawing's last change
 ---@field stop fun()
 ---@field drain fun()
 ---@field seq integer the last entry drawn
@@ -120,7 +140,6 @@ M.ns = { hl = NS, tools = TOOLS, messages = MESSAGES, mine = MINE, md = MD, boxe
 ---@field busy boolean
 ---@field since? number when the running turn started
 ---@field handover boolean the session is on Claude's own screen (iso handover)
----@field unseen boolean output arrived below where you're looking
 ---@field chan? integer the subscription to the supervisor
 ---@field timer? uv.uv_timer_t
 
@@ -162,13 +181,33 @@ end
 
 local function by_buf(buf)
   for _, chat in pairs(chats) do
-    if chat.buf == buf or chat.composer == buf then
+    if chat.buf == buf then
       return chat
     end
   end
 end
 
-local update_bar
+local update_bar, decorate
+
+-- The row after the last line of the conversation: the composer's first. While the conversation is
+-- being drawn (edit), counted from the buffer, which only the drawing changes meanwhile.
+local function body_end(chat)
+  if chat.edit_from then
+    return chat.lines + vim.api.nvim_buf_line_count(chat.buf) - chat.edit_from
+  end
+  return chat.lines
+end
+
+-- Whether win's cursor (the current window's by default) is in the composer.
+local function in_draft(chat, win)
+  return vim.api.nvim_win_get_cursor(win or 0)[1] > chat.lines
+end
+
+-- The rows win shows text in: its height but its winbar.
+function M.text_rows(win)
+  local info = vim.fn.getwininfo(win)[1]
+  return info and info.height or vim.api.nvim_win_get_height(win)
+end
 
 -- Whether win can be measured and followed: it's open, has rows, and shows a loaded buffer (buf,
 -- if given) with lines in it. A restart, a hot reload's rebind or a closed tab can leave a
@@ -183,11 +222,12 @@ local function measurable(win, buf)
     and vim.api.nvim_win_get_height(win) > 0
 end
 
--- The rows from win's top to its buffer's end, filler lines in; more than its height while the end
--- is below it. Lines alone don't say: a long line wraps over many rows, and its last ones can be
--- below the window while its start is on screen. nil for a window it can't measure. Counting stops
--- a little past the window's height: callers only ask whether the end is on screen (or a wheel
--- step below it), and measuring a long chat from its top on every streamed update spun the TUI.
+-- The rows from win's top to its buffer's end, filler lines in (the composer's rule and hint under
+-- its last line too); more than its height while the end is below it. Lines alone don't say: a
+-- long line wraps over many rows, and its last ones can be below the window while its start is on
+-- screen. nil for a window it can't measure. Counting stops a little past the window's height:
+-- callers only ask whether the end is on screen (or a wheel step below it), and measuring a long
+-- chat from its top on every streamed update spun the TUI.
 function M.rows_to_end(win)
   if not measurable(win) then
     return nil
@@ -203,14 +243,17 @@ end
 
 local function shows_end(win)
   local rows = M.rows_to_end(win)
-  return rows ~= nil and rows <= vim.api.nvim_win_get_height(win)
+  return rows ~= nil and rows <= M.text_rows(win)
 end
 
--- The view of win with its buffer's last row on its bottom row: up from the end, whole lines while
--- they fit, then the rows of the next that do (smoothscroll's skipcol) or of the filler above it.
+-- The view of win with its buffer's end on its bottom row (the virtual lines under the last line,
+-- the composer's rule and hint, the last of it): up from there, whole lines while they fit, then
+-- the rows of the next that do (smoothscroll's skipcol) or of the filler above it.
 local function end_view(win)
-  local left = vim.api.nvim_win_get_height(win)
   local row = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) - 1
+  local below = vim.api.nvim_win_text_height(win, { start_row = row }).all
+    - vim.api.nvim_win_text_height(win, { start_row = row, end_row = row }).all
+  local left = math.max(1, M.text_rows(win) - below)
   local fill = 0
   while row >= 0 do
     local text = vim.api.nvim_win_text_height(win, { start_row = row, end_row = row, start_vcol = 0 }).all
@@ -240,18 +283,20 @@ function M.end_view(win)
   return ok and view or nil
 end
 
--- Windows that keep following the chat's end: those that show it, wherever their cursor is (yours
--- is in the composer), except the one you're in once you've moved its cursor off the last line.
-local function followers(buf)
-  local last, current = vim.api.nvim_buf_line_count(buf), vim.api.nvim_get_current_win()
+-- Windows that keep following the chat's end: those that show it, the one you're in only while its
+-- cursor is in the composer (moving it up into the conversation, to read or za a tool call, stops it).
+local function followers(chat)
+  local current = vim.api.nvim_get_current_win()
   return vim.tbl_filter(function(win)
-    return measurable(win, buf) and shows_end(win) and (win ~= current or vim.api.nvim_win_get_cursor(win)[1] == last)
-  end, vim.fn.win_findbuf(buf))
+    return measurable(win, chat.buf) and shows_end(win) and (win ~= current or in_draft(chat, win))
+  end, vim.fn.win_findbuf(chat.buf))
 end
 
--- Puts the end of the chat on win's bottom row, the cursor on it. Set here: nvim keeps only the
--- cursor's row on screen, and in a window that isn't current may not move its view at all. A
--- window that went away, or shows something else now, stops following.
+-- Puts the buffer's end on win's bottom row: the composer at the bottom, the conversation's end
+-- right above it. Set here: nvim keeps only the cursor's row on screen, and in a window that isn't
+-- current may not move its view at all. A cursor in the composer stays where it is in your text;
+-- one up in the conversation goes to the composer's end, or nvim would scroll back to it. A window
+-- that went away, or shows something else now, stops following.
 local function to_end(win)
   local view = M.end_view(win)
   if not view then
@@ -261,8 +306,11 @@ local function to_end(win)
     return
   end
   local buf = vim.api.nvim_win_get_buf(win)
-  view.lnum = vim.api.nvim_buf_line_count(buf)
-  view.col = #vim.api.nvim_buf_get_lines(buf, view.lnum - 1, view.lnum, false)[1]
+  local chat = by_buf(buf)
+  if not (chat and in_draft(chat, win)) then
+    view.lnum = vim.api.nvim_buf_line_count(buf)
+    view.col = #vim.api.nvim_buf_get_lines(buf, view.lnum - 1, view.lnum, false)[1]
+  end
   vim.api.nvim_win_call(win, function()
     vim.fn.winrestview(view)
   end)
@@ -270,13 +318,13 @@ local function to_end(win)
 end
 
 -- A window that follows keeps the end on its bottom row when it changes size: the queue's window
--- opening above the composer takes the chat's rows.
+-- opening under it takes its rows.
 vim.api.nvim_create_autocmd("WinResized", {
   group = vim.api.nvim_create_augroup("isovim_acp_chat_follow", { clear = true }),
   callback = safe.wrap("the chat's follow on a resize", function()
     for _, win in ipairs(vim.v.event.windows or {}) do
       local chat = vim.api.nvim_win_is_valid(win) and vim.w[win].isovim_follows and by_buf(vim.api.nvim_win_get_buf(win))
-      if chat and chat.buf == vim.api.nvim_win_get_buf(win) then
+      if chat then
         pcall(to_end, win)
       end
     end
@@ -284,21 +332,25 @@ vim.api.nvim_create_autocmd("WinResized", {
 })
 
 -- Records which windows follow (for a resize), as you move or scroll them.
-local function note_followers(buf)
-  local follow = followers(buf)
-  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+local function note_followers(chat)
+  local follow = followers(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
     vim.w[win].isovim_follows = vim.tbl_contains(follow, win)
   end
 end
 
--- Whether output sits below what every window showing the chat shows; the composer's bar says so.
+-- Notes which windows showing the chat don't show its end, so the composer (and its bar) is out of
+-- sight there: their winbar shows the bar instead (update_bar).
 local function set_unseen(chat)
-  local wins = vim.tbl_filter(function(win)
-    return measurable(win, chat.buf)
-  end, vim.fn.win_findbuf(chat.buf))
-  local unseen = #wins > 0 and #vim.tbl_filter(shows_end, wins) == 0
-  if unseen ~= chat.unseen then
-    chat.unseen = unseen
+  local changed = false
+  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
+    local unseen = measurable(win, chat.buf) and not shows_end(win)
+    if vim.w[win].isovim_unseen ~= unseen then
+      vim.w[win].isovim_unseen = unseen
+      changed = true
+    end
+  end
+  if changed then
     update_bar(chat)
   end
 end
@@ -311,13 +363,37 @@ local function to_bottom(chat)
   set_unseen(chat)
 end
 
--- Changes the buffer with fn. Windows at the bottom stay there.
+-- Runs fn with the buffer modifiable, as it is only while your cursor is in the composer.
+local function writable(buf, fn)
+  local was = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  local ok, err = pcall(fn)
+  vim.bo[buf].modifiable = was
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- Changes the conversation with fn, which writes only above the composer (from body_end up). The
+-- composer moves down with what's added, your cursor in it too; nothing it changes is recorded for
+-- undo, and the guard lets it be. Windows at the bottom stay there.
 local function edit(chat, fn)
   local buf = chat.buf
-  local follow = followers(buf)
-  vim.bo[buf].modifiable = true
-  fn(buf)
-  vim.bo[buf].modifiable = false
+  if chat.edit_from then
+    return fn(buf)
+  end
+  local follow = followers(chat)
+  chat.edit_from = vim.api.nvim_buf_line_count(buf)
+  local ok, err = pcall(writable, buf, function()
+    fn(buf)
+  end)
+  chat.lines, chat.edit_from = body_end(chat), nil
+  chat.last = vim.api.nvim_buf_get_lines(buf, chat.lines - 1, chat.lines, false)[1] or ""
+  chat.tick = vim.api.nvim_buf_get_changedtick(buf)
+  if not ok then
+    error(err, 0)
+  end
+  decorate(chat)
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     if vim.tbl_contains(follow, win) then
       pcall(to_end, win)
@@ -326,11 +402,6 @@ local function edit(chat, fn)
     end
   end
   set_unseen(chat)
-end
-
--- The row after the last line of the conversation.
-local function body_end(chat)
-  return vim.api.nvim_buf_line_count(chat.buf)
 end
 
 local function line_hl(buf, row, count, hl)
@@ -1088,9 +1159,6 @@ function M.bar_parts(chat)
   if #chat.queue > 0 then
     add((" · %d queued"):format(#chat.queue), "IsovimAcpSpinnerNote")
   end
-  if chat.unseen then
-    add(" · ↓ more below", "IsovimAcpSpinnerNote")
-  end
   return parts
 end
 
@@ -1109,19 +1177,23 @@ local function any_busy()
   return false
 end
 
+-- The bar is drawn over the composer (decorate); a window that doesn't show the buffer's end, the
+-- composer out of sight, has it as its winbar, saying so.
 update_bar = function(chat)
-  if not vim.api.nvim_buf_is_loaded(chat.composer) then
+  if not vim.api.nvim_buf_is_loaded(chat.buf) then
     return
   end
+  decorate(chat)
   local bar = " "
   for _, part in ipairs(M.bar_parts(chat)) do
     bar = bar .. "%#" .. part[2] .. "#" .. part[1]:gsub("%%", "%%%%")
   end
-  for _, win in ipairs(vim.fn.win_findbuf(chat.composer)) do
-    vim.wo[win][0].winbar = bar
-  end
-  if M.decorate_composer then
-    M.decorate_composer(chat)
+  bar = bar .. "%#IsovimAcpSpinnerNote# · ↓ more below"
+  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
+    local want = vim.w[win].isovim_unseen and bar or ""
+    if vim.wo[win][0].winbar ~= want then
+      vim.wo[win][0].winbar = want
+    end
   end
   -- In _G, so a hot reload can stop the one the old code started.
   if any_busy() and not _G.isovim_acp_spinner then
@@ -1131,7 +1203,7 @@ update_bar = function(chat)
       frame = frame % #FRAMES + 1
       local busy = false
       for _, each in pairs(chats) do
-        if each.busy and vim.api.nvim_buf_is_loaded(each.composer) then
+        if each.busy and vim.api.nvim_buf_is_loaded(each.buf) then
           busy = true
           safe.wrap("the chat's spinner", update_bar)(each)
         end
@@ -1178,6 +1250,8 @@ M.push = safe.wrap("the chat's stream", function(ws, agent, entry)
   end
 end)
 
+-- The conversation emptied, to be drawn again from the journal; the composer, and your cursor in
+-- it, stay as they are.
 local function reset(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.fresh = nil, {}, {}, {}, 0, true
   chat.history_images = {}
@@ -1188,7 +1262,7 @@ local function reset(chat)
       vim.api.nvim_buf_clear_namespace(chat.buf, ns, 0, -1)
     end
     edit(chat, function(buf)
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
+      vim.api.nvim_buf_set_lines(buf, 0, body_end(chat), false, { "" })
     end)
   end
   queue.refresh(chat)
@@ -1460,13 +1534,88 @@ function M.answer(chat, text, box)
   return true
 end
 
+-- The composer: your draft, the buffer's lines from the conversation's end on.
+
+local function draft(chat)
+  return vim.api.nvim_buf_get_lines(chat.buf, chat.lines, -1, false)
+end
+
+-- What you've typed in the agent's composer (to keep it over a restart, isovim.update).
+function M.draft(chat)
+  return draft(chat)
+end
+
+-- Puts win's cursor at the end of your draft.
+local function to_draft(chat, win)
+  local last = vim.api.nvim_buf_line_count(chat.buf)
+  vim.api.nvim_win_set_cursor(win, { last, #(vim.api.nvim_buf_get_lines(chat.buf, last - 1, last, false)[1] or "") })
+  if win == vim.api.nvim_get_current_win() then
+    vim.bo[chat.buf].modifiable = true
+  end
+end
+
+-- The draft's undo (see the top): a state is recorded each time it differs from the last, after a
+-- change in normal mode and once an insert ends.
+local UNDO_MAX = 200
+
+local function record(chat)
+  local undo, lines = chat.undo, draft(chat)
+  if #lines == 0 or vim.deep_equal(lines, undo.states[undo.at]) then
+    return
+  end
+  for i = #undo.states, undo.at + 1, -1 do
+    undo.states[i] = nil
+  end
+  undo.states[#undo.states + 1] = lines
+  if #undo.states > UNDO_MAX then
+    table.remove(undo.states, 1)
+  end
+  undo.at = #undo.states
+end
+
+-- Puts lines in the composer in place of your draft (a prompt sent, recalled, put back to rewind,
+-- or a draft kept over a restart); u brings back what was there.
+function M.set_draft(chat, lines)
+  record(chat)
+  writable(chat.buf, function()
+    vim.api.nvim_buf_set_lines(chat.buf, chat.lines, -1, false, lines)
+  end)
+  record(chat)
+  decorate(chat)
+end
+
+-- u and <C-r> (count times): the draft as it was before or after, the cursor at the start of the
+-- first line that differs, as vim's undo puts it.
+local function step(chat, dir)
+  record(chat)
+  local undo = chat.undo
+  local at = math.max(1, math.min(#undo.states, undo.at + dir * vim.v.count1))
+  if at == undo.at then
+    return vim.api.nvim_echo({ { dir < 0 and "Already at oldest change" or "Already at newest change" } }, false, {})
+  end
+  local before, after = undo.states[undo.at], undo.states[at]
+  undo.at = at
+  writable(chat.buf, function()
+    vim.api.nvim_buf_set_lines(chat.buf, chat.lines, -1, false, after)
+  end)
+  local row = 1
+  while row < #after and before[row] == after[row] do
+    row = row + 1
+  end
+  vim.api.nvim_win_set_cursor(0, { chat.lines + row, 0 })
+  decorate(chat)
+end
+
 -- Sends what's in the composer and empties it; on failure the text stays and you're told why.
 -- During a rewind it's the rewound prompt's new text. While a permission or question waits on you,
 -- an answer to it (a number, yes or no, your own words for a question) answers it instead.
-function M.submit(composer)
-  local chat = by_buf(composer)
-  local text = vim.trim(table.concat(vim.api.nvim_buf_get_lines(composer, 0, -1, false), "\n"))
-  if not chat or text == "" then
+function M.submit(buf)
+  local chat = by_buf(buf)
+  if not chat then
+    return
+  end
+  local text = vim.trim(table.concat(draft(chat), "\n"))
+  if text == "" then
     return
   end
   if chat.rewind then
@@ -1475,7 +1624,7 @@ function M.submit(composer)
       return say("could not rewind: " .. call_error(result), vim.log.levels.ERROR)
     end
     chat.rewind = nil
-    vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+    M.set_draft(chat, { "" })
     update_bar(chat)
     return to_bottom(chat)
   end
@@ -1486,33 +1635,32 @@ function M.submit(composer)
       if err then
         return say("could not answer: " .. err, vim.log.levels.WARN)
       end
-      vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+      M.set_draft(chat, { "" })
       return
     end
   end
   if command and COMMANDS[command] then
     if COMMANDS[command](chat, rest, command) then
       chat.recall = nil
-      vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+      M.set_draft(chat, { "" })
     end
     return
   end
   local attached
-  text, attached = images.collect(composer, text)
+  text, attached = images.collect(chat.buf, text)
   local ok, result = acp.call(chat.ws, chat.agent, "prompt", { text = text, images = attached })
   if not ok then
     vim.notify("isovim: could not send to " .. chat.agent .. ": " .. tostring(result), vim.log.levels.ERROR)
     return
   end
   chat.recall = nil
-  vim.api.nvim_buf_set_lines(composer, 0, -1, false, { "" })
+  M.set_draft(chat, { "" })
   to_bottom(chat)
 end
 
 -- <Up>/<Down> in an empty composer (or one showing an earlier prompt) walk your earlier prompts.
 local function recall(chat, dir)
-  local lines = vim.api.nvim_buf_get_lines(chat.composer, 0, -1, false)
-  local text = table.concat(lines, "\n")
+  local text = table.concat(draft(chat), "\n")
   local showing = chat.recall and chat.history[chat.recall] == text
   if text ~= "" and not showing then
     return false
@@ -1523,36 +1671,164 @@ local function recall(chat, dir)
   end
   chat.recall = index <= #chat.history and index or nil
   local shown = chat.recall and vim.split(chat.history[chat.recall], "\n", { plain = true }) or { "" }
-  vim.api.nvim_buf_set_lines(chat.composer, 0, -1, false, shown)
-  images.set(chat.composer, chat.recall and chat.history_images[chat.history[chat.recall]])
-  vim.api.nvim_win_set_cursor(0, { #shown, #shown[#shown] })
+  M.set_draft(chat, shown)
+  images.set(chat.buf, chat.recall and chat.history_images[chat.history[chat.recall]])
+  vim.api.nvim_win_set_cursor(0, { chat.lines + #shown, #shown[#shown] })
   return true
 end
 
-local function map_chat(chat)
-  local buf = chat.buf
-  local function map(lhs, fn, desc)
-    -- nowait: global ]x/[x maps would otherwise hold these back for 'timeoutlen'.
-    vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, desc = "isovim: " .. desc })
+-- Puts you in the agent's composer, in insert mode at the end of your draft: in the window you're
+-- in if it shows the chat, else the first that does.
+function M.focus_composer(ws, agent)
+  local chat = M.get(ws, agent)
+  if not chat then
+    return false
   end
-  map("]]", function()
+  local win = vim.api.nvim_get_current_buf() == chat.buf and vim.api.nvim_get_current_win() or vim.fn.bufwinid(chat.buf)
+  if win == -1 then
+    return false
+  end
+  -- Modifiable before the window is entered, or entering it would leave insert mode (init.lua).
+  vim.bo[chat.buf].modifiable = true
+  to_draft(chat, win)
+  vim.api.nvim_set_current_win(win)
+  vim.cmd.startinsert({ bang = true })
+  pcall(to_end, win)
+  return true
+end
+
+-- The buffer is modifiable only while the cursor, and in visual mode the selection's other end, is
+-- in the composer; typing that gets up into the conversation (a click, <C-o>k) stops there.
+local function guard_cursor(chat)
+  if vim.api.nvim_get_current_buf() ~= chat.buf or chat.edit_from then
+    return
+  end
+  local row = vim.fn.line(".")
+  local mode = vim.api.nvim_get_mode().mode
+  if mode:find("^[vVsS\22\19]") then
+    row = math.min(row, vim.fn.line("v"))
+  end
+  local mine = row > chat.lines
+  if vim.bo[chat.buf].modifiable ~= mine then
+    vim.bo[chat.buf].modifiable = mine
+  end
+  if not mine and (mode:sub(1, 1) == "i" or mode:sub(1, 1) == "R") then
+    vim.cmd.stopinsert()
+  end
+end
+
+local remake
+
+-- A change reached the conversation: it's drawn again from the journal, your draft as it was
+-- before that change.
+local function repair(chat)
+  if chat.dead or not vim.api.nvim_buf_is_valid(chat.buf) then
+    return
+  end
+  vim.cmd.stopinsert()
+  remake(chat, chat.undo.states[chat.undo.at])
+  say("the conversation is read-only: put back as it was", vim.log.levels.WARN)
+end
+
+-- Catches a change of yours that reaches the conversation, as it happens: one that starts above
+-- the conversation's last line, or changes it. The drawing's own (edit) are let be.
+local function guard(chat)
+  vim.api.nvim_buf_attach(chat.buf, false, {
+    on_bytes = function(_, buf, _, row)
+      if chat.dead then
+        return true
+      end
+      if chat.edit_from or chat.broken then
+        return
+      end
+      local last = row >= chat.lines - 1 and vim.api.nvim_buf_get_lines(buf, chat.lines - 1, chat.lines, false)[1]
+      if last ~= chat.last then
+        chat.broken = true
+        safe.schedule("putting the conversation back", function()
+          repair(chat)
+        end)
+      end
+    end,
+  })
+end
+
+-- After a change of yours: the composer keeps a line (dd on its only one), the draft's state is
+-- recorded for undo (in normal mode; an insert's once it ends), and it's drawn again. One the
+-- drawing made is let be.
+local function changed(chat, typing)
+  local buf = chat.buf
+  if chat.broken or chat.dead or chat.edit_from or vim.api.nvim_buf_get_changedtick(buf) == chat.tick then
+    return
+  end
+  if vim.api.nvim_buf_line_count(buf) <= chat.lines then
+    writable(buf, function()
+      vim.api.nvim_buf_set_lines(buf, chat.lines, chat.lines, false, { "" })
+    end)
+    if vim.api.nvim_get_current_buf() == buf then
+      to_draft(chat, vim.api.nvim_get_current_win())
+    end
+  end
+  if not typing then
+    record(chat)
+  end
+  decorate(chat)
+end
+
+-- Keys that start typing (see the top). One a plugin has mapped (LazyVim's s and S are flash's
+-- jumps) is left to it.
+local TYPING = { "i", "a", "o", "O", "I", "A", "c", "s", "C", "S", "R", "gi", "gI" }
+local TYPING_VISUAL = { "c", "s", "C", "S", "R", "I", "A" }
+
+local function global_maps(mode)
+  local lhs = {}
+  for _, map in ipairs(vim.api.nvim_get_keymap(mode)) do
+    lhs[map.lhs] = true
+  end
+  return lhs
+end
+
+local function map_keys(chat)
+  local buf = chat.buf
+  local function map(modes, lhs, fn, desc, opts)
+    vim.keymap.set(modes, lhs, fn, vim.tbl_extend("force", { buffer = buf, nowait = true, desc = "isovim: " .. desc }, opts or {}))
+  end
+  local function mine()
+    return in_draft(chat)
+  end
+  local to_composer = ("<Cmd>lua require('isovim.acp.chat').focus_composer(%q, %q)<CR>"):format(chat.ws, chat.agent)
+  -- Not nowait, so a longer map that starts with one (surround's cs) still gets its keys.
+  local taken = global_maps("n")
+  for _, lhs in ipairs(TYPING) do
+    if not taken[lhs] then
+      map("n", lhs, function()
+        return mine() and lhs or to_composer
+      end, "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
+    end
+  end
+  taken = global_maps("x")
+  for _, lhs in ipairs(TYPING_VISUAL) do
+    if not taken[lhs] then
+      map("x", lhs, function()
+        return math.min(vim.fn.line("."), vim.fn.line("v")) > chat.lines and lhs or "<Esc>" .. to_composer
+      end, "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
+    end
+  end
+  map("n", "]]", function()
     jump(chat, 1, true)
   end, "your next prompt")
-  map("[[", function()
+  map("n", "[[", function()
     jump(chat, -1, true)
   end, "your previous prompt")
-  map("]m", function()
+  map("n", "]m", function()
     jump(chat, 1, false)
   end, "next message")
-  map("[m", function()
+  map("n", "[m", function()
     jump(chat, -1, false)
   end, "previous message")
-  for _, lhs in ipairs({ "i", "a", "o" }) do
-    map(lhs, function()
-      M.focus_composer(chat.ws, chat.agent)
-    end, "type to the agent")
-  end
-  map("<CR>", function()
+  map("n", "<CR>", function()
+    if mine() then
+      return M.submit(buf)
+    end
     -- On an option of a box waiting on you: that's the answer.
     local row = vim.api.nvim_win_get_cursor(0)[1] - 1
     local mark = vim.api.nvim_buf_get_extmarks(buf, OPTIONS, { row, 0 }, { row, -1 }, {})[1]
@@ -1573,64 +1849,76 @@ local function map_chat(chat)
       return
     end
     M.focus_composer(chat.ws, chat.agent)
-  end, "answer with the option under the cursor, else type to the agent")
-  map("<C-c>", function()
-    cancel(chat)
-  end, "cancel the agent's turn")
-  for _, cmd in ipairs({ "za", "zo", "zc" }) do
-    map(cmd, function()
-      fold(chat, cmd)
-    end, "fold the tool call under the cursor")
-  end
-  map("gf", function()
-    open_file(chat)
-  end, "open the file on the line as a tab")
-  map("<C-j>", function()
-    local win = queue.window(chat)
-    if win then
-      return vim.api.nvim_set_current_win(win)
-    end
-    M.focus_composer(chat.ws, chat.agent)
-  end, "down to the queue while it shows, else the composer")
-  require("isovim").map_to_sidebar(buf)
-end
-
-local function map_composer(chat)
-  local buf = chat.composer
-  local function map(modes, lhs, fn, desc, opts)
-    vim.keymap.set(modes, lhs, fn, vim.tbl_extend("force", { buffer = buf, nowait = true, desc = "isovim: " .. desc }, opts or {}))
-  end
-  map({ "n", "i" }, "<CR>", function()
+  end, "send the draft; on the conversation, answer with the option under the cursor, else type to the agent")
+  map("i", "<CR>", function()
     M.submit(buf)
   end, "send to the agent")
   -- A new line without sending: <CR> here is the key's own, not the mapping above. <M-CR> for a
   -- terminal that sends <S-CR> as <CR>.
   map("i", "<S-CR>", "<CR>", "new line")
   map("i", "<M-CR>", "<CR>", "new line")
-  -- Nothing is below the composer: <C-j>, which walks down the column, stays.
-  map({ "n", "i" }, "<C-j>", "<Nop>", "nothing below the composer")
+  -- At the composer's very start these would join its first line onto the conversation's last.
+  for _, lhs in ipairs({ "<BS>", "<C-w>", "<C-u>" }) do
+    map("i", lhs, function()
+      local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+      return (row == chat.lines + 1 and col == 0) and "" or lhs
+    end, "delete before the cursor, back to the composer's start", { expr = true })
+  end
   map({ "n", "i" }, "<C-c>", function()
     if chat.rewind then
       chat.rewind = nil
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+      M.set_draft(chat, { "" })
       return update_bar(chat)
     end
     cancel(chat)
   end, "cancel the agent's turn (or the rewind you're editing)")
   for _, key_dir in ipairs({ { "<Up>", -1 }, { "<Down>", 1 } }) do
     map({ "n", "i" }, key_dir[1], function()
-      if not recall(chat, key_dir[2]) then
-        vim.api.nvim_feedkeys(vim.keycode(key_dir[1]), "n", false)
+      if mine() and recall(chat, key_dir[2]) then
+        return
       end
+      -- Typing, up from the composer's first line stays put: the conversation isn't for typing in.
+      if vim.fn.mode() == "i" and key_dir[2] < 0 and vim.fn.line(".") == chat.lines + 1 then
+        return
+      end
+      vim.api.nvim_feedkeys(vim.keycode(key_dir[1]), "n", false)
     end, "earlier prompts while the composer is empty")
   end
-  map({ "n", "i" }, "<C-k>", function()
-    vim.cmd.stopinsert()
-    local win = queue.window(chat) or vim.fn.bufwinid(chat.buf)
-    if win ~= -1 then
+  for _, lhs in ipairs({ "u", "g-" }) do
+    map("n", lhs, function()
+      step(chat, -1)
+    end, "undo in the composer")
+  end
+  for _, lhs in ipairs({ "<C-r>", "g+" }) do
+    map("n", lhs, function()
+      step(chat, 1)
+    end, "redo in the composer")
+  end
+  map({ "n", "i" }, "<C-j>", function()
+    if not mine() then
+      return M.focus_composer(chat.ws, chat.agent)
+    end
+    local win = queue.window(chat)
+    if win then
+      vim.cmd.stopinsert()
       vim.api.nvim_set_current_win(win)
     end
-  end, "up to the queue while it shows, else the chat")
+  end, "down: from the conversation to the composer, from the composer to the queue while it shows")
+  map({ "n", "i" }, "<C-k>", function()
+    if not mine() then
+      return vim.cmd.wincmd("k")
+    end
+    vim.cmd.stopinsert()
+    vim.api.nvim_win_set_cursor(0, { chat.lines, 0 })
+  end, "up: from the composer to the conversation's end")
+  for _, cmd in ipairs({ "za", "zo", "zc" }) do
+    map("n", cmd, function()
+      fold(chat, cmd)
+    end, "fold the tool call under the cursor")
+  end
+  map("n", "gf", function()
+    open_file(chat)
+  end, "open the file on the line as a tab")
   require("isovim").map_to_sidebar(buf, { "n", "i" })
 end
 
@@ -1640,16 +1928,17 @@ M.help_keys = {
     { "]] / [[", "your next / previous prompt" },
     { "]m / [m", "the next / previous message" },
     { "za zo zc", "fold the tool call's output under the cursor" },
-    { "i a o <CR>", "type to the agent (<CR> on a box's option answers with it)" },
-    { "<C-c>", "cancel the agent's turn" },
-    { "<C-j>", "down to the queue while it shows, else the composer" },
-    { "<C-h>", "the sidebar, on the row you left (<C-l> there comes back)" },
+    { "i a o O I A c C <CR>", "on the conversation: to the end of your draft, typing (<CR> on a box's option answers with it)" },
+    { "u / <C-r>", "undo / redo in the composer, never the conversation" },
+    { "<C-c>", "cancel the agent's turn (or the rewind you're editing)" },
+    { "<C-j> / <C-k>", "down to the composer, then the queue while it shows / up from the composer to the conversation" },
+    { "<C-h>", "the sidebar, in insert mode too (<C-l> there comes back)" },
   },
   queue = {
     { "edit, :w", "edit, reorder or delete lines; :w makes it the queue" },
     { "<CR>", "send the prompt on the line now (cancels the turn)" },
     { "q", "hide the queue until another prompt queues" },
-    { "<C-k> / <C-j>", "up to the chat / down to the composer" },
+    { "<C-k>", "up to the composer" },
     { "<C-h>", "the sidebar, in insert mode too (<C-l> there comes back)" },
     { "<leader>iq", "go to the queue, opening it even when empty" },
   },
@@ -1657,9 +1946,7 @@ M.help_keys = {
     { "<CR>", "send (queued while the agent works)" },
     { "<S-CR> / <M-CR>", "a new line" },
     { "<Up> / <Down>", "your earlier prompts while it's empty" },
-    { "<C-c>", "cancel the turn (or the rewind you're editing)" },
-    { "<C-k>", "up to the queue while it shows, else the chat" },
-    { "<C-j>", "nothing: the composer is the bottom" },
+    { "<C-v>", "paste the clipboard's image as an [Image #n] chip" },
     { "<C-h>", "the sidebar, in insert mode too, in place of backspace (<BS>); <C-l> there comes back typing" },
   },
 }
@@ -1678,80 +1965,60 @@ local function chat_window(win)
   wo.conceallevel, wo.concealcursor = 2, "nc"
 end
 
--- The composer as Claude's prompt: a rule above and below it, ❯ before its first line, a hint
--- under it, and what to type while it's empty. Redrawn as you type (the rule below follows the
--- last line).
+-- The composer as Claude's prompt (see the top), drawn again whenever its lines, its bar or its
+-- hint change.
 local COMPOSER = vim.api.nvim_create_namespace("isovim_acp_composer")
-local RULE_LINE = { { ("─"):rep(400), "IsovimAcpRule" } }
-
--- The rule above the first line shows only while the window keeps a filler line at its top.
-local function show_top_rule(chat)
-  for _, win in ipairs(vim.fn.win_findbuf(chat.composer)) do
-    vim.api.nvim_win_call(win, function()
-      local view = vim.fn.winsaveview()
-      if view.topline == 1 and (view.topfill or 0) < 1 then
-        view.topfill = 1
-        vim.fn.winrestview(view)
-      end
-    end)
-  end
-end
+local RULE_LINE = { { RULE, "IsovimAcpRule" } }
 
 local function composer_hint(chat)
-  local up = (queue.window(chat) and "<C-k> the queue" or "<C-k> the chat") .. " · <C-h> the sidebar"
+  local around = (queue.window(chat) and "<C-j> the queue · " or "") .. "<C-k> the chat · <C-h> the sidebar"
   if #chat.boxes > 0 then
-    return "  type its number and <CR> to answer · or <CR> on an option in the chat · <leader>in the Inbox"
+    return "  type its number and <CR> to answer · or <CR> on an option above · <leader>in the Inbox"
   elseif chat.busy then
-    return "  <CR> queues it · <C-c> interrupts · " .. (queue.window(chat) and up or "<leader>iq the queue · " .. up)
+    return "  <CR> queues it · <C-c> interrupts · " .. (queue.window(chat) and around or "<leader>iq the queue · " .. around)
   end
   -- Where to go before what to type, so a narrow window cuts the latter.
-  return "  <CR> send · <S-CR> new line · <C-v> image · " .. up .. " · <Up> earlier prompts · /new /resume /fork"
+  return "  <CR> send · <S-CR> new line · <C-v> image · " .. around .. " · <Up> earlier prompts · /new /resume /fork"
 end
 
-local function decorate_composer(chat)
-  local buf = chat.composer
-  if not vim.api.nvim_buf_is_loaded(buf) then
+decorate = function(chat)
+  local buf = chat.buf
+  if chat.edit_from or not vim.api.nvim_buf_is_loaded(buf) then
     return
   end
-  local last = vim.api.nvim_buf_line_count(buf) - 1
-  local hint = composer_hint(chat)
-  local empty = last == 0 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
-  local drawn = table.concat({ hint, last, tostring(empty) }, "|")
-  if chat.composer_drawn == drawn and #vim.api.nvim_buf_get_extmarks(buf, COMPOSER, 0, -1, { limit = 1 }) > 0 then
-    return show_top_rule(chat)
+  local first, count = chat.lines, vim.api.nvim_buf_line_count(buf)
+  if count <= first then
+    return
   end
-  chat.composer_drawn = drawn
   vim.api.nvim_buf_clear_namespace(buf, COMPOSER, 0, -1)
-  vim.api.nvim_buf_set_extmark(buf, COMPOSER, 0, 0, { virt_lines = { RULE_LINE }, virt_lines_above = true,
-    virt_lines_leftcol = true })
-  vim.api.nvim_buf_set_extmark(buf, COMPOSER, last, 0,
-    { virt_lines = { RULE_LINE, { { hint, "IsovimAcpHint" } } }, virt_lines_leftcol = true })
-  if empty then
+  local bar = { { " " } }
+  vim.list_extend(bar, M.bar_parts(chat))
+  vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_lines = { { { "" } }, bar, RULE_LINE },
+    virt_lines_above = true, virt_lines_leftcol = true })
+  for row = first, count - 1 do
+    vim.api.nvim_buf_set_extmark(buf, COMPOSER, row, 0, { virt_text = { { row == first and "❯ " or "  ",
+      "IsovimAcpComposerGlyph" } }, virt_text_pos = "inline", right_gravity = false })
+  end
+  vim.api.nvim_buf_set_extmark(buf, COMPOSER, count - 1, 0,
+    { virt_lines = { RULE_LINE, { { composer_hint(chat), "IsovimAcpHint" } } }, virt_lines_leftcol = true })
+  if count - first == 1 and vim.api.nvim_buf_get_lines(buf, first, count, false)[1] == "" then
     local spec = store.agent(chat.ws, chat.agent) or {}
-    vim.api.nvim_buf_set_extmark(buf, COMPOSER, 0, 0, { virt_text = { { ("Message %s…"):format(spec.name or chat.agent),
+    vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { ("Message %s…"):format(spec.name or chat.agent),
       "IsovimAcpHint" } }, virt_text_pos = "overlay" })
   end
-  show_top_rule(chat)
-end
-M.decorate_composer = decorate_composer
-
-local function composer_window(win)
-  local wo = vim.wo[win][0]
-  wo.winfixheight, wo.number, wo.relativenumber, wo.wrap = true, false, false, true
-  wo.signcolumn, wo.foldcolumn, wo.fillchars = "no", "0", "eob: "
-  wo.statuscolumn = "%#IsovimAcpComposerGlyph#%{v:lnum == 1 && v:virtnum == 0 ? '❯ ' : '  '}"
-  wo.breakindent = false
 end
 
--- The chat's autocmds, so a hot reload can take them off its buffers.
+-- The chat's autocmds, so a hot reload can take them off its buffer.
 local GROUP = vim.api.nvim_create_augroup("isovim_acp_chat", { clear = false })
+-- The old code's, which kept the composer's window in its place under the chat.
+pcall(vim.api.nvim_del_augroup_by_name, "isovim_acp_column")
 
--- A new chat, or with old (a hot reload) the same chat made again on old's buffers and drawn again.
-local function make(ws, agent, old)
+-- A new chat, or with old (a hot reload, a repair) the same chat made again on old's buffer and
+-- drawn again. lines are the composer's to begin with.
+local function make(ws, agent, old, lines)
   local spec = store.agent(ws, agent) or {}
   local name = (spec.name or agent)
   local buf = old and old.buf or scratch(("isovim-acp://%s/%s · %s"):format(ws, agent, name))
-  vim.bo[buf].modifiable = false
   vim.bo[buf].filetype = "isovim_acp"
   -- Wrapped lines line up under the text after their glyph.
   vim.bo[buf].formatlistpat = [[^\s*\(❯\|⏺\|✻\|⎿\)\s\+]]
@@ -1761,77 +2028,99 @@ local function make(ws, agent, old)
   -- No smooth scrolling: its animation moves the cursor after a jump (so a key right after one acts
   -- on a line it passes through), and it lags a chat that follows its end. No indent guides.
   vim.b[buf].snacks_scroll, vim.b[buf].snacks_indent = false, false
-
-  local composer = old and old.composer or scratch(("isovim-acp://%s/%s/composer"):format(ws, agent))
-  vim.bo[composer].filetype = "isovim_composer"
-  vim.b[composer].isovim_agent = agent
-  -- Its workspace's, so it comes and goes with the chat when you switch workspaces.
-  vim.b[composer].isovim_ws = ws
-  vim.b[composer].isovim_composer = true
-  vim.b[composer].snacks_indent = false
   -- No completion menu, whose keys would take <Up>, <Down> and <CR> (blink.cmp reads this).
-  vim.b[composer].completion = false
+  vim.b[buf].completion = false
+  -- No undo of nvim's: the composer keeps its own (see the top).
+  vim.bo[buf].undolevels = -1
 
-  images.setup(composer, store.path(ws) .. "/images")
-
-  local chat = { ws = ws, agent = agent, buf = buf, composer = composer, tools = {}, queue = {}, history = {}, history_images = {}, seq = 0,
-    fresh = true, busy = false, handover = false, unseen = false, marks = {}, boxes = {}, options = {},
-    kind = spec.kind or "claude" }
-  if old then
-    reset(chat)
+  lines = lines and #lines > 0 and lines or { "" }
+  local chat = { ws = ws, agent = agent, buf = buf, tools = {}, queue = {}, history = {}, history_images = {}, seq = 0,
+    fresh = true, busy = false, handover = false, marks = {}, boxes = {}, options = {}, kind = spec.kind or "claude",
+    lines = 1, last = "", undo = { states = { lines }, at = 1 } }
+  -- The conversation's placeholder line, then the composer's.
+  for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS, COMPOSER }) do
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   end
-  -- Window options follow the buffer into any window that shows it (a layout rebuilt, :b).
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", unpack(lines) })
+
+  images.setup(buf, store.path(ws) .. "/images", {
+    first = function()
+      local each = by_buf(buf)
+      return each and each.lines or 0
+    end,
+    enter = function()
+      local each = by_buf(buf)
+      if each then
+        to_draft(each, vim.api.nvim_get_current_win())
+      end
+    end,
+  })
+  -- Window options follow the buffer into any window that shows it (a layout rebuilt, :b), and its
+  -- queue window under each (later, as a chat being opened is still placing windows; windows
+  -- placed inside another autocmd, as selecting a workspace rebuilds its layout, fire none:
+  -- isovim.layout calls M.settle).
   vim.api.nvim_create_autocmd("BufWinEnter", {
     group = GROUP,
     buffer = buf,
     callback = safe.wrap("the chat's window", function()
       chat_window(vim.api.nvim_get_current_win())
+      update_bar(chat)
+      M.settle(chat)
     end),
   })
-  -- Scrolled or moved: whether it follows; back at the bottom, nothing unseen.
+  vim.api.nvim_create_autocmd({ "BufWinLeave", "WinClosed" }, {
+    group = GROUP,
+    buffer = buf,
+    callback = safe.wrap("the chat's queue window", function()
+      M.settle(chat)
+    end),
+  })
+  -- Scrolled or moved: whether each window follows, and shows the composer.
   vim.api.nvim_create_autocmd({ "CursorMoved", "WinScrolled" }, {
     group = GROUP,
     buffer = buf,
     callback = safe.wrap("the chat's follow", function()
-      note_followers(buf)
-      if chat.unseen then
-        set_unseen(chat)
-      end
+      note_followers(chat)
+      set_unseen(chat)
     end),
   })
-  vim.api.nvim_create_autocmd("BufWinEnter", {
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "ModeChanged", "BufEnter", "WinEnter" }, {
     group = GROUP,
-    buffer = composer,
-    callback = safe.wrap("the composer's window", function()
-      composer_window(vim.api.nvim_get_current_win())
-      update_bar(chat)
+    buffer = buf,
+    callback = safe.wrap("the composer's guard", function()
+      guard_cursor(chat)
     end),
   })
-  -- The queue window follows the composer's: above each window showing it, gone with it. Later,
-  -- as a chat being opened is still placing windows. (Windows placed inside another autocmd, as
-  -- selecting a workspace rebuilds its layout, fire none: isovim.layout calls M.settle.)
-  vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWinLeave", "WinClosed" }, {
+  vim.api.nvim_create_autocmd("TextChanged", {
     group = GROUP,
-    buffer = composer,
-    callback = function()
-      M.settle(chat)
-    end,
-  })
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
-    group = GROUP,
-    buffer = composer,
+    buffer = buf,
     callback = safe.wrap("the composer's look", function()
-      decorate_composer(chat)
+      changed(chat, false)
     end),
   })
-  map_chat(chat)
-  map_composer(chat)
+  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChangedP" }, {
+    group = GROUP,
+    buffer = buf,
+    callback = safe.wrap("the composer's look", function()
+      changed(chat, true)
+    end),
+  })
+  vim.api.nvim_create_autocmd("InsertLeave", {
+    group = GROUP,
+    buffer = buf,
+    callback = safe.wrap("the composer's undo", function()
+      record(chat)
+    end),
+  })
+  map_keys(chat)
   -- Each entry on its own, so one that fails to draw doesn't stop the rest.
   chat.stop, chat.drain = journal.follow(ws, agent, safe.wrap("the chat's journal", function(entry)
     ingest(chat, entry, false)
   end), safe.wrap("the chat's journal", function()
     reset(chat)
   end))
+  guard(chat)
   subscribe(chat)
   -- What the journal can't say: whether the supervisor is still at it (it may have died mid-turn).
   local ok, state = acp.call(ws, agent, "status")
@@ -1843,13 +2132,14 @@ local function make(ws, agent, old)
   -- A supervisor that comes back (a restart, a handover's end) is subscribed to again.
   chat.timer = vim.uv.new_timer()
   chat.timer:start(1000, 1000, safe.schedule_wrap("the chat's subscription", function()
-    if vim.api.nvim_buf_is_loaded(buf) then
+    if not chat.dead and vim.api.nvim_buf_is_loaded(buf) then
       subscribe(chat)
     end
   end))
   local stop = chat.stop
   chat.unfollow = stop
   chat.stop = function()
+    chat.dead = true
     stop()
     if chat.timer and not chat.timer:is_closing() then
       chat.timer:stop()
@@ -1871,16 +2161,13 @@ local function make(ws, agent, old)
       end
       safe.schedule("closing the chat", function()
         queue.close(ws, agent)
-        if vim.api.nvim_buf_is_valid(composer) then
-          pcall(vim.api.nvim_buf_delete, composer, { force = true })
-        end
       end)
     end),
   })
   -- Its tab closed (Snacks.bufdelete, :bd) unloads it rather than wiping it, and an unloaded
   -- buffer forgets it's a scratch one: opened again it came back empty, as a file with a swap
   -- (E325 when another nvim held one) that kept isovim from restarting. The chat goes whole
-  -- instead, composer and queue too, as a surface's view does; opening it again draws it afresh.
+  -- instead, queue too, as a surface's view does; opening it again draws it afresh.
   vim.api.nvim_create_autocmd("BufDelete", {
     group = GROUP,
     buffer = buf,
@@ -1892,144 +2179,28 @@ local function make(ws, agent, old)
       end)
     end,
   })
-  vim.api.nvim_create_autocmd("BufDelete", {
-    group = GROUP,
-    buffer = composer,
-    callback = function()
-      safe.schedule("closing the chat", function()
-        if chats[key(ws, agent)] == chat and not vim.api.nvim_buf_is_loaded(composer) then
-          M.close(ws, agent)
-        end
-      end)
-    end,
-  })
+  decorate(chat)
   return chat
 end
 
--- The composer's height, its bar included. Nothing changes it: a drag, :resize or a layout
--- restored is put back (M.settle).
-local COMPOSER_HEIGHT = 6
-
--- Where a window sits in winlayout(): the col or row node holding it, and its index there.
-local function parent_of(win, node)
-  node = node or vim.fn.winlayout()
-  if node[1] == "leaf" then
-    return nil
-  end
-  for i, child in ipairs(node[2]) do
-    if child[1] == "leaf" and child[2] == win then
-      return node, i
-    end
-    local parent, j = parent_of(win, child)
-    if parent then
-      return parent, j
-    end
-  end
-end
-
-local function leaves(node, out)
-  out = out or {}
-  if node[1] == "leaf" then
-    out[#out + 1] = node[2]
-  else
-    for _, child in ipairs(node[2]) do
-      leaves(child, out)
-    end
-  end
-  return out
-end
-
-local function is_queue(win)
-  return vim.b[vim.api.nvim_win_get_buf(win)].isovim_queue == true
-end
-
--- A window that got between the chat and its composer, or under the composer, goes beside the
--- chat; a queue window there just closes (queue.sync puts back the one that belongs).
-local function move_beside(node, chat_win)
-  for _, win in ipairs(leaves(node)) do
-    if is_queue(win) then
-      pcall(vim.api.nvim_win_close, win, false)
-    else
-      pcall(vim.fn.win_splitmove, win, chat_win, { vertical = true, rightbelow = true })
-    end
-  end
-end
-
--- The chat's column, as it always is: the chat (or the row it sits in, a file beside it), the
--- queue window while it shows, and the composer at the bottom, COMPOSER_HEIGHT tall. Anything
--- else that got between or under them goes beside the chat; a composer away from its chat goes
--- back under it.
----@param chat isovim.acp.Chat
-local function arrange(chat)
-  local here = {}
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    here[win] = true
-  end
-  local chat_win = vim.fn.bufwinid(chat.buf)
-  for _, cwin in ipairs(vim.fn.win_findbuf(chat.composer)) do
-    if here[cwin] and chat_win ~= -1 then
-      local node, i = parent_of(cwin)
-      local above = 0
-      if node and node[1] == "col" then
-        for j = #node[2], i + 1, -1 do
-          move_beside(node[2][j], chat_win)
-        end
-        for j = i - 1, 1, -1 do
-          local child = node[2][j]
-          if vim.tbl_contains(leaves(child), chat_win) then
-            above = j
-            break
-          elseif not (child[1] == "leaf" and is_queue(child[2])) then
-            move_beside(child, chat_win)
-          end
-        end
-      end
-      if above == 0 then
-        pcall(vim.fn.win_splitmove, cwin, chat_win, { rightbelow = true })
-      end
-      if vim.api.nvim_win_is_valid(cwin) and vim.api.nvim_win_get_height(cwin) ~= COMPOSER_HEIGHT then
-        pcall(vim.api.nvim_win_set_height, cwin, COMPOSER_HEIGHT)
-      end
-    end
-  end
-  queue.sync(chat)
-end
-
--- Soon (once whatever is placing windows is done): each chat's column put right (arrange), with
--- its queue window where its composer shows; or chat's alone.
-local settling = false
+-- Soon (once whatever is placing windows is done): each chat's queue window under each window
+-- showing it (isovim.acp.queue), or chat's alone.
 ---@param chat? isovim.acp.Chat
 function M.settle(chat)
   vim.schedule(function()
-    if settling then
-      return
-    end
-    settling = true
     for _, each in pairs(chat and { chat } or chats) do
-      if vim.api.nvim_buf_is_loaded(each.buf) and vim.api.nvim_buf_is_loaded(each.composer) then
-        safe.wrap("the chat's column", arrange)(each)
+      if not each.dead and vim.api.nvim_buf_is_loaded(each.buf) then
+        safe.wrap("the chat's queue window", queue.sync)(each)
         safe.wrap("the chat's bar", update_bar)(each)
       end
     end
-    settling = false
   end)
 end
-
--- Whenever windows change (a drag on a separator, :resize, a split, a layout restored), the chat
--- columns on screen are put right again.
-vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "WinResized", "VimResized" }, {
-  group = vim.api.nvim_create_augroup("isovim_acp_column", { clear = true }),
-  callback = safe.wrap("the chat's column", function()
-    if not settling and next(chats) then
-      M.settle()
-    end
-  end),
-})
 
 ---@return isovim.acp.Chat?
 function M.get(ws, agent)
   local chat = chats[key(ws, agent)]
-  if chat and vim.api.nvim_buf_is_loaded(chat.buf) and vim.api.nvim_buf_is_loaded(chat.composer) then
+  if chat and vim.api.nvim_buf_is_loaded(chat.buf) then
     return chat
   end
 end
@@ -2047,13 +2218,14 @@ function M.set_open(ws, agent, row, open)
   return false
 end
 
--- The chat a buffer belongs to (the chat's or its composer's).
+-- The chat a buffer belongs to.
 ---@return isovim.acp.Chat?
 function M.of_buf(buf)
   return by_buf(buf or vim.api.nvim_get_current_buf())
 end
 
--- Shows the agent's chat in win, with its composer in a split below unless it's on screen.
+-- Shows the agent's chat in win, at its end; coming from another buffer, with the cursor at the
+-- end of your draft.
 ---@return isovim.acp.Chat
 function M.open(ws, agent, win)
   local chat = M.get(ws, agent)
@@ -2062,35 +2234,16 @@ function M.open(ws, agent, win)
     chat = make(ws, agent)
     chats[key(ws, agent)] = chat
   end
-  -- Replacing another agent's chat (shown nowhere else), its composer gives way to this one's.
-  local shown = by_buf(vim.api.nvim_win_get_buf(win))
-  local replaced = shown and shown ~= chat and shown.buf == vim.api.nvim_win_get_buf(win) and #vim.fn.win_findbuf(shown.buf) == 1
-  local old_composer = replaced and vim.fn.bufwinid(shown.composer) or -1
+  local shown = vim.api.nvim_win_get_buf(win) == chat.buf
   vim.api.nvim_win_set_buf(win, chat.buf)
-  -- Another workspace's chat entering the window selects it, which closes the old composer's.
-  if old_composer ~= -1 and vim.api.nvim_win_is_valid(old_composer) and vim.fn.bufwinid(chat.composer) == -1 then
-    vim.api.nvim_win_set_buf(old_composer, chat.composer)
-  elseif vim.fn.bufwinid(chat.composer) == -1 then
-    vim.api.nvim_open_win(chat.composer, false, { split = "below", win = win, height = COMPOSER_HEIGHT })
+  if not shown then
+    to_draft(chat, win)
   end
-  -- At the end, once the composer has taken its rows.
   pcall(to_end, win)
   set_unseen(chat)
   update_bar(chat)
   M.settle(chat)
   return chat
-end
-
--- Puts you in the agent's composer, in insert mode at its end.
-function M.focus_composer(ws, agent)
-  local chat = M.get(ws, agent)
-  local win = chat and vim.fn.bufwinid(chat.composer) or -1
-  if win == -1 then
-    return false
-  end
-  vim.api.nvim_set_current_win(win)
-  vim.cmd.startinsert({ bang = true })
-  return true
 end
 
 -- The supervisor replaced the journal (a session switch): read it again from the start.
@@ -2112,15 +2265,14 @@ local function message_at(chat, row, mine)
   end
 end
 
--- The chat you're in (its buffer or its composer), and the row the cursor is on in the chat (nil
--- in the composer).
+-- The chat you're in, and the row the cursor is on in its conversation (nil in the composer).
 local function here()
-  local buf = vim.api.nvim_get_current_buf()
-  local chat = by_buf(buf)
+  local chat = by_buf(vim.api.nvim_get_current_buf())
   if not chat then
     return nil
   end
-  return chat, buf == chat.buf and vim.api.nvim_win_get_cursor(0)[1] - 1 or nil
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  return chat, row < chat.lines and row or nil
 end
 
 -- <leader>iu: your prompt under the cursor (in the composer, your last) goes into the composer to
@@ -2130,16 +2282,13 @@ function M.rewind_at_cursor()
   if not chat then
     return say("rewind: put the cursor on one of your prompts in an ACP agent's chat")
   end
-  local info = message_at(chat, row or vim.api.nvim_buf_line_count(chat.buf) - 1, true)
+  local info = message_at(chat, row or chat.lines - 1, true)
   if not info or info.kind ~= "prompt" or not info.id then
     return say("rewind: no prompt of yours at or above the cursor")
   end
   chat.rewind = { id = info.id, text = info.text or "" }
-  local lines = vim.split(info.text or "", "\n", { plain = true })
-  vim.api.nvim_buf_set_lines(chat.composer, 0, -1, false, lines)
-  if M.focus_composer(chat.ws, chat.agent) then
-    vim.api.nvim_win_set_cursor(0, { #lines, #lines[#lines] })
-  end
+  M.set_draft(chat, vim.split(info.text or "", "\n", { plain = true }))
+  M.focus_composer(chat.ws, chat.agent)
   update_bar(chat)
   return chat.rewind
 end
@@ -2171,10 +2320,90 @@ local function placed(chat)
   return calls
 end
 
--- After a hot reload each open chat is made again by the new code on its own buffers (its keys,
--- autocmds and drawing then run it), drawn again from its journal. What the journal doesn't hold
--- is kept: where each window was scrolled, the composer's text, the tool calls you opened or
--- collapsed, a rewind you're editing. Autocmds of an isovim from before GROUP had none.
+-- The chat made again by the current code on its own buffer (its keys, autocmds and drawing then
+-- run it), drawn again from its journal: after a hot reload (M.rebind), or a change that reached
+-- the conversation (repair). What the journal doesn't hold is kept: where each window was scrolled,
+-- a cursor in the composer at its place in your draft, the draft and its undo, the tool calls you
+-- opened or collapsed, a rewind you're editing. lines, if given, are the draft instead (a repair:
+-- the cursor goes to its end). A chat of the old code, whose composer was a buffer of its own,
+-- gives that buffer's text (and images) to the one buffer, and the composer and its window go.
+remake = function(old, lines)
+  local k = key(old.ws, old.agent)
+  local composer = old.composer and old.composer ~= old.buf and vim.api.nvim_buf_is_valid(old.composer) and old.composer or nil
+  local count = old.lines or vim.api.nvim_buf_line_count(old.buf)
+  local repairing = lines ~= nil
+  lines = lines or (composer and vim.api.nvim_buf_get_lines(composer, 0, -1, false))
+    or vim.api.nvim_buf_get_lines(old.buf, count, -1, false)
+  local views, at, opened = {}, {}, {}
+  for _, win in ipairs(vim.fn.win_findbuf(old.buf)) do
+    views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+    if row > count then
+      at[win] = { row - count, col }
+    end
+  end
+  local current = vim.api.nvim_get_current_win()
+  if composer and vim.api.nvim_win_get_buf(current) == composer and vim.fn.bufwinid(old.buf) ~= -1 then
+    local win = vim.fn.bufwinid(old.buf)
+    at[win] = vim.api.nvim_win_get_cursor(current)
+    vim.api.nvim_set_current_win(win)
+  end
+  for i, call in ipairs(placed(old)) do
+    opened[i] = call.open
+  end
+  pcall(old.stop)
+  old.dead = true
+  for _, buf in ipairs({ old.buf, composer }) do
+    for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
+      if au.group == nil or au.group == GROUP then
+        vim.api.nvim_del_autocmd(au.id)
+      end
+    end
+    for _, mode in ipairs({ "n", "i", "x" }) do
+      for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+        if vim.startswith(map.desc or "", "isovim: ") then
+          pcall(vim.api.nvim_buf_del_keymap, buf, mode, map.lhs)
+        end
+      end
+    end
+  end
+  if composer then
+    images.move(composer, old.buf)
+    pcall(vim.api.nvim_buf_delete, composer, { force = true })
+  end
+  local chat = make(old.ws, old.agent, old, lines)
+  chat.rewind, chat.recall = old.rewind, old.recall
+  if old.undo and vim.deep_equal(old.undo.states[old.undo.at], draft(chat)) then
+    chat.undo = old.undo
+  end
+  for i, call in ipairs(placed(chat)) do
+    if opened[i] ~= nil and call.open ~= opened[i] then
+      call.open = opened[i]
+      draw_tool(chat, call)
+    end
+  end
+  chats[k] = chat
+  local count_now = vim.api.nvim_buf_line_count(chat.buf)
+  for win, view in pairs(views) do
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == chat.buf then
+      vim.api.nvim_win_call(win, function()
+        vim.fn.winrestview(view)
+      end)
+      if repairing and win == vim.api.nvim_get_current_win() then
+        to_draft(chat, win)
+      elseif at[win] then
+        pcall(vim.api.nvim_win_set_cursor, win, { math.min(chat.lines + at[win][1], count_now), at[win][2] })
+      end
+    end
+  end
+  guard_cursor(chat)
+  update_bar(chat)
+  M.settle(chat)
+  return chat
+end
+
+-- After a hot reload each open chat is made again by the new code on its own buffer (remake).
+-- Autocmds of an isovim from before GROUP had none.
 function M.rebind()
   local spinner = _G.isovim_acp_spinner
   if spinner and not spinner:is_closing() then
@@ -2182,61 +2411,26 @@ function M.rebind()
   end
   _G.isovim_acp_spinner = nil
   local broken = {}
-  for k, old in pairs(chats) do
-    -- One whose tab was closed before the code that closes it whole (its buffers unloaded, or
-    -- loaded again as files) is closed, and opened afresh where it shows.
-    if not (vim.api.nvim_buf_is_loaded(old.buf) and vim.api.nvim_buf_is_loaded(old.composer))
-      or vim.bo[old.buf].buftype ~= "nofile" or vim.bo[old.composer].buftype ~= "nofile" then
-      broken[#broken + 1] = { old = old, win = vim.fn.bufwinid(old.buf) }
+  for _, old in ipairs(vim.tbl_values(chats)) do
+    local composer = old.composer and old.composer ~= old.buf and old.composer or nil
+    -- One whose tab was closed before the code that closes it whole (its buffer unloaded, or
+    -- loaded again as a file) is closed, and opened afresh where it shows.
+    local intact = vim.api.nvim_buf_is_loaded(old.buf) and vim.bo[old.buf].buftype == "nofile"
+      and (not composer or vim.api.nvim_buf_is_loaded(composer) and vim.bo[composer].buftype == "nofile")
+    if intact then
+      remake(old)
     else
-      local views, opened = {}, {}
-      for _, win in ipairs(vim.fn.win_findbuf(old.buf)) do
-        views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-      end
-      for i, call in ipairs(placed(old)) do
-        opened[i] = call.open
-      end
-      pcall(old.stop)
-      for _, buf in ipairs({ old.buf, old.composer }) do
-        for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
-          if au.group == nil or au.group == GROUP then
-            vim.api.nvim_del_autocmd(au.id)
-          end
-        end
-        for _, mode in ipairs({ "n", "i" }) do
-          for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
-            if vim.startswith(map.desc or "", "isovim: ") then
-              vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)
-            end
-          end
-        end
-      end
-      local chat = make(old.ws, old.agent, old)
-      chat.rewind, chat.recall, chat.unseen = old.rewind, old.recall, old.unseen
-      for i, call in ipairs(placed(chat)) do
-        if opened[i] ~= nil and call.open ~= opened[i] then
-          call.open = opened[i]
-          draw_tool(chat, call)
-        end
-      end
-      chats[k] = chat
-      for win, view in pairs(views) do
-        if measurable(win, chat.buf) then
-          vim.api.nvim_win_call(win, function()
-            vim.fn.winrestview(view)
-          end)
-        end
-      end
-      update_bar(chat)
+      broken[#broken + 1] = { old = old, composer = composer, win = vim.fn.bufwinid(old.buf) }
     end
   end
   -- The fresh one goes into its window before the old buffers are wiped, so the window stays.
   for _, each in ipairs(broken) do
     local old = each.old
     pcall(old.stop)
+    old.dead = true
     chats[key(old.ws, old.agent)] = nil
     queue.close(old.ws, old.agent)
-    for _, buf in ipairs({ old.buf, old.composer }) do
+    for _, buf in ipairs({ old.buf, each.composer }) do
       for _, au in ipairs(vim.api.nvim_get_autocmds({ buffer = buf })) do
         if au.group == nil or au.group == GROUP then
           vim.api.nvim_del_autocmd(au.id)
@@ -2247,23 +2441,22 @@ function M.rebind()
     if each.win ~= -1 and vim.api.nvim_win_is_valid(each.win) then
       safe.wrap("opening the chat again", M.open)(old.ws, old.agent, each.win)
     end
-    for _, buf in ipairs({ old.composer, old.buf }) do
-      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    if each.composer then
+      pcall(vim.api.nvim_buf_delete, each.composer, { force = true })
     end
+    pcall(vim.api.nvim_buf_delete, old.buf, { force = true })
   end
 end
 
--- The agent went away: its chat, composer and queue go too.
+-- The agent went away: its chat and queue go too.
 function M.close(ws, agent)
   local chat = chats[key(ws, agent)]
   if chat then
     chat.stop()
     chats[key(ws, agent)] = nil
     queue.close(ws, agent)
-    for _, buf in ipairs({ chat.composer, chat.buf }) do
-      if vim.api.nvim_buf_is_valid(buf) then
-        pcall(vim.api.nvim_buf_delete, buf, { force = true })
-      end
+    if vim.api.nvim_buf_is_valid(chat.buf) then
+      pcall(vim.api.nvim_buf_delete, chat.buf, { force = true })
     end
   end
 end

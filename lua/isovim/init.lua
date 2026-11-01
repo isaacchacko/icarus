@@ -164,7 +164,7 @@ local function focus_sidebar()
 end
 M.focus_sidebar = focus_sidebar
 
--- <C-h> to the sidebar from a buffer of the main column (a composer, an ACP chat, a surface view
+-- <C-h> to the sidebar from a buffer of the main column (an ACP chat, its queue, a surface view
 -- and its input box), in normal mode and each other mode given; in insert mode it takes the place
 -- of vim's backspace there (<BS> still deletes). Through require, so a map made before a hot
 -- reload runs the new code.
@@ -246,8 +246,8 @@ local CHAT_KEYS = {
 
 -- What isovim opens (a pinned file, a file a chat names, a surface, Settings) opens as a tab, never
 -- a split: in the editing window you're in (the main one from the sidebar or a float), replacing
--- what it shows as :b does; from a chat's composer or a surface's input box, in its chat's or view's
--- window above it. The chat stays a tab away (isovim.tabs). Splits are yours to make.
+-- what it shows as :b does; from a surface's input box, in its view's window above it. The chat
+-- stays a tab away (isovim.tabs). Splits are yours to make.
 ---@param path string|integer a file, or a buffer to show as it is (a rendered surface)
 ---@return integer win, integer prev the buffer the window showed
 local function show(path, lnum)
@@ -256,10 +256,9 @@ local function show(path, lnum)
     win = main_win()
   end
   local here = vim.api.nvim_win_get_buf(win)
-  local chat = vim.b[here].isovim_composer and package.loaded["isovim.acp.chat"] and require("isovim.acp.chat").of_buf(here)
   local view = vim.b[here].isovim_surface_input and package.loaded["isovim.surface_view"]
     and require("isovim.surface_view").views[vim.b[here].isovim_surface_input]
-  local above = chat and vim.fn.bufwinid(chat.buf) or view and vim.fn.bufwinid(view.buf) or -1
+  local above = view and vim.fn.bufwinid(view.buf) or -1
   if above ~= -1 then
     win = above
   end
@@ -362,7 +361,7 @@ function M.open(ws, agent, win)
   M.recent_agents = vim.list_extend({ key }, vim.tbl_filter(function(other)
     return other ~= key
   end, vim.list_slice(M.recent_agents, 1, 50)))
-  -- An ACP agent's chat is drawn from its journal, with a composer below it (isovim.acp.chat).
+  -- An ACP agent's chat is drawn from its journal, its composer at its end (isovim.acp.chat).
   if spec.acp then
     local acp_chat = require("isovim.acp.chat")
     acp_chat.open(ws, agent, win)
@@ -747,7 +746,7 @@ function M.setup(opts)
     if not win then
       return "<ScrollWheelDown>"
     end
-    local below = (require("isovim.acp.chat").rows_to_end(win) or 0) - vim.api.nvim_win_get_height(win)
+    local below = (require("isovim.acp.chat").rows_to_end(win) or 0) - require("isovim.acp.chat").text_rows(win)
     local step = math.min(below, tonumber(vim.o.mousescroll:match("ver:(%d+)")) or 3)
     return step > 0 and ("<Cmd>lua vim.api.nvim_win_call(%d, function() vim.cmd('normal! %d\\5') end)<CR>"):format(win, step)
       or ""
@@ -759,7 +758,7 @@ function M.setup(opts)
         local win = tonumber(id)
         if win and vim.api.nvim_win_is_valid(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_agent_kind then
           local rows = require("isovim.acp.chat").rows_to_end(win)
-          local past = rows and rows < vim.api.nvim_win_get_height(win)
+          local past = rows and rows < require("isovim.acp.chat").text_rows(win)
           vim.api.nvim_win_call(win, function()
             local view = vim.fn.winsaveview()
             local at_end = past and (view.topline > 1 or view.skipcol > 0) and require("isovim.acp.chat").end_view(win)
@@ -1496,7 +1495,7 @@ function M.resume()
   for key, lines in pairs(saved.drafts or {}) do
     local open = chat.get(key:match("^(.*)/([^/]+)$"))
     if open then
-      vim.api.nvim_buf_set_lines(open.composer, 0, -1, false, lines)
+      chat.set_draft(open, lines)
     end
   end
   if saved.scope then

@@ -310,8 +310,8 @@ function M.previous_repo()
   toast("No other repo yet")
 end
 
--- The prompt queue of the ACP agent whose chat (or composer) you're in, else the one on screen:
--- its window between the chat and the composer, opened even when nothing waits.
+-- The prompt queue of the ACP agent whose chat you're in, else the one on screen: its window under
+-- the chat, opened even when nothing waits.
 function M.prompt_queue()
   local chat_mod = require("isovim.acp.chat")
   local chat = chat_mod.of_buf()

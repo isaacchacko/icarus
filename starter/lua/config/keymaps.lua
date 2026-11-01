@@ -7,9 +7,9 @@ end
 vim.keymap.set({ "n", "t" }, "<C-/>", toggle_terminal, { desc = "isovim: toggle the workspace's terminal" })
 vim.keymap.set({ "n", "t" }, "<C-_>", toggle_terminal, { desc = "which_key_ignore" })
 
--- LazyVim's buffer and window keys, on isovim's buffers too (isovim.tabs): from a composer, a queue
--- or an input box they act on its chat or view, an agent's closed tab stays closed until you open
--- it again, and its composer and queue go with it.
+-- LazyVim's buffer and window keys, on isovim's buffers too (isovim.tabs): from a queue or an input
+-- box they act on its chat or view, an agent's closed tab stays closed until you open it again, and
+-- its queue goes with it.
 vim.keymap.set("n", "<leader>bd", function()
   require("isovim.tabs").bufdelete()
 end, { desc = "Delete Buffer" })

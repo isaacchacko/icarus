@@ -328,8 +328,8 @@ local function save()
     if vim.api.nvim_buf_is_valid(chat.buf) then
       add(chat.ws, chat.agent)
     end
-    if vim.api.nvim_buf_is_valid(chat.composer) then
-      local lines = vim.api.nvim_buf_get_lines(chat.composer, 0, -1, false)
+    if vim.api.nvim_buf_is_valid(chat.buf) and chat.lines then
+      local lines = require("isovim.acp.chat").draft(chat)
       if vim.trim(table.concat(lines, "\n")) ~= "" then
         drafts[chat.ws .. "/" .. chat.agent] = lines
       end
