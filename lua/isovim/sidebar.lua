@@ -310,7 +310,9 @@ function M.surface_chunks(entry)
       local n = entry.counts and entry.counts[name] or 0
       if n > 0 then
         local task_glyph, task_hl = unpack(TASK_GLYPHS[name])
-        vim.list_extend(row, { { "  " .. task_glyph, task_hl }, { tostring(n), "Comment" } })
+        -- A space after the glyph: ◐ and ⊘ are ambiguous-width, and fonts that draw them wide
+        -- would cover the count.
+        vim.list_extend(row, { { "  " .. task_glyph .. " ", task_hl }, { tostring(n), "Comment" } })
       end
     end
   elseif (kind == "file" or kind == "folder") and entry.exists == false then
