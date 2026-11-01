@@ -1,29 +1,39 @@
 -- Which repo a workspace works in (its git origin, as "owner/repo") and how its sidebar row draws it:
--- a glyph and a color, from ~/.isovim/repos/<owner>/<repo>/config.json, all optional:
---   glyph   any string up to two cells wide, e.g. a nerd-font glyph; default the repo glyph
---   color   a name from M.palette or "#rrggbb"; default a palette color picked by the repo's name
+-- a glyph and a color, from ~/.isovim/repos/<owner>/<repo>/config.json:
+--   glyph   any string up to two cells wide, e.g. a nerd-font glyph
+--   color   a name from M.palette or "#rrggbb"
+-- A repo first seen without a color is given one: the default glyph (unless it has a glyph) and the next
+-- palette color are written into its config, which from then on is the one source of truth. The next
+-- color is the palette's entry at (number of repo configs that have a color) mod (palette size), so repos
+-- take the colors in the order they're first seen, wrapping round when the palette runs out. The default
+-- glyph and the palette come from repo_defaults in ~/.isovim/config.json.
+local config = require("isovim.config")
 local store = require("isovim.store")
 local icons = require("isovim.icons")
 
 local M = {}
 
--- tokyonight's accents, which read on its dark background.
-M.palette = {
-  red = "#f7768e",
-  orange = "#ff9e64",
-  yellow = "#e0af68",
-  lime = "#c3e88d",
-  green = "#9ece6a",
-  teal = "#73daca",
-  cyan = "#7dcfff",
-  sky = "#2ac3de",
-  blue = "#7aa2f7",
-  purple = "#9d7cd8",
-  magenta = "#bb9af7",
-  pink = "#fca7ea",
+-- tokyonight's accents, which read on its dark background, in the order repos take them by default.
+local ACCENTS = {
+  { "red", "#f7768e" },
+  { "orange", "#ff9e64" },
+  { "yellow", "#e0af68" },
+  { "lime", "#c3e88d" },
+  { "green", "#9ece6a" },
+  { "teal", "#73daca" },
+  { "cyan", "#7dcfff" },
+  { "sky", "#2ac3de" },
+  { "blue", "#7aa2f7" },
+  { "purple", "#9d7cd8" },
+  { "magenta", "#bb9af7" },
+  { "pink", "#fca7ea" },
 }
-local PALETTE_ORDER = vim.tbl_keys(M.palette)
-table.sort(PALETTE_ORDER)
+M.palette = {} ---@type table<string, string> name -> "#rrggbb"
+local DEFAULT_PALETTE = {}
+for _, accent in ipairs(ACCENTS) do
+  M.palette[accent[1]] = accent[2]
+  DEFAULT_PALETTE[#DEFAULT_PALETTE + 1] = accent[1]
+end
 
 -- "owner/repo" for GitHub, "host/path" for other hosts, the last two folders for a local path, all
 -- lowercase (hosts ignore case); nil when the URL doesn't give a name safe as a path under ~/.isovim/repos.
@@ -67,15 +77,6 @@ function M.of(dir)
   return names[dir] or nil
 end
 
--- A stable pick from the palette, so an unconfigured repo keeps its color everywhere.
-local function derived_color(name)
-  local hash = 5381
-  for i = 1, #name do
-    hash = (hash * 33 + name:byte(i)) % 2 ^ 32
-  end
-  return M.palette[PALETTE_ORDER[hash % #PALETTE_ORDER + 1]]
-end
-
 local function hex(color)
   if type(color) ~= "string" then
     return nil
@@ -83,27 +84,80 @@ local function hex(color)
   return M.palette[color:lower()] or (color:match("^#%x%x%x%x%x%x$") and color:lower())
 end
 
+-- The glyph and palette new repos are given: repo_defaults from config.json, else the repo glyph and ACCENTS.
+---@return {glyph: string, palette: string[]}
+function M.defaults()
+  local defaults = config.get().repo_defaults
+  defaults = type(defaults) == "table" and defaults or {}
+  local palette = vim.islist(defaults.palette) and vim.tbl_filter(hex, defaults.palette) or {}
+  local glyph = type(defaults.glyph) == "string" and defaults.glyph ~= "" and defaults.glyph or icons.get("repo")
+  return { glyph = glyph, palette = #palette > 0 and palette or DEFAULT_PALETTE }
+end
+
+-- A repo's config: {} when it has no file, nil when its file isn't a JSON object.
+local function read(path)
+  if not vim.uv.fs_stat(path) then
+    return {}
+  end
+  local ok, lines = pcall(vim.fn.readfile, path)
+  local decoded, repo_config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  local object = decoded and type(repo_config) == "table" and not (vim.islist(repo_config) and #repo_config > 0)
+  return object and repo_config or nil
+end
+
+local function next_color(palette)
+  local taken = 0
+  for _, path in ipairs(vim.fn.glob(store.root .. "/repos/**/config.json", true, true)) do
+    local repo_config = read(path)
+    if repo_config and hex(repo_config.color) then
+      taken = taken + 1
+    end
+  end
+  return palette[taken % #palette + 1]
+end
+
+-- Written to a temp file and renamed over the old one, so no reader ever sees half of it.
+local function write(path, repo_config)
+  vim.fn.mkdir(vim.fs.dirname(path), "p")
+  local tmp = ("%s.%d.tmp"):format(path, vim.uv.os_getpid())
+  local lines = vim.split(vim.json.encode(repo_config, { indent = "  " }), "\n")
+  local ok = pcall(vim.fn.writefile, lines, tmp)
+  if not (ok and vim.uv.fs_rename(tmp, path)) then
+    vim.fn.delete(tmp)
+  end
+end
+
+local function stamp_of(path)
+  local stat = vim.uv.fs_stat(path)
+  return stat and ("%d.%d.%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size) or ""
+end
+
 local styles = {} ---@type table<string, {stamp: string, style: {name: string, glyph: string, color: string}}>
 
--- The repo's glyph and color (as "#rrggbb"); its config is read again whenever the file changes.
+-- The repo's glyph and color (as "#rrggbb"), written into its config the first time it's seen without a
+-- color; the config is read again whenever the file changes. A file that isn't a JSON object is never
+-- written over: until it's fixed the repo shows the default glyph and the color it would be given.
 ---@return {name: string, glyph: string, color: string}
 function M.style(name)
   local path = ("%s/repos/%s/config.json"):format(store.root, name)
-  local stat = vim.uv.fs_stat(path)
-  local stamp = stat and ("%d.%d.%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size) or ""
   local cached = styles[name]
-  if cached and cached.stamp == stamp then
+  if cached and cached.stamp == stamp_of(path) then
     return cached.style
   end
-  local ok, lines = pcall(vim.fn.readfile, path)
-  local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
-  config = decoded and type(config) == "table" and config or {}
-  local glyph = type(config.glyph) == "string" and config.glyph ~= "" and config.glyph or icons.get("repo")
+  local defaults = M.defaults()
+  local repo_config = read(path)
+  if repo_config and repo_config.color == nil then
+    repo_config.glyph = repo_config.glyph == nil and defaults.glyph or repo_config.glyph
+    repo_config.color = next_color(defaults.palette)
+    write(path, repo_config)
+  end
+  repo_config = repo_config or {}
+  local glyph = type(repo_config.glyph) == "string" and repo_config.glyph ~= "" and repo_config.glyph or defaults.glyph
   if vim.fn.strdisplaywidth(glyph) > 2 then
     glyph = vim.fn.strcharpart(glyph, 0, 1)
   end
-  local style = { name = name, glyph = glyph, color = hex(config.color) or derived_color(name) }
-  styles[name] = { stamp = stamp, style = style }
+  local style = { name = name, glyph = glyph, color = hex(repo_config.color) or hex(next_color(defaults.palette)) }
+  styles[name] = { stamp = stamp_of(path), style = style }
   return style
 end
 

@@ -6,13 +6,16 @@
 --              code folders (~/code, ~/src, ~/Programs, ...)
 --   prompts    role -> file (root, router, worker; relative to ~) added to what agents of that role are
 --              told at launch, after instructions.md
+--   repo_defaults  {glyph, palette}: the glyph and the list of colors (names or "#rrggbb") written into a
+--              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
+--              red to pink. Repos take the colors in the order they're first seen, wrapping round.
 local store = require("isovim.store")
 
 local M = {}
 
 M.path = store.root .. "/config.json"
 
----@return {self?: string, hosts?: table<string, string>, aliases?: table<string, string>, repo_dirs?: string[], prompts?: table<string, string>}
+---@return {self?: string, hosts?: table<string, string>, aliases?: table<string, string>, repo_dirs?: string[], prompts?: table<string, string>, repo_defaults?: {glyph?: string, palette?: string[]}}
 function M.get()
   local ok, lines = pcall(vim.fn.readfile, M.path)
   local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")

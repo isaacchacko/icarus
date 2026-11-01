@@ -85,11 +85,12 @@ Everything lives in `~/.isovim/`:
     "aliases": { "box": "desktop" },
     "repo_dirs": ["~/clients"],
     "idle_after": 30,
-    "prompts": { "root": "~/notes/root.md", "router": "prompts/router.md" }
+    "prompts": { "root": "~/notes/root.md", "router": "prompts/router.md" },
+    "repo_defaults": { "glyph": "\uf401", "palette": ["teal", "magenta", "#ff9e64"] }
   }
   ```
-  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told.
-- **`repos/<owner>/<repo>/config.json`** sets how a repo's workspaces show in the sidebar, picked by their git origin: `{"glyph": "\uf1d3", "color": "teal"}`. `color` is `#rrggbb` or one of red, orange, yellow, lime, green, teal, cyan, sky, blue, purple, magenta, pink; a repo without one gets a color picked from its name, and the repo glyph.
+  `hosts` are your other machines by ssh name, `repo_dirs` are more folders whose repos are offered when making a workspace (`~`, `~/code`, `~/src`, `~/Programs` and the like are always looked in). `prompts` names a file (relative to `~`) for each role, `root`, `router` or `worker`, added after `instructions.md` to what agents of that role are told. `repo_defaults` is the glyph and the colors new repos are given (below); without it, the repo glyph and the twelve colors red to pink.
+- **`repos/<owner>/<repo>/config.json`** sets how a repo's workspaces show in the sidebar, picked by their git origin: `{"glyph": "\uf1d3", "color": "teal"}`. `color` is `#rrggbb` or one of red, orange, yellow, lime, green, teal, cyan, sky, blue, purple, magenta, pink. The first time isovim sees a repo without a `color`, it writes one into this file, with the default glyph if it has none: the palette's next color, the one at (number of repo configs that have a color) mod (palette size), so repos take the colors in the order they're first seen and wrap round. From then on the file decides, so edit it to change them. A file that isn't valid JSON is never written over.
 - **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes, once per quiet spell.
 - **Roles.** Every agent is a `worker` unless made a `root` (sets the north star) or `router` (a repo's one interface to you, running the swarm): `iso agent ... --role router`, or `iso role <agent> router`, which it picks up when it next restarts. It's told its role, gets its role's prompt, and has it in `$ISOVIM_ROLE`; `iso ls` shows it.
 - **`iso agent <ws> claude --prompt "<text>"`** starts an agent on a prompt, so scripts can start work, and `iso ls --json` says when each agent was last active.
