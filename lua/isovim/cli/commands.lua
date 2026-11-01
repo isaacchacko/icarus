@@ -275,7 +275,8 @@ M.list = {
     args = { "<text>..." },
     help = [=[
        iso ask <question...>         from an agent: ask the root; the root (or anyone, with no
-                                     root) raises it to you, into the Inbox]=],
+                                     root) raises it to you, into the Inbox. Workspace agents
+                                     only; retired at cutover (a router's surface question)]=],
   },
   { name = "answer", module = "surfaces",
     audience = "user",
@@ -337,7 +338,8 @@ M.list = {
     args = { "<ws>", "<path>" },
     flags = { ["--label"] = "<text>" },
     help = [=[
-       iso pin <ws> <path> [--label text]   show a file or folder under the workspace in the sidebar]=],
+       iso pin <ws> <path> [--label text]   show a file or folder under the workspace in the sidebar
+                                     (workspace agents; retired at cutover: surface file|folder)]=],
   },
   { name = "unpin", module = "workspaces",
     args = { "<ws>", "<path>" },
@@ -477,6 +479,7 @@ M.list = {
        iso task set <id> [<title>] [--status todo|doing|waiting|blocked|done] [--parent <id>]
                                      [--detail text] [--pr N] [--linear PRO-x]
                                      add or update one of your tasks; the sidebar shows them with T
+                                     (workspace agents; retired at cutover: the router's tasks.md)
        iso task rm <id>              remove one of your tasks and its subtasks
        iso task ls                   your tasks]=],
   },

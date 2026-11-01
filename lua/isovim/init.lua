@@ -789,6 +789,8 @@ function M.setup(opts)
   end
   -- Agent dirs with no record, every 10 minutes: logged only, until v0 is cut over.
   require("isovim.lifecycle").start_timer()
+  -- The role prompt files, on first run (and any missing one after): never over yours.
+  pcall(require("isovim.config").seed_prompts)
   if reloading then
     for _, buf in ipairs(chat_bufs()) do
       map_chat_keys(buf)

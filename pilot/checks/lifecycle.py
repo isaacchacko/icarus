@@ -201,6 +201,8 @@ try:
     iso.wait(lambda: synced.exists() and json.loads(synced.read_text()).get("setup") == ["echo r2"], "repos/ synced to the peer")
     check(True, "a repo config write syncs repos/ to the peer")
     peer_config = json.loads((peer_home / "config.json").read_text())
+    # The role prompts isovim seeded into this host's config.json on its first run go along too.
+    peer_config.pop("prompts", None)
     check(peer_config == {"self": "peer", "hosts": {"me": "mehost"}, "aliases": {"p": "peer"}, "repo_dirs": ["~/code"]},
           "config.json is merged in, keeping the peer's self and hosts", peer_config)
     check((peer_home / "repos" / "o" / "r" / "config.json").exists() and not (peer_home / "repos" / "o" / "r" / "base-clone").exists(),
