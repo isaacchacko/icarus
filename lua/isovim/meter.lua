@@ -1,4 +1,4 @@
--- The style meter in the sidebar's title: a rank for how many agents run on this host at once,
+-- The style meter in the sidebar's title: a rank for how many agents are working on this host at once,
 -- e.g. "S (9) - swarming". A rank-up flashes the letter; the top rank shimmers.
 local M = {}
 
@@ -46,7 +46,7 @@ end
 
 local count, rank, flash_until = 0, nil, 0
 
--- The live agents on this host, from each refresh. Only a climb flashes, not the first count.
+-- The agents working on this host, from each refresh. Only a climb flashes, not the first count.
 function M.update(live)
   local new = rank_of(live)
   if rank and new > rank then

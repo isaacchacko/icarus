@@ -1044,10 +1044,11 @@ local function collect()
     for _, agent in ipairs(store.agents(ws.id)) do
       agent.running = running[agent.id] ~= nil
       agent.script = scripts.of(agent)
-      if is_live(agent) then
+      agent.status = status.get(ws.id, agent.id)
+      -- The style meter counts agents at work, not every one with a process.
+      if is_live(agent) and agent.status == "working" then
         live = live + 1
       end
-      agent.status = status.get(ws.id, agent.id)
       ws.active = math.max(ws.active, running[agent.id] or 0)
       if not listed(agent) and not is_terminal(agent) then
         hidden = hidden + 1
