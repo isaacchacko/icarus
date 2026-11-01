@@ -27,6 +27,8 @@ The first `iso` installs its plugins (a LazyVim-based config in `starter/`, unde
 
 ## Use
 
+On start, with nothing to resume, the editing area shows the landing: what isovim is, what waits on you, the repos set up here, the keys that matter, and quick actions on single keys (`s` spawn, `p` pick a repo, `j` jump, `i` the Inbox, `t` a terminal, `m` send a repo to a host). `<leader>il` brings it back.
+
 In the sidebar, `s` spawns a worker in the repo under the cursor and opens its chat; type in the box under it and `Enter` sends. `Enter` on a repo opens its router, and on an Inbox row, that surface. `<leader>in` anywhere goes to the next thing that needs you. `?` lists every key.
 
 `iso help` lists the commands. For Tab completion and the `iso jump` shell function, add `source <(iso completion zsh)` to ~/.zshrc after compinit (bash: `eval "$(iso completion bash)"` in ~/.bashrc).
@@ -66,7 +68,7 @@ In the sidebar, `s` spawns a worker in the repo under the cursor and opens its c
 Plain nvim keys keep their meaning. File keys work on repos and agents, and everything isovim's own is under `<leader>i`.
 
 - `<leader><leader>` picks a repo; `<leader>ff` finds a file in it and `<leader>/` greps it, transcripts included; `<leader>,` shows its buffers; `<leader>fr` recent agents (`<leader>fR` recent files); `<leader>e` opens or closes the sidebar.
-- `<leader>i`: `n` the next thing that needs you; `i` / `h` / `I` the repo / host / other hosts' Inbox; `r` the router, `R` the nearest root, `H` the host root; `w` / `a` / `b` a worker / any agent / the previous one; `p` the previous repo (again flips back); `g` / `T` General / Terminals; `s` / `t` spawn / new terminal; `j` jump; `<` / `>` switch host; `q` the queue; `u` / `f` rewind / fork at the cursor; `x` root mode (not wired yet: use `iso rootmode`).
+- `<leader>i`: `n` the next thing that needs you; `i` / `h` / `I` the repo / host / other hosts' Inbox; `r` the router, `R` the nearest root, `H` the host root; `w` / `a` / `b` a worker / any agent / the previous one; `p` the previous repo (again flips back); `g` / `T` General / Terminals; `s` / `t` spawn / new terminal; `j` jump; `<` / `>` switch host; `q` the queue; `u` / `f` rewind / fork at the cursor; `l` the landing; `x` root mode (not wired yet: use `iso rootmode`).
 - In a chat: `]]` / `[[` your prompts, `]m` / `[m` any message, `za` folds, `i` / `a` / `o` / `Enter` to the input box, `<C-c>` cancels, `gf` opens a file. In the input box: `Enter` sends, `<S-CR>` (or `<C-j>`) a newline, `<Up>` / `<Down>` your earlier prompts while it's empty, `<Esc>` normal mode, `<C-k>` up to the chat.
 - In the sidebar: `Enter` / `Tab` open / collapse, `<` / `>` switch host, `<C-j>` / `<C-k>` between windows, `s` / `t` spawn / terminal, `r` / `d` / `R` rename / remove / restart, `m` send to a host (on a repo, all its agents; on an agent, that one), `o` / `y` / `c` its port / copy the PR URL / its changes, `u` measure CPU and RAM, `H` / `P` / `L` hidden agents / PRs / ports, `?` help.
 

@@ -498,6 +498,16 @@ local function waiting(list)
 end
 M.waiting = waiting
 
+-- The surfaces waiting on you: this host's, and the other hosts' (the top Inbox, as of the last refresh).
+---@return integer here, integer others
+function M.inbox_counts()
+  local here = 0
+  for _, list in pairs(local_surfaces() or {}) do
+    here = here + waiting(list)
+  end
+  return here, #M.queue
+end
+
 -- A group's collapse state, per host, kept through hot reloads (isovim.collapsed). Repos and their
 -- Inboxes start open; the host Inbox too.
 local function collapse_key(host, what, key)
@@ -1260,6 +1270,7 @@ local function refresh_now()
   keep = nil
   rows.list = collect()
   render(wins)
+  require("isovim.landing").refresh()
   local inbox_line = queued and line_of(rows.inbox, queued, { "host", "repo_key", "name" })
   if inbox_line then
     vim.api.nvim_win_set_cursor(wins.inbox, { inbox_line, 0 })
@@ -1420,6 +1431,7 @@ local FOOTER_KEYS = {
   { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json beside the chat; on cpu, ram, measure them" },
 }
 local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, terminals = TERMINAL_KEYS, footer = FOOTER_KEYS }
+M.COLUMN_KEYS, M.LIST_KEYS = COLUMN_KEYS, LIST_KEYS
 
 local function map_keys(buf, role)
   local function on_row(action)

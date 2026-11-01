@@ -7,24 +7,8 @@ return {
       { "<leader>fe", false },
       { "<leader>fE", false },
     },
-    opts = function(_, opts)
-      local preset = opts.dashboard.preset
-      preset.header = [[
-██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
-██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║
-██║███████╗██║   ██║██║   ██║██║██╔████╔██║
-██║╚════██║██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║
-██║███████║╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║
-╚═╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝]]
-      -- isovim's own first, with the keys the sidebar and <leader>i use.
-      local isovim = {
-        { icon = "\u{f07b} ", key = "s", desc = "Spawn", action = ":lua require('isovim.keys').spawn()" },
-        { icon = "\u{f0ec} ", key = "p", desc = "Pick Repo", action = ":lua require('isovim.keys').pick_repo()" },
-        { icon = "\u{f0f3} ", key = "n", desc = "What Needs You", action = ":lua require('isovim').next_needs_you()" },
-        { icon = "\u{f187} ", key = "u", desc = "Unarchive Workspace", action = ":lua require('isovim').unarchive()" },
-      }
-      preset.keys = vim.list_extend(isovim, preset.keys or {})
-    end,
+    -- isovim's landing (isovim.landing) opens in the editing area on start in its place.
+    opts = { dashboard = { enabled = false } },
   },
   {
     "lewis6991/gitsigns.nvim",

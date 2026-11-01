@@ -263,6 +263,14 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `<` / `>` | switch host |
 | `q` | the prompt queue |
 | `u` / `f` | rewind / fork at the cursor |
+| `l` | the landing |
+
+**The landing**
+- On start, when there is nothing to resume, the editing area shows the landing (`isovim.landing`):
+  what isovim is, the Inbox count, the repos in `~/.isovim/repos`, the keys that matter (their words
+  read from the key tables, as `?` does) and quick actions on single keys: `s` spawn in a repo picked,
+  `p` pick a repo, `j` jump, `i` the host's Inbox, `t` a terminal, `m` send a repo to a host, `?` help.
+  `<leader>il` brings it back. It belongs to no workspace, so no layout keeps it.
 
 **In the chat**
 - `]]` / `[[` jump between your prompts; `]m` / `[m` between any messages.

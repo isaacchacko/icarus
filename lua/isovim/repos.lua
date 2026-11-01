@@ -166,6 +166,19 @@ function M.dir(name)
   return ("%s/repos/%s"):format(store.root, name)
 end
 
+-- The repos set up on this host, ~/.isovim/repos/<owner>/<repo>, sorted.
+---@return string[]
+function M.list()
+  local root, names = store.root .. "/repos", {}
+  for path, kind in vim.fs.dir(root, { depth = 2 }) do
+    if kind == "directory" and path:find("/") then
+      names[#names + 1] = path
+    end
+  end
+  table.sort(names)
+  return names
+end
+
 -- The repo's config: {} when it has no file, nil when its file isn't a JSON object.
 function M.config(name)
   return read(M.dir(name) .. "/config.json")

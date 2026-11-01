@@ -150,7 +150,7 @@ try:
         " out['<leader>e'] = vim.fn.maparg('<leader>e', 'n', false, true).desc or '' return out"
     )
     others = {lhs: desc for lhs, desc in maps.items() if not desc.startswith("isovim: ")}
-    check(not others and len(maps) == 29, f"{len(maps)} keys, all isovim's", others)
+    check(not others and len(maps) == 30, f"{len(maps)} keys, all isovim's", others)
     group = lua("local ok, config = pcall(require, 'which-key.config') if not ok then return 'no which-key' end"
                 " for _, m in ipairs(config.mappings or {}) do if m.lhs == '<leader>i' or m[1] == '<leader>i' then return m.desc end end return ''")
     check(group == "isovim", "which-key group isovim under <leader>i", group)

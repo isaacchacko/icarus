@@ -430,6 +430,9 @@ M.GROUP = {
   { "f", function()
     require("isovim.acp.chat").fork_at_cursor()
   end, "fork the agent at the message under the cursor" },
+  { "l", function()
+    require("isovim.landing").open()
+  end, "the landing: what isovim is, its keys, quick actions" },
 }
 
 -- The <leader>a keys from before: {key, what it did, its replacement}.

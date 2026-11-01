@@ -917,7 +917,10 @@ function M.setup(opts)
   end
   if vim.fn.argc() == 0 then
     sidebar.open()
-    vim.schedule(M.resume)
+    vim.schedule(function()
+      M.resume()
+      require("isovim.landing").open_if_empty()
+    end)
   end
 end
 
