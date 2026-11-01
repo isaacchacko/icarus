@@ -196,13 +196,12 @@ one tab, isovim, in every scope.
 |---|---|---|
 | markdown | the router writes `name.md` with frontmatter (`name`, `icon`, `color`, `consumable`) | rendered markdown and an input box (it takes images, as the chat's does); the router rewrites it in place |
 | question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
-| file / folder | `iso router surface file\|folder <path>` | opens beside the chat |
+| file / folder | `iso router surface file\|folder <path>` | the file as a tab in the main window; the folder as the explorer's root |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
 | Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed, alone in its window with no input box; one that doesn't parse shown as it is and marked broken |
 
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
-- A question opens beside the chat (or in the main window) like a markdown surface, never as a
-  popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
+- A question opens as a tab in the main window like a markdown surface, never as a popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
   multi question they tick it (`<Space>` too) and Submit or `s` sends. One that takes your own words
   has the input box under it, whose `<CR>` sends them. The answer goes the way `iso answer`'s does,
   and the buffer shows it, as it does when the question is answered elsewhere; `q` closes it. An
@@ -236,7 +235,12 @@ shows a "root mode" marker beside its count.
 The tab bar holds the current scope (a repo, Root, General or Terminals): every agent of it, opened
 or not, named with its status mark as in the sidebar (`…` working, `●` unread, `●!` waiting on you),
 the router first and then the others by number; then the surfaces you opened, the landing and any
-files. An agent whose chat isn't open is a placeholder that attaches to nothing until it's shown;
+files. Nothing opens a split by itself: a surface, a pinned file, a file a chat names (`gf`),
+Settings, the changes view's pick, a picker's or the explorer's file opens as a tab in the window
+you're in (the main one from the sidebar; the chat's from its composer), replacing what it shows as
+`:b` does, and the chat's composer goes with the chat. A markdown surface's input box stays under
+its view, part of its tab, as the composer is part of the chat's. Splits are yours to make
+(`:vsplit`, `<C-w>v`); the terminal toggle is the one isovim key that opens one. An agent whose chat isn't open is a placeholder that attaches to nothing until it's shown;
 picking any agent's tab (or `<S-h>` / `<S-l>`, `[b` / `]b`) opens its chat there with its composer,
 as Enter on its sidebar row does. Agents spawned and removed come and go, and switching scope swaps
 the set. The empty buffer nvim starts with goes once nothing shows it.

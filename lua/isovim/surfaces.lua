@@ -883,13 +883,14 @@ end
 
 -- Opens a surface in the TUI: a markdown surface or the Task Board rendered with an input box
 -- under it, a question as a buffer that answers it (both isovim.surface_view), a broken one's
--- file, a file or a folder beside the chat; a chat in the chat window. Opening consumes what's
+-- file, a file as a tab in the main window, a folder as the explorer's root; a chat in the chat
+-- window. Opening consumes what's
 -- consumable.
 function M.open(entry)
   local isovim = require("isovim")
   local function reveal(path)
     if not pcall(isovim.reveal, entry.repo, path) then
-      vim.cmd.vsplit(vim.fn.fnameescape(path))
+      isovim.show(path)
     end
   end
   if entry.error then

@@ -1,5 +1,5 @@
--- A surface as you see it on Enter: rendered, not the raw file, in a buffer of its own beside the
--- chat (or in the main window).
+-- A surface as you see it on Enter: rendered, not the raw file, in a buffer of its own, a tab in the
+-- main window (isovim.show).
 --
 -- A markdown surface: a read-only markdown buffer (render-markdown draws it, as LazyVim's markdown
 -- extra sets it up), its body without its frontmatter, with an input box under it. The Task Board,
@@ -46,7 +46,6 @@ local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 ---@field answer? table question: its answer, once seen; kept after its asker removes it
 ---@field rows? table[] question: what each line of the buffer is, for <CR>
 ---@field opened? number question: when it was opened, epoch seconds
----@field split? boolean question: its window was made for it, so q closes it
 ---@field prev? integer question: the buffer its window showed before, which q brings back
 
 -- In _G, so a hot reload re-binds the views the old code opened.
@@ -439,21 +438,15 @@ local function step(view, dir)
   vim.api.nvim_win_set_cursor(0, { line, 3 })
 end
 
--- q: the view's windows go, or the window it took shows what it showed before.
+-- q: the window it took shows what it showed before (a chat comes back with its composer).
 local function close(view)
   close_input(view)
   local win = vim.fn.bufwinid(view.buf)
   if win == -1 then
     return
   end
-  local others = vim.tbl_filter(function(each)
-    return each ~= win and vim.api.nvim_win_get_config(each).relative == ""
-      and not vim.b[vim.api.nvim_win_get_buf(each)].isovim_sidebar
-  end, vim.api.nvim_tabpage_list_wins(0))
-  if view.prev and vim.api.nvim_buf_is_valid(view.prev) and not view.split then
+  if view.prev and vim.api.nvim_buf_is_valid(view.prev) and view.prev ~= view.buf then
     vim.api.nvim_win_set_buf(win, view.prev)
-  elseif #others > 0 then
-    vim.api.nvim_win_close(win, true)
   else
     vim.api.nvim_win_call(win, vim.cmd.enew)
   end
@@ -701,40 +694,6 @@ local function input_window(win, view)
   wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.statuscolumn = false, false, "no", "0", ""
 end
 
--- A window for the view in this tab: beside a chat when one shows (in the window beside it, else a
--- split to its right), else in the main window (the biggest that isn't the sidebar or a float).
----@return integer win, boolean split made for it, integer? prev the buffer the window showed
-local function place(buf)
-  local chat, others = nil, {}
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    local b = vim.api.nvim_win_get_buf(win)
-    if vim.api.nvim_win_get_config(win).relative == "" and not vim.b[b].isovim_sidebar
-      and vim.bo[b].filetype ~= "isovim_sidebar" and vim.bo[b].filetype ~= "isovim_composer" and not vim.b[b].isovim_surface_input then
-      if vim.bo[b].filetype == "isovim_acp" or vim.b[b].isovim_id then
-        chat = chat or win
-      else
-        others[#others + 1] = win
-      end
-    end
-  end
-  table.sort(others, function(a, b)
-    return vim.api.nvim_win_get_width(a) * vim.api.nvim_win_get_height(a) > vim.api.nvim_win_get_width(b) * vim.api.nvim_win_get_height(b)
-  end)
-  local win = others[1]
-  if chat and not win then
-    return vim.api.nvim_open_win(buf, true, { split = "right", win = chat }), true
-  elseif win then
-    local prev = vim.api.nvim_win_get_buf(win)
-    vim.api.nvim_win_set_buf(win, buf)
-    vim.api.nvim_set_current_win(win)
-    return win, false, prev
-  end
-  vim.cmd("vsplit")
-  win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(win, buf)
-  return win, true
-end
-
 -- The window showing the view: its options, and its input box under it (moved there if it shows
 -- anywhere else), whenever the view comes into a window, by Enter in an Inbox or by its tab.
 function M.dress(view, win)
@@ -755,7 +714,7 @@ function M.dress(view, win)
   end
 end
 
--- Opens the surface rendered, beside the chat, with its input box under it: a markdown surface's
+-- Opens the surface rendered, as a tab in the main window, with its input box under it: a markdown surface's
 -- always, a question's while it waits and takes your own words, the Task Board's never.
 ---@param entry isovim.Surface
 function M.open(entry)
@@ -769,7 +728,8 @@ function M.open(entry)
   end
   local win = vim.fn.bufwinid(view.buf)
   if win == -1 then
-    win, view.split, view.prev = place(view.buf)
+    -- As a tab in the main window, replacing what it showed (isovim.show).
+    win, view.prev = require("isovim").show(view.buf)
   else
     vim.api.nvim_set_current_win(win)
   end

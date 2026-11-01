@@ -1420,7 +1420,7 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, surface or PR; on a repo, its router; on a busy repo in the host Inbox, its Inbox; a pinned file beside the chat" },
+  { "<cr>", "isovim_open", "open the agent, surface or PR; on a repo, its router; on a busy repo in the host Inbox, its Inbox; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo or Inbox (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "t", "isovim_terminal", "new terminal (it opens in ~)" },
@@ -1461,7 +1461,7 @@ local TERMINAL_KEYS = {
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
 }
 local FOOTER_KEYS = {
-  { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json beside the chat; on cpu, ram, measure them" },
+  { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json as a tab; on cpu, ram, measure them" },
 }
 local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, terminals = TERMINAL_KEYS, footer = FOOTER_KEYS }
 M.COLUMN_KEYS, M.LIST_KEYS = COLUMN_KEYS, LIST_KEYS
@@ -1900,7 +1900,7 @@ M.actions = {
   end,
   isovim_open_footer = function(row)
     if row and row.kind == "settings" then
-      isovim.open_beside(isovim.main_win(), require("isovim.config").path)
+      isovim.show(require("isovim.config").path)
     elseif row and row.kind == "usage" then
       measure()
     end

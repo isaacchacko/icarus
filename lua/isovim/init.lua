@@ -243,36 +243,41 @@ local CHAT_KEYS = {
   { "<C-l>", [[<C-\><C-n><C-w>l]], "go to the right window" },
 }
 
--- A file opens beside the chat rather than in place of it: in the other editing split, or a new
--- one on the right.
-local function open_beside(chat_win, path, lnum)
-  local chat = vim.api.nvim_win_get_buf(chat_win)
-  local target
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    -- Never a float (a toast, a picker): what's opened would go with it.
-    local float = vim.api.nvim_win_get_config(win).relative ~= ""
-    if win ~= chat_win and not float and not is_sidebar(win) and vim.api.nvim_win_get_buf(win) ~= chat then
-      target = target or win
-    end
+-- What isovim opens (a pinned file, a file a chat names, a surface, Settings) opens as a tab, never
+-- a split: in the editing window you're in (the main one from the sidebar or a float), replacing
+-- what it shows as :b does; from a chat's composer or a surface's input box, in its chat's or view's
+-- window above it. The chat stays a tab away (isovim.tabs). Splits are yours to make.
+---@param path string|integer a file, or a buffer to show as it is (a rendered surface)
+---@return integer win, integer prev the buffer the window showed
+local function show(path, lnum)
+  local win = vim.api.nvim_get_current_win()
+  if is_sidebar(win) then
+    win = main_win()
+  end
+  local here = vim.api.nvim_win_get_buf(win)
+  local chat = vim.b[here].isovim_composer and package.loaded["isovim.acp.chat"] and require("isovim.acp.chat").of_buf(here)
+  local view = vim.b[here].isovim_surface_input and package.loaded["isovim.surface_view"]
+    and require("isovim.surface_view").views[vim.b[here].isovim_surface_input]
+  local above = chat and vim.fn.bufwinid(chat.buf) or view and vim.fn.bufwinid(view.buf) or -1
+  if above ~= -1 then
+    win = above
   end
   -- A buffer number is shown as it is (a rendered surface, isovim.surface_view); a path is listed.
   local file_buf = type(path) == "number" and path or vim.fn.bufadd(path)
   if type(path) ~= "number" then
     vim.bo[file_buf].buflisted = true
   end
-  if target then
-    vim.api.nvim_win_set_buf(target, file_buf)
-    vim.api.nvim_set_current_win(target)
-  else
-    vim.api.nvim_open_win(file_buf, true, { split = "right", win = chat_win })
-  end
+  local prev = vim.api.nvim_win_get_buf(win)
+  vim.api.nvim_win_set_buf(win, file_buf)
+  vim.api.nvim_set_current_win(win)
   if lnum then
     pcall(vim.api.nvim_win_set_cursor, 0, { tonumber(lnum), 0 })
     vim.cmd("normal! zz")
   end
+  return win, prev
 end
 
--- A file the agent mentioned (src/x.py, src/x.py:12, src/x.py:12:5), beside its chat.
+-- A file the agent mentioned (src/x.py, src/x.py:12, src/x.py:12:5), as a tab.
 local function open_mentioned()
   local file = vim.fn.expand("<cfile>")
   local line = vim.api.nvim_get_current_line()
@@ -282,16 +287,16 @@ local function open_mentioned()
   if vim.fn.filereadable(path) == 0 then
     return Snacks.notify.warn("No file " .. file)
   end
-  open_beside(vim.api.nvim_get_current_win(), path, lnum)
+  show(path, lnum)
 end
 
 -- Normal mode in a chat; `?` lists them too.
 local CHAT_NORMAL_KEYS = {
-  { "gf", open_mentioned, "open file(:line) beside the chat" },
+  { "gf", open_mentioned, "open file(:line) as a tab" },
   { "gF", open_mentioned, "same as gf" },
   { "<C-h>", focus_sidebar, "go to the sidebar" },
 }
-M.chat_keys, M.chat_normal_keys, M.open_beside = CHAT_KEYS, CHAT_NORMAL_KEYS, open_beside
+M.chat_keys, M.chat_normal_keys, M.show = CHAT_KEYS, CHAT_NORMAL_KEYS, show
 
 local function map_chat_keys(buf)
   for _, key in ipairs(CHAT_NORMAL_KEYS) do
@@ -557,17 +562,14 @@ local function drop_exited()
   return dropped
 end
 
--- A pinned file opens beside the workspace's chat and the sidebar stays put; a pinned folder
--- becomes the explorer's root.
+-- A pinned file opens as a tab in the main window and the sidebar stays put; a pinned folder becomes
+-- the explorer's root.
 function M.reveal(ws, path)
   select(ws)
   if type(path) == "string" and vim.fn.isdirectory(path) == 1 then
     return require("isovim.sidebar").show_explorer({ cwd = path })
   end
-  local chat_win = vim.tbl_filter(function(win)
-    return not is_sidebar(win) and vim.b[vim.api.nvim_win_get_buf(win)].isovim_id == ws
-  end, vim.api.nvim_tabpage_list_wins(0))[1]
-  open_beside(chat_win or main_win(), path)
+  show(path)
 end
 
 ---@param opts? {reload?: boolean}

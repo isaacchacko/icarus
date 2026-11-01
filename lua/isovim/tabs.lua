@@ -10,6 +10,11 @@
 --
 -- Order: the router first, then the scope's other agents by number, then surfaces (isovim.surface_view),
 -- the landing, and anything else (files) as bufferline had it.
+--
+-- Nothing opens a split by itself: a chat's window, a surface's or a placeholder's is where Snacks
+-- pickers open what they pick (b:snacks_main; the changes view, the explorer, <leader>ff), replacing
+-- it as :b does, and a composer whose chat another buffer replaced closes; picking the chat's tab
+-- brings both back.
 local store = require("isovim.store")
 
 local M = {}
@@ -125,14 +130,23 @@ local function open_in(win, ws, agent)
   end
 end
 
+-- Where Snacks pickers open a file: a chat's window, a surface's or a placeholder's, not a split.
+local function main_buffer(buf)
+  if (M.agent_of(buf) or vim.b[buf].isovim_surface) and not vim.b[buf].snacks_main then
+    vim.b[buf].snacks_main = true
+  end
+end
+
 vim.api.nvim_create_autocmd("BufWinEnter", {
   group = GROUP,
   callback = function(ev)
+    main_buffer(ev.buf)
     local placeholder = vim.b[ev.buf].isovim_placeholder
     -- An ACP chat entering a window without its composer: picked from the tab bar.
     local acp = not placeholder and vim.b[ev.buf].isovim_acp
     if not (placeholder or acp) or opening then
-      return
+      -- Anything else in a chat's window: its composer goes with it.
+      return vim.schedule(close_stray_composers)
     end
     local win = vim.api.nvim_get_current_win()
     vim.schedule(function()
@@ -171,6 +185,7 @@ local function placeholder(ws, agent, spec, scope_name)
   pcall(vim.api.nvim_buf_set_name, buf, name)
   vim.bo[buf].modifiable = false
   vim.b[buf].isovim_placeholder = ws .. "/" .. agent
+  vim.b[buf].snacks_main = true
   vim.b[buf].isovim_scope = scope_name
   vim.b[buf].isovim_agent_name, vim.b[buf].isovim_agent_kind = spec.name or agent, spec.kind or "claude"
   return buf
@@ -189,6 +204,7 @@ function M.sync(scope_name)
       placeholders[vim.b[buf].isovim_placeholder] = buf
     else
       local ws, agent = M.agent_of(buf)
+      main_buffer(buf)
       if ws and vim.api.nvim_buf_is_loaded(buf) then
         chats[ws .. "/" .. agent] = true
       elseif blank(buf) and vim.bo[buf].buflisted and #vim.fn.win_findbuf(buf) == 0 then

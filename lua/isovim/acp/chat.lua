@@ -1239,7 +1239,7 @@ local function cancel(chat)
   end
 end
 
--- The file named on the cursor's line (path, path:12), beside the chat.
+-- The file named on the cursor's line (path, path:12), as a tab in the chat's window (isovim.show).
 local function open_file(chat)
   local file = vim.fn.expand("<cfile>")
   local line = vim.api.nvim_get_current_line()
@@ -1250,12 +1250,7 @@ local function open_file(chat)
   if vim.fn.filereadable(path) == 0 then
     return vim.notify("isovim: no file " .. file, vim.log.levels.WARN)
   end
-  local buf = vim.fn.bufadd(path)
-  vim.bo[buf].buflisted = true
-  vim.api.nvim_open_win(buf, true, { split = "right", win = vim.api.nvim_get_current_win() })
-  if lnum then
-    pcall(vim.api.nvim_win_set_cursor, 0, { tonumber(lnum), 0 })
-  end
+  require("isovim").show(path, lnum)
 end
 
 local function scratch(name)
@@ -1547,7 +1542,7 @@ local function map_chat(chat)
   end
   map("gf", function()
     open_file(chat)
-  end, "open the file on the line beside the chat")
+  end, "open the file on the line as a tab")
   map("<C-j>", function()
     local win = queue.window(chat)
     if win then
