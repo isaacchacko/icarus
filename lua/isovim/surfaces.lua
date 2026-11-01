@@ -1,5 +1,5 @@
--- Surfaces: the files in a repo's iso/ (~/iso/<owner>/<repo>/iso/, _/iso/ for no repo) that show the
--- user something, written only by the repo's router. Only the top level of iso/ counts, so
+-- Surfaces: the files in a repo's iso/ (~/iso/<owner>/<repo>/iso/, or a pseudo-repo's: root/iso/ for
+-- the host root, general/iso/ for no repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
 -- agents/, journal/ and transcripts/ never do:
 --   tasks.md        the Task Board: headings todo, doing, waiting, blocked, done (any level, any
 --                   case), one task a line under them ("- ", "* " and "[ ] " are dropped)
@@ -65,8 +65,30 @@ end
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
 
+-- The pseudo-repos, keys beside owner/repo: root (the host root's surfaces) and general (no repo's).
+-- "_" is general too: it's the key store gives agents in no repo, so it's taken and made general.
+M.pseudo = { root = true, general = true }
+local ALIAS = { _ = "general" }
+
+local function canon(repo)
+  return ALIAS[repo] or repo
+end
+
+-- The surface key for a repo key (owner/repo, root, general or _); nil when it's none of those.
+---@return string?
+function M.key(key)
+  key = canon(key)
+  if M.pseudo[key] or (key ~= "_" and store.valid_key(key)) then
+    return key
+  end
+end
+
 -- A repo's iso/.
 function M.dir(repo)
+  repo = canon(repo)
+  if M.pseudo[repo] then
+    return store.work .. "/" .. repo .. "/iso"
+  end
   return store.path(repo)
 end
 
@@ -98,12 +120,20 @@ local function write_json(path, value)
   write_file(path, vim.json.encode(value) .. "\n")
 end
 
--- The repo keys with an iso/ under the work root; nothing below one is looked in.
+-- The repo keys with an iso/ under the work root, the pseudo-repos among them; nothing below one is
+-- looked in. _/ is store's (its agents' records), not general's.
 ---@return string[]
 function M.repos()
   local found = {}
+  for name in pairs(M.pseudo) do
+    if vim.fn.isdirectory(M.dir(name)) == 1 then
+      found[#found + 1] = name
+    end
+  end
   local function walk(dir, key, depth)
-    if key and store.valid_key(key) and vim.fn.isdirectory(dir .. "/iso") == 1 then
+    if depth == 1 and (M.pseudo[key] or key == "_") then
+      return
+    elseif key and store.valid_key(key) and vim.fn.isdirectory(dir .. "/iso") == 1 then
       found[#found + 1] = key
       return
     end
@@ -370,7 +400,7 @@ local function parse_markdown(entry, text)
 end
 
 local function state_file(repo)
-  return store.run_dir(repo) .. "/surfaces.json"
+  return store.run_dir(canon(repo)) .. "/surfaces.json"
 end
 
 local function read_state(repo)
@@ -418,6 +448,7 @@ end
 -- A repo's surfaces, parsed, by name; nothing is written.
 ---@return isovim.Surface[]
 function M.read(repo, state)
+  repo = canon(repo)
   state = state or read_state(repo)
   local dir = M.dir(repo)
   local bases, taken = {}, {}
@@ -440,6 +471,7 @@ end
 -- One surface by name; nil when it has none.
 ---@return isovim.Surface?
 function M.get(repo, name)
+  repo = canon(repo)
   return vim.iter(M.read(repo)):find(function(entry)
     return entry.name == name
   end)
@@ -447,7 +479,7 @@ end
 
 -- Runs fn under the repo's surface lock, a dir only one process can make.
 local function locked(repo, fn)
-  local run = store.run_dir(repo)
+  local run = store.run_dir(canon(repo))
   vim.fn.mkdir(run, "p")
   local lock = run .. "/surfaces.lock"
   local deadline = vim.uv.hrtime() + 5e9
@@ -505,6 +537,7 @@ end
 ---@param quiet? table<string, true> base file names
 ---@return isovim.Surface[]
 function M.scan(repo, quiet)
+  repo = canon(repo)
   if vim.fn.isdirectory(M.dir(repo)) == 0 then
     return {}
   end
@@ -592,6 +625,7 @@ end
 ---@return isovim.Surface? entry, string how_or_err "asked", "reattached", "reworded", "kept" (answered
 --- before it was asked differently), or what's wrong
 function M.ask(repo, spec, name)
+  repo = canon(repo)
   local q, err, asked_name = M.validate_question(spec)
   if not q then
     return nil, err
@@ -625,6 +659,7 @@ end
 ---@param kind "file"|"folder"
 ---@return isovim.Surface? entry, string? err
 function M.show(repo, kind, path, name)
+  repo = canon(repo)
   path = vim.fs.normalize(vim.fn.fnamemodify(path, ":p")):gsub("(.)/$", "%1")
   name = name or vim.fs.basename(path):gsub("[^%w._-]+", "-")
   local current = M.get(repo, name)
@@ -642,6 +677,7 @@ end
 -- Puts an agent's chat (its address) in the repo's Inbox; again brings it back if it was opened.
 ---@return isovim.Surface? entry, string? err
 function M.chat(repo, address, name)
+  repo = canon(repo)
   local ws, id = address:match("^(.*)/([^/]+)$")
   name = name or ("chat-" .. (ws == repo and id or address):gsub("[^%w._-]+", "-"))
   local current = M.get(repo, name)
@@ -772,6 +808,7 @@ end
 -- Takes an answered question's answer and removes it; nil while it's pending.
 ---@return table? answer
 function M.collect(repo, name)
+  repo = canon(repo)
   local entry = M.get(repo, name)
   if not (entry and entry.type == "question" and entry.answer) then
     return nil
@@ -817,6 +854,7 @@ M.cache = {} ---@type table<string, isovim.Surface[]> per repo, while watching
 -- A repo's surfaces: the watcher's while M.watch runs, else scanned now.
 ---@return isovim.Surface[]
 function M.list(repo)
+  repo = canon(repo)
   return M.cache[repo] or M.scan(repo)
 end
 

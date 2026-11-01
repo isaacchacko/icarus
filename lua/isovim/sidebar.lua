@@ -441,7 +441,11 @@ end
 M.surfaces = surfaces
 
 -- The surface keys a host's groups are under: a repo's key, "_" for general, "root" for the root.
+-- isovim.surfaces calls general "general".
 local GENERAL_KEY, ROOT_KEY = "_", "root"
+local function group_key(surface_key)
+  return surface_key == "general" and GENERAL_KEY or surface_key
+end
 
 -- This host's surfaces by key, each list in the module's order.
 ---@return table<string, table[]>?
@@ -457,7 +461,7 @@ local function local_surfaces()
   for _, key in ipairs(ok and keys or {}) do
     local listed, list = pcall(mod.list, key)
     if listed and type(list) == "table" and #list > 0 then
-      by_key[key] = list
+      by_key[group_key(key)] = list
     end
   end
   return by_key
@@ -474,8 +478,9 @@ local function remote_surfaces(name, ssh)
   local by_key = {}
   for _, entry in ipairs(list) do
     if type(entry) == "table" and type(entry.repo) == "string" then
-      by_key[entry.repo] = by_key[entry.repo] or {}
-      table.insert(by_key[entry.repo], entry)
+      local key = group_key(entry.repo)
+      by_key[key] = by_key[key] or {}
+      table.insert(by_key[key], entry)
     end
   end
   return by_key
@@ -605,7 +610,7 @@ end
 -- Rows for the surfaces of an Inbox, one format per type (KINDS.surface).
 local function surface_rows(items, base, list, depth)
   for _, entry in ipairs(list or {}) do
-    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = entry.repo, name = entry.name, depth = depth })
+    items[#items + 1] = vim.tbl_extend("force", base, { kind = "surface", surface = entry, repo_key = group_key(entry.repo), name = entry.name, depth = depth })
   end
 end
 

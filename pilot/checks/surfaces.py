@@ -74,6 +74,22 @@ def complete(*words):
     return [line.split("\t", 1)[0] for line in lines[:-1] if line]
 
 
+counter = [0]
+
+
+def inside(address, *cmds, timeout=60):
+    """Runs each iso command from inside the agent's pane, as its tool would; returns [(rc, out, err)]."""
+    counter[0] += 1
+    d = iso.tmp / f"in{counter[0]}"
+    d.mkdir()
+    lines = [f"{BIN} {cmd} > {d}/{i}.out 2> {d}/{i}.err; echo $? > {d}/{i}.rc" for i, cmd in enumerate(cmds)]
+    (d / "s.sh").write_text("\n".join(lines + [f"touch {d}/done"]) + "\n")
+    rc, _, err = run("send", address, f"run bash {d}/s.sh")
+    assert rc == 0, err
+    iso.wait(lambda: (d / "done").exists(), f"commands in {address}", timeout)
+    return [(int((d / f"{i}.rc").read_text()), (d / f"{i}.out").read_text(), (d / f"{i}.err").read_text()) for i in range(len(cmds))]
+
+
 SHIP = json.dumps({"question": "Ship it?", "options": [{"label": "yes"}, {"label": "no", "description": "not yet"}]})
 PICK = json.dumps({"question": "Which ones?", "options": [{"label": "red"}, {"label": "green"}, {"label": "blue"}],
                    "multi": True, "other": True})
@@ -242,6 +258,40 @@ try:
     rc, out = asker.finish()
     assert rc == 0 and out == "no", (out, asker.err)
     print("ok   the TUI's watcher, list, open, consume and answer")
+
+    # The pseudo-repos: the host root's surfaces go in root/iso/, a repo-less agent's in general/iso/
+    # (_ is general's other name), each with its own events; iso answer finds root/<name>.
+    root_iso, general_iso = iso.tmp / "work" / "root" / "iso", iso.tmp / "work" / "general" / "iso"
+    boss = iso.cli("new", "boss")
+    iso.cli("root", f"{boss}/main")
+    for address in (f"{boss}/main", f"{ws}/main"):
+        iso.cli("open", address)
+    root_note, general_note = iso.tmp / "root-note.txt", iso.tmp / "general-note.txt"
+    root_note.write_text("for the root\n")
+    general_note.write_text("for no repo\n")
+    got = inside(f"{boss}/main", f"router surface file {root_note}")
+    assert got[0][0] == 0 and got[0][1].strip() == str(root_iso / "root-note.txt.surface"), got
+    got = inside(f"{ws}/main", f"router surface file {general_note}")
+    assert got[0][0] == 0 and got[0][1].strip() == str(general_iso / "general-note.txt.surface"), got
+    assert not (iso.tmp / "work" / "_" / "iso" / "general-note.txt.surface").exists()
+    rc, _, err = run("router", "surface", "folder", str(iso.tmp / "notes"), "--repo", "_")
+    assert rc == 0 and (general_iso / "notes.surface").exists(), err
+    rc, out, err = run("__surfaces")
+    assert rc == 0, err
+    by_repo = {(e["repo"], e["name"]) for e in json.loads(out)}
+    assert {("root", "root-note.txt"), ("general", "general-note.txt"), ("general", "notes")} <= by_repo, by_repo
+    asker = subprocess.Popen([BIN, "router", "surface", "question", SHIP, "--repo", "root"], env=iso.env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    iso.wait((root_iso / "ship-it.surface").exists, "the root's question")
+    assert "root/ship-it" in complete("answer", ""), complete("answer", "")
+    rc, out, _ = run("answer", "root/ship-it", "no")
+    assert rc == 0 and out == "no", out
+    assert asker.communicate(timeout=15)[0].strip() == "no"
+    iso.wait(lambda: iso.lua("return vim.tbl_map(function(e) return e.name end, require('isovim.surfaces').list('root'))") == ["root-note.txt"],
+             "the TUI's watcher to list the root's surfaces")
+    assert {"surface.root.root-note%2Etxt.created", "surface.root.ship-it.answered", "surface.general.general-note%2Etxt.created"} \
+        <= {row["topic"] for row in events("surface.")}, [row["topic"] for row in events("surface.")]
+    print("ok   the root's surfaces go in root/iso/, a repo-less agent's in general/iso/")
 
     expected = {f"{TOPIC}.{n}.{w}" for n, w in (("plan%2Etxt", "created"), ("plan%2Etxt", "changed"), ("status", "created"),
                                                  ("tasks", "changed"), ("bad", "removed"), (chat_name, "removed"))}

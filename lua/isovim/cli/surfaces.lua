@@ -15,26 +15,32 @@ local function note(text)
   io.stderr:write("iso: " .. text .. "\n")
 end
 
--- A repo key from what was typed: owner/repo (or _), or a dir in the repo.
+-- A repo key from what was typed: owner/repo, a pseudo-repo (root, general, or _ for general), or a
+-- dir in the repo.
 local function repo_key(text)
   local dir = vim.fs.normalize(text)
-  if vim.fn.isdirectory(dir) == 1 then
+  if surfaces.pseudo[text] or text == "_" then
+    return surfaces.key(text)
+  elseif vim.fn.isdirectory(dir) == 1 then
     return require("isovim.repos").of(vim.uv.fs_realpath(dir) or dir) or fail(text .. " isn't in a repo with an origin")
   elseif store.valid_key(text) then
     return text:lower()
   end
-  fail(("%s is neither a repo (owner/repo, or _) nor a dir in one"):format(text))
+  fail(("%s is neither a repo (owner/repo, root or general) nor a dir in one"):format(text))
 end
 
--- The repo whose Inbox a surface goes in: the calling agent's (a new-layout agent's key, a
--- workspace agent's checkout's origin), else --repo, else the cwd's.
+-- The repo whose Inbox a surface goes in: the calling agent's (root for the host root, a new-layout
+-- agent's key, a workspace agent's checkout's origin, general for no repo), else --repo, else the
+-- cwd's.
 local function my_repo(given)
-  local ws = require("isovim.root").caller()
+  local ws, agent = require("isovim.root").caller()
   local mine
-  if ws and store.v2(ws) then
-    mine = ws
+  if ws and require("isovim.scope").is_root(ws, vim.tbl_extend("force", store.agent(ws, agent) or {}, { id = agent })) then
+    mine = "root"
+  elseif ws and store.v2(ws) then
+    mine = surfaces.key(ws)
   elseif ws then
-    mine = require("isovim.repos").of(store.dir(ws)) or "_"
+    mine = require("isovim.repos").of(store.dir(ws)) or "general"
   end
   local named = given and repo_key(given)
   if mine and named and named ~= mine then
@@ -160,7 +166,7 @@ end
 local function find_question(query)
   local repo, name = query:match("^(.*)/([^/]+)$")
   local found = {}
-  for _, key in ipairs(repo and { repo:lower() } or surfaces.repos()) do
+  for _, key in ipairs(repo and { surfaces.key(repo:lower()) or repo:lower() } or surfaces.repos()) do
     for _, entry in ipairs(surfaces.scan(key)) do
       if entry.type == "question" and entry.name == (name or query) then
         found[#found + 1] = entry

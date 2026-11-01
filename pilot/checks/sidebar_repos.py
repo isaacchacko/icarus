@@ -168,15 +168,21 @@ try:
     api_iso = work / "acme" / "api" / "iso"
     api_iso.mkdir(parents=True, exist_ok=True)
     (api_iso / "deploy.md").write_text("---\nname: Deploy notes\nconsumable: true\n---\nGo.\n")
-    general_iso = work / "_" / "iso"
+    general_iso = work / "general" / "iso"
     general_iso.mkdir(parents=True, exist_ok=True)
     (general_iso / "readme.surface").write_text(json.dumps({"type": "file", "path": str(src / "api" / "README.md")}))
+    # The root's question, in the root pseudo-repo's iso/: the host Inbox lists it.
+    root_iso = work / "root" / "iso"
+    root_iso.mkdir(parents=True, exist_ok=True)
+    (root_iso / "spend.surface").write_text(json.dumps({"type": "question", "question": "Approve the spend?",
+                                                        "options": [{"label": "yes"}, {"label": "no"}], "created": int(time.time())}))
     lua("require('isovim.sidebar').refresh()")
 
     # The list: host Inbox, root pinned first, the repos by name, general last.
     def ready():
         ls = lines()
-        return any("Ship the tab fix?" in l for l in ls) and any("tabfix" in l for l in ls) and any("general" in l for l in ls) and ls
+        return (any("Ship the tab fix?" in l for l in ls) and any("tabfix" in l for l in ls) and any("general" in l for l in ls)
+                and any("Approve the spend?" in l for l in ls) and any("readme" in l.lower() for l in ls) and ls)
     ls = iso.wait(ready, "the grouped list", timeout=20)
     print("\n".join(ls))
     kinds = lua("local s = require('isovim.sidebar') return s.debug_kinds()")
@@ -216,6 +222,9 @@ try:
     check("root mode" in host_inbox[0] and any("web" in l and "2" in l for l in host_inbox[1:])
           and any("api" in l for l in host_inbox[1:]) and not any("general" in l for l in host_inbox[1:]),
           "the host Inbox: root mode marker, a row per busy repo (general's file surface doesn't wait on you)", host_inbox)
+    check(any("Approve the spend?" in l for l in host_inbox[1:]) and "4" in host_inbox[0],
+          "the host Inbox lists the root's surfaces from root/iso/ and counts them", host_inbox)
+    check("readme" in "\n".join(ls[general:]).lower(), "general's Inbox lists its surface from general/iso/", ls[general:])
     # The meter counts the live agents, the ACP router among them.
     live = iso.wait(lambda: (n := lua("return tonumber(require('isovim.meter').chunks()[2][1]:match('%d+'))")) and n >= 1 and n, "the meter")
     check(live >= 1 and lua("return require('isovim.sidebar').is_live({running = true, acp = true, kind = 'x'})"),
@@ -263,8 +272,8 @@ try:
     leader("i", "h")
     iso.wait(lambda: lua("return vim.b.isovim_sidebar") == "list", "the list focused")
     line = lua("return vim.api.nvim_get_current_line()")
-    check(lua("return vim.api.nvim_win_get_cursor(0)[1]") > 1 and ("web" in line or "api" in line or "general" in line),
-          "<leader>ih: the host Inbox's first busy repo", line)
+    check(lua("return vim.api.nvim_win_get_cursor(0)[1]") > 1 and "Approve the spend?" in line,
+          "<leader>ih: the host Inbox's first waiting surface, the root's question", line)
 
     # Collapsing persists through a hot reload.
     i = put_cursor("web", next(i for i, k in enumerate(lua("return require('isovim.sidebar').debug_kinds()")) if k == "repo"))
