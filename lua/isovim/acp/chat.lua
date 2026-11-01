@@ -1633,8 +1633,9 @@ local function chat_window(win)
   wo.wrap, wo.linebreak, wo.breakindent, wo.breakindentopt = true, true, true, "list:-1"
   wo.number, wo.relativenumber, wo.signcolumn, wo.statuscolumn, wo.foldcolumn = false, false, "no", "", "0"
   wo.list, wo.spell, wo.colorcolumn, wo.foldenable = false, false, "", false
-  -- Scrolled by screen rows, so a line longer than the window still shows its end.
-  wo.smoothscroll = true
+  -- Scrolled by screen rows, so a line longer than the window still shows its end. No scrolloff:
+  -- only you and following move the view, never nvim chasing the cursor to keep rows around it.
+  wo.smoothscroll, wo.scrolloff = true, 0
   wo.fillchars = "eob: "
   -- Markdown's marks (`code`, **bold**) hidden, as Claude draws them, on the cursor's line too.
   wo.conceallevel, wo.concealcursor = 2, "nc"
