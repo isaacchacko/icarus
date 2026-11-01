@@ -2,7 +2,8 @@
 -- the host root, general/iso/ for no repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
 -- agents/, journal/ and transcripts/ never do:
 --   tasks.md        the Task Board: headings todo, doing, waiting, blocked, done (any level, any
---                   case), one task a line under them ("- ", "* " and "[ ] " are dropped)
+--                   case; the first word names it, so "Doing (2)" is doing), one task a line under
+--                   them ("- ", "* " and "[ ] " are dropped)
 --   <name>.md       a markdown surface, every other *.md. Optional YAML frontmatter, plain
 --                   key: value lines between --- lines: name (the row's title; else the file's),
 --                   icon (up to two cells), color (a palette name or #rrggbb), consumable (true:
@@ -234,7 +235,8 @@ local function task_board(body, start)
     local title = line:match("^#+%s+(.-)%s*#*%s*$")
     if title then
       heading = title
-      section = STATUS[title:lower()] and title:lower() or false
+      local word = title:lower():match("%a+")
+      section = STATUS[word] and word or false
     elseif not line:match("^%s*$") then
       if section == nil then
         return nil, ("line %d comes before any heading; tasks go under %s"):format(n, table.concat(M.statuses, ", "))

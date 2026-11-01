@@ -1,12 +1,16 @@
 -- A surface as you see it on Enter: rendered, not the raw file, in a buffer of its own beside the
 -- chat (or in the main window).
 --
--- A markdown surface or the Task Board: a read-only markdown buffer (render-markdown draws it, as
--- LazyVim's markdown extra sets it up), a markdown surface's body without its frontmatter, the
--- Task Board as a list under its five headings, with an input box under it. The input box is a
--- buffer like the chat's composer; <CR> sends what's in it to the repo's router (the host root for
--- the root pseudo-repo) with iso send, so it goes into the router's queue through its supervisor, as
--- any prompt of yours does, and starts the router if it isn't running.
+-- A markdown surface or the Task Board, with an input box under it. A markdown surface is a
+-- read-only markdown buffer (render-markdown draws it, as LazyVim's markdown extra sets it up), its
+-- body without its frontmatter. The Task Board is drawn here instead, as markdown would draw the
+-- router's words as markup (<C-j> as an HTML tag) and every task as a bullet and an empty checkbox
+-- whatever its status: the sections that hold tasks, each task after its status's glyph (the
+-- sidebar's), wrapped lines hung under its text, `code` drawn as code and an owner at the end like
+-- (a1) dimmed. The input box is a buffer like the chat's composer, shown under the view and closed
+-- with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
+-- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
+-- does, and starts the router if it isn't running.
 --
 -- A question: who asked and what, its options numbered as the chat's question box draws them
 -- (isovim.acp.look's palette), answered in the buffer: <CR> on an option or its number picks it, or
@@ -31,6 +35,7 @@ local NS = vim.api.nvim_create_namespace("isovim_surface_view")
 ---@field kind "markdown"|"question"
 ---@field buf integer the rendered view
 ---@field input integer the input box
+---@field under? integer the window the input box was opened under
 ---@field entry? isovim.Surface question: as last drawn
 ---@field chosen? string[] question: the options ticked so far (multi)
 ---@field answer? table question: its answer, once seen; kept after its asker removes it
@@ -77,31 +82,94 @@ function M.reader(repo)
   return store.router(repo)
 end
 
--- The lines the view shows for a surface: a markdown surface's body, the Task Board as a list.
+-- A task's text drawn: `code` as code with its backticks hidden, an owner at the end, like (a1) or
+-- (a1, owner/repo/a3), dimmed.
+local function task_marks(marks, row, col, text, done)
+  if done then
+    marks[#marks + 1] = { row, col, col + #text, "Comment" }
+  end
+  local from = 1
+  while true do
+    local open, close = text:find("`[^`]+`", from)
+    if not open then
+      break
+    end
+    marks[#marks + 1] = { row, col + open - 1, col + open, conceal = "" }
+    marks[#marks + 1] = { row, col + open, col + close - 1, "@markup.raw" }
+    marks[#marks + 1] = { row, col + close - 1, col + close, conceal = "" }
+    from = close + 1
+  end
+  local owner = text:match("%s(%([^()]+%))$")
+  if owner and vim.iter(vim.split(owner:sub(2, -2), ",")):all(function(part)
+    return vim.trim(part):match("^[%w._:/-]*a%d+$") ~= nil
+  end) then
+    marks[#marks + 1] = { row, col + #text - #owner, col + #text, "Comment" }
+  end
+end
+
+-- The Task Board's lines and their highlights ({row, col, end_col, hl} or with conceal): its title,
+-- then each status that holds tasks, in the file's order of statuses. A board that doesn't parse
+-- says why over the file as it is.
+local function board(entry)
+  local lines, marks = {}, {}
+  local function add(text, hl)
+    lines[#lines + 1] = text
+    if hl then
+      marks[#marks + 1] = { #lines - 1, 0, #text, hl }
+    end
+  end
+  add("Task Board", "Title")
+  if entry.repo ~= "general" then
+    local repo = "  " .. entry.repo
+    marks[#marks + 1] = { 0, #lines[1], #lines[1] + #repo, "Comment" }
+    lines[1] = lines[1] .. repo
+  end
+  if entry.error then
+    add("")
+    add(("\u{f071} tasks.md doesn't parse: %s"):format(entry.error), "DiagnosticWarn")
+    add("")
+    vim.list_extend(lines, vim.split(vim.trim(entry.body or ""), "\n", { plain = true }))
+    return lines, marks
+  end
+  local glyphs = require("isovim.sidebar").task_glyphs
+  for _, status in ipairs(surfaces.statuses) do
+    local under = vim.tbl_filter(function(task)
+      return task.status == status
+    end, entry.tasks or {})
+    if #under > 0 then
+      add("")
+      local name = status:sub(1, 1):upper() .. status:sub(2)
+      add(("%s  %d"):format(name, #under))
+      marks[#marks + 1] = { #lines - 1, 0, #name, "Bold" }
+      marks[#marks + 1] = { #lines - 1, #name, #lines[#lines], "Comment" }
+      local glyph, hl = unpack(glyphs[status])
+      for _, task in ipairs(under) do
+        local prefix = "  " .. glyph .. " "
+        add(prefix .. task.text)
+        marks[#marks + 1] = { #lines - 1, 2, 2 + #glyph, hl }
+        task_marks(marks, #lines - 1, #prefix, task.text, status == "done")
+      end
+    end
+  end
+  if #lines == 1 then
+    add("")
+    add("Nothing on the board.", "Comment")
+  end
+  return lines, marks
+end
+
+-- The lines the view shows for a surface, and their highlights: a markdown surface's body (drawn
+-- by render-markdown, so no highlights), the Task Board as board draws it.
 ---@param entry isovim.Surface
----@return string[]
-function M.lines(entry)
+---@return string[] lines, table[] marks
+function M.render(entry)
+  if entry.type == "tasks" then
+    return board(entry)
+  end
   local lines = {}
   if entry.error then
     lines[#lines + 1] = ("> **%s is broken:** %s"):format(entry.base, entry.error)
     lines[#lines + 1] = ""
-  end
-  if entry.type == "tasks" then
-    lines[#lines + 1] = "# Task Board"
-    for _, status in ipairs(surfaces.statuses) do
-      local under = vim.tbl_filter(function(task)
-        return task.status == status
-      end, entry.tasks or {})
-      lines[#lines + 1] = ""
-      lines[#lines + 1] = ("## %s%s (%d)"):format(status:sub(1, 1):upper(), status:sub(2), #under)
-      if #under > 0 then
-        lines[#lines + 1] = ""
-      end
-      for _, task in ipairs(under) do
-        lines[#lines + 1] = ("- [%s] %s"):format(status == "done" and "x" or " ", task.text)
-      end
-    end
-    return lines
   end
   if entry.title and entry.title ~= entry.name then
     lines[#lines + 1] = "# " .. entry.title
@@ -115,14 +183,24 @@ function M.lines(entry)
     table.remove(body)
   end
   vim.list_extend(lines, body)
-  return lines
+  return lines, {}
 end
 
-local function set_lines(buf, lines)
+---@param entry isovim.Surface
+---@return string[]
+function M.lines(entry)
+  return (M.render(entry))
+end
+
+local function set_lines(buf, lines, marks)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   vim.bo[buf].modified = false
+  vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
+  for _, mark in ipairs(marks or {}) do
+    vim.api.nvim_buf_set_extmark(buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4], conceal = mark.conceal })
+  end
 end
 
 local function winbar(view)
@@ -414,7 +492,7 @@ local function refresh(view, entry)
   draw(view)
 end
 
--- The keys of the view and its input box.
+-- The keys of the view and its input box, and the box going with the view.
 local function bind(view)
   local function map(modes, lhs, fn, desc)
     vim.keymap.set(modes, lhs, fn, { buffer = view.input, nowait = true, desc = "isovim: " .. desc })
@@ -478,6 +556,30 @@ local function bind(view)
       end, { buffer = view.buf, nowait = true, desc = "isovim: type to the repo's router" })
     end
   end
+  -- The input box goes with the view: once no window shows the view (another buffer took its
+  -- window, or it closed), its box closes too, rather than stay behind under whatever's there. The
+  -- last window beside the sidebar is emptied instead, as :q there would otherwise quit isovim.
+  vim.api.nvim_create_autocmd("BufWinLeave", {
+    group = vim.api.nvim_create_augroup("isovim_surface_view_" .. view.buf, { clear = true }),
+    buffer = view.buf,
+    callback = function()
+      vim.schedule(function()
+        local input_win = vim.fn.bufwinid(view.input)
+        if vim.fn.bufwinid(view.buf) ~= -1 or input_win == -1 then
+          return
+        end
+        local is_sidebar = require("isovim").is_sidebar
+        if vim.iter(vim.api.nvim_tabpage_list_wins(0)):all(function(win)
+          return win == input_win or is_sidebar(win)
+        end) then
+          vim.api.nvim_win_set_buf(input_win, vim.api.nvim_create_buf(true, false))
+          vim.wo[input_win][0].winbar, vim.wo[input_win][0].winfixheight = "", false
+        else
+          pcall(vim.api.nvim_win_close, input_win, true)
+        end
+      end)
+    end,
+  })
 end
 
 local function make(entry)
@@ -492,7 +594,7 @@ local function make(entry)
     view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
     vim.b[view.buf].completion = false
   else
-    view.buf = scratch(("isovim-surface://%s"):format(id), "markdown")
+    view.buf = scratch(("isovim-surface://%s"):format(id), entry.type == "tasks" and "isovim_tasks" or "markdown")
   end
   vim.b[view.buf].isovim_surface = id
   view.input = scratch(("isovim-surface://%s/input"):format(id), "isovim_surface_input")
@@ -532,11 +634,19 @@ function M.submit(view)
   end))
 end
 
-local function view_window(win, question)
+-- The Task Board's wrapped lines hang under its task's text, two cells in from the line's indent.
+local function view_window(win, question, tasks)
   local wo = vim.wo[win][0]
   wo.wrap, wo.linebreak, wo.conceallevel = true, true, 2
   wo.number, wo.relativenumber, wo.signcolumn, wo.spell = false, false, "no", false
   wo.cursorline = question or false
+  wo.breakindent, wo.breakindentopt = tasks, tasks and "shift:2" or ""
+end
+
+local function input_window(win, view)
+  local wo = vim.wo[win][0]
+  wo.winbar, wo.winfixheight = winbar(view), true
+  wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.statuscolumn = false, false, "no", "0", ""
 end
 
 -- A window for the view in this tab: beside a chat when one shows (in the window beside it, else a
@@ -583,7 +693,7 @@ function M.open(entry)
     view.opened = os.time()
     refresh(view, entry)
   else
-    set_lines(view.buf, M.lines(entry))
+    set_lines(view.buf, M.render(entry))
   end
   local win = vim.fn.bufwinid(view.buf)
   if win == -1 then
@@ -591,12 +701,19 @@ function M.open(entry)
   else
     vim.api.nvim_set_current_win(win)
   end
-  view_window(win, question)
-  if vim.fn.bufwinid(view.input) == -1 and (not question or (entry.other and pending(view))) then
-    local input_win = vim.api.nvim_open_win(view.input, false, { split = "below", win = win, height = 3 })
-    vim.wo[input_win][0].winbar = winbar(view)
-    vim.wo[input_win][0].winfixheight = true
-    vim.wo[input_win][0].number, vim.wo[input_win][0].relativenumber = false, false
+  view_window(win, question, entry.type == "tasks")
+  -- Its box under it, moved there if it shows anywhere else.
+  local input_win = vim.fn.bufwinid(view.input)
+  if input_win ~= -1 and view.under ~= win then
+    pcall(vim.api.nvim_win_close, input_win, true)
+    input_win = -1
+  end
+  if input_win == -1 and (not question or (entry.other and pending(view))) then
+    input_win = vim.api.nvim_open_win(view.input, false, { split = "below", win = win, height = 3 })
+    view.under = win
+  end
+  if input_win ~= -1 then
+    input_window(input_win, view)
   end
   if question then
     -- Answered in normal mode, whatever was being typed where it was opened from (the composer).
@@ -609,6 +726,9 @@ function M.open(entry)
     if first and not (view.rows[line] and view.rows[line].option) then
       vim.api.nvim_win_set_cursor(win, { first, 3 })
     end
+    return view
+  end
+  if entry.type == "tasks" then
     return view
   end
   -- render-markdown loads on the first markdown buffer and skips that one (its FileType has gone
@@ -645,7 +765,7 @@ function M.rebind()
       if view.kind == "question" then
         draw(view)
       elseif entry then
-        set_lines(view.buf, M.lines(entry))
+        set_lines(view.buf, M.render(entry))
       end
       for win, saved in pairs(views) do
         vim.api.nvim_win_call(win, function()
@@ -667,7 +787,12 @@ function M.changed(repo, entries)
       if view.kind == "question" then
         refresh(view, entry)
       else
-        set_lines(view.buf, entry and M.lines(entry) or { ("> %s/%s is gone: its router removed it."):format(view.repo, view.name) })
+        if entry then
+          set_lines(view.buf, M.render(entry))
+        else
+          local gone = ("%s/%s is gone: its router removed it."):format(view.repo, view.name)
+          set_lines(view.buf, { vim.bo[view.buf].filetype == "markdown" and "> " .. gone or gone })
+        end
         local input_win = vim.fn.bufwinid(view.input)
         if input_win ~= -1 then
           vim.wo[input_win][0].winbar = winbar(view)

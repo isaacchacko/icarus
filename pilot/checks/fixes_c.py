@@ -9,8 +9,11 @@
 12. codex-acp is in the launch table: iso spawn --kind codex makes a codex agent over ACP whose
     session requests carry the role prompt as systemPrompt (append) and set codex's no-prompts mode,
     with isovim's hooks in CODEX_CONFIG; checkhealth names both adapters.
-13. A markdown surface and the Task Board open rendered (no frontmatter; the board as a list) with an
-    input box under them whose text goes to the repo's router's queue, and the view follows the file;
+13. A markdown surface and the Task Board open rendered (no frontmatter; the board drawn by isovim,
+    not render-markdown: the sections that hold tasks, a glyph per status, `code` and owners like (a1)
+    drawn, wrapped tasks hung, "## Doing (2)" read as doing, one that doesn't parse shown as it is and
+    marked broken in the sidebar) with an input box under them whose text goes to the repo's router's
+    queue and that closes with the view and comes back under it, and the view follows the file;
     an agent removed with no parent hands its children to the repo's router; autopr registers nothing
     for a new-layout agent. (root.<scope>.raised|decided are checked in rootmode.py.)
 Run from pilot/: uv run --with pynvim --with pillow --with fonttools python checks/fixes_c.py"""
@@ -132,6 +135,115 @@ def tmux_has(socket, name):
 def fake_log():
     path = Path(iso.env["FAKE_ACP_LOG"])
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def task_board_view():
+    """The Task Board drawn by surface_view, not by render-markdown: a heading's first word names its
+    status, `code` and an owner like (a1) are drawn, wrapped tasks hang, a board that doesn't parse
+    says so in the view and the sidebar, and the input box goes wherever the view goes."""
+    iso_dir = work / "acme" / "web" / "iso"
+
+    def board_after(text, what):
+        (iso_dir / "tasks.md").write_text(text)
+        return iso.wait(lambda: (lambda b: b if what(b) else None)(lua(
+            "return vim.api.nvim_buf_get_lines(require('isovim.surface_view').views['acme/web/tasks'].buf, 0, -1, false)")),
+            "the board to follow tasks.md", 15)
+
+    def marks(row):
+        return lua("""
+          local view = require('isovim.surface_view').views['acme/web/tasks']
+          local ns = vim.api.nvim_get_namespaces().isovim_surface_view
+          local line = vim.api.nvim_buf_get_lines(view.buf, ..., ... + 1, false)[1]
+          local out = {}
+          for _, m in ipairs(vim.api.nvim_buf_get_extmarks(view.buf, ns, { ..., 0 }, { ..., -1 }, { details = true })) do
+            out[#out + 1] = { text = line:sub(m[3] + 1, m[4].end_col), hl = m[4].hl_group or '', conceal = m[4].conceal }
+          end
+          return out
+        """, row)
+
+    board = board_after("## Doing (2)\n- [ ] Bind `<C-j>` to the queue (a1)\n- [ ] the composer (acme/web/a2, a3)\n\n## Done (1)\n- [x] shipped (a4)\n",
+                        lambda b: "Doing  2" in b)
+    check(board == ["Task Board  acme/web", "", "Doing  2", "  ◐ Bind `<C-j>` to the queue (a1)", "  ◐ the composer (acme/web/a2, a3)",
+                    "", "Done  1", "  ✓ shipped (a4)"],
+          "headings with a count, \"## Doing (2)\", parse as their first word (they broke the whole board)", board)
+    info = lua("""
+      local view = require('isovim.surface_view').views['acme/web/tasks']
+      local win = vim.fn.bufwinid(view.buf)
+      return { ft = vim.bo[view.buf].filetype, bi = vim.wo[win].breakindent, bio = vim.wo[win].breakindentopt, cl = vim.wo[win].conceallevel }
+    """)
+    check(info["ft"] == "isovim_tasks" and info["bi"] and info["bio"] == "shift:2" and info["cl"] == 2,
+          "not a markdown buffer (render-markdown drew every task as a bullet and an empty checkbox, and <C-j> as an HTML tag);"
+          " wrapped tasks hang under their text", info)
+    bind = marks(3)
+    check({"text": "◐", "hl": "DiagnosticInfo", "conceal": None} in [dict(m, conceal=m.get("conceal")) for m in bind]
+          and [m["text"] for m in bind if m.get("conceal") == ""] == ["`", "`"]
+          and {"text": "<C-j>", "hl": "@markup.raw"} in [{"text": m["text"], "hl": m["hl"]} for m in bind]
+          and {"text": "(a1)", "hl": "Comment"} in [{"text": m["text"], "hl": m["hl"]} for m in bind],
+          "the doing glyph in its color, `code` drawn as code with its backticks hidden, the owner (a1) dimmed", bind)
+    check({"text": "(acme/web/a2, a3)", "hl": "Comment"} in [{"text": m["text"], "hl": m["hl"]} for m in marks(4)],
+          "an owner list of addresses dimmed too", marks(4))
+    check({"text": "shipped (a4)", "hl": "Comment"} in [{"text": m["text"], "hl": m["hl"]} for m in marks(7)], "a done task dimmed", marks(7))
+    # Narrow, beside a chat, every task wraps; each continuation starts under its text, not its glyph.
+    (iso_dir / "tasks.md").write_text("# doing\n" + "- " + " ".join(["a long task that wraps"] * 8) + " (a1)\n")
+    lua("vim.api.nvim_win_set_width(vim.fn.bufwinid(require('isovim.surface_view').views['acme/web/tasks'].buf), 50)")
+    def wrapped():
+        rows = [r for r in iso.screen().splitlines() if "wraps" in r or "a long" in r]
+        return rows if len(rows) > 2 and "◐ a long" in rows[0] else None
+    rows = iso.wait(wrapped, "the long task on screen", 15)
+    starts = {r.split("│")[-1][:4] for r in rows[1:]}
+    check(len(rows) > 2 and "◐ a long" in rows[0] and starts == {"    "}, "a wrapped task hangs under its text", rows)
+    iso.screenshot("task-board-wrapped")
+    board = board_after("# doing\n- one (a1)\n# notes\n- remember the milk\n", lambda b: any("doesn't parse" in l for l in b))
+    entry = lua("return vim.iter(require('isovim.surfaces').list('acme/web')):find(function(e) return e.name == 'tasks' end)")
+    chunks = lua("return require('isovim.sidebar').surface_chunks(...)", entry)
+    check('under "notes"' in board[2] and board[4:] == ["# doing", "- one (a1)", "# notes", "- remember the milk"]
+          and ["  broken", "DiagnosticError"] in chunks,
+          "a board that doesn't parse says why over the file as it is (it was every section at 0), and its row says broken", (board, chunks))
+    board_after("# todo\n# doing\n- Landing page on TUI start (a1)\n# waiting\n# blocked\n- Cutover on victoria (a6)\n# done\n",
+                lambda b: "Blocked  1" in b)
+    iso.screenshot("task-board")
+    # The input box goes with the view: another buffer in its window, or the window closed, closes the
+    # box (it stayed, under whatever took the window); opened again, it's under the view.
+    def boxes():
+        return lua("""
+          local view = require('isovim.surface_view').views['acme/web/tasks']
+          local win, input = vim.fn.bufwinid(view.buf), vim.fn.bufwinid(view.input)
+          local below = win ~= -1 and input ~= -1 and vim.fn.win_screenpos(input)[1] == vim.fn.win_screenpos(win)[1] + vim.api.nvim_win_get_height(win) + 1
+            and vim.fn.win_screenpos(input)[2] == vim.fn.win_screenpos(win)[2]
+          return { view = win ~= -1, input = input ~= -1, below = below }
+        """)
+
+    def reopen():
+        lua("""
+          local entry = vim.iter(require('isovim.surfaces').list('acme/web')):find(function(e) return e.name == 'tasks' end)
+          require('isovim.surface_view').open(entry)
+        """)
+    check(boxes() == {"view": True, "input": True, "below": True}, "the box under the view", boxes())
+    lua("vim.api.nvim_win_set_buf(vim.fn.bufwinid(require('isovim.surface_view').views['acme/web/tasks'].buf), vim.api.nvim_create_buf(true, true))")
+    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to close", 5)
+    check(not gone["view"], "another buffer in the view's window closes its box", gone)
+    reopen()
+    check(boxes() == {"view": True, "input": True, "below": True}, "opened again, the box is under the view", boxes())
+    lua("vim.api.nvim_win_close(vim.fn.bufwinid(require('isovim.surface_view').views['acme/web/tasks'].buf), false)")
+    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to close", 5)
+    check(not gone["view"], ":q on the view closes its box", gone)
+    reopen()
+    check(boxes() == {"view": True, "input": True, "below": True}, "and it comes back under it", boxes())
+    # The view and its box alone beside the sidebar: :q on the view leaves an empty window, as isovim
+    # would quit once the box closed too.
+    lua("""
+      local view = require('isovim.surface_view').views['acme/web/tasks']
+      local keep = { [vim.fn.bufwinid(view.buf)] = true, [vim.fn.bufwinid(view.input)] = true }
+      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if not keep[win] and not require('isovim').is_sidebar(win) then vim.api.nvim_win_close(win, true) end
+      end
+      vim.api.nvim_set_current_win(vim.fn.bufwinid(view.buf))
+    """)
+    iso.keys(":q", "Enter")
+    gone = iso.wait(lambda: (lambda b: b if not b["input"] else None)(boxes()), "the box to go", 5)
+    alone = lua("local n = 0 for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do"
+                " if not require('isovim').is_sidebar(w) then n = n + 1 end end return n")
+    check(not gone["view"] and alone == 1, ":q on the view alone leaves an empty window, isovim still up", (gone, alone))
 
 
 try:
@@ -271,8 +383,10 @@ try:
       local entry = vim.iter(s.list('acme/web')):find(function(e) return e.name == 'tasks' end)
       return vim.api.nvim_buf_get_lines(require('isovim.surface_view').open(entry).buf, 0, -1, false)
     """)
-    check(board[0] == "# Task Board" and "## Todo (1)" in board and "- [ ] write docs" in board and "## Doing (1)" in board
-          and "- [x] events" in board and "## Blocked (0)" in board, "the Task Board opens as a list under its headings", board)
+    check(board[0] == "Task Board  acme/web" and "Todo  1" in board and "  ○ write docs" in board and "Doing  1" in board
+          and "  ✓ events" in board and not any(line.startswith("Blocked") for line in board),
+          "the Task Board opens as the sections that hold tasks, each task after its status's glyph", board)
+    task_board_view()
 
     rc, worker, err = run("spawn", "--repo", str(src), "--name", "parent")
     child = iso.cli("agent", str(src), "terminal", "--v2", "--name", "kid", "--parent", worker)

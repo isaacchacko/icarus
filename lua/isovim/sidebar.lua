@@ -42,6 +42,7 @@ local TASK_GLYPHS = {
   blocked = { "⊘", "DiagnosticWarn" },
   done = { "✓", "DiagnosticOk" },
 }
+M.task_glyphs = TASK_GLYPHS
 
 local KINDS = {
   hint = {
@@ -316,6 +317,10 @@ function M.surface_chunks(entry)
     row[#row + 1] = { "  missing", "DiagnosticWarn" }
   elseif kind == "broken" and entry.error then
     row[#row + 1] = { "  " .. entry.error, "DiagnosticError" }
+  end
+  -- A markdown surface or the Task Board that doesn't parse still opens, saying why.
+  if entry.error and kind ~= "broken" then
+    row[#row + 1] = { "  broken", "DiagnosticError" }
   end
   return row
 end

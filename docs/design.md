@@ -159,7 +159,7 @@ them, and writes a `*.surface.error` beside any that's broken or whose target is
 | question | `iso router surface question <json\|file>`, which blocks until answered and prints the answer | a buffer of its own: who asked, the question, its options numbered (`{question, options:[{label, description}], multi?, other?}`); answered there, then shows the answer; removed once its asker has it |
 | file / folder | `iso router surface file\|folder <path>` | opens beside the chat |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
-| Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done, one line per task | rendered as a list |
+| Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed; one that doesn't parse shown as it is and marked broken |
 
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
 - A question opens beside the chat (or in the main window) like a markdown surface, never as a
