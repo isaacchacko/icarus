@@ -70,8 +70,9 @@ local function select(id)
   if switching and id then
     local buf = vim.api.nvim_get_current_buf()
     local want = vim.b[buf].isovim_ws == id and buf or nil
-    -- Its splits from this session, else from its layout.json (moved in, unarchived, not yet visited).
-    if not layout.restore(id, is_sidebar, want) then
+    -- Its splits from this session, else from its layout.json (moved in, unarchived, not yet visited),
+    -- unless they're on screen: rebuilding would close the split just opened from.
+    if not layout.shown(id, is_sidebar, want) and not layout.restore(id, is_sidebar, want) then
       layout.resume(id, is_sidebar, M.open_leaf(id), want)
     end
   end

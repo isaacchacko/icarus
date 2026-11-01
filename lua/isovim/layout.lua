@@ -63,6 +63,14 @@ function M.save(ws, is_sidebar)
   M.persist(ws, tree, focus)
 end
 
+-- Whether ws's splits are on screen already, besides want (the buffer just opened): then there is
+-- nothing to bring back, e.g. for a file split off beside its chat while another workspace was selected.
+---@param is_sidebar fun(win: integer): boolean
+function M.shown(ws, is_sidebar, want)
+  local tree = prune(vim.fn.winlayout(), ws, is_sidebar)
+  return tree and not (tree[1] == "leaf" and tree[2].buf == want) or false
+end
+
 -- A buffer as layout.json names it: an agent's chat, or a file, relative to the workspace's dir
 -- when in it, so the layout survives a move to another host or a recreated worktree.
 local function describe(buf, root)
