@@ -110,7 +110,11 @@ local function pull(git)
   end
   local _, changes = git("status", "--porcelain", "--untracked-files=no")
   if changes ~= "" then
-    return { state = "declined", reason = "its checkout has local changes" }
+    local files = vim.tbl_map(function(line)
+      return line:sub(4)
+    end, vim.split(changes, "\n", { trimempty = true }))
+    local shown = table.concat(vim.list_slice(files, 1, 3), ", ") .. (#files > 3 and (", +" .. (#files - 3)) or "")
+    return { state = "declined", reason = ("its checkout has local changes (%s)"):format(shown) }
   end
   local _, names = git("diff", "--name-only", "HEAD", upstream)
   local _, count = git("rev-list", "--count", "HEAD.." .. upstream)
@@ -141,14 +145,21 @@ end
 -- once, and only a check you asked for, verbose, says there was nothing to do or the fetch failed),
 -- and after an update that needs a restart, arms it. lua/ hot reloads through isovim.reload.
 function M.pulled(result, verbose)
+  local said = state.said
   if result.state == "declined" then
-    if verbose or state.said ~= result.reason then
+    if verbose or said ~= result.reason then
       notify(M.describe(result), "warn")
     end
     state.said = result.reason
-    return
   elseif result.state ~= "offline" then
     state.said = nil
+  end
+  -- The sidebar's footer says why while it's blocked (M.blocked).
+  if state.said ~= said then
+    pcall(require("isovim.sidebar").redraw)
+  end
+  if result.state == "declined" then
+    return
   end
   if result.state ~= "updated" then
     return verbose and notify(M.describe(result), result.state == "offline" and "warn" or "info")
@@ -166,6 +177,11 @@ function M.pulled(result, verbose)
   if #restart > 0 and M.can_restart then
     M.arm()
   end
+end
+
+-- Why self-update is blocked now, for the sidebar's footer; nil while it isn't.
+function M.blocked()
+  return state.said
 end
 
 -- iso update: the pull itself, run by any process (an agent's, with or without a TUI open).

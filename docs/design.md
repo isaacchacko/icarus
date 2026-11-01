@@ -485,7 +485,8 @@ each directory has its own and one made later (a pull's) is watched as it appear
   through `require`, and the ones that hold a closure (the migrate timer, the chat's spinner) are
   replaced. `starter/lua/config/keymaps.lua` runs again.
 - **Needs a restart:** the rest of `starter/` (the plugin specs, `config/lazy.lua`), which lazy.nvim
-  reads once at startup; a changed `lazy-lock.json` also needs `:Lazy restore`. The toast says so,
+  reads once at startup; `bin/iso` restores the plugins as it starts when `lazy-lock.json` changed.
+  The toast says so,
   or, when a self-update brought it, that isovim restarts onto it by itself; `<leader>i!` restarts
   now.
 - **Agents restart themselves:** the agents' supervisors (`nvim -l agent_host.lua`: `acp/host.lua`,
@@ -529,8 +530,17 @@ pull is the TUI's own, or `iso update`'s, one isovim command, not an agent's git
 - **When it pulls:** a fast-forward (`git merge --ff-only`), only when the checkout is on the
   default branch, no tracked file has changes (untracked ones, `.claude/` and `.vibe-wise/`, are
   fine) and it is behind origin, not diverged. Otherwise it does nothing and says why once (local
-  changes, another branch or a detached HEAD, diverged, a fast-forward git refused), again only
-  when the reason changes. It never stashes, resets or rebases.
+  changes, naming the files; another branch or a detached HEAD; diverged; a fast-forward git
+  refused) in a toast, again only when the reason changes, and the sidebar's footer shows
+  `not updating: <why>` until it can pull again (`Enter` on it checks now). It never stashes, resets
+  or rebases.
+- **Nothing of isovim's own dirties the checkout:** lazy.nvim's lockfile and LazyVim's extras
+  (`vim.g.lazyvim_json`) are the host's, `~/.isovim/lazy-lock.json` and `~/.isovim/lazyvim.json`, so
+  `:Lazy update`, a pin or `:LazyExtras` write there. `bin/iso` seeds the lockfile from
+  `starter/lazy-lock.json` and, when that changes, replaces it and restores the plugins (it keeps
+  the copy it seeded from, `lazy-lock.seeded.json`, to tell). The extras start as
+  `starter/lazyvim.json`'s; when that changes, the extras it added or dropped since
+  (`lazyvim.seeded.json`) are added to or dropped from the host's, and the ones you toggled stay.
 - **What then:** `lua/isovim/` hot reloads through the watcher, as for any pull (`reload.lua`
   included). `starter/` (but `config/keymaps.lua`) and `bin/iso` are read only at startup, so they
   restart the TUI; `bin/iso-hook` and `bin/iso-browser.mjs` run fresh each call and need nothing.
@@ -539,9 +549,9 @@ pull is the TUI's own, or `iso update`'s, one isovim command, not an agent's git
   Then `isovim updated: restarting in 5s · any key to wait`; any key postpones it until you're idle
   again. It writes `~/.isovim/restart.json` (every open chat, most recent first, the current
   workspace, the scope, each composer's draft; the current workspace's splits are already in its
-  `layout.json`) and exits with code 75. `bin/iso` runs nvim in a loop: on 75 it runs `Lazy!
-  restore` (as on a first run) if `lazy-lock.json` changed, then runs itself again, the updated
-  `bin/iso`, with no arguments. The new TUI reopens the chats of agents still running, the current
+  `layout.json`) and exits with code 75. `bin/iso` runs nvim in a loop: on 75 it runs itself
+  again, the updated `bin/iso`, with no arguments, which restores the plugins first if
+  `starter/lazy-lock.json` changed. The new TUI reopens the chats of agents still running, the current
   workspace's layout, the scope and the drafts, and deletes the file. Agents live in tmux and their
   supervisors, so they never notice. The TUI names itself in `isovim.lock` (`bin/iso` names itself
   until then), so `iso --takeover` still stops the TUI, and the loop with it.

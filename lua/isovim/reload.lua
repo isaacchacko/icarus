@@ -127,7 +127,7 @@ local function flush()
       table.insert(lines, ok and ("starter/%s ran again"):format(rel) or ("starter/%s failed: %s"):format(rel, err))
     elseif rel == "lazy-lock.json" then
       table.insert(lines, "starter/lazy-lock.json changed: " .. (coming and "isovim restores the plugins and restarts once you're idle"
-        or ":Lazy restore, then restart to apply"))
+        or "restart to apply (isovim restores the plugins as it starts)"))
     else
       table.insert(restart, rel)
     end

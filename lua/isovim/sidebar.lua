@@ -1219,11 +1219,18 @@ local function footer_lines()
     }
   end
   rows.footer = { { kind = "usage" }, { kind = "settings" }, { kind = "about" } }
-  return {
+  local lines = {
     first,
     { { "  " }, { "\u{f013}", "Special" }, { " Settings" } }, -- fa-cog
     { { "  " }, { "ISOVIM", "Title" }, { " " .. (version or ""), "Comment" } },
   }
+  -- Self-update can't pull (isovim.update): why, until it can; <CR> on it checks again.
+  local blocked = require("isovim.update").blocked()
+  if blocked then
+    table.insert(rows.footer, { kind = "update" })
+    table.insert(lines, { { "  not updating: " .. blocked, "DiagnosticWarn" } })
+  end
+  return lines
 end
 
 local shown_title
@@ -1256,8 +1263,9 @@ local function render(wins)
     set_height(wins.terminals, math.min(#lines, 9))
   end
   if wins.footer then
-    draw(wins.footer, footer_lines())
-    set_height(wins.footer, 3)
+    local lines = footer_lines()
+    draw(wins.footer, lines)
+    set_height(wins.footer, #lines)
   end
 end
 
@@ -1491,7 +1499,7 @@ local TERMINAL_KEYS = {
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser" },
 }
 local FOOTER_KEYS = {
-  { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json as a tab; on cpu, ram, measure them" },
+  { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json as a tab; on cpu, ram, measure them; on not updating, check again" },
 }
 local ROLE_KEYS = { list = LIST_KEYS, inbox = INBOX_KEYS, terminals = TERMINAL_KEYS, footer = FOOTER_KEYS }
 M.COLUMN_KEYS, M.LIST_KEYS = COLUMN_KEYS, LIST_KEYS
@@ -1933,6 +1941,8 @@ M.actions = {
       isovim.show(require("isovim.config").path)
     elseif row and row.kind == "usage" then
       measure()
+    elseif row and row.kind == "update" then
+      require("isovim.update").check(true)
     end
   end,
   isovim_usage = measure,
