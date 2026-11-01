@@ -4,9 +4,10 @@
 -- journal as prompts, text and tool calls, and the chat carries on with no gap.
 local M = {}
 
-function M.transcript(id)
-  local projects = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects"
-  return vim.fn.glob(projects .. "/*/" .. id .. ".jsonl", false, true)[1]
+-- The one Claude writes to now, under the project of dir, the cwd it runs in (a migration leaves
+-- an old copy elsewhere).
+function M.transcript(id, dir)
+  return require("isovim.panes").claude_transcript(id, dir)
 end
 
 function M.size(path)

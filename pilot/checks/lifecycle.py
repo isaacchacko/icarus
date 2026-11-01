@@ -212,8 +212,9 @@ try:
     peer_config = json.loads((peer_home / "config.json").read_text())
     # The role prompts isovim seeded into this host's config.json on its first run go along too.
     peer_config.pop("prompts", None)
-    check(peer_config == {"self": "peer", "hosts": {"me": "mehost"}, "aliases": {"p": "peer"}, "repo_dirs": ["~/code"]},
-          "config.json is merged in, keeping the peer's self and hosts", peer_config)
+    # "old" is a key only the peer has, which a sync never takes away (only a key deleted here is).
+    check(peer_config == {"self": "peer", "hosts": {"me": "mehost"}, "aliases": {"p": "peer"}, "repo_dirs": ["~/code"], "old": True},
+          "config.json is merged in, keeping the peer's self and hosts and a key only it has", peer_config)
     check((peer_home / "repos" / "o" / "r" / "config.json").exists() and not (peer_home / "repos" / "o" / "r" / "base-clone").exists(),
           "a base clone is never synced")
     check(not any((peer_home / name).exists() for name in ("events", "run", "reaper.log", "cache")), "events/ and run/ stay home",

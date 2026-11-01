@@ -214,12 +214,11 @@ local function run_git(dir, args, timeout)
   return result.code == 0, vim.trim(result.stdout or ""), vim.trim(result.stderr or "")
 end
 
--- Claude's transcript of a session (<session>.jsonl, under whichever project it's in) and the dir
+-- Claude's transcript of a session (the current one, under dir's project when it's there) and the dir
 -- of its subagents' beside it, when there is one.
 ---@return string? transcript, string? dir
-local function claude_transcript(session)
-  local projects = vim.fs.dirname(panes.claude_project("/"))
-  local file = vim.fn.glob(projects .. "/*/" .. session .. ".jsonl", false, true)[1]
+local function claude_transcript(session, dir)
+  local file = panes.claude_transcript(session, dir)
   if not file then
     return nil
   end
@@ -423,7 +422,7 @@ function M.send_agent(key, agent, host)
       copy(rollout, stage .. "/codex/" .. rollout:sub(#panes.codex_sessions + 2))
     end
   elseif session then
-    local transcript, subagents = claude_transcript(session)
+    local transcript, subagents = claude_transcript(session, store.agent_dir(key, id))
     if transcript then
       copy(transcript, stage .. "/claude/" .. session .. ".jsonl")
     end

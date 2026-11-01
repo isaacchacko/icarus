@@ -84,7 +84,9 @@ local S = {
   loading = false, -- a session/load whose replay goes into the journal (a /resume with no kept journal)
   held = nil, ---@type {why: string, kind: "auth"|"usage"|"transport"|"error", delay?: number}? what the queue waits on
   retry = nil, -- the timer that tries a held queue again
-  prompt_hash = nil, ---@type string? the role prompt's sha256, as the last session request sent it
+  backoff = nil, ---@type number? the last retry's delay, while prompts keep failing: the next one doubles it
+  role_hash = nil, ---@type string? isovim.panes.role_hash of the role prompt the last session request sent
+  legacy_hash = nil, ---@type string? the same prompt's hash as journals recorded it before role_hash (prompt_hash)
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -282,12 +284,17 @@ end
 local release
 
 -- The queue waits: nothing is sent until release, which the retry timer calls once a login is
--- back (asked every 30s) or, for anything else, after a while that doubles each time (to 30 min).
--- The agent's state is held, with why; its repo's Inbox says so.
+-- back (asked every 30s) or, for anything else, after a while that doubles each time (to 30 min)
+-- until a prompt goes through. The agent's state is held, with why; its repo's Inbox says so,
+-- and its chat once, not at every try.
 local function hold(why, kind)
-  local first = not S.held
+  local first = not S.held and not (S.backoff and kind ~= "auth")
   local base = tonumber(vim.env.ISOVIM_RETRY_SECS or "") or (kind == "auth" and 30 or 60)
-  local delay = kind == "auth" and base or math.min(S.held and S.held.delay and S.held.delay * 2 or base, 1800)
+  local delay = base
+  if kind ~= "auth" then
+    delay = math.min(S.backoff and S.backoff * 2 or base, 1800)
+    S.backoff = delay
+  end
   S.held = { why = why, kind = kind, delay = delay }
   set_state("held")
   if first then
@@ -331,6 +338,9 @@ local function turn_ended(prompt, result, err)
   local reason = result and result.stopReason or nil
   append("turn", { state = "end", id = prompt.id, stopReason = reason, error = err and err.message or nil })
   local kept = err and failure_kind(err)
+  if not err then
+    S.backoff = nil
+  end
   if kept then
     -- A login that's gone is said as that, not in the adapter's words.
     local why = kept == "auth" and auth.why(auth_kind(), true) or nil
@@ -602,7 +612,9 @@ local function with_meta(params)
   S.imported = vim.tbl_map(function(import)
     return import.path
   end, found)
-  S.prompt_hash = vim.fn.sha256(require("isovim.panes").instructions(S.spec))
+  local panes = require("isovim.panes")
+  S.role_hash = panes.role_hash(S.spec)
+  S.legacy_hash = vim.fn.sha256(panes.instructions(S.spec, nil, true))
   return adapter.session_params(S.spec.kind, params, append_text)
 end
 
@@ -614,14 +626,24 @@ local function remember_session(id, how)
   pcall(sessions.note, S.ws, S.agent, id, { how = how })
 end
 
--- The role prompt's hash the journal last recorded a session getting, and that session's role.
-local function last_prompt_hash(entries)
+-- The journal's last session entry that recorded its role prompt: role_hash, or prompt_hash (the
+-- whole text's sha256) from before isovim hashed only the role and the user's files.
+local function last_recorded(entries)
   entries = entries or journal.read(S.ws, S.agent)
   for i = #entries, 1, -1 do
-    if entries[i].kind == "session" and entries[i].prompt_hash then
-      return entries[i].prompt_hash, entries[i].role
+    if entries[i].kind == "session" and (entries[i].role_hash or entries[i].prompt_hash) then
+      return entries[i]
     end
   end
+end
+
+-- Whether that entry's session got the role prompt this one is opened with. An old prompt_hash
+-- matches the text as it was then, so isovim's rewording since sends no one a role message.
+local function same_prompt(entry)
+  if entry.role_hash then
+    return entry.role_hash == S.role_hash
+  end
+  return entry.prompt_hash == S.legacy_hash
 end
 
 -- Claude Code keeps the system prompt a session started with (a prompt_snapshot in its
@@ -637,19 +659,27 @@ local function role_prompt()
 end
 
 -- Whether the session just opened (resumed: one that keeps an earlier system prompt) needs the
--- role prompt as a message: its hash differs from what the journal last recorded; with nothing
--- recorded, only a fork (a copy of another agent's session) does.
+-- role prompt as a message: it differs from what the journal last recorded. With nothing recorded,
+-- a fork (a copy of another agent's session) does, and so does the agent's own session resumed on
+-- a restart (resumed == "restart"): its journal is from before isovim recorded it, like a migrated
+-- _/a0's, so its prompt is unknown. A rewind or /resume within a session keeps what it had.
 local function role_changed(resumed, how, last)
-  return resumed and S.prompt_hash ~= nil and last ~= S.prompt_hash and (last ~= nil or how == "fork")
+  if not resumed or S.role_hash == nil then
+    return false
+  elseif last then
+    return not same_prompt(last)
+  end
+  return how == "fork" or resumed == "restart"
 end
 
 -- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session
--- entry. resumed: it carries an earlier session's system prompt (resume, load, fork).
+-- entry. resumed: it carries an earlier session's system prompt (resume, load, fork); "restart" for
+-- the agent's own session reopened as its supervisor starts.
 local function session_ready(how, fresh, extra, resumed)
-  local last = last_prompt_hash() or (how == "fork" and S.source_hash or nil)
+  local last = last_recorded() or (how == "fork" and S.source_entry or nil)
   local tell = role_changed(resumed, how, last)
   append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported,
-    role = store.role(S.spec), prompt_hash = S.prompt_hash }))
+    role = store.role(S.spec), role_hash = S.role_hash }))
   local mode = adapter.mode(S.spec)
   S.client:request("session/set_mode", { sessionId = S.session, modeId = mode }, function(_, err)
     if err then
@@ -660,9 +690,14 @@ local function session_ready(how, fresh, extra, resumed)
     S.ready = true
     set_state("ready")
     out(("[session %s: %s]\n"):format(how, S.session))
-    -- The spawn's prompt goes once, to the agent's first session.
-    if fresh and S.spec.prompt and S.spec.prompt ~= "" and not S.prompted then
+    -- The spawn's prompt goes once, to the agent's first session. It's kept on disk with the queue,
+    -- so one held (logged out) still goes after the supervisor ends and resumes the session.
+    local queued = vim.iter(S.queue):any(function(prompt)
+      return prompt.via == "spawn"
+    end)
+    if fresh and S.spec.prompt and S.spec.prompt ~= "" and not S.prompted and not queued then
       table.insert(S.queue, 1, { id = next_id(), text = S.spec.prompt, via = "spawn" })
+      save_queue()
     end
     if tell then
       table.insert(S.queue, 1, role_prompt())
@@ -709,9 +744,9 @@ reload = function()
       table.insert(S.queue, 1, role_prompt())
       save_queue()
     else
-      local last = last_prompt_hash()
-      append("session", { how = "reload", sessionId = S.session, role = role, imports = S.imported, prompt_hash = S.prompt_hash })
-      if last ~= S.prompt_hash then
+      local last = last_recorded()
+      append("session", { how = "reload", sessionId = S.session, role = role, imports = S.imported, role_hash = S.role_hash })
+      if not (last and same_prompt(last)) then
         table.insert(S.queue, 1, role_prompt())
         save_queue()
         notice(("reloaded the session as a %s; that role's prompt goes to it as the next message, since a resumed session keeps the system prompt it started with")
@@ -786,7 +821,7 @@ local function fork_session()
   local from_ws, from_agent = tostring(spec.fork_from or ""):match("^(.*)/([^/]+)$")
   -- The prompt its source's session had (the carried journal keeps no session entries): a fork of
   -- the same role needs no role message.
-  S.source_hash = from_ws and last_prompt_hash(journal.read(from_ws, from_agent)) or nil
+  S.source_entry = from_ws and last_recorded(journal.read(from_ws, from_agent)) or nil
   local function carry(id)
     if from_ws then
       replace_journal(sessions.carry(journal.read(from_ws, from_agent), tonumber(spec.fork_seq)))
@@ -841,7 +876,7 @@ local function open_session(init)
       return new_session()
     end
     S.session = id
-    session_ready(resume and "resume" or "load", false, nil, true)
+    session_ready(resume and "resume" or "load", false, nil, "restart")
   end)
 end
 
@@ -1066,7 +1101,7 @@ end
 -- detached, and the session is opened again, which sends what was queued meanwhile.
 local function handed_back(code)
   local handover = S.handover
-  local path = handover.transcript or require("isovim.acp.handover").transcript(S.session)
+  local path = handover.transcript or require("isovim.acp.handover").transcript(S.session, S.cwd)
   local offset = handover.transcript and handover.offset or 0
   for _, entry in ipairs(require("isovim.acp.handover").entries(path, offset)) do
     append(entry[1], vim.tbl_extend("force", entry[2], { handover = true }))
@@ -1093,7 +1128,7 @@ function CALLS.handover()
     error("its session isn't up yet")
   end
   local handover_mod = require("isovim.acp.handover")
-  local transcript = handover_mod.transcript(S.session)
+  local transcript = handover_mod.transcript(S.session, S.cwd)
   S.handover = { transcript = transcript, offset = handover_mod.size(transcript) }
   S.ready = false
   append("handover", { state = "start", sessionId = S.session })

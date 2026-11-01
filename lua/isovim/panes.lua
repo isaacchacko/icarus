@@ -193,8 +193,8 @@ local V0 = {
     .. "`iso {role} spawn [--role r] [--read-only] [--name n] \"<prompt>\"` starts a child in your repo, of a "
     .. "role no higher than yours (one router per repo per host, one repo-root per repo, one root per host), "
     .. "and prints its address; `iso {role} fork` starts a copy of your conversation. `iso {role} promote "
-    .. "[<agent>] router|repo-root|root [\"reason\"]` raises an agent, one way only; its session reloads "
-    .. "with the new role's prompt, and one you promote is told who and why.",
+    .. "[<agent>] router|repo-root|root [\"reason\"]` raises an agent, one way only; a promotion gives you "
+    .. "the new role's instructions in a message from isovim, and one you promote is told who and why.",
   events = "To react as things happen instead of polling, `iso {role} listen '<pattern>'... [--once]` prints "
     .. "each matching event as a JSON line: agent.<scope>.<id>.status|spawned|exited|promoted, "
     .. "msg.<scope>.<id>, surface.<owner/repo>.<name>.created|changed|removed|answered|consumed and "
@@ -250,9 +250,15 @@ local V0 = {
   },
 }
 
-local function v0_text(role)
+-- V0.agents as it read until 2026-11-01, only to recognise the hashes journals recorded then,
+-- when the whole text was hashed (isovim.acp.host).
+local AGENTS_BEFORE = V0.agents:gsub(vim.pesc("a promotion gives you the new role's instructions in a message from isovim"),
+  "its session reloads with the new role's prompt")
+
+---@param before? boolean the text as it was before 2026-11-01
+local function v0_text(role, before)
   local parts = { V0.intro, V0.work .. ((role == "worker" or role == "router") and V0.scripts or ""), V0.messages,
-    V0.agents, V0.events, V0.browser, V0.role[role] or V0.role.worker }
+    before and AGENTS_BEFORE or V0.agents, V0.events, V0.browser, V0.role[role] or V0.role.worker }
   return (table.concat(parts, "\n\n"):gsub("{role}", role))
 end
 
@@ -267,25 +273,45 @@ local function read(path)
   return ok and vim.trim(table.concat(lines, "\n")) or ""
 end
 
----@param agent isovim.Agent
----@param ws? string its workspace or repo key, when the caller has it
-local function instructions(agent, ws)
+-- isovim's own text, then the user's files: instructions.md and the role's prompt file.
+---@return string own, string[] files
+local function instruction_parts(agent, ws, before)
   local role = store.role(agent)
   local v0 = agent.acp or (ws ~= nil and store.v2(ws))
   local config = require("isovim.config")
   pcall(config.seed_prompts)
-  local own = v0 and v0_text(role) or (LEGACY:format(role):gsub("{role}", role))
-  local parts = { own, read(M.instructions_file) }
+  local own = v0 and v0_text(role, before) or (LEGACY:format(role):gsub("{role}", role))
+  local files = { read(M.instructions_file) }
   local prompt = config.prompt_file(role)
   if prompt and (v0 or not config.is_shipped(role, prompt)) then
-    parts[#parts + 1] = read(prompt)
+    files[#files + 1] = read(prompt)
   end
-  return table.concat(vim.tbl_filter(function(part)
+  return own, vim.tbl_filter(function(part)
     return part ~= ""
-  end, parts), "\n\n")
+  end, files)
+end
+
+---@param agent isovim.Agent
+---@param ws? string its workspace or repo key, when the caller has it
+---@param before? boolean isovim's text as it was before 2026-11-01
+local function instructions(agent, ws, before)
+  local own, files = instruction_parts(agent, ws, before)
+  return table.concat(vim.list_extend({ own }, files), "\n\n")
 end
 M.instructions = instructions
 M.v0_text = v0_text
+
+-- Raise it when isovim's built-in text changes in a way agents already running must be told.
+M.text_revision = 1
+
+-- What says whether a resumed ACP session's role prompt changed (isovim.acp.host): the role, the
+-- user's files (instructions.md, the role's prompt file) and text_revision, but not isovim's own
+-- words, so rewording those doesn't send every agent a role message on its next restart.
+---@param agent isovim.Agent
+function M.role_hash(agent, ws)
+  local _, files = instruction_parts(agent, ws)
+  return vim.fn.sha256(table.concat({ store.role(agent), tostring(M.text_revision), unpack(files) }, "\0"))
+end
 
 -- Claude keeps a workspace's transcripts under ~/.claude/projects/<cwd with every character but
 -- letters and digits as ->, as Claude Code itself names them (so a "_" in an owner or repo is "-"
@@ -293,6 +319,27 @@ M.v0_text = v0_text
 function M.claude_project(dir)
   local key = (vim.uv.fs_realpath(dir) or dir):gsub("[^%w]", "-")
   return vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects/" .. key
+end
+
+-- Claude's transcript of session id (<id>.jsonl, under whichever project it's in). There can be
+-- two: the migration copies one to the project of the agent's new dir and leaves the old. The one
+-- under dir's project (where the agent runs, so where Claude writes it now) wins, else the newest.
+---@param dir? string the dir the agent runs in
+---@return string?
+function M.claude_transcript(id, dir)
+  local own = dir and M.claude_project(dir) .. "/" .. id .. ".jsonl"
+  if own and vim.uv.fs_stat(own) then
+    return own
+  end
+  local found = vim.fn.glob(vim.fs.dirname(M.claude_project("/")) .. "/*/" .. id .. ".jsonl", false, true)
+  local function mtime(path)
+    local stat = vim.uv.fs_stat(path)
+    return stat and stat.mtime.sec + stat.mtime.nsec / 1e9 or 0
+  end
+  table.sort(found, function(a, b)
+    return mtime(a) > mtime(b)
+  end)
+  return found[1]
 end
 
 -- A fresh Claude gets its own session id, recorded where its hooks record it, so it resumes only

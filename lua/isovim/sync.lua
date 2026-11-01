@@ -7,7 +7,8 @@
 --   prompts/     the role prompts, the same way, in the same rsync
 --   config.json  merged into theirs key by key, the newer of each winning: config.keys.json beside
 --                it records when each key last changed (refreshed at each sync from the file's
---                mtime); a key with no record on a side counts as as old as that side's file. self,
+--                mtime); a key with no record on a side counts as as old as that side's file, and
+--                one a side has never had (no value, no record of it going) as older than any. self,
 --                hosts, reaper and enforce say who a host is, who its peers are and whether it's
 --                cut over, so stay that host's own
 -- events/, run/ and the rest of ~/.isovim stay on their host. A host that's down is logged to
@@ -107,9 +108,14 @@ end
 local function merged(ours, our_stamps, our_mtime, theirs, their_stamps, their_mtime, name)
   local result, stamps = {}, {}
   -- A stamp counts only while it's of the value that side has: a key edited since that side's
-  -- last sync (a hand edit, a sync from an older isovim) is as new as its file.
+  -- last sync (a hand edit, a sync from an older isovim) is as new as its file. A key a side has
+  -- never had (no value, and no stamp saying it went) loses: it's only new to that side, not
+  -- deleted there, so the first sync never takes away a key only the other host has.
   local function when(side, side_stamps, key, fallback)
     local stamp = side_stamps[key]
+    if side[key] == nil and type(stamp) ~= "table" then
+      return -math.huge
+    end
     return type(stamp) == "table" and stamp.h == hash(side[key]) and tonumber(stamp.t) or fallback
   end
   for key in pairs(vim.tbl_extend("force", {}, ours, theirs, our_stamps, their_stamps)) do

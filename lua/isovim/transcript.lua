@@ -10,7 +10,8 @@ function M.path(ws, agent)
   return store.path(ws) .. "/transcripts/" .. agent .. ".txt"
 end
 
--- The agent's raw log: Claude's <session>.jsonl under any project, or Codex's rollout.
+-- The agent's raw log: Claude's <session>.jsonl (the current one, isovim.panes.claude_transcript),
+-- or Codex's rollout.
 ---@return string?
 function M.source(ws, agent)
   local spec = store.agent(ws, agent)
@@ -21,8 +22,7 @@ function M.source(ws, agent)
   if spec.kind == "codex" then
     return panes.codex_rollout(id)
   end
-  local projects = vim.fs.dirname(panes.claude_project("/"))
-  return vim.fn.glob(projects .. "/*/" .. id .. ".jsonl", false, true)[1]
+  return panes.claude_transcript(id, store.agent_dir(ws, agent))
 end
 
 -- Wrappers the harness puts around or between messages: system reminders, slash-command echoes,
