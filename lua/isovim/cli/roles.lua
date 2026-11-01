@@ -125,6 +125,14 @@ local function repo_key(dir)
   return keys[dir] or nil
 end
 
+-- A workspace's repo; a new-layout unit is named for its repo (nil for "_").
+local function ws_key(ws)
+  if store.v2(ws.id) then
+    return ws.id ~= "_" and ws.id or nil
+  end
+  return repo_key(ws.dir)
+end
+
 -- A repo key as a person reads it.
 local function repo_name(key)
   return (key:gsub("^local:", ""):gsub("/%.git$", ""))
@@ -138,7 +146,7 @@ local function holders(role, key, except)
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       local address = ws.id .. "/" .. agent.id
-      if store.role(agent) == role and address ~= except and (role == "root" or repo_key(ws.dir) == key) then
+      if store.role(agent) == role and address ~= except and (role == "root" or ws_key(ws) == key) then
         found[#found + 1] = address
       end
     end
@@ -213,7 +221,7 @@ function M.spawn(args)
     fail(("a %s spawns roles up to its own, and %s is higher"):format(mine, role))
   end
   local dir = repo and repo_dir(repo)
-  if not dir and caller_ws and store.dir(caller_ws) ~= store.path(caller_ws) then
+  if not dir and caller_ws and not store.v2(caller_ws) and store.dir(caller_ws) ~= store.path(caller_ws) then
     dir = store.dir(caller_ws)
   end
   check_unique(role, dir and repo_key(dir))
@@ -283,10 +291,17 @@ local function fork_root(ws, agent, promoter, reason)
   if agent.kind ~= "claude" or not session then
     fail(("%s/%s has no Claude conversation to fork into the root"):format(ws.id, agent.id))
   end
-  local dir = store.dir(ws.id)
-  local id = store.create(ws.name .. " root", dir ~= store.path(ws.id) and dir or nil)
-  store.remove_agent(id, "main")
-  local fork = store.add_agent(id, { kind = "claude", name = agent.name, role = "root" })
+  -- As iso fork makes it: a new workspace in the same project, or a new-layout agent's next aN.
+  local id = ws.id
+  if not store.v2(ws.id) then
+    local dir = store.dir(ws.id)
+    id = store.create(ws.name .. " root", dir ~= store.path(ws.id) and dir or nil)
+    store.remove_agent(id, "main")
+  end
+  local fork, err = store.add_agent(id, { kind = "claude", name = not store.v2(id) and agent.name or nil, role = "root" })
+  if not fork then
+    fail(err)
+  end
   store.update_agent(id, fork.id, { fork_of = session })
   local events = require("isovim.events")
   events.publish(events.agent_topic(id, fork.id, "promoted"), { role = "root", previous = "router", fork_of = ws.id .. "/" .. agent.id })
@@ -325,7 +340,7 @@ function M.promote(args)
   elseif not require("isovim.panes").reports(agent.kind) then
     fail(("%s is a %s, and only claude and codex agents have roles"):format(address, agent.kind))
   end
-  check_unique(role, repo_key(ws.dir), address)
+  check_unique(role, ws_key(ws), address)
   if role == "root" and from == "router" then
     fork_root(ws, agent, promoter, reason)
     return
