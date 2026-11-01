@@ -562,7 +562,27 @@ function M.setup(opts)
   })
   -- A chat scrolls no further down than its last line and never sideways. The window would scroll
   -- past the end, the terminal snap it back on its next refresh, and a trackpad's momentum would
-  -- scroll it past again, over and over. Runs before the redraw, so the overshoot never shows.
+  -- scroll it past again, over and over. The wheel over a chat at its end does nothing at all;
+  -- the clamp below catches the keys that scroll.
+  local function chat_under_mouse()
+    local win = vim.fn.getmousepos().winid
+    return win ~= 0 and vim.b[vim.api.nvim_win_get_buf(win)].isovim_agent_kind and win or nil
+  end
+  for _, key in ipairs({ "<ScrollWheelLeft>", "<ScrollWheelRight>" }) do
+    vim.keymap.set({ "n", "x", "t" }, key, function()
+      return chat_under_mouse() and "" or key
+    end, { expr = true, desc = "isovim: no sideways scrolling in a chat" })
+  end
+  vim.keymap.set({ "n", "x", "t" }, "<ScrollWheelDown>", function()
+    local win = chat_under_mouse()
+    if not win then
+      return "<ScrollWheelDown>"
+    end
+    local below = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) - vim.fn.line("w$", win)
+    local step = math.min(below, tonumber(vim.o.mousescroll:match("ver:(%d+)")) or 3)
+    return step > 0 and ("<Cmd>lua vim.api.nvim_win_call(%d, function() vim.cmd('normal! %d\\5') end)<CR>"):format(win, step)
+      or ""
+  end, { expr = true, desc = "isovim: scroll a chat down, no further than its end" })
   vim.api.nvim_create_autocmd("WinScrolled", {
     group = group,
     callback = function()
