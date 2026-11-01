@@ -68,14 +68,15 @@ end
 ---@field agent? string chat: the agent's address
 
 -- The pseudo-repos, keys beside owner/repo: root (the host root's) and general (no repo's), the same
--- keys store gives agents. "_" (general's old key) is still read as general.
+-- keys store gives agents. "_" (general's old key) is still read as general, even while an old _/
+-- waits on its move (store.old_live): nothing new is written there.
 M.pseudo = store.pseudo
-local canon = store.canon
+local canon = store.canon_new
 
 -- The surface key for a repo key (owner/repo, root, general or _); nil when it's none of those.
 ---@return string?
 function M.key(key)
-  key = store.canon(key)
+  key = canon(key)
   if store.valid_key(key) then
     return key
   end
@@ -83,7 +84,7 @@ end
 
 -- A repo's iso/.
 function M.dir(repo)
-  return store.path(store.canon(repo))
+  return store.path(canon(repo))
 end
 
 -- Where a broken surface's reason goes.

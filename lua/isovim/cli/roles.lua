@@ -269,7 +269,7 @@ end
 function M.spawn(args)
   local repo = option(args, "--repo")
   -- --repo general (or _, its old name) is General, no repo.
-  local to_general = repo and store.canon(repo) == store.GENERAL
+  local to_general = repo and store.canon_new(repo) == store.GENERAL
   if to_general then
     repo = nil
   end
@@ -302,9 +302,10 @@ function M.spawn(args)
   if not dir and not address and not legacy and not to_general then
     dir = checkout_of(vim.uv.cwd())
   end
-  -- An agent in root/ (the host root) spawns into general/, as the root's own key is its alone.
+  -- An agent in root/ (the host root) spawns into general/, as the root's own key is its alone; so
+  -- does one in an old _/ whose move waits, as nothing new goes there.
   local caller_key = caller_ws and store.v2(caller_ws) and store.canon(caller_ws) or nil
-  if caller_key == store.ROOT then
+  if caller_key == store.ROOT or caller_key == store.OLD then
     caller_key = nil
   end
   -- An agent's child in its repo is made from the clone its spawner was, as a user's spawn from

@@ -496,7 +496,8 @@ function M.plan()
   plan.claude_projects = claude
   local v2 = 0
   for _, ws in ipairs(store.list()) do
-    if store.v2(ws.id) then
+    -- _/'s own are counted as pending.
+    if store.v2(ws.id) and ws.id ~= store.OLD then
       v2 = v2 + #store.agents(ws.id)
     end
   end

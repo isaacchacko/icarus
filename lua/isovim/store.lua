@@ -25,24 +25,37 @@ local META = ".isovim.json"
 -- workspace id does (store.list, run dirs, tmux names), so an agent's address is <key>/aN. A
 -- workspace id is six hex digits, never holding a "/" nor being a pseudo-repo's name, so the two
 -- can't be confused.
--- "_" was general's key before; it is still read as general wherever one is typed (M.canon, and
--- M.canon_address for _/aN, which isovim.migrate may have moved to root/ or renumbered), but it's
--- never written: isovim.migrate moves an old ~/iso/_/ on the first start.
-M.GENERAL, M.ROOT = "general", "root"
+-- "_" was general's key before; isovim.migrate moves an old ~/iso/_/ to general/ and root/ on the
+-- first start. Until it has, _ is a key of its own, read from ~/iso/_/ as the old isovim wrote it
+-- (M.old_live): a deferred move (an agent mid-turn, or claude logged out) leaves its agents fully
+-- live at _/aN. Once _/ is gone, _ is read as general wherever one is typed (M.canon, and
+-- M.canon_address for _/aN, which isovim.migrate may have moved to root/ or renumbered).
+M.GENERAL, M.ROOT, M.OLD = "general", "root", "_"
 M.pseudo = { general = true, root = true }
+
+-- Whether the old ~/iso/_/ is still there, its move to general/ and root/ deferred (or going on).
+function M.old_live()
+  local stat = vim.uv.fs_lstat(M.work .. "/" .. M.OLD)
+  return stat ~= nil and stat.type == "directory"
+end
 
 ---@return string
 function M.canon(key)
-  return key == "_" and M.GENERAL or key
+  return key == M.OLD and not M.old_live() and M.GENERAL or key
+end
+
+-- A key typed for a new agent: _ always means general, as nothing new goes into an old _/.
+function M.canon_new(key)
+  return key == M.OLD and M.GENERAL or key
 end
 
 function M.is_pseudo(key)
-  return M.pseudo[M.canon(key) or ""] == true
+  key = M.canon(key)
+  return M.pseudo[key or ""] == true or key == M.OLD
 end
 
 function M.v2(id)
-  id = M.canon(id)
-  return M.pseudo[id or ""] == true or (type(id) == "string" and id:find("/", 1, true) ~= nil)
+  return M.is_pseudo(id) or (type(id) == "string" and id:find("/", 1, true) ~= nil)
 end
 
 -- A key safe as a path under the work root: a pseudo-repo (or "_"), or two or more names as
@@ -67,7 +80,7 @@ end
 -- A key's folder relative to the work root.
 function M.key_folder(key)
   key = M.canon(key)
-  if M.pseudo[key] then
+  if M.pseudo[key] or key == M.OLD then
     return key
   end
   local owner, rest = key:match("^([^/]+)(/.*)$")
@@ -88,6 +101,8 @@ end
 
 -- The migration's map of old addresses to new ones (_/aN to general/aM or root/aM), isovim.migrate's.
 M.migrated_file = M.root .. "/migrated.json"
+-- Held while isovim.migrate checks or moves _/.
+M.migrate_lock = M.root .. "/migrate.lock"
 local migrated = { at = -1 }
 local function migrated_map()
   local stat = vim.uv.fs_stat(M.migrated_file)
@@ -100,9 +115,26 @@ local function migrated_map()
   return migrated.map
 end
 
+-- Whether the old _/ still holds agent (an id, or a record's name), not yet moved.
+local function old_holds(agent)
+  local dir = M.work .. "/" .. M.OLD
+  if agent:match("^a%d+$") then
+    return vim.uv.fs_stat(dir .. "/iso/agents/" .. agent .. ".json") ~= nil or vim.uv.fs_stat(dir .. "/" .. agent) ~= nil
+  end
+  for _, path in ipairs(vim.fn.glob(dir .. "/iso/agents/a*.json", false, true)) do
+    local ok, lines = pcall(vim.fn.readfile, path)
+    local decoded, record = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+    if decoded and type(record) == "table" and record.name == agent then
+      return true
+    end
+  end
+  return false
+end
+
 -- An address as it is now: _/aN (and _ alone, and _/<name>) as general's, or where the migration
--- moved it. A host prefix is kept; another host's _/aN only becomes general/aN, as that host's own
--- map isn't known here (it resolves the address itself when a command goes there).
+-- moved it; while an old _/ still holds it (M.old_live), as it is. A host prefix is kept; another
+-- host's _/aN only becomes general/aN, as that host's own map isn't known here (it resolves the
+-- address itself when a command goes there).
 ---@param address string? <ws>/<agent>, <host>:<ws>/<agent>, or a key
 ---@param here? boolean the host prefix, if any, is this host's
 function M.canon_address(address, here)
@@ -111,12 +143,19 @@ function M.canon_address(address, here)
   end
   local host, rest = address:match("^([%w_.-]+:)(.*)$")
   rest = rest or address
+  local mine = not host or here
   if rest == "_" then
-    return (host or "") .. M.GENERAL
+    return (host or "") .. (mine and M.canon(M.OLD) or M.GENERAL)
   elseif rest:sub(1, 2) ~= "_/" then
     return address
   end
-  local moved = (not host or here) and migrated_map()[rest]
+  local moved = mine and migrated_map()[rest]
+  -- While the move goes on (its lock held), the map it wrote first wins: the agents it stops read
+  -- their old addresses as the new ones.
+  local moving = moved and vim.uv.fs_stat(M.migrate_lock) ~= nil
+  if mine and not moving and M.old_live() and old_holds(rest:sub(3)) then
+    return address
+  end
   return (host or "") .. (type(moved) == "string" and moved or M.GENERAL .. rest:sub(2))
 end
 
@@ -276,10 +315,7 @@ end
 local function keys()
   local found = {}
   local function walk(dir, folder, depth)
-    -- An old _/ is isovim.migrate's to move, never a key of its own.
-    if folder == "_" then
-      return
-    end
+    -- An old _/ found here is still waiting on isovim.migrate, so it's a key of its own (M.old_live).
     local key = folder and M.folder_key(folder)
     if key and vim.uv.fs_stat(dir .. "/iso/agents") then
       if M.valid_key(key) and #vim.fn.glob(records(key) .. "/a*.json", false, true) > 0 then
@@ -311,7 +347,7 @@ function M.list()
       dir = M.dir(key),
       created = created_at(M.path(key), {}) or 0,
       modified = stat and stat.mtime.sec or 0,
-      repo = not M.pseudo[key] and key or nil,
+      repo = not M.is_pseudo(key) and key or nil,
     }
   end
   for id, kind in vim.fs.dir(M.workspaces) do
@@ -678,7 +714,7 @@ local function add_record(key, spec)
   end
   local id = "a" .. n
   local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
-    read_only = spec.read_only or false, repo = not M.pseudo[key] and key or nil, created = os.time(), cmd = spec.cmd,
+    read_only = spec.read_only or false, repo = not M.is_pseudo(key) and key or nil, created = os.time(), cmd = spec.cmd,
     hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of,
     acp = spec.acp or nil }
   write_json(M.record_file(key, id), record)

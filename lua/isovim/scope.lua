@@ -30,7 +30,8 @@ end
 -- outside git.
 function M.of_workspace(ws)
   if store.v2(ws) then
-    return store.canon(ws)
+    -- An old _/ whose move waits holds what general/ and root/ will: General's.
+    return store.canon(ws) == store.OLD and M.GENERAL or store.canon(ws)
   end
   for _, agent in ipairs(store.agents(ws)) do
     if M.is_root(ws, agent) then

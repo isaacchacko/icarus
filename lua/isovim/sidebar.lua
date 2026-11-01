@@ -445,7 +445,7 @@ M.surfaces = surfaces
 -- still lists its agents under.
 local GENERAL_KEY, ROOT_KEY = store.GENERAL, store.ROOT
 local function group_key(surface_key)
-  return store.canon(surface_key)
+  return store.canon_new(surface_key)
 end
 
 -- This host's surfaces by key, each list in the module's order.

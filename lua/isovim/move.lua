@@ -556,6 +556,8 @@ function M.send_agent(key, agent, host)
     return false, address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
   elseif role == "root" or role == "repo-root" then
     return false, ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
+  elseif store.canon(key) == store.OLD then
+    return false, address .. " is in the old _/, whose move to general/ and root/ waits (~/.isovim/migrate.log): move it once that's done"
   end
   local running = panes.running(key, id)
   if running and agent.acp then

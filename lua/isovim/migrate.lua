@@ -18,15 +18,17 @@
 -- session (and Claude's transcript of it is copied to where Claude looks for the new dir). One that
 -- is mid-turn or waiting on a question isn't cut off: the whole move waits (deferred) until none
 -- is, and the next start or iso command tries again; so does one while a running agent's claude (or
--- codex) isn't logged in here (isovim.auth), as it would restart unable to work. old _/aN addresses keep working: the move's
--- map (~/.isovim/migrated.json) says where each went (store.canon_address). Every step is logged to
--- ~/.isovim/migrate.log.
+-- codex) isn't logged in here (isovim.auth), as it would restart unable to work. While it waits, _/
+-- stays fully live as a key of its own (store.old_live): its agents are listed, addressed and
+-- messaged at _/aN, and the root among them holds the role. Once moved, old _/aN addresses keep
+-- working: the move's map (~/.isovim/migrated.json) says where each went (store.canon_address).
+-- Every step is logged to ~/.isovim/migrate.log.
 local store = require("isovim.store")
 
 local M = {}
 
 M.log_file = store.root .. "/migrate.log"
-M.lock = store.root .. "/migrate.lock"
+M.lock = store.migrate_lock
 local OLD = "_"
 -- A lock older than this was left by a process that died.
 local STALE = 300

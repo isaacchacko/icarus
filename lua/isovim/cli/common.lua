@@ -251,7 +251,7 @@ local function unit(target)
     key = require("isovim.repos").of(dir) or store.GENERAL
     checkout = key ~= store.GENERAL and dir or nil
   elseif store.v2(target) and store.valid_key(target) then
-    key = store.canon(target:lower())
+    key = store.canon_new(target:lower())
   else
     fail(("%s is neither a dir nor a repo (owner/repo, or general for none)"):format(target))
   end
