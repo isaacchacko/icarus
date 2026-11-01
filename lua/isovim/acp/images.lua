@@ -3,7 +3,9 @@
 -- there, is vim's own <C-v>; a path to an image pasted or dropped in (a terminal types a drop as a
 -- bracketed paste of its path, often quoted or backslash-escaped) attaches that file, and so does
 -- one typed in, once you send. Each shows in the box as a chip, [Image #n], text you edit like any
--- other: deleting it drops the image.
+-- other: deleting it drops the image. Neither blocks: the clipboard is read and a file copied in
+-- the background, the statusline showing a bar meanwhile (M.status, a lualine component), and the
+-- chip lands where the paste started.
 --
 -- Every image is a file under the repo's iso/images/: the clipboard's is written there as a PNG,
 -- and a dropped file is copied there, since a screenshot dragged from macOS's thumbnail is a temp
@@ -14,6 +16,8 @@
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_acp_images")
+-- Where each paste's chip will go, apart from the chips' highlights, which are redrawn as you type.
+local PENDING = vim.api.nvim_create_namespace("isovim_acp_images_pending")
 -- Its own group, which a chat's rebind (isovim.acp.chat) leaves alone, as it keeps the box.
 local GROUP = vim.api.nvim_create_augroup("isovim_acp_images", { clear = false })
 
@@ -145,11 +149,11 @@ local function new_name(ext)
   return ("%s-%s.%s"):format(os.date("%Y%m%d-%H%M%S"), vim.fn.sha256(tostring(vim.uv.hrtime())):sub(1, 6), ext)
 end
 
-local function run(cmd)
-  local ok, result = pcall(function()
-    return vim.system(cmd):wait(5000)
-  end)
-  return ok and result or { code = 1, stdout = "" }
+-- Runs cmd without waiting on it, then done(result) on the main loop; one that can't start fails.
+local function run(cmd, done)
+  if not pcall(vim.system, cmd, { timeout = 10000 }, vim.schedule_wrap(done)) then
+    done({ code = 1, stdout = "" })
+  end
 end
 
 local function is_png(path)
@@ -161,39 +165,82 @@ local function is_png(path)
   return head == "\137PNG"
 end
 
--- Writes the clipboard's image to path as a PNG: pngpaste if it's there, else osascript on macOS;
--- wl-paste on Wayland, xclip on X. False when the clipboard holds no image.
-local function clipboard_png(path)
+-- Writes the clipboard's image to path as a PNG, then done(true): pngpaste if it's there, else
+-- osascript on macOS; wl-paste on Wayland, xclip on X. done(false) when the clipboard holds none.
+local function clipboard_png(path, done)
+  local function written()
+    if is_png(path) then
+      return done(true)
+    end
+    os.remove(path)
+    done(false)
+  end
   if vim.fn.executable("pngpaste") == 1 then
-    run({ "pngpaste", path })
+    return run({ "pngpaste", path }, written)
   elseif vim.fn.has("mac") == 1 then
-    run({ "osascript", "-e", "on run argv", "-e", "set png to (the clipboard as «class PNGf»)",
+    return run({ "osascript", "-e", "on run argv", "-e", "set png to (the clipboard as «class PNGf»)",
       "-e", "set f to open for access (POSIX file (item 1 of argv)) with write permission",
-      "-e", "set eof f to 0", "-e", "write png to f", "-e", "close access f", "-e", "end run", path })
+      "-e", "set eof f to 0", "-e", "write png to f", "-e", "close access f", "-e", "end run", path }, written)
+  end
+  local list, read
+  if vim.env.WAYLAND_DISPLAY and vim.fn.executable("wl-paste") == 1 then
+    list, read = { "wl-paste", "--list-types" }, { "wl-paste", "--no-newline", "--type", "image/png" }
+  elseif vim.fn.executable("xclip") == 1 then
+    list, read = { "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o" }, { "xclip", "-selection", "clipboard", "-t", "image/png", "-o" }
   else
-    local list, read
-    if vim.env.WAYLAND_DISPLAY and vim.fn.executable("wl-paste") == 1 then
-      list, read = { "wl-paste", "--list-types" }, { "wl-paste", "--no-newline", "--type", "image/png" }
-    elseif vim.fn.executable("xclip") == 1 then
-      list, read = { "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o" }, { "xclip", "-selection", "clipboard", "-t", "image/png", "-o" }
-    else
-      return false
-    end
-    if not (run(list).stdout or ""):find("image/png", 1, true) then
-      return false
-    end
-    local png = run(read)
-    local file = png.code == 0 and png.stdout ~= "" and io.open(path, "wb")
-    if file then
-      file:write(png.stdout)
-      file:close()
-    end
+    return done(false)
   end
-  if is_png(path) then
-    return true
-  end
-  os.remove(path)
-  return false
+  run(list, function(types)
+    if not (types.stdout or ""):find("image/png", 1, true) then
+      return done(false)
+    end
+    run(read, function(png)
+      local file = png.code == 0 and png.stdout ~= "" and io.open(path, "wb")
+      if file then
+        file:write(png.stdout)
+        file:close()
+      end
+      written()
+    end)
+  end)
+end
+
+-- Copies from to to a chunk at a time, counting job.done of job.total bytes, then done(err).
+local CHUNK = 256 * 1024
+local function copy(from, to, job, done)
+  local uv = vim.uv
+  done = vim.schedule_wrap(done)
+  uv.fs_open(from, "r", 438, function(open_err, src)
+    if not src then
+      return done(open_err)
+    end
+    job.total = (uv.fs_fstat(src) or {}).size
+    uv.fs_open(to, "w", 420, function(err, dst)
+      if not dst then
+        uv.fs_close(src)
+        return done(err)
+      end
+      local function step()
+        uv.fs_read(src, CHUNK, job.done, function(read_err, data)
+          if read_err or not data or data == "" then
+            uv.fs_close(src)
+            uv.fs_close(dst)
+            return done(read_err)
+          end
+          uv.fs_write(dst, data, job.done, function(write_err)
+            if write_err then
+              uv.fs_close(src)
+              uv.fs_close(dst)
+              return done(write_err)
+            end
+            job.done = job.done + #data
+            step()
+          end)
+        end)
+      end
+      step()
+    end)
+  end)
 end
 
 local function highlight(buf)
@@ -208,44 +255,139 @@ local function highlight(buf)
   end
 end
 
--- Attaches image to the box and puts its chip at the cursor.
-local function attach(buf, image)
+-- The statusline while an image pastes: a bar, filling with the bytes copied when that's known,
+-- else sweeping; then, for a few seconds, what went wrong if it failed (M.status).
+---@type {buf: integer, mark: integer, done: integer, total?: integer, tick: integer}[]
+local jobs = {}
+local notice ---@type {text: string, till: number}?
+local timer ---@type uv.uv_timer_t?
+local CELLS = 6
+
+function M.status()
+  local job = jobs[#jobs]
+  if job then
+    local cells = {}
+    local filled = job.total and job.total > 0 and math.floor(job.done / job.total * CELLS + 0.5)
+    local head = math.floor(vim.uv.now() / 120) % (CELLS + 3)
+    for i = 1, CELLS do
+      local on = filled and i <= filled or (not filled and i > head - 3 and i <= head)
+      cells[i] = on and "▰" or "▱"
+    end
+    return "󰋩 pasting image " .. table.concat(cells)
+  end
+  return notice and vim.uv.now() < notice.till and "󰋩 " .. notice.text or ""
+end
+
+local function redraw()
+  pcall(vim.cmd, "redrawstatus!")
+end
+
+local function animate()
+  if timer then
+    return
+  end
+  timer = vim.uv.new_timer()
+  timer:start(0, 120, vim.schedule_wrap(function()
+    redraw()
+    if #jobs == 0 and M.status() == "" and timer then
+      timer:stop()
+      timer:close()
+      timer = nil
+    end
+  end))
+end
+
+-- A paste starts: the chip will go where the cursor is now (at, if given), whatever's typed meanwhile.
+local function begin(buf, at)
+  if not at then
+    local win = vim.fn.bufwinid(buf)
+    local row, col = unpack(vim.api.nvim_win_get_cursor(win ~= -1 and win or 0))
+    -- In normal mode it goes after the character under the cursor, as p puts it.
+    if vim.api.nvim_get_mode().mode:sub(1, 1) ~= "i" then
+      col = math.min(col + 1, #(vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""))
+    end
+    at = { row - 1, col }
+  end
+  local job = { buf = buf, done = 0, tick = vim.api.nvim_buf_get_changedtick(buf),
+    mark = vim.api.nvim_buf_set_extmark(buf, PENDING, at[1], at[2], { right_gravity = false }) }
+  jobs[#jobs + 1] = job
+  animate()
+  return job
+end
+
+-- A paste ends: image's chip goes in at its place, or, failed, the statusline says why for a while.
+-- Returns where the chip ends.
+local function finish(job, image, err)
+  jobs = vim.tbl_filter(function(each)
+    return each ~= job
+  end, jobs)
+  if err then
+    notice = { text = err, till = vim.uv.now() + 4000 }
+    animate()
+  end
+  local buf = job.buf
+  if not (vim.api.nvim_buf_is_valid(buf) and boxes[buf]) then
+    return
+  end
+  local row, col = unpack(vim.api.nvim_buf_get_extmark_by_id(buf, PENDING, job.mark, {}))
+  vim.api.nvim_buf_del_extmark(buf, PENDING, job.mark)
+  redraw()
+  if not image then
+    return
+  end
   local box = boxes[buf]
   local n = box.next
   box.images[n], box.next = image, n + 1
   local chip = M.chip(n) .. " "
-  if vim.api.nvim_get_mode().mode:sub(1, 1) == "i" then
-    local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-    vim.api.nvim_buf_set_text(buf, row - 1, col, row - 1, col, { chip })
-    vim.api.nvim_win_set_cursor(0, { row, col + #chip })
-  else
-    vim.api.nvim_put({ chip }, "c", true, true)
+  vim.api.nvim_buf_set_text(buf, row, col, row, col, { chip })
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    local cursor = vim.api.nvim_win_get_cursor(win)
+    if cursor[1] - 1 == row and cursor[2] >= col then
+      vim.api.nvim_win_set_cursor(win, { cursor[1], cursor[2] + #chip })
+    end
   end
   highlight(buf)
+  return { row, col + #chip }
 end
 
--- Attaches a copy of the image file at path.
-function M.attach_file(buf, path)
+-- Attaches copies of the image files at paths, one after the other, each chip after the last.
+function M.attach_files(buf, paths, at)
+  local path = table.remove(paths, 1)
+  if not path then
+    return
+  end
   local box = boxes[buf]
   vim.fn.mkdir(box.dir, "p")
-  local copy = box.dir .. "/" .. new_name((path:match("%.(%w+)$") or "png"):lower())
-  local ok, err = vim.uv.fs_copyfile(path, copy)
-  if not ok then
-    return vim.notify("isovim: could not attach " .. path .. ": " .. tostring(err), vim.log.levels.ERROR)
-  end
-  attach(buf, { path = copy, mimeType = M.mime(path) })
+  local dest = box.dir .. "/" .. new_name((path:match("%.(%w+)$") or "png"):lower())
+  local job = begin(buf, at)
+  copy(path, dest, job, function(err)
+    if err then
+      os.remove(dest)
+      finish(job, nil, ("could not attach %s: %s"):format(vim.fs.basename(path), err))
+      return M.attach_files(buf, paths)
+    end
+    M.attach_files(buf, paths, finish(job, { path = dest, mimeType = M.mime(path) }))
+  end)
 end
 
--- Attaches the clipboard's image; false when it holds none.
+-- Attaches the clipboard's image, read without blocking. With no image there, <C-v> is vim's own
+-- once it's known, if nothing was typed meanwhile.
 function M.paste_clipboard(buf)
   local box = boxes[buf]
   vim.fn.mkdir(box.dir, "p")
   local path = box.dir .. "/" .. new_name("png")
-  if not clipboard_png(path) then
-    return false
-  end
-  attach(buf, { path = path, mimeType = "image/png" })
-  return true
+  local job = begin(buf)
+  clipboard_png(path, function(ok)
+    if ok then
+      return finish(job, { path = path, mimeType = "image/png" })
+    end
+    local untouched = vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_get_current_buf() == buf
+      and vim.api.nvim_buf_get_changedtick(buf) == job.tick and vim.api.nvim_get_mode().mode:sub(1, 1) == "i"
+    finish(job, nil, not untouched and "no image on the clipboard" or nil)
+    if untouched then
+      vim.api.nvim_feedkeys(vim.keycode("<C-v>"), "n", false)
+    end
+  end)
 end
 
 -- What the box sends: its text, an image path typed into it made an attachment, and its images
@@ -283,9 +425,7 @@ end
 -- again and keeps what's attached.
 function M.setup(buf, dir)
   vim.keymap.set("i", "<C-v>", function()
-    if not M.paste_clipboard(buf) then
-      vim.api.nvim_feedkeys(vim.keycode("<C-v>"), "n", false)
-    end
+    M.paste_clipboard(buf)
   end, { buffer = buf, desc = "isovim: paste the clipboard's image (else insert a key literally)" })
   if boxes[buf] then
     return
@@ -320,9 +460,7 @@ vim.paste = function(lines, phase)
   if not found then
     return paste(lines, phase)
   end
-  for _, path in ipairs(found) do
-    M.attach_file(buf, path)
-  end
+  M.attach_files(buf, found)
   return true
 end
 

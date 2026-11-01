@@ -23,6 +23,20 @@ return {
     end,
   },
   {
+    "nvim-lualine/lualine.nvim",
+    opts = function(_, opts)
+      -- An image pasting into an input box: its bar, then for a moment why it failed, if it did.
+      table.insert(opts.sections.lualine_x, 1, {
+        function()
+          return require("isovim.acp.images").status()
+        end,
+        cond = function()
+          return package.loaded["isovim.acp.images"] ~= nil and require("isovim.acp.images").status() ~= ""
+        end,
+      })
+    end,
+  },
+  {
     "akinsho/bufferline.nvim",
     opts = function(_, opts)
       -- The tab line always shows, starting right of the sidebar: over the sidebar is its title.

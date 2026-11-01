@@ -123,6 +123,9 @@ image there is vim's own `<C-v>`, so a literal insert still works; a path to an 
 dropped in (quoted, backslash-escaped or a `file://` URL), or typed and then sent, attaches that
 file, copied under `iso/images/` since a dragged screenshot is a temp file. Each shows as an
 `[Image #n]` chip, in the input box and in the chat. A surface's input box takes them the same way.
+A paste doesn't block: the statusline shows `󰋩 pasting image ▰▰▰▱▱▱` (filling with the bytes copied
+for a file, sweeping while the clipboard is read) until the chip lands where `<C-v>` was pressed,
+or says for a few seconds why it failed.
 
 While prompts wait, the queue shows between the two, in a window of its own: one prompt a line, as
 tall as its lines up to six, titled `queued · N`. It opens as the first prompt queues and closes when

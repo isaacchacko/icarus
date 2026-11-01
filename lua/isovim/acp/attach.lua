@@ -21,7 +21,8 @@ function M.run(ws, agent)
   vim.o.title = true
   local spec = require("isovim.store").agent(ws, agent) or {}
   vim.o.titlestring = "isovim · " .. (spec.name or agent)
-  vim.o.statusline = ("%%#StatusLine# isovim · %s/%s · %s%%=:qa leaves "):format(ws, agent, (spec.name or agent):gsub("%%", "%%%%"))
+  vim.o.statusline = ("%%#StatusLine# isovim · %s/%s · %s%%=%%{v:lua.require'isovim.acp.images'.status()}  :qa leaves ")
+    :format(ws, agent, (spec.name or agent):gsub("%%", "%%%%"))
   local chat = require("isovim.acp.chat").open(ws, agent, vim.api.nvim_get_current_win())
   -- The empty buffer nvim started with goes.
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
