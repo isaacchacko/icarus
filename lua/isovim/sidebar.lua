@@ -83,6 +83,7 @@ local KINDS = {
         local icon, hl = status.icon(item.status)
         vim.list_extend(row, { { " " }, { icon, hl } })
       end
+      row[#row + 1] = item.running_mark
       return row
     end,
     open = function(item)
@@ -95,7 +96,7 @@ local KINDS = {
   terminals = {
     format = function(item)
       local glyph, glyph_hl = icons.get("terminals")
-      return { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "terminals", "Comment" }, { " " .. item.count, "Comment" } }
+      return { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "terminals", "Comment" }, item.running_mark }
     end,
     open = function(item)
       M.set_collapsed(item.host, "terminals", nil, not item.collapsed)
@@ -226,6 +227,7 @@ local KINDS = {
       if item.subtitle and item.subtitle ~= item.name then
         row[#row + 1] = { "  " .. item.subtitle, "Comment" }
       end
+      row[#row + 1] = item.running_mark
       return row
     end,
     open = function(item)
@@ -675,6 +677,19 @@ local function group_status(agents)
   return most_urgent(agents)
 end
 
+-- How many of a group's agents run, at its header's right edge: in the working color while any
+-- works, dim otherwise, nothing when none runs. Hidden ones count: they run, H only hides rows.
+local function running_mark(agents)
+  local n, working = 0, false
+  for _, entry in ipairs(agents) do
+    if entry.running then
+      n = n + 1
+      working = working or entry.status == "working"
+    end
+  end
+  return n > 0 and { tostring(n), working and "DiagnosticInfo" or "Comment", right = true } or nil
+end
+
 -- Rows for the surfaces of an Inbox, one format per type (KINDS.surface).
 local function surface_rows(items, base, list, depth)
   for _, entry in ipairs(list or {}) do
@@ -751,7 +766,8 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
     if g.kind == "root" then
       for i, entry in ipairs(agents) do
-        items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY, glyph = "root" })
+        items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY, glyph = "root",
+          running_mark = i == 1 and running_mark(g.agents) or nil })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
       -- Its Inbox, as a repo's: all its surfaces (the Task Board, markdown, files, questions), while
@@ -783,6 +799,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
         waiting = waiting(list),
         ws = g.spawn_ws,
         ws_name = g.name,
+        running_mark = running_mark(g.agents),
       })
       if not collapsed then
         if surfaces_by_key and #list > 0 then
@@ -1085,7 +1102,7 @@ local function collect()
   end
   local list = vim.list_extend(vim.list_extend({}, inbox), items)
   local collapsed = is_collapsed(shown, "terminals")
-  list[#list + 1] = { kind = "terminals", host = shown, count = #terminals, collapsed = collapsed }
+  list[#list + 1] = { kind = "terminals", host = shown, count = #terminals, collapsed = collapsed, running_mark = running_mark(terminals) }
   vim.list_extend(list, collapsed and {} or terminals)
   -- So you know they're there.
   if not shown and hidden > 0 then

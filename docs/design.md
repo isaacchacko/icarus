@@ -272,7 +272,8 @@ Inbox 2                     ← the shown host's: every surface waiting on you
   isovim - ? mini-animate …
 ♛ root  ⏺                   ← the host root, with the crown
   Inbox                     ← the root's surfaces (Task Board, markdown, files, questions)
-▾ isovim ●                  ← repo header in its color; opens the router
+▾ isovim ●             2    ← repo header in its color; opens the router; at the right, how
+                               many of its agents run (the working color while any works)
   Inbox                     ← this repo's surfaces
     router · rework vocab
     a3 · tab line fix        (workers; teams behind them are counted, not listed)
