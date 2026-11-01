@@ -185,14 +185,18 @@ end
 
 -- The rows from win's top to its buffer's end, filler lines in; more than its height while the end
 -- is below it. Lines alone don't say: a long line wraps over many rows, and its last ones can be
--- below the window while its start is on screen. nil for a window it can't measure.
+-- below the window while its start is on screen. nil for a window it can't measure. Counting stops
+-- a little past the window's height: callers only ask whether the end is on screen (or a wheel
+-- step below it), and measuring a long chat from its top on every streamed update spun the TUI.
 function M.rows_to_end(win)
   if not measurable(win) then
     return nil
   end
   local ok, rows = pcall(function()
     local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-    return view.topfill + vim.api.nvim_win_text_height(win, { start_row = view.topline - 1, start_vcol = view.skipcol }).all
+    local cap = vim.api.nvim_win_get_height(win) + 100
+    return view.topfill
+      + vim.api.nvim_win_text_height(win, { start_row = view.topline - 1, start_vcol = view.skipcol, max_height = cap }).all
   end)
   return ok and rows or nil
 end
