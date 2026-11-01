@@ -1,4 +1,4 @@
--- isovim's glyphs and their colors, for the sidebar, the Needs-you pane and the tab bar.
+-- isovim's glyphs and their colors, for the sidebar, the Inbox and the tab bar.
 -- cod-claude and cod-openai are newer than the Symbols Nerd Font Ghostty 1.4 bundles (3.4): the
 -- terminal needs Symbols Nerd Font Mono 3.5+ installed and, in Ghostty,
 -- `font-codepoint-map = U+EC81-U+EC82=Symbols Nerd Font Mono`.

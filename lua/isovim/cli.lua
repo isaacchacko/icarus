@@ -49,7 +49,7 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
                                      starts from a copy of <agent>'s conversation (default: the
                                      agent running this); nothing opens it, so focus stays put
        iso ask <question...>         from an agent: ask the root; the root (or anyone, with no
-                                     root) raises it to you, into Needs-you
+                                     root) raises it to you, into the Inbox
        iso root [<agent>|--clear]    print or set the root, the agent the others ask and whose
                                      stamped messages speak for you; <host>:<ws>/<agent> for a
                                      root on another host
@@ -659,7 +659,7 @@ function commands.send(args)
 end
 
 -- A worker's question goes to the root; the root's own (or any agent's while there's no root) is
--- raised to you, and the agent shows in Needs-you until you've looked at it.
+-- raised to you, and the agent shows in the Inbox until you've looked at it.
 function commands.ask(args)
   local root = require("isovim.root")
   local question = table.concat(args, " ")
@@ -679,7 +679,7 @@ function commands.ask(args)
   root.raise(ws, agent, question)
   tui("require('isovim').refresh()")
   out("Raised to the user. End your turn on this question in your own chat, with the evidence and "
-    .. "your recommendation; Needs-you shows it to them.")
+    .. "your recommendation; the Inbox shows it to them.")
 end
 
 -- The root: shown, or set by the user from a shell, by the root handing over, or claimed by an agent

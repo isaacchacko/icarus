@@ -47,7 +47,7 @@ function M.start(ws, which)
   if not line then
     return nil
   end
-  -- It reports like an agent: working while it runs, then finished (a toast, Needs you).
+  -- It reports like an agent: working while it runs, then finished (a toast, the Inbox).
   local hook = vim.fn.shellescape(panes.hook_script)
   local cmd = ("%s prompt </dev/null; %s; code=$?; %s stop </dev/null; "):format(hook, line, hook)
     .. ("[ $code -eq 0 ] || echo 'iso: the %s script failed (exit '$code')'; exec ${SHELL:-sh} -l"):format(which)

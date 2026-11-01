@@ -2,7 +2,7 @@
 -- other ([from <host>:<ws>/<agent> · m<id>], with "root" when the root sent it) and keeps a ledger of
 -- the stamps, so a receiver can tell a real stamp from a typed one. A stamp from the root carries
 -- the user's delegated authority; workers ask the root with `iso ask`, and the root raises the
--- user's own decisions to them, which the Needs-you pane shows.
+-- user's own decisions to them, which the Inbox shows.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 
@@ -169,7 +169,7 @@ local function raised_file(ws, agent)
   return store.run_dir(ws) .. "/" .. agent .. ".raised"
 end
 
--- A decision raised to the user: the agent shows in Needs-you until they've looked at it.
+-- A decision raised to the user: the agent shows in the Inbox until they've looked at it.
 function M.raise(ws, agent, question)
   vim.fn.mkdir(store.run_dir(ws), "p")
   vim.fn.writefile({ question }, raised_file(ws, agent))

@@ -1,4 +1,4 @@
--- The Workspaces picker, its Needs-you pane, and the file explorer that can take its place.
+-- The Workspaces picker, its Inbox, and the file explorer that can take its place.
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
@@ -201,7 +201,7 @@ end
 
 -- Rows: each workspace with its agents, or its PRs while P is on; a collapsed workspace (the default)
 -- only its own row. Hidden agents show only while show_hidden is on. Agents waiting on you
--- (attention) also go to M.queue, the "Needs you" pane.
+-- (attention) also go to M.queue, the Inbox.
 local function sidebar_items()
   isovim.mark_visible_seen()
   local sessions = panes.sessions()
@@ -399,7 +399,7 @@ end
 
 local queue_ns = vim.api.nvim_create_namespace("isovim_queue")
 
--- The "Needs you" pane is the picker's preview window: rendered from M.queue whatever the
+-- The Inbox is the picker's preview window: rendered from M.queue whatever the
 -- list's cursor is on, and hidden while the queue is empty.
 local function render_queue(preview)
   local lines, marks = {}, {}
@@ -510,7 +510,7 @@ local function add_agent(ws, spec)
   isovim.refresh()
 end
 
--- {key, action, description}: the sidebar list's and the Needs-you pane's keys, which `?` lists.
+-- {key, action, description}: the sidebar list's and the Inbox's keys, which `?` lists.
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent or PR; a pinned file beside the chat, a folder in the explorer" },
   { "<Tab>", "isovim_toggle_expand", "expand or collapse the workspace" },
@@ -532,7 +532,7 @@ local LIST_KEYS = {
   { "P", "isovim_toggle_prs", "agents or PRs" },
   { "b", "isovim_last_workspace", "back to the last workspace" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
-  { "<c-k>", "isovim_focus_queue", "into Needs you" },
+  { "<c-k>", "isovim_focus_queue", "into Inbox" },
   { "<c-l>", "isovim_focus_chat", "to the chat" },
   { "?", "isovim_help", "this help" },
 }
@@ -563,7 +563,7 @@ function M.help()
     lines[#lines + 1] = ""
   end
   section("Sidebar", LIST_KEYS)
-  section("Needs you", QUEUE_KEYS)
+  section("Inbox", QUEUE_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
   local leader = {}
@@ -886,7 +886,7 @@ function M.open(opts)
         border = "none",
         box = "vertical",
         { win = "input", height = 1, border = true, title = "{title} {live} {flags}", title_pos = "center" },
-        { win = "preview", title = "Needs you", title_pos = "center", height = 6, border = true },
+        { win = "preview", title = "Inbox", title_pos = "center", height = 6, border = true },
         { win = "list", border = "none" },
       },
     },
