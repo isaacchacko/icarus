@@ -293,6 +293,42 @@ try:
         <= {row["topic"] for row in events("surface.")}, [row["topic"] for row in events("surface.")]
     print("ok   the root's surfaces go in root/iso/, a repo-less agent's in general/iso/")
 
+    # <leader>in walks what waits on you: the root's first, then the repos', general last; a
+    # question left unanswered steps aside, then comes round again; with nothing, the legacy agents.
+    (root_iso / "brief.md").write_text("---\nconsumable: true\n---\nread me\n")
+    (root_iso / "decide.surface").write_text(json.dumps({"type": "question", "question": "Decide?", "options": [{"label": "a"}]}))
+    (work / "news.md").write_text("---\nconsumable: true\n---\nnews\n")
+    (general_iso / "aside.md").write_text("---\nconsumable: true\n---\naside\n")
+    iso.wait(lambda: iso.lua("""
+      local n = 0
+      for _, key in ipairs({'root', ..., 'general'}) do
+        for _, e in ipairs(require('isovim.surfaces').list(key)) do if e.needs_you then n = n + 1 end end
+      end
+      return n
+    """, REPO_KEY) == 5, "the watcher to see what waits (brief, decide, news, status, aside)")
+    iso.lua("vim.g.asked = vim.NIL; vim.ui.select = function(_, opts) vim.g.asked = opts.prompt end")
+
+    def step():
+        before = len(events("surface."))
+        iso.lua("vim.g.asked = vim.NIL; require('isovim').next_needs_you()")
+        new = [row for row in events("surface.")[before:] if row["topic"].endswith(".consumed")]
+        return iso.lua("return vim.g.asked") or (new[0]["repo"] + "/" + new[0]["name"] if new else None)
+
+    walked = [step() for _ in range(6)]
+    assert walked == ["root/brief", "Decide?", f"{REPO_KEY}/news", f"{REPO_KEY}/status", "general/aside", "Decide?"], walked
+    run("answer", "root/decide", "a")
+    iso.wait(lambda: iso.lua("return #vim.tbl_filter(function(e) return e.needs_you end, require('isovim.surfaces').list('root'))") == 0,
+             "the root's question answered")
+    iso.lua("vim.g.told = vim.NIL; local n = Snacks.notify.info; Snacks.notify.info = function(m, ...) vim.g.told = m return n(m, ...) end")
+    iso.lua("require('isovim').next_needs_you()")
+    assert iso.lua("return vim.g.told") == "Nothing needs you", iso.lua("return vim.g.told")
+    iso.lua("require('isovim').open(...)", boss, "main")
+    run("send", f"{ws}/main", "ask may I?")
+    iso.wait(lambda: iso.lua("return require('isovim.status').get(...)", ws, "main") == "attention", "alpha to ask")
+    iso.lua("require('isovim').next_needs_you()")
+    iso.wait(lambda: iso.lua("return vim.b.isovim_id") == ws, "the legacy agent that asks, opened")
+    print("ok   <leader>in walks the waiting surfaces, the root's first, then falls back to the agents")
+
     expected = {f"{TOPIC}.{n}.{w}" for n, w in (("plan%2Etxt", "created"), ("plan%2Etxt", "changed"), ("status", "created"),
                                                  ("tasks", "changed"), ("bad", "removed"), (chat_name, "removed"))}
     assert expected <= set(topics()), expected - set(topics())
