@@ -170,7 +170,13 @@ function M.animate(on)
     return
   end
   if on and not timer:is_active() then
-    timer:start(100, 100, require("isovim.safe").ticker("the sidebar's spinners", M.on_tick))
+    local safe, on_tick = require("isovim.safe"), M.on_tick
+    timer:start(100, 100, safe.ticker("the sidebar's spinners", function()
+      -- Under textlock it can't draw (E565): the next tick does.
+      if not safe.text_locked() then
+        on_tick()
+      end
+    end))
   elseif not on then
     timer:stop()
   end

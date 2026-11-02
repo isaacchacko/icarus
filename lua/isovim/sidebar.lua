@@ -1633,6 +1633,10 @@ function M.refresh()
   pending = true
   vim.defer_fn(function()
     pending = false
+    -- Under textlock it can't draw (E565): shortly.
+    if require("isovim.safe").text_locked() then
+      return M.refresh()
+    end
     require("isovim.safe").wrap("the sidebar", refresh_now)()
   end, 30)
 end

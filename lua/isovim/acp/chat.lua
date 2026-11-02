@@ -668,7 +668,7 @@ end
 -- open, else what shows collapsed and a line saying how much more there is.
 ---@param call isovim.acp.ToolCall
 local function draw_tool(chat, call)
-  local row = vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
+  local row = call.mark and vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
   if not row then
     return
   end
@@ -753,10 +753,11 @@ local function tool(chat, update)
     chat.tools[id] = call
     local name = look.tool_name(call)
     call.hidden = name ~= nil and look.HIDDEN[name] or false
-    if not call.hidden then
-      local row = add_block(chat, { "" })
-      call.mark = vim.api.nvim_buf_set_extmark(chat.buf, TOOLS, row, 0, {})
-    end
+  end
+  -- Apart from making it: a draw refused halfway (E565) comes back here with the call made.
+  if not call.hidden and not call.mark then
+    local row = add_block(chat, { "" })
+    call.mark = vim.api.nvim_buf_set_extmark(chat.buf, TOOLS, row, 0, {})
   end
   call.title = update.title or call.title
   call.status = update.status or call.status
@@ -1215,7 +1216,7 @@ end
 
 -- The banner drawn again where it is (the first two lines) when what it says changed.
 local function update_banner(chat)
-  if not (chat.thread and chat.banner) or chat.drawing_banner then
+  if not (chat.thread and chat.banner) or chat.drawing_banner or safe.text_locked() then
     return
   end
   local lines = banner(chat)
@@ -1649,23 +1650,93 @@ local function render(chat, entry)
   end
 end
 
--- Takes an entry once, in order: one pushed ahead of what's been read (a gap) reads the journal.
-local function ingest(chat, entry, pushed)
-  local seq = tonumber(entry.seq) or 0
-  if seq <= chat.seq then
-    return
+local reset, flush
+
+-- Draws an entry; only then is it taken (chat.seq), so one nvim wouldn't let be drawn isn't lost: it
+-- returns false for that (E565). One that fails for any other reason is reported, not tried again,
+-- as it would fail for good.
+local function draw_entry(chat, entry)
+  if entry.reset_chat then
+    reset(chat)
+    return true
   end
-  if pushed and seq > chat.seq + 1 then
-    return chat.drain()
+  -- Set while it draws, so a read of the journal that lands meanwhile doesn't draw it twice.
+  local before = chat.seq
+  chat.seq = tonumber(entry.seq) or before
+  local ok, err = pcall(render, chat, entry)
+  chat.entry = nil
+  if not ok and tostring(err):find("E565", 1, true) then
+    chat.seq = before
+    return false
   end
-  chat.seq = seq
-  render(chat, entry)
+  if not ok then
+    error(err, 0)
+  end
   if chat.thread and not chat.seen_soon then
     chat.seen_soon = true
     vim.schedule(function()
       chat.seen_soon = nil
       M.thread_seen(chat)
     end)
+  end
+  return true
+end
+
+-- Holds an entry back while nvim refuses text changes (safe.text_locked: a supervisor's push landing
+-- inside an expression mapping, say), in order, and tries again shortly.
+local function hold(chat, entry)
+  chat.deferred = chat.deferred or {}
+  chat.deferred[#chat.deferred + 1] = entry
+  chat.deferred_to = entry.reset_chat and 0 or tonumber(entry.seq) or chat.deferred_to
+  if not chat.retrying then
+    chat.retrying = true
+    vim.defer_fn(safe.wrap("the chat's stream", function()
+      chat.retrying = false
+      if not chat.dead then
+        flush(chat)
+      end
+    end), 50)
+  end
+end
+
+-- What was held back, drawn now if it can be; what can't stays held, in order.
+flush = function(chat)
+  local held = chat.deferred
+  if not held then
+    return
+  elseif safe.text_locked() then
+    chat.deferred = {}
+    return vim.iter(held):each(function(entry)
+      hold(chat, entry)
+    end)
+  end
+  chat.deferred, chat.deferred_to = nil, nil
+  -- Each on its own: one that fails for good is reported, and doesn't take the rest with it.
+  local draw = safe.wrap("the chat's stream", draw_entry)
+  batch(chat, function()
+    for i, entry in ipairs(held) do
+      if draw(chat, entry) == false then
+        for j = i, #held do
+          hold(chat, held[j])
+        end
+        return
+      end
+    end
+  end)
+end
+
+-- Takes an entry once, in order: one pushed ahead of what's been read (a gap) reads the journal.
+local function ingest(chat, entry, pushed)
+  local seq = tonumber(entry.seq) or 0
+  local top = chat.deferred and chat.deferred_to or chat.seq
+  if seq <= top then
+    return
+  end
+  if pushed and seq > top + 1 then
+    return chat.drain()
+  end
+  if chat.deferred or safe.text_locked() or not draw_entry(chat, entry) then
+    hold(chat, entry)
   end
 end
 
@@ -1684,7 +1755,7 @@ end)
 
 -- The conversation emptied, to be drawn again from the journal; the composer, and your cursor in
 -- it, stay as they are.
-local function reset(chat)
+reset = function(chat)
   chat.block, chat.tools, chat.queue, chat.history, chat.seq, chat.fresh = nil, {}, {}, {}, 0, true
   chat.history_images = {}
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
@@ -1698,6 +1769,17 @@ local function reset(chat)
     end)
   end
   refresh_queue(chat)
+end
+
+-- The journal was replaced: the chat starts over, once nvim lets it be drawn. What was held back was
+-- of the journal that's gone.
+local function start_over(chat)
+  if safe.text_locked() then
+    chat.deferred = nil
+    return hold(chat, { reset_chat = true })
+  end
+  chat.deferred, chat.deferred_to = nil, nil
+  reset(chat)
 end
 
 -- Subscribes to the supervisor's entries, if it's up and the chat isn't already.
@@ -2776,7 +2858,7 @@ local function follow(chat, from)
     local stop, at, drain = threads.follow(ws, chat.thread, safe.wrap("the thread", function(entry)
       ingest(chat, entry, false)
     end), safe.wrap("the thread", function()
-      reset(chat)
+      start_over(chat)
     end), from)
     chat.drain, chat.journal_at = drain, at
     chat.stop = function()
@@ -2796,7 +2878,7 @@ local function follow(chat, from)
     if chat.backlog then
       chat.backlog, chat.backlog_at = {}, 1
     end
-    reset(chat)
+    start_over(chat)
   end), function(read)
     batch(chat, read)
   end, from)
@@ -2879,7 +2961,7 @@ end
 function M.set_open(ws, agent, row, open)
   local chat = M.get(ws, agent)
   for _, call in pairs(chat and chat.tools or {}) do
-    if vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1] == row then
+    if call.mark and vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1] == row then
       call.open = open
       draw_tool(chat, call)
       return true
@@ -3170,6 +3252,10 @@ end)
 
 local pump
 pump = safe.wrap("drawing the chats again", function()
+  -- Nothing can be drawn under textlock (E565): shortly.
+  if safe.text_locked() then
+    return vim.defer_fn(pump, 50)
+  end
   local start = vim.uv.hrtime()
   while builds[1] do
     local chat = builds[1].chat
@@ -3198,6 +3284,12 @@ end)
 -- those on screen first. A chat of the old code, whose composer was a buffer of its own, is made
 -- again at once (remake).
 function M.rebind(redraw)
+  -- Under textlock nothing can be drawn (E565): shortly.
+  if safe.text_locked() then
+    return vim.defer_fn(function()
+      require("isovim.acp.chat").rebind(redraw)
+    end, 50)
+  end
   for _, build in ipairs(builds) do
     drop(build)
   end

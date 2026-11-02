@@ -65,6 +65,28 @@ end
 -- can run other events in the middle of it (a long nvim_win_text_height checks for input and handles
 -- what's waiting): a timer or a supervisor's push landing then found modules half loaded ("loop or
 -- previous error loading module") and a chat half made. What runs again by itself skips its turn.
+-- Whether nvim refuses text changes right now (E565): textlock holds while an expression mapping, a
+-- statusline or the like runs, and a supervisor's RPC can land inside one, as can anything run from
+-- a vim.wait there. There's no asking for it directly, so a hidden scratch buffer is written to,
+-- which changes nothing anyone sees. In a fast event no API call would work either.
+function M.text_locked()
+  if vim.in_fast_event() then
+    return true
+  end
+  local buf = _G.isovim_probe_buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+    local ok, made = pcall(vim.api.nvim_create_buf, false, true)
+    if not ok then
+      return true
+    end
+    buf = made
+    vim.bo[buf].undolevels = -1
+    _G.isovim_probe_buf = buf
+  end
+  local ok, err = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, {})
+  return not ok and tostring(err):find("E565", 1, true) ~= nil
+end
+
 function M.reloading()
   return _G.isovim_reloading == true
 end
