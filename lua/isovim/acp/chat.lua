@@ -2498,11 +2498,14 @@ local function map_keys(chat)
     local thread_u = lhs == "u" and chat.thread
     map("n", lhs, function()
       if thread_u and not mine() then
-        return M.thread_unread(chat)
+        return M.toggle_read(chat)
       end
       step(chat, -1)
-    end, thread_u and "mark the thread unread (in the composer: undo)" or "undo in the composer")
+    end, thread_u and "mark the thread read or unread (in the composer: undo)" or "undo in the composer")
   end
+  map("n", "U", function()
+    return mine() and "U" or "<Cmd>lua require('isovim.acp.chat').toggle_read()<CR>"
+  end, "mark it read or unread (in the composer: vim's U)", { expr = true, nowait = false })
   for _, lhs in ipairs({ "<C-r>", "g+" }) do
     map("n", lhs, function()
       step(chat, 1)
@@ -2569,8 +2572,8 @@ M.help_keys = {
   thread = {
     { "<CR>", "in its composer: post to the router (a new thread's first <CR> takes its title)" },
     { "r", "on the thread: resolve it, or open it again" },
-    { "u", "on the thread: mark it unread, back in the Inbox until you open it again (in the composer, undo)" },
-    { "D", "on the thread: take it out of the Inbox without replying or resolving it, till the router's next post (in the composer, vim's D)" },
+    { "u", "on the thread: mark it read if it's holding your attention (your turn or unread), out of the Inbox till the router's next post, else unread until you open it again (in the composer, undo)" },
+    { "D", "on the thread: mark it read, whatever it was (in the composer, vim's D)" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
@@ -3379,26 +3382,34 @@ function M.thread_seen(chat)
   end
 end
 
--- u on a thread's conversation: back in the Inbox until you open it again. One resolved isn't
--- listed, so there's nothing to go back to.
-function M.thread_unread(chat)
-  if chat.resolved then
-    return vim.api.nvim_echo({ { "it's resolved: r opens it again", "Comment" } }, false, {})
-  end
-  require("isovim.surfaces").mark_unread({ repo = chat.ws, type = "thread", base = thread_base(chat) })
+-- A thread as isovim.surfaces lists it; one resolved long ago isn't listed any more.
+local function thread_surface(chat)
+  return require("isovim.surfaces").get(chat.ws, chat.thread)
 end
 
--- D on a thread's conversation: out of the Inbox without replying or resolving it.
+-- u on a thread's conversation, U on any chat's: marked read if it's holding your attention, else
+-- unread (isovim.surfaces.toggle_read, isovim.status.toggle_read).
+function M.toggle_read(chat)
+  chat = chat or by_buf(vim.api.nvim_get_current_buf())
+  if chat and chat.thread then
+    local entry = thread_surface(chat)
+    if not entry then
+      return vim.api.nvim_echo({ { "it's resolved: r opens it again", "Comment" } }, false, {})
+    end
+    require("isovim.surfaces").toggle_read(entry)
+  elseif chat and not chat.pending_title then
+    require("isovim.status").toggle_read(chat.ws, chat.agent)
+    require("isovim.sidebar").refresh()
+  end
+end
+
+-- D on a thread's conversation: marked read, whatever it was, not a toggle.
 function M.dismiss_thread()
   local chat = by_buf(vim.api.nvim_get_current_buf())
-  if not (chat and chat.thread) then
-    return
+  local entry = chat and chat.thread and thread_surface(chat)
+  if entry and not entry.resolved then
+    require("isovim.surfaces").mark_read(entry)
   end
-  threads.dismiss(chat.ws, chat.thread)
-  local surfaces = require("isovim.surfaces")
-  surfaces.opened(chat.ws, thread_base(chat))
-  surfaces.scan(chat.ws)
-  surfaces.recheck()
 end
 
 -- Shows the chat as a tab in the main window (isovim.show), at its end, typing in its composer.

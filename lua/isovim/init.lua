@@ -399,8 +399,9 @@ function M.mark_visible_seen()
   end
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     local buf = vim.api.nvim_win_get_buf(win)
-    if vim.b[buf].isovim_id then
-      status.mark_seen(vim.b[buf].isovim_id, vim.b[buf].isovim_agent or "main")
+    local ws, agent = vim.b[buf].isovim_id, vim.b[buf].isovim_agent or "main"
+    if ws and not status.marked_unread(ws, agent) then
+      status.mark_seen(ws, agent)
     end
   end
 end

@@ -108,6 +108,43 @@ function M.mark_seen(ws, agent)
   end
 end
 
+-- A seen file this old is the user's mark, not a look: a chat on screen stays unread until opened.
+local MARKED_UNREAD = 1
+
+function M.marked_unread(ws, agent)
+  return mtime(store.seen_file(ws, agent)) == MARKED_UNREAD
+end
+
+-- U on an agent's row, or on its chat's conversation: if it's holding your attention it goes read,
+-- as opening it does, else it goes unread until you next open it. What it can't do yet says so, and
+-- so does a held queue, which waits on you until it's fixed. Says what it did, in one quiet line.
+function M.toggle_read(ws, agent)
+  local now, seen = M.get(ws, agent), store.seen_file(ws, agent)
+  local said
+  if M.state(ws, agent) == "held" then
+    said = "its prompts wait on something it can't do itself: it waits on you until that's fixed"
+  elseif now == "attention" or now == "unread" then
+    local file = io.open(seen, "w")
+    if file then
+      file:write(os.time())
+      file:close()
+    end
+    said = "marked read"
+  elseif now == "working" or now == "waiting" then
+    said = "it's mid-turn: it'll be unread when it finishes"
+  elseif M.state(ws, agent) == "ready" or mtime(store.state_file(ws, agent)) == 0 then
+    said = "it hasn't taken a turn: nothing to mark"
+  else
+    local file = io.open(seen, "w")
+    if file then
+      file:close()
+      vim.uv.fs_utime(seen, MARKED_UNREAD, MARKED_UNREAD)
+    end
+    said = "marked unread"
+  end
+  vim.api.nvim_echo({ { said, "Comment" } }, false, {})
+end
+
 ---@param status isovim.Status
 ---@return string icon, string? hl
 function M.icon(status)

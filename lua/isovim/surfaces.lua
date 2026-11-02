@@ -59,7 +59,7 @@ end
 ---@field type "markdown"|"tasks"|"prs"|"decisions"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
 ---@field address? string link: what it points at, an iso: address or a web page's URL
 ---@field note? string link: the router's one line about it
----@field marked_unread? boolean you marked it unread (M.mark_unread): it waits on you until you open it
+---@field marked_unread? boolean you marked it unread (M.toggle_read): it waits on you until you open it
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -502,7 +502,7 @@ local function parse(repo, base, state, taken)
   return entry
 end
 
--- What you marked unread (M.mark_unread), by base: run/<repo>/unread.json. Apart from the scan's
+-- What you marked unread (M.toggle_read), by base: run/<repo>/unread.json. Apart from the scan's
 -- state, which drops what's no file (the PRs surface), and from what was read (consumed, a thread's
 -- last line seen), which it leaves alone.
 local function unread_file(repo)
@@ -1243,30 +1243,63 @@ local function changed(repo)
   end
 end
 
--- u in a view, U on a row: the surface or thread back in the Inbox, needs_you, staying there after
--- you leave it even though it's open now, until you next open it (M.opened). A question has nothing
--- to mark: one unanswered waits on you whether or not you've opened it, with no read state at all.
--- Says what it did, in one quiet line.
-function M.mark_unread(entry)
-  local said = "marked unread"
+-- Why the key can't mark entry either way, or nil: someone is blocked on it, or it holds no read
+-- state.
+local function unmarkable(entry)
   if entry.type == "question" then
-    said = entry.answer and "it's answered: nothing to mark"
+    return entry.answer and "it's answered: nothing to mark"
       or entry.deciding and "a root is deciding it first"
-      or "it waits on you until it's answered"
-  elseif entry.type == "chat" then
-    said = "it waits on you until you open it"
+      or "it waits on you until it's answered: its asker is blocked on it"
   elseif entry.type == "decisions" then
-    said = "it's a log: nothing in it waits on you"
-  else
-    local repo = canon(entry.repo)
-    locked(repo, function()
-      local unread = read_unread(repo)
-      unread[entry.base] = true
-      write_json(unread_file(repo), unread)
-    end)
-    changed(repo)
+    return "it's a log: nothing in it waits on you"
+  elseif entry.type == "thread" and entry.resolved then
+    return "it's resolved: r in it opens it again"
+  elseif entry.type == "page" and (entry.waiting or 0) > 0 then
+    return entry.waiting == 1 and "a comment here waits on your reply" or ("%d comments here wait on your reply"):format(entry.waiting)
+  elseif entry.type == "prs" and (entry.waiting or 0) > 0 then
+    return entry.waiting == 1 and "a PR waits on you" or ("%d PRs wait on you"):format(entry.waiting)
   end
-  vim.api.nvim_echo({ { said, "Comment" } }, false, {})
+end
+
+-- Back in the Inbox, needs_you, staying there after you leave it even though it's open now, until you
+-- next open it (M.opened).
+local function mark_unread(entry)
+  local repo = canon(entry.repo)
+  locked(repo, function()
+    local unread = read_unread(repo)
+    unread[entry.base] = true
+    write_json(unread_file(repo), unread)
+  end)
+  changed(repo)
+end
+
+-- Out of the Inbox, with everything that holds it there: what you marked unread, what you haven't
+-- opened, and on a thread your turn (isovim.threads.dismiss), till the agent's next post.
+function M.mark_read(entry)
+  if entry.type == "thread" then
+    require("isovim.threads").dismiss(entry.repo, entry.name)
+    M.opened(entry.repo, entry.base)
+    M.scan(entry.repo)
+    M.recheck()
+  else
+    M.opened(entry.repo, entry.base)
+    M.consume(entry)
+  end
+  local still = entry.type == "thread" and (entry.pending or 0) > 0
+  vim.api.nvim_echo({ { still and "marked read; its question still waits on you" or "marked read", "Comment" } }, false, {})
+end
+
+-- u in a view, U on a row: if it's holding your attention it goes read, else it goes unread. What
+-- someone's blocked on stays, and it says so. Says what it did, in one quiet line.
+function M.toggle_read(entry)
+  local why = unmarkable(entry)
+  if why then
+    return vim.api.nvim_echo({ { why, "Comment" } }, false, {})
+  elseif entry.needs_you then
+    return M.mark_read(entry)
+  end
+  mark_unread(entry)
+  vim.api.nvim_echo({ { "marked unread", "Comment" } }, false, {})
 end
 
 -- You opened it: what you marked unread is read again.

@@ -1778,8 +1778,8 @@ local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Root, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
-  { "D", "isovim_dismiss_thread", "take the thread out of the Inbox without replying or resolving it, till the agent's next post (D on the thread too)" },
-  { "U", "isovim_mark_unread", "mark the surface or thread unread: back in the Inbox until you open it (u in its view, but a file's, where u is vim's undo)" },
+  { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },
+  { "U", "isovim_toggle_read", "mark the surface, thread or agent's chat read if it's holding your attention, out of the Inbox till something new, else unread, until you open it. A waiting question or a page awaiting your reply stays: it says so" },
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
@@ -1860,7 +1860,7 @@ function M.help()
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
   section("A surface's view (markdown, a page, the Task Board, the PRs, a question)", {
-    { "u", "mark it unread: back in the Inbox until you open it again (an unanswered question waits anyway; a file's u is vim's undo: U on its row)" },
+    { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })
   section("Links (iso: addresses, drawn as chips in chats, threads, pages and PRs)", {
     { "<Tab>", "on a link: open what it points at, as a tab (elsewhere, vim's jump forward)" },
@@ -2529,19 +2529,19 @@ M.actions = {
     elseif thread.resolved then
       return vim.api.nvim_echo({ { "it's resolved: it's not in the Inbox", "Comment" } }, false, {})
     end
-    require("isovim.threads").dismiss(thread.repo, thread.name)
-    M.surfaces().opened(thread.repo, thread.base)
-    M.surfaces().scan(thread.repo)
-    M.surfaces().recheck()
+    M.surfaces().mark_read(thread)
     M.refresh()
   end,
-  isovim_mark_unread = function(item)
-    if not (item and item.surface) then
-      return vim.api.nvim_echo({ { "U marks a surface or thread unread", "Comment" } }, false, {})
+  isovim_toggle_read = function(item)
+    if not (item and (item.surface or item.kind == "agent")) then
+      return vim.api.nvim_echo({ { "U marks a surface, thread or agent's chat read or unread", "Comment" } }, false, {})
     elseif item.host then
       return Snacks.notify.info(("That's on %s; mark it there"):format(item.host), { title = "isovim" })
+    elseif item.surface then
+      M.surfaces().toggle_read(item.surface)
+    else
+      status.toggle_read(item.ws, item.agent)
     end
-    M.surfaces().mark_unread(item.surface)
     M.refresh()
   end,
   -- t: a new thread in the row's repo, an agent's row's too (none in General, Root or Terminals).

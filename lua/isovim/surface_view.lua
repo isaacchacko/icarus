@@ -885,14 +885,15 @@ local function bind(view)
       end, { buffer = view.buf, nowait = true, desc = "isovim: type to the repo's router" })
     end
   end
-  -- u: back in the Inbox until it's opened again (a question says why it needs no marking).
+  -- u: marked read if it's holding your attention, else unread until it's opened again; what someone's
+  -- blocked on stays (isovim.surfaces.toggle_read).
   vim.keymap.set("n", "u", function()
     local entry = view.kind == "question" and view.entry
       or view.kind == "prs" and surfaces.prs_entry(view.repo) or surfaces.get(view.repo, view.name)
     if entry then
-      surfaces.mark_unread(entry)
+      surfaces.toggle_read(entry)
     end
-  end, { buffer = view.buf, nowait = true, desc = "isovim: mark it unread" })
+  end, { buffer = view.buf, nowait = true, desc = "isovim: mark it read or unread" })
   -- The input box goes with the view: once no window shows the view (another buffer took its
   -- window, or it closed), its box closes too, rather than stay behind under whatever's there. The
   -- last window beside the sidebar is emptied instead, as :q there would otherwise quit isovim.

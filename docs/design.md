@@ -312,9 +312,9 @@ host; General, Root and Terminals have none, and starting one there says why.
   (`thread ls --all` shows the rest); its count is the open ones.
 - **Whose turn:** apart from what you've read. After any agent's post it's your turn: the thread's
   row says `waiting on you` (`● waiting on you` while the post is unread), and it's in the repo's and
-  host's Inbox, opened or not, until you post, it's resolved or you press `D` (on its row or on the
-  thread), which takes it out without replying, read and all, till the next post, so an unneeded
-  post can't pin it there. You'd rather be nagged than miss one, so the default is your turn and the
+  host's Inbox, opened or not, until you post, it's resolved or you mark it read (`U` on its row, `u` on
+  the thread, or `D` on either, below), which takes it out without replying till the next post, so
+  an unneeded post can't pin it there. You'd rather be nagged than miss one, so the default is your turn and the
   agent opts out when a post needs nothing from you: `iso router thread post <id> --no-reply`, `new
   ... --no-reply`, or `iso router thread waiting <id> none|<agent>` (`waiting {on: user|<agent
   address>|none, by, why?}`) in a turn whose last message posts itself, since that's how most replies
@@ -462,14 +462,23 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   page wherever a comment asks, then resolves it with a note, and the comment leaves the page. A
   reply with `--ask` asks you something: the page waits on you, in the Inbox, until you reply.
 
-**Marking unread.** `u` in a surface's view (markdown, a page, the Task Board, the PRs) or on a
-thread's conversation, or `U` on any surface's or thread's row in the sidebar, puts it back in the
-Inbox as unread, and it stays there after you leave it even though it's open now, until you next
-open it (by its row or its tab). It's a flag per surface in `run/<repo>/unread.json`, apart from what
-was read (consumed, a thread's last line seen), which it leaves alone. A question has nothing to
-mark: it holds no read state, and one unanswered waits on you whether or not you've opened it, so `u`
-says that. In a thread `u` depends on the cursor: on the conversation it marks unread, in the draft
-it's the draft's undo (`g-` is undo anywhere); a plain agent's chat keeps `u` as undo. A surfaced file
+**Marking read or unread.** You shouldn't have to be the last to act on something for it to leave your
+attention. `U` on any surface's, thread's or agent's row in the sidebar, `u` in a surface's view
+(markdown, a page, the Task Board, the PRs) or on a thread's conversation, and `U` on any chat's
+conversation are one toggle: if it's holding your attention it goes read, else it goes unread.
+Read clears everything that holds it, unread and your turn alike, so a thread leaves the Inbox till
+the agent's next post (`D` does the same on a thread, not as a toggle); a surface you hadn't opened
+counts as opened; an agent's dot or attention clears as opening its chat does. Unread puts it back
+in the Inbox, and it stays there after you leave it even though it's open now, until you next open
+it (by its row or its tab). For a surface that's a flag in `run/<repo>/unread.json`, apart from what
+was read (consumed, a thread's last line seen); for an agent, its seen file is dated to the
+epoch's first second, so a turn it finished reads as unread again, and a chat on screen, which
+otherwise counts as read, stays unread until you open it. What someone's blocked on stays, and the key says so and does
+nothing: an unanswered question, a page with a comment awaiting your reply, and the PRs surface
+while PRs wait on you, as those follow the PRs. So does an agent's held queue, until it's fixed. An
+agent mid-turn or that hasn't taken one has nothing to mark. In a thread `u` depends on the cursor: on
+the conversation it toggles, in the draft it's the draft's undo (`g-` is undo anywhere); a plain
+agent's chat keeps `u` as undo, so `U` on its conversation or row is the way there. A surfaced file
 opens as a real, editable buffer, so `u` there stays vim's undo: `U` on its row marks it, as on a
 folder or a link, which have no view of their own.
 
