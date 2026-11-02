@@ -14,8 +14,7 @@
 -- extmark per chip) keeps which address each one is, for <Tab>, gf and a yank, which gives the
 -- address. A chip whose target changed (an agent now idle) is drawn again as you come back to its
 -- buffer. <Tab> in normal mode with the cursor on one opens its target as a tab, gf too; elsewhere
--- <Tab> goes to the next one, so it alone walks them and opens where it lands (with none in the
--- buffer it's vim's own, <C-i>, the jump forward). ]l and [l walk them, wrapping, with whatever else
+-- <Tab> is vim's own (<C-i>, the jump forward). ]l and [l walk them, wrapping, with whatever else
 -- the buffer can land on (a chat's images and waiting questions). A web page opens in isovim's Chrome (iso browser
 -- open: a background window, so it never takes your focus), or the system's browser when that isn't
 -- running; a localhost one's chip says down, dim, while nothing listens on its port (a connect,
@@ -506,11 +505,11 @@ function M.attach(buf, write, opts)
     local addr = M.at_cursor()
     if addr then
       return M.open(addr)
-    elseif (opts.open and opts.open()) or walk(buf, opts, 1) then
+    elseif opts.open and opts.open() then
       return
     end
     vim.api.nvim_feedkeys(vim.v.count1 .. vim.keycode("<C-i>"), "n", false)
-  end, { buffer = buf, desc = "isovim: open the link under the cursor (else go to the next one)" })
+  end, { buffer = buf, desc = "isovim: open the link under the cursor (else jump forward)" })
   for lhs, direction in pairs({ ["]l"] = 1, ["[l"] = -1 }) do
     vim.keymap.set("n", lhs, function()
       for _ = 1, vim.v.count1 do

@@ -1863,7 +1863,7 @@ function M.help()
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })
   section("Links (iso: addresses, drawn as chips in chats, threads, pages and PRs)", {
-    { "<Tab>", "on a link: open what it points at, as a tab; elsewhere, go to the next one, so it alone walks them and opens where it lands (with none in the buffer, vim's jump forward)" },
+    { "<Tab>", "on a link: open what it points at, as a tab (elsewhere, vim's jump forward)" },
     { "gf", "on a link: open it" },
     { "]l / [l", "the next or previous link, wrapping; in a chat or thread its images and waiting questions too" },
   })

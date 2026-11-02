@@ -2811,7 +2811,7 @@ local function bind(chat)
     open = function()
       return require("isovim.image").open_chip(chat)
     end,
-    -- Besides links, ]l [l and <Tab> stop at its images and at what waits on you.
+    -- Besides links, ]l [l stop at its images and at what waits on you.
     stops = function()
       local stops = {}
       for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, chat.lines, false)) do
