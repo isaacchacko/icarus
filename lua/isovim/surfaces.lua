@@ -76,6 +76,11 @@ end
 ---@field comments_open? integer page: how many of its comments are open
 ---@field posts? integer thread: how many posts it has
 ---@field working? boolean thread: the router's turn on it runs
+---@field new_reply? boolean thread: a router post past what you've read
+---@field waiting_on? string thread: whose turn it is, "user" or a worker's address
+---@field waiting_name? string thread: the name of the worker it waits on
+---@field resolved? boolean thread: a resolved one, listed under the open ones
+---@field outcome? string thread: what it was resolved with
 ---@field waiting? integer page: how many of them wait on the user (an agent's reply asked them); prs: PRs
 ---@field tasks? {status: string, text: string, line: integer}[] tasks
 ---@field counts? table<string, integer> tasks: how many under each heading
@@ -553,25 +558,76 @@ function M.read(repo, state)
   vim.list_extend(list, M.threads(repo))
   local unread = read_unread(repo)
   for _, entry in ipairs(next(unread) and list or {}) do
-    if unread[entry.base] and entry.type ~= "question" then
+    if unread[entry.base] and entry.type ~= "question" and not entry.resolved then
       entry.needs_you, entry.marked_unread = true, true
     end
   end
   return list
 end
 
--- The repo's open threads as surfaces (isovim.threads), newest first: named by id, titled, waiting
--- on you while a router post is past what you've read.
+-- How many resolved threads the sidebar lists, under the open ones.
+local RESOLVED_LISTED = 5
+
+-- What a thread's row calls the worker it waits on: its name, else its id.
+local function worker_name(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, id)
+  return record and record.name or id or address
+end
+
+-- How many resolved threads the sidebar lists, under the open ones.
+local RESOLVED_LISTED = 5
+
+-- What a thread's row calls the worker it waits on: its name, else its id.
+local function worker_name(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, id)
+  return record and record.name or id or address
+end
+
+-- How many resolved threads the sidebar lists, under the open ones.
+local RESOLVED_LISTED = 5
+
+-- What a thread's row calls the worker it waits on: its name, else its id.
+local function worker_name(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, id)
+  return record and record.name or id or address
+end
+
+-- How many resolved threads the sidebar lists, under the open ones.
+local RESOLVED_LISTED = 5
+
+-- What a thread's row calls the worker it waits on: its name, else its id.
+local function worker_name(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, id)
+  return record and record.name or id or address
+end
+
+-- The repo's threads as surfaces (isovim.threads): named by id, titled, the open ones newest first,
+-- waiting on you while a router post is past what you've read or the router marked it so, then the
+-- last few resolved, the latest first, which wait on nobody.
 ---@return isovim.Surface[]
 function M.threads(repo)
   local threads = require("isovim.threads")
   local seen = threads.seen(repo)
   local list = {}
-  for _, info in ipairs(threads.list(repo)) do
+  local all = threads.list(repo, true)
+  local resolved = vim.tbl_filter(function(info)
+    return info.status == "resolved"
+  end, all)
+  for _, info in ipairs(vim.tbl_filter(function(info)
+    return info.status == "open"
+  end, all)) do
     local file = threads.file(repo, info.id)
-    -- A reply you haven't read; a question waiting is in the Inbox as itself (below), the thread's
-    -- row saying so.
-    local needs_you = info.last_reply > (seen[info.id] or 0)
+    -- A reply you haven't read, or a mark that outlasts your reading it; a question waiting is in the
+    -- Inbox as itself (below), the thread's row saying so. A mark made in a turn counts from that
+    -- turn's post.
+    local new_reply = info.last_reply > (seen[info.id] or 0)
+    local on_you = info.waiting_on == "user" and not info.working
+    local needs_you = new_reply or on_you
+    local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     -- Its questions still waiting, each a question surface: the Inbox, root mode and iso answer
     -- take them as any question, and their answers go back into the thread (M.answer).
     for _, q in ipairs(info.questions) do
@@ -614,9 +670,33 @@ function M.threads(repo)
       posts = info.posts,
       working = info.working,
       needs_you = needs_you,
+      new_reply = new_reply,
+      waiting_on = on_you and "user" or worker,
+      waiting_name = worker and worker_name(worker),
       pending = info.pending,
-      sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d"):format(info.title, info.posts, tostring(info.working), info.status,
-        tostring(needs_you), info.pending)),
+      sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
+        tostring(needs_you), info.pending, tostring(info.waiting_on))),
+    }
+  end
+  table.sort(resolved, function(a, b)
+    return (a.resolved_at or 0) > (b.resolved_at or 0)
+  end)
+  for _, info in ipairs(vim.list_slice(resolved, 1, RESOLVED_LISTED)) do
+    list[#list + 1] = {
+      repo = repo,
+      name = info.id,
+      base = "threads/" .. info.id .. ".jsonl",
+      type = "thread",
+      title = info.title,
+      file = threads.file(repo, info.id),
+      error_file = "",
+      created = info.at or 0,
+      posts = info.posts,
+      needs_you = false,
+      resolved = true,
+      outcome = info.outcome,
+      pending = 0,
+      sig = vim.fn.sha256(("%s|%d|resolved|%s"):format(info.title, info.posts, tostring(info.outcome))),
     }
   end
   return list

@@ -790,20 +790,34 @@ M.role_actions = {
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
     help = [=[
-       iso thread new "<title>" ["first post"]
-                                     open a thread for a new topic, rather than burying
-                                     it in your own chat; prints its id (t1, t2...).
+       iso thread new "<title>" ["first post"] [--ask]
+                                     open a thread for each ask that's different, rather
+                                     than burying it in your own chat; prints its id (t1,
+                                     t2...).
                                      Threads live in iso/threads/ of a repo with a
                                      router here (none in General or Root). The user's
                                      posts come to you as prompts tagged [thread
                                      <repo>#<id> "<title>"]: answer them as usual, and
                                      your turn's last message is posted to the thread
-                                     for you (tool calls stay in your chat)
-       iso thread post <id> <text...> [--image <file>]...
+                                     for you (tool calls stay in your chat). A thread
+                                     the user stopped at the title of comes the same
+                                     way, the title as their first post
+       iso thread post <id> <text...> [--image <file>]... [--ask]
                                      post to a thread anytime: a follow-up, or what a
-                                     worker finished that it was about
+                                     worker finished that it was about. --ask: it wants
+                                     something from the user, so the thread waits on
+                                     them, in their Inbox, until they post
+       iso thread waiting <id> user|<agent>|none
+                                     whose turn it is, a light mark that blocks nothing.
+                                     In a turn whose last message posts itself, run it
+                                     before you end the turn: it stands for that post.
+                                     user is as --ask; on an agent it clears once that
+                                     agent finishes or is removed, and you're told, so
+                                     the thread doesn't sit
        iso thread resolve <id> [<outcome...>]
-                                     resolve it, with its outcome; it leaves the list
+                                     resolve it once it's settled, without being asked,
+                                     with its outcome; it goes under the open ones, then
+                                     off the list after 5 more
        iso thread ask <id> <json|file|->
                                      ask the user in the thread, not the repo's
                                      Inbox: the same JSON as surface question. It

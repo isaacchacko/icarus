@@ -171,12 +171,15 @@ local KINDS = {
     id = { "host", "repo_key" },
   },
   -- A section of a group (Threads, Surfaces, Files, Agents; its Inbox is repo_inbox): its fold, its
-  -- name and count. Threads says when a reply waits unread, Agents how many run, at the right.
+  -- name and count. Threads says when one waits on you or a reply unread, Agents how many run, at
+  -- the right.
   -- Enter or Tab folds it.
   section = {
     format = function(item)
       local row = { { "  " }, { item.collapsed and "▸ " or "▾ ", "Comment" }, { item.section, "Title" }, { " " .. item.count, "Comment" } }
-      if item.unread then
+      if item.on_you then
+        row[#row + 1] = { "  ● waiting on you", "DiagnosticWarn" }
+      elseif item.unread then
         row[#row + 1] = { "  ● new reply", "DiagnosticWarn" }
       end
       row[#row + 1] = item.running_mark
@@ -394,7 +397,7 @@ local SURFACE_GLYPHS = {
 function M.surface_chunks(entry)
   local kind = entry.type
   local title = entry.title or entry.name or "?"
-  local dim = not entry.needs_you and (entry.consumed or entry.answer ~= nil)
+  local dim = not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved)
   local title_hl = dim and "Comment" or nil
   local glyph, hl
   if kind == "file" or kind == "folder" then
@@ -456,14 +459,22 @@ function M.surface_chunks(entry)
       row[#row + 1] = { "  " .. target.status, target.status_hl or "Comment" }
     end
   elseif kind == "thread" then
-    -- How many posts, the router's turn on it, a reply of the router's you haven't read.
+    -- How many posts, then whose turn it is: a question or a mark waiting on you, the router's turn
+    -- on it, a reply of the router's you haven't read, the worker it waits on. A resolved one, its
+    -- outcome.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
-    if (entry.pending or 0) > 0 then
+    if entry.resolved then
+      row[#row + 1] = { "  ✓ " .. vim.trim((entry.outcome or "resolved"):gsub("%s+", " ")), "Comment" }
+    elseif (entry.pending or 0) > 0 then
       row[#row + 1] = { "  ? waiting on you", "DiagnosticWarn" }
     elseif entry.working then
       row[#row + 1] = { "  working…", "Comment" }
-    elseif entry.needs_you and not entry.marked_unread then
+    elseif entry.waiting_on == "user" then
+      row[#row + 1] = { "  waiting on you", "DiagnosticWarn" }
+    elseif entry.new_reply then
       row[#row + 1] = { "  new reply", "DiagnosticWarn" }
+    elseif entry.waiting_on then
+      row[#row + 1] = { "  waiting on " .. (entry.waiting_name or entry.waiting_on), "Comment" }
     end
   elseif kind == "page" then
     -- Its open comments; in the Inbox, how many of them wait on you.
@@ -821,11 +832,12 @@ local function surface_rows(items, base, list, depth)
 end
 
 -- The sections a group's rows sit in, in this order: the Inbox (what needs you; questions only
--- ever here), Threads (a repo's open ones, marked while one has a reply you haven't read), Surfaces
+-- ever here; a thread marked as waiting on you too), Threads (a repo's open ones, marked while one
+-- waits on you or has a reply you haven't read, then its last 5 resolved, dimmed), Surfaces
 -- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
--- (the repo-root and its decision log) and Agents. An empty one isn't shown. The Inbox and Threads
--- start open, the rest folded; each one's state is kept per repo and host (isovim.collapsed, in the
--- session). M.all_rows opens them all.
+-- (the repo-root and its decision log) and Agents. An empty one isn't shown, but for a repo's
+-- Threads. The Inbox and Threads start open, the rest folded; each one's state is kept per repo and
+-- host (isovim.collapsed, in the session). M.all_rows opens them all.
 local FOLDED = { Surfaces = true, Files = true, Root = true, Agents = true }
 local all_open = false
 
@@ -856,14 +868,19 @@ M.set_section_folded = set_section_folded
 -- paths' rows. agents, roots: its listed agents and repo-roots, add_tasks: puts an agent's tasks under
 -- it. The log under a root that hasn't decided anything yet is only this host's to show.
 local function group_sections(items, base, host, key, opts)
-  local inbox, threads, boards, others, files = {}, {}, {}, {}, {}
+  local inbox, threads, resolved, boards, others, files = {}, {}, {}, {}, {}, {}
   local log
   for _, entry in ipairs(opts.list) do
     local kind = entry.type
     if kind == "decisions" then
       log = entry
+    elseif kind == "thread" and entry.resolved then
+      resolved[#resolved + 1] = opts.threads and entry or nil
     elseif kind == "thread" and opts.threads then
       threads[#threads + 1] = entry
+      if entry.waiting_on == "user" then
+        inbox[#inbox + 1] = entry
+      end
     elseif entry.needs_you then
       inbox[#inbox + 1] = entry
     elseif kind == "file" or kind == "folder" or kind == "link" then
@@ -893,7 +910,7 @@ local function group_sections(items, base, host, key, opts)
     end
   end
   local function section(name, count, children, extra)
-    if count == 0 then
+    if count == 0 and not (extra and extra.always) then
       return
     end
     local folded = section_folded(host, key, name)
@@ -902,12 +919,15 @@ local function group_sections(items, base, host, key, opts)
       children()
     end
   end
-  section("Threads", #threads, function()
-    for i, entry in ipairs(threads) do
-      items[#items + 1] = surface(entry, "Threads", i, #threads)
+  local listed = vim.list_extend(vim.list_slice(threads, 1), resolved)
+  section("Threads", #listed, function()
+    for i, entry in ipairs(listed) do
+      items[#items + 1] = surface(entry, "Threads", i, #listed)
     end
-  end, { unread = vim.iter(threads):any(function(entry)
-    return entry.needs_you and not entry.marked_unread
+  end, { count = #threads, always = opts.threads, unread = vim.iter(threads):any(function(entry)
+    return entry.new_reply and not entry.marked_unread
+  end), on_you = vim.iter(threads):any(function(entry)
+    return entry.waiting_on == "user"
   end) })
   local surfaces_list = vim.list_extend(boards, others)
   section("Surfaces", #surfaces_list, function()
@@ -1762,7 +1782,7 @@ local LIST_KEYS = {
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
-  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; a thread resolved, its posts kept), or archive the workspace" },
+  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },

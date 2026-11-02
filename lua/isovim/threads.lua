@@ -6,7 +6,8 @@
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
 --   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
---   {kind = "post", by = "user"|<agent address>, text, at, images?}
+--   {kind = "post", by = "user"|<agent address>, text, at, images?, ask?}   ask: it wants something from
+--                                                   the user, so the thread waits on them (below)
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
 --   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
@@ -16,11 +17,19 @@
 -- and iso answer take it as any question; its answer is appended here, where the asker's thread
 -- ask waits for it.
 --   {kind = "working", state = "start"|"end", at}   the router's turn on one of its posts
+--   {kind = "waiting", on = "user"|<agent address>|"none", by, why?, at}   whose turn it is
 -- A post of the user's goes to the router as a prompt tagged "[thread <repo>#<id> "<title>"]";
 -- the supervisor (isovim.acp.host) marks that turn working in the thread and posts the turn's last
 -- message there when it ends, so the router just answers. It posts more with iso router thread
 -- post. What the user has read (the last line seen, per thread) is run/<repo>/threads.json: a
 -- router post past it makes the thread wait on them (needs_you) until they open it.
+--
+-- Whose turn it is, a light mark and not the blocking thread ask: a post with ask, or iso router
+-- thread waiting, which a turn whose last message posts itself uses, since the mark stands for the
+-- post that turn makes. Waiting on the user, the thread is in the Inbox, opened or not, until they
+-- post or the router's next turn on it starts. Waiting on a worker clears once that worker has
+-- finished or gone, and the router is told; M.listen, in the router's supervisor, sees to that, and
+-- gives the router a thread the user stopped at the title of, the title as their first post.
 local store = require("isovim.store")
 
 local M = {}
@@ -69,20 +78,35 @@ function M.summary(entries)
   local head = entries[1] or {}
   local info = { id = head.id, title = head.title or head.id or "?", created_by = head.created_by, at = head.at,
     status = head.status or "open", posts = 0, last_reply = 0, working = false }
+  local function waits(on, at)
+    info.waiting_on, info.waiting_at = on, at
+  end
   for _, entry in ipairs(entries) do
     if entry.kind == "post" then
       info.posts = info.posts + 1
       if entry.by ~= "user" then
         info.last_reply = entry.seq
+        if entry.ask then
+          waits("user", entry.at)
+        end
+      elseif info.waiting_on == "user" then
+        waits(nil)
       end
     elseif entry.kind == "resolved" then
-      info.status, info.outcome = "resolved", entry.outcome
+      info.status, info.outcome, info.resolved_at = "resolved", entry.outcome, entry.at
+      waits(nil)
     elseif entry.kind == "reopened" then
       info.status, info.outcome = "open", nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
       info.title = entry.title
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
+      -- A turn on their post is the answer to whatever waited on them.
+      if info.working and info.waiting_on == "user" then
+        waits(nil)
+      end
+    elseif entry.kind == "waiting" then
+      waits(entry.on ~= "none" and entry.on or nil, entry.at)
     end
   end
   info.questions = M.questions(entries)
@@ -215,10 +239,10 @@ function M.raise(repo, id, qid, by, why)
   return append(repo, id, { kind = "raised", qid = qid, by = by, why = why })
 end
 
--- A post in the thread.
+-- A post in the thread; ask: it wants something from the user, so the thread waits on them.
 ---@param images? {path: string, mimeType: string}[]
 ---@return table? post, string? err
-function M.post(repo, id, by, text, images)
+function M.post(repo, id, by, text, images, ask)
   local entries, err = exists(repo, id)
   if not entries then
     return nil, err
@@ -227,7 +251,20 @@ function M.post(repo, id, by, text, images)
   if text == "" and not (images and images[1]) then
     return nil, "a post needs text"
   end
-  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil })
+  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil, ask = ask or nil })
+end
+
+-- Whose turn it is: on is "user", an agent's address, or "none".
+---@return boolean? marked, string? err
+function M.wait_on(repo, id, on, by)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  elseif M.summary(entries).status ~= "open" then
+    return nil, id .. " is resolved"
+  end
+  append(repo, id, { kind = "waiting", on = on, by = by })
+  return true
 end
 
 -- Resolves the thread with an outcome, or (resolved already) opens it again.
@@ -318,6 +355,72 @@ function M.mark_seen(repo, id, seq)
   vim.uv.fs_rename(tmp, path)
   local entries = M.read(repo, id) or {}
   return M.summary(entries).last_reply > was
+end
+
+-- How long a thread with only its title waits for a first post before the router gets the title, and
+-- how long a draft in its composer holds that off, from its last keystroke. And how long a worker
+-- that's a thread's wait gets to start: it's marked as it's messaged, often before it's working.
+local TITLE_WAIT, DRAFT_WAIT, WORKER_START = 30, 300, 30
+
+local function draft_file(repo, id)
+  return store.run_dir(repo) .. "/thread-draft-" .. id
+end
+
+-- The user is writing a first post in the thread's composer, or isn't any more.
+function M.drafting(repo, id, typing)
+  if not typing then
+    os.remove(draft_file(repo, id))
+    return
+  end
+  vim.fn.mkdir(store.run_dir(repo), "p")
+  local file = io.open(draft_file(repo, id), "wb")
+  if file then
+    file:close()
+  end
+end
+
+local function drafted(repo, id)
+  local stat = vim.uv.fs_stat(draft_file(repo, id))
+  return stat ~= nil and os.time() - stat.mtime.sec < DRAFT_WAIT
+end
+
+-- One look over the repo's open threads: say(text) sends the router a message.
+function M.sweep(repo, say)
+  local status = require("isovim.status")
+  for _, info in ipairs(M.list(repo)) do
+    local worker = info.waiting_on ~= "user" and info.waiting_on or nil
+    local state = worker and status.owner_state(worker)
+    if state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START) then
+      append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = state })
+      say(("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
+        .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled."):format(info.id, info.title,
+        worker, state == "gone" and "is gone" or "has finished its turn", info.id))
+    end
+    if info.posts == 0 and info.created_by == "user" and os.time() - (info.at or 0) >= TITLE_WAIT and not drafted(repo, info.id) then
+      append(repo, info.id, { kind = "post", by = "user", text = info.title })
+      M.drafting(repo, info.id, false)
+      say(M.prompt(repo, info.id, info.title, info.title))
+    end
+  end
+end
+
+-- Keeps the repo's threads moving, from its router's supervisor, so it runs whether or not the TUI
+-- is open: every 10s, and soon after one of the repo's agents changes state or goes.
+---@param repo string
+---@param say fun(text: string)
+function M.listen(repo, say)
+  local safe = require("isovim.safe")
+  local sweep = safe.wrap("threads.sweep", function()
+    M.sweep(repo, say)
+  end)
+  local tick, soon = assert(vim.uv.new_timer()), assert(vim.uv.new_timer())
+  tick:start(5000, 10000, vim.schedule_wrap(sweep))
+  require("isovim.events").watch(function(_, event)
+    if event.scope == repo and event.topic:match("^agent%.") and (event.topic:match("%.status$") or event.topic:match("%.exited$"))
+      and not soon:is_active() then
+      soon:start(2000, 0, vim.schedule_wrap(sweep))
+    end
+  end)
 end
 
 -- Follows a thread file: on_entry(entry) for each line from line from+1 on, as it's appended

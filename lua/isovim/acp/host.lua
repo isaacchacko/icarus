@@ -1179,11 +1179,24 @@ local function subscribe_inbox()
   end)
 end
 
+-- A router keeps its repo's threads moving (isovim.threads.listen): what it's told about them comes
+-- as messages.
+local function subscribe_threads()
+  if S.thread_sweep or store.role(S.spec) ~= "router" then
+    return
+  end
+  S.thread_sweep = true
+  threads.listen(store.canon(S.ws), function(text)
+    submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
+  end)
+end
+
 -- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session
 -- entry. resumed: it carries an earlier session's system prompt (resume, load, fork); "restart" for
 -- the agent's own session reopened as its supervisor starts.
 local function session_ready(how, fresh, extra, resumed)
   subscribe_inbox()
+  subscribe_threads()
   S.context, S.compact_floor = nil, 0
   local last = last_recorded() or (how == "fork" and S.source_entry or nil)
   local tell = role_changed(resumed, how, last)

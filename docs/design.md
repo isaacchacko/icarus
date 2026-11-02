@@ -266,9 +266,9 @@ host; General, Root and Terminals have none, and starting one there says why.
 
 - **Stored** as `iso/threads/<id>.jsonl` (`t1`, `t2`…), appended to, never rewritten: a header
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
-  address>, text, at, images?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
-  {state: start|end}` around the router's turn on one of its posts, and `renamed {by, title}`, its
-  title from then on (posts already sent keep their tags). What you've read is
+  address>, text, at, images?, ask?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
+  {state: start|end}` around the router's turn on one of its posts, `renamed {by, title}`, its
+  title from then on (posts already sent keep their tags), and `waiting` (below). What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
 - **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
   its own, drawn as the PR view is (isovim.boxes, its helpers shared with isovim.pr_view): a banner
@@ -307,8 +307,27 @@ host; General, Root and Terminals have none, and starting one there says why.
   view opens with its composer asking for the title (`<CR>`), then your first post.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
   posts (`working…` while the router's turn on it runs). One with a router post you haven't read
-  waits on you: it's in the repo's and the host's Inbox (`new reply`) until you open it. A resolved
-  one drops off the list (`thread ls --all` shows it); the jump picker lists the open ones.
+  waits on you: it's in the host's Inbox (`new reply`) until you open it. Threads always shows for
+  a repo, even empty, with its last 5 resolved under the open ones, dimmed, each with its outcome
+  (`thread ls --all` shows the rest); its count is the open ones.
+- **Whose turn:** a thread's row says `waiting on you`, `waiting on <worker>` or nothing. It's a
+  light mark, not the blocking `thread ask`: a post with `ask` (`iso router thread post <id> --ask`),
+  or `waiting {on: user|<agent address>|none, by, why?}` (`iso router thread waiting <id> ...`), which
+  a turn whose last message posts itself runs before it ends, since that's how most replies get
+  posted; the mark stands for the post that turn makes, and counts only once the turn is over.
+  Waiting on you, the thread is in the repo's and host's Inbox, and stays after you open it, until
+  you post or the router's next turn on it starts. Waiting on a worker clears once that worker has
+  finished or gone, and the router is told, so the thread doesn't sit: a turn's end isn't always
+  the end of its work, and the router marks it again if it isn't. "Finished" is the worker's state
+  not being mid-turn, 30s or more after the mark, as a mark often comes just before the worker
+  starts. There's no reminder about quiet threads otherwise.
+- **The title alone:** the UI asks for the title, then your first post, and only a post prompts
+  the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
+  post 30s on, and goes to the router as one. A first post within that time means one prompt, not
+  two; so does one you're writing, as the composer's draft holds it off until 5 minutes after your
+  last keystroke (`run/<repo>/thread-draft-<id>`). This and the worker's wait are checked by the
+  router's supervisor (isovim.threads.listen), every 10s and soon after one of the repo's agents
+  changes state, so they run whether or not the TUI is open.
 
 ## Links
 

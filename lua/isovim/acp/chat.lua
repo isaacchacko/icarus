@@ -2328,6 +2328,10 @@ local function changed(chat, typing)
     record(chat)
   end
   decorate(chat)
+  -- A first post on its way holds off giving the router the title alone (isovim.threads.listen).
+  if chat.thread and (chat.thread_info and chat.thread_info.posts or 0) == 0 and not chat.resolved then
+    threads.drafting(chat.ws, chat.thread, vim.trim(table.concat(draft(chat), "\n")) ~= "")
+  end
 end
 
 -- Keys that start typing (see the top). One a plugin has mapped (LazyVim's s and S are flash's
@@ -3503,6 +3507,7 @@ function M.post_thread(chat, text)
   if not post then
     return say("could not post: " .. tostring(err), vim.log.levels.ERROR)
   end
+  threads.drafting(chat.ws, chat.thread, false)
   chat.recall = nil
   M.set_draft(chat, { "" })
   to_bottom(chat)

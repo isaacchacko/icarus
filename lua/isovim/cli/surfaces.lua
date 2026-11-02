@@ -380,12 +380,12 @@ function M.page(args)
   out(("%s/%s %s %s"):format(repo, name, id, sub == "reply" and (ask and "asks the user now" or "has your reply") or "is resolved"))
 end
 
--- iso <role> thread new|post|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
+-- iso <role> thread new|post|waiting|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
 -- repo's. Routers (and the user, from a shell) make, post and resolve them; other roles read.
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] | post <id> <text...> [--image f] | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--ask] | post <id> <text...> [--image f] [--ask] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   if sub ~= "ls" and sub ~= "show" then
@@ -396,6 +396,7 @@ function M.thread(args)
     end
   end
   me = me or "user"
+  local ask = flag(args, "--ask")
   local images = {}
   while true do
     local path = option(args, "--image")
@@ -412,16 +413,31 @@ function M.thread(args)
     end
     local first = vim.trim(table.concat(vim.list_slice(args, 2), " "))
     if first ~= "" then
-      threads.post(repo, id, me, first, images[1] and images or nil)
+      threads.post(repo, id, me, first, images[1] and images or nil, ask)
     end
     out(id)
   elseif sub == "post" then
     local id = args[1] or fail(usage)
-    local post, err = threads.post(repo, id, me, table.concat(vim.list_slice(args, 2), " "), images[1] and images or nil)
+    local post, err = threads.post(repo, id, me, table.concat(vim.list_slice(args, 2), " "), images[1] and images or nil, ask)
     if not post then
       fail(err)
     end
-    out(("posted to %s#%s"):format(repo, id))
+    out(("posted to %s#%s%s"):format(repo, id, ask and ": it waits on the user now" or ""))
+  elseif sub == "waiting" then
+    local id = args[1] or fail(usage)
+    local on = args[2] or fail(usage)
+    if on ~= "user" and on ~= "none" then
+      local ws, agent = c.resolve_agent(on:find("/", 1, true) and on or (repo .. "/" .. on))
+      on = ws.id .. "/" .. agent.id
+      if on == me then
+        fail("a thread waits on the user or a worker, not on you: `none` says it waits on nobody")
+      end
+    end
+    local marked, err = threads.wait_on(repo, id, on, me)
+    if not marked then
+      fail(err)
+    end
+    out(("%s#%s %s"):format(repo, id, on == "none" and "waits on nobody" or ("waits on " .. on)))
   elseif sub == "resolve" then
     local id = args[1] or fail(usage)
     local status, err = threads.resolve(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
@@ -467,7 +483,7 @@ function M.thread(args)
     end
     for _, info in ipairs(list) do
       out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
-        info.working and "  (working)" or ""))
+        (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
     end
   elseif sub == "show" then
     local id = args[1] or fail(usage)
@@ -486,6 +502,8 @@ function M.thread(args)
       elseif entry.kind == "answered" then
         out(("[%s answered by %s: %s]"):format(entry.qid, entry.by or "?", table.concat(entry.labels or {}, ", ")
           .. (entry.other and (" " .. entry.other) or "")))
+      elseif entry.kind == "waiting" then
+        out(("\n[%s by %s]"):format(entry.on == "none" and "waiting on nobody" or ("waiting on " .. tostring(entry.on)), entry.by or "?"))
       elseif entry.kind == "renamed" then
         out(("\n[renamed %q by %s]"):format(entry.title or "", entry.by or "?"))
       elseif entry.kind == "resolved" or entry.kind == "reopened" then

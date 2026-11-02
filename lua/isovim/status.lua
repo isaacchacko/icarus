@@ -55,6 +55,20 @@ function M.set_state(ws, agent, state, reason)
   end
 end
 
+-- States that mean it's mid-turn, or will pick up where it left off (a held queue).
+local BUSY = { working = true, checking = true, waiting = true, attention = true, held = true }
+
+-- "gone" (no such agent here), "working" or "idle", for an address.
+---@return "gone"|"working"|"idle"
+function M.owner_state(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  if not (ws and store.agent(ws, id)) then
+    return "gone"
+  end
+  local working = require("isovim.panes").running(ws, id) and BUSY[M.state(ws, id) or ""]
+  return working and "working" or "idle"
+end
+
 ---@return isovim.Status
 function M.get(ws, agent)
   local changed = mtime(store.state_file(ws, agent))

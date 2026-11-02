@@ -37,25 +37,12 @@ local function node(args)
     { detach = true, stdin = false, stdout = false, stderr = false })
 end
 
--- States that mean it's mid-turn, or will pick up where it left off (a held queue).
-local BUSY = { working = true, checking = true, waiting = true, attention = true, held = true }
-
--- "gone" (no such agent here), "working" or "idle", for an address.
-local function owner_state(address)
-  local ws, id = address:match("^(.*)/([^/]+)$")
-  if not (ws and store.agent(ws, id)) then
-    return "gone"
-  end
-  local working = require("isovim.panes").running(ws, id) and BUSY[require("isovim.status").state(ws, id) or ""]
-  return working and "working" or "idle"
-end
-
 local function sweep()
   local owners, any = {}, false
   for _, tab in ipairs(all_tabs()) do
     any = true
     if type(tab) == "table" and type(tab.owner) == "string" and not owners[tab.owner] then
-      owners[tab.owner] = owner_state(tab.owner)
+      owners[tab.owner] = require("isovim.status").owner_state(tab.owner)
     end
   end
   if any then
