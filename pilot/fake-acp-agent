@@ -33,7 +33,10 @@ session (or its source) started with, ignoring the append they're sent. "system"
 snapshot; "whoami" with the role the agent believes it has: the last "[isovim: your role is now X]"
 message it was given, else the snapshot's "as a X agent". While $FAKE_AUTH_FILE says false (claude
 logged out) every prompt fails at once with "Authentication required", as the adapter's do; "limit"
-fails with a usage limit. "bg <cmd>" runs cmd as Claude runs a background Bash: a child of this
+fails with a usage limit, and so does every prompt while $FAKE_LIMIT_FILE exists, leaving the
+attempt in the session as Claude does: a user entry and an API error entry in the transcript under
+$CLAUDE_CONFIG_DIR (only when that's set, never the real ~/.claude), which a session opened with
+persistSession false doesn't write. "bg <cmd>" runs cmd as Claude runs a background Bash: a child of this
 process in a process group of its own, still running after the turn.
 
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
@@ -102,6 +105,29 @@ def remember(sid, message):
         data = load_session(sid) or {"messages": []}
         data["messages"].append(message)
         save_session(sid, data)
+
+
+# What Claude writes for a session, for what reads its transcript. Claude keys the project by the cwd.
+ephemeral = set()
+
+
+def transcript(sid, row):
+    home = os.environ.get("CLAUDE_CONFIG_DIR")
+    if not home or sid in ephemeral:
+        return
+    project = os.path.join(home, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+    os.makedirs(project, exist_ok=True)
+    with open(os.path.join(project, sid + ".jsonl"), "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def user_entry(sid, text):
+    transcript(sid, {"type": "user", "sessionId": sid, "message": {"role": "user", "content": [{"type": "text", "text": text}]}})
+
+
+def limited():
+    path = os.environ.get("FAKE_LIMIT_FILE")
+    return bool(path) and os.path.exists(path)
 
 
 def log(entry):
@@ -220,6 +246,7 @@ def prompt(rid, params):
     stop = "end_turn"
     earlier = [m["text"] for m in (load_session(session) or {"messages": []})["messages"] if m["role"] == "user"]
     remember(session, {"role": "user", "text": text})
+    user_entry(session, text)
     turn["messageId"], turn["text"] = None, ""
     if text == "history":
         chunk(session, "history: " + " | ".join(earlier))
@@ -422,6 +449,8 @@ def handle(frame):
     elif method == "session/new":
         sid = "fake-" + uuid.uuid4().hex[:12]
         remember_hooks(sid, params)
+        if ((params.get("_meta") or {}).get("claudeCode") or {}).get("options", {}).get("persistSession") is False:
+            ephemeral.add(sid)
         with session_lock:
             save_session(sid, {"messages": [], "cwd": params.get("cwd"), "system": system_of(params)})
         send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
@@ -468,6 +497,13 @@ def handle(frame):
         # As the adapter answers a prompt when claude isn't logged in: at once, an error.
         log({"failed": "auth", "text": text_of(params.get("prompt", []))})
         send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Authentication required"}})
+    elif method == "session/prompt" and limited():
+        remember(params["sessionId"], {"role": "user", "text": text_of(params.get("prompt", []))})
+        user_entry(params["sessionId"], text_of(params.get("prompt", [])))
+        transcript(params["sessionId"], {"type": "assistant", "isApiErrorMessage": True, "sessionId": params["sessionId"],
+                                         "message": {"role": "assistant", "model": "<synthetic>",
+                                                     "content": [{"type": "text", "text": "You've hit your limit"}]}})
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Claude AI usage limit reached"}})
     elif method == "session/prompt" and text_of(params.get("prompt", [])) == "limit":
         send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Claude AI usage limit reached"}})
     elif method == "session/prompt":

@@ -91,6 +91,31 @@ lifetimes, so agents outlive the TUI).
   <file>` attaches one.
 - Cancel is a protocol call.
 
+**A held queue.** A prompt that fails on something that passes (a login, a usage limit, an overload)
+goes back first in the queue, which holds. It reaches the session once:
+- Claude keeps a failed attempt in the session, a user entry and an API error entry. It sends the
+  model every copy, merged into one user message (the transcripts of the 2026-11-01 hold show 5 copies
+  in one request), and it would resend the prompt with every retry.
+- So nothing is retried while it's held. A **throwaway session** tests it: `session/new`, "Reply with
+  ok.", `session/close`, on the same adapter, after a delay that doubles to 30 min (a login first waits
+  for `claude auth status`, asked every 30s). For claude it has no transcript, tools or user settings,
+  so it's no conversation and it costs 1.3s of CPU and, measured, $0.02 when it's answered, nothing
+  when it's refused. `claude auth status` can't tell: a limit isn't in it. Anything it says stays out
+  of the journal. A throwaway session that fails on something else (a broken adapter) can't tell
+  either, and a real try goes, so it can't hold the queue for good.
+- Once it's answered, the prompt goes only if the session hasn't got it. A prompt remembers the size of
+  Claude's transcript when it first went (`tried`, kept in the queue on disk), and what the transcript
+  gained since says whether its user entry is there. If it is, the session gets a one-line note to pick
+  it up instead of a copy; the model sees the message and the note, with any images once. If not (an
+  adapter that died first, a session switched since, or Codex, whose sessions isovim can't read), the
+  whole prompt goes.
+- We don't take the failed attempt out of the session. The running claude holds it in memory, so that
+  would take reopening the session, by a fork or a rewrite of its transcript, and reopening kills its
+  background shells (see Resume).
+- The journal has one `prompt` entry per prompt, so the chat draws it once; the note isn't one. Editing
+  a kept prompt in the queue makes it a new prompt, with a new id, sent whole. A supervisor that starts
+  with a failed prompt queued tests before it sends anything.
+
 **Permissions.**
 - Sessions run in bypass mode, as agents do today.
 - Structured questions an agent asks (AskUserQuestion) become **question surfaces** in its repo's

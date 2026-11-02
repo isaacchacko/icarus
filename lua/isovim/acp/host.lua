@@ -13,7 +13,10 @@
 --
 -- A prompt that fails on something that passes (claude not logged in, a usage limit, the adapter
 -- going away) isn't used up: it goes back to the front of the queue, which is held (state held,
--- with why, and a held-aN notice in the repo's Inbox) until the login is back or a retry works.
+-- with why, and a held-aN notice in the repo's Inbox) until a throwaway session (probe) gets an
+-- answer. Claude keeps a failed attempt in the session, and the model sees every copy, so the
+-- prompt goes again only if the session doesn't have it; if it does, the session gets a note to
+-- pick it up (PICK_UP). The journal has one prompt entry per prompt.
 -- A supervisor that starts while claude isn't logged in holds its queue the same way. Claude Code
 -- restores the system prompt a session started with, so a resumed, reloaded or forked session
 -- whose role prompt changed gets it as its first message, "[isovim: your role is now X]".
@@ -53,6 +56,7 @@ local log = require("isovim.acp.log")
 local sessions = require("isovim.acp.sessions")
 local asks_mod = require("isovim.acp.asks")
 local images = require("isovim.acp.images")
+local handover = require("isovim.acp.handover")
 local threads = require("isovim.threads")
 local Client = require("isovim.acp.client")
 local auth = require("isovim.auth")
@@ -69,6 +73,7 @@ local M = {}
 ---@field publish? boolean whether to publish msg.<scope>.<id> (prompts from iso send/msg)
 ---@field via "iso"|"composer"|"spawn" where it came from: iso send/msg, the TUI's composer, iso spawn
 ---@field images? isovim.acp.Image[] what it attaches, [Image #n] in its text for images[n]
+---@field tried? integer it has gone before, and failed: the size of Claude's transcript just before (in_session)
 
 local S = {
   ws = nil, ---@type string
@@ -94,6 +99,7 @@ local S = {
   held = nil, ---@type {why: string, kind: "auth"|"usage"|"transport"|"error", delay?: number}? what the queue waits on
   retry = nil, -- the timer that tries a held queue again
   backoff = nil, ---@type number? the last retry's delay, while prompts keep failing: the next one doubles it
+  probing = false, -- a throwaway session is up (probe); what it says goes nowhere
   role_hash = nil, ---@type string? isovim.panes.role_hash of the role prompt the last session request sent
   legacy_hash = nil, ---@type string? the same prompt's hash as journals recorded it before role_hash (prompt_hash)
   restart = nil, ---@type {text?: string, why: string}? a restart that waits for the running turn to end
@@ -183,7 +189,7 @@ local function save_queue()
   for _, prompt in ipairs(S.queue) do
     if not prompt.reload then
       kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
-        message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images }
+        message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images, tried = prompt.tried }
     end
   end
   local path = queue_file(S.ws, S.agent)
@@ -299,12 +305,73 @@ local function auth_kind()
   return auth.kind_of(S.spec) or "claude"
 end
 
-local release
+-- Why a failure that passes holds the queue, and the hold's kind; nil for any other failure. A
+-- login that's gone is said as that, not in the adapter's words.
+local function held_on(err)
+  local kind = failure_kind(err)
+  if not kind then
+    return nil
+  end
+  local why = kind == "auth" and auth.why(auth_kind(), true) or nil
+  if kind == "auth" and not why then
+    -- Logged in all the same: tried again after a while, as anything else is.
+    kind = "error"
+  end
+  return why or ("the prompt failed (%s): %s"):format(kind, tostring(err.message)), kind
+end
 
--- The queue waits: nothing is sent until release, which the retry timer calls once a login is
--- back (asked every 30s) or, for anything else, after a while that doubles each time (to 30 min)
--- until a prompt goes through. The agent's state is held, with why; its repo's Inbox says so,
--- and its chat once, not at every try.
+-- Claude can take minutes retrying an overloaded API before it answers.
+local PROBE_TIMEOUT = 120000
+
+-- Asks whether what the queue waits on has passed, in a throwaway session, so nothing goes into
+-- the agent's: done(nil) when it got an answer, done(err) with why it didn't. A refused request
+-- costs nothing and one that's answered about $0.02 and 1.3s of CPU (adapter.probe_params).
+local function probe(done)
+  local finished, session = false, nil
+  local function close()
+    S.client:request("session/close", { sessionId = session }, function()
+      S.probing = false
+    end)
+  end
+  local function finish(err)
+    if finished then
+      return
+    end
+    finished = true
+    if session then
+      close()
+    else
+      S.probing = false
+    end
+    done(err)
+  end
+  S.probing = true
+  vim.defer_fn(function()
+    if not finished and session then
+      S.client:notify("session/cancel", { sessionId = session })
+    end
+    finish({ code = TRANSPORT_ERROR, message = "the throwaway session didn't answer" })
+  end, PROBE_TIMEOUT)
+  S.client:request("session/new", adapter.probe_params(S.spec.kind, { cwd = S.cwd, mcpServers = {} }), function(opened, new_err)
+    session = opened and opened.sessionId
+    if not session then
+      return finish(new_err or { message = "no session id" })
+    elseif finished then
+      return close()
+    end
+    S.client:request("session/prompt", { sessionId = session, prompt = { { type = "text", text = "Reply with ok." } } },
+      function(_, err)
+        finish(err)
+      end)
+  end)
+end
+
+local release, try_again
+
+-- The queue waits: nothing is sent until release, which try_again calls once a login is back
+-- (asked every 30s) and a throwaway session is answered (for anything but a login, asked after a
+-- while that doubles each time, to 30 min). The agent's state is held, with why; its repo's Inbox
+-- says so, and its chat once, not at every try.
 local function hold(why, kind)
   local first = not S.held and not (S.backoff and kind ~= "auth")
   local base = tonumber(vim.env.ISOVIM_RETRY_SECS or "") or (kind == "auth" and 30 or 60)
@@ -321,16 +388,41 @@ local function hold(why, kind)
   inbox_notice(why)
   S.retry = S.retry or vim.uv.new_timer()
   S.retry:stop()
-  S.retry:start(math.floor(delay * 1000), 0, vim.schedule_wrap(function()
+  S.retry:start(math.floor(delay * 1000), 0, vim.schedule_wrap(try_again))
+end
+
+-- A login being back says enough for what never reached the session. Once a prompt has failed or
+-- for any other hold, a throwaway session tells, since the session mustn't take another try.
+try_again = function()
+  if not S.held then
+    return
+  end
+  S.retry:stop()
+  local kind = S.held.kind
+  local still = kind == "auth" and auth.why(auth_kind(), true) or nil
+  if still then
+    return hold(still, "auth")
+  end
+  local passed = kind == "auth" and "logged in again" or "trying again"
+  local first = S.queue[1]
+  if not first or (kind == "auth" and not first.tried) then
+    return release(passed)
+  elseif not S.ready then
+    return hold(S.held.why, kind)
+  end
+  probe(function(err)
     if not S.held then
       return
+    elseif not err then
+      return release("a throwaway session got an answer")
     end
-    local still = S.held.kind == "auth" and auth.why(auth_kind(), true) or nil
-    if still then
-      return hold(still, "auth")
+    local why, failed = held_on(err)
+    if why then
+      return hold(why, failed)
     end
-    release(S.held.kind == "auth" and "logged in again" or "trying again")
-  end))
+    -- It can't tell, and only a real try can: a broken probe mustn't hold the queue for good.
+    release("no throwaway session (" .. tostring(err.message) .. "), so trying the prompt")
+  end)
 end
 
 release = function(why)
@@ -365,18 +457,14 @@ local function turn_ended(prompt, result, err)
     end
     pcall(threads.working, thread.repo, thread.id, "end")
   end
-  local kept = err and failure_kind(err)
   if not err then
     S.backoff = nil
   end
+  local why, kept
+  if err then
+    why, kept = held_on(err)
+  end
   if kept then
-    -- A login that's gone is said as that, not in the adapter's words.
-    local why = kept == "auth" and auth.why(auth_kind(), true) or nil
-    if kept == "auth" and not why then
-      -- Logged in all the same: tried again after a while, as anything else is.
-      kept = "error"
-    end
-    why = why or ("the prompt failed (%s): %s"):format(kept, tostring(err.message))
     table.insert(S.queue, 1, prompt)
     queue_changed()
     notice("the prompt failed: " .. tostring(err.message) .. "; it's kept, first in the queue")
@@ -392,6 +480,23 @@ local function turn_ended(prompt, result, err)
   next_prompt()
 end
 
+-- What a session that has the prompt from a failed try gets in place of another copy.
+local PICK_UP = "[isovim: your turn on the message above failed before it finished (a usage limit, a login or an outage), "
+  .. "and that has passed. The message isn't sent again: pick it up now.]"
+
+local function transcript()
+  return S.spec.kind ~= "codex" and S.session and handover.transcript(S.session, S.cwd) or nil
+end
+
+-- Whether the session kept the prompt from a try that failed: Claude writes a user entry before
+-- it calls the API, but a session switched since, or an adapter that died first, hasn't got one.
+local function in_session(prompt)
+  local wanted = vim.trim(prompt.text)
+  return prompt.tried ~= nil and vim.iter(handover.entries(transcript(), prompt.tried)):any(function(entry)
+    return entry[1] == "prompt" and entry[2].text:find(wanted, 1, true) ~= nil
+  end)
+end
+
 ---@param prompt isovim.acp.Prompt
 deliver = function(prompt)
   -- It has left the queue.
@@ -404,16 +509,24 @@ deliver = function(prompt)
   -- The files as they were before this turn, for a rewind to put back.
   local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
   snapshot = ok and snapshot or nil
-  local entry = append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind,
-    stamp = prompt.stamp, via = prompt.via, role = prompt.role, images = prompt.images })
-  -- The role prompt a resumed session can't get any other way: said once it's in the journal.
-  if prompt.via == "role" then
-    local journaled = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
-      return e.kind == "prompt" and e.id == prompt.id
-    end)
-    notice(journaled and ("gave it the %s's prompt as a message (journal seq %s): a resumed session keeps the system prompt it started with")
-      :format(prompt.role or "role", tostring(journaled.seq or entry.seq))
-      or ("could not find the %s's prompt in the journal after sending it"):format(prompt.role or "role"))
+  local journaled = prompt.tried and vim.iter(journal.read(S.ws, S.agent)):any(function(e)
+    return e.kind == "prompt" and e.id == prompt.id
+  end)
+  if journaled then
+    -- Going again, it has only the queue to leave.
+    queue_changed()
+  else
+    local entry = append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind,
+      stamp = prompt.stamp, via = prompt.via, role = prompt.role, images = prompt.images })
+    -- The role prompt a resumed session can't get any other way: said once it's in the journal.
+    if prompt.via == "role" then
+      local found = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
+        return e.kind == "prompt" and e.id == prompt.id
+      end)
+      notice(found and ("gave it the %s's prompt as a message (journal seq %s): a resumed session keeps the system prompt it started with")
+        :format(prompt.role or "role", tostring(found.seq or entry.seq))
+        or ("could not find the %s's prompt in the journal after sending it"):format(prompt.role or "role"))
+    end
   end
   append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
     snapshot_dir = snapshot and snapshot.dir })
@@ -429,7 +542,15 @@ deliver = function(prompt)
   set_state("working")
   out(("\n❯ %s%s\n"):format(prompt.from and ("(" .. prompt.from .. ") ") or "", prompt.text))
   local takes_images = type(S.caps.promptCapabilities) == "table" and S.caps.promptCapabilities.image == true
-  S.client:request("session/prompt", { sessionId = S.session, prompt = images.blocks(prompt.text, prompt.images, takes_images) },
+  local blocks
+  if in_session(prompt) then
+    notice("its session kept that prompt from the try that failed, so it gets a note to pick it up, not a copy")
+    blocks = { { type = "text", text = PICK_UP } }
+  else
+    blocks = images.blocks(prompt.text, prompt.images, takes_images)
+  end
+  prompt.tried = prompt.tried or handover.size(transcript())
+  S.client:request("session/prompt", { sessionId = S.session, prompt = blocks },
     function(result, err)
       turn_ended(prompt, result, err)
     end)
@@ -693,8 +814,12 @@ function CALLS.queue_set(payload)
       if prompt then
         by_id[item.id] = nil
         if text ~= prompt.text then
-          -- Edited: a message's stamp no longer matches what it says, so it's yours now.
+          -- Edited: a message's stamp no longer matches what it says, so it's yours now. One that
+          -- had failed is a new prompt, sent whole.
           prompt.text, prompt.from, prompt.kind, prompt.stamp, prompt.via = text, nil, nil, nil, "composer"
+          if prompt.tried then
+            prompt.id, prompt.tried = next_id(), nil
+          end
           if prompt.images then
             prompt.text, prompt.images = images.renumber(text, prompt.images)
             prompt.images = prompt.images[1] and prompt.images or nil
@@ -769,6 +894,10 @@ end
 
 local handlers = {
   on_notification = function(method, params)
+    -- What the throwaway session says, if not said by the agent's session, goes nowhere.
+    if S.probing and params.sessionId ~= S.session then
+      return
+    end
     if method == "session/update" and type(params.update) == "table" then
       -- A load replays history that the journal already holds.
       if S.replaying then
@@ -942,6 +1071,13 @@ local function session_ready(how, fresh, extra, resumed)
     end
     if S.held then
       return set_state("held")
+    end
+    -- One that failed under the last supervisor: this one tests before the session takes more.
+    if vim.iter(S.queue):any(function(prompt)
+      return prompt.tried
+    end) then
+      hold("a prompt failed before this restart", "error")
+      return try_again()
     end
     local first = table.remove(S.queue, 1)
     if first then
@@ -1337,10 +1473,10 @@ end
 -- Claude exited: what it did goes into the journal, any client attached for the handover is
 -- detached, and the session is opened again, which sends what was queued meanwhile.
 local function handed_back(code)
-  local handover = S.handover
-  local path = handover.transcript or require("isovim.acp.handover").transcript(S.session, S.cwd)
-  local offset = handover.transcript and handover.offset or 0
-  for _, entry in ipairs(require("isovim.acp.handover").entries(path, offset)) do
+  local given = S.handover
+  local path = given.transcript or handover.transcript(S.session, S.cwd)
+  local offset = given.transcript and given.offset or 0
+  for _, entry in ipairs(handover.entries(path, offset)) do
     append(entry[1], vim.tbl_extend("force", entry[2], { handover = true }))
   end
   S.handover = nil
@@ -1364,9 +1500,8 @@ function CALLS.handover()
   elseif not S.session or not S.ready then
     error("its session isn't up yet")
   end
-  local handover_mod = require("isovim.acp.handover")
-  local transcript = handover_mod.transcript(S.session, S.cwd)
-  S.handover = { transcript = transcript, offset = handover_mod.size(transcript) }
+  local path = handover.transcript(S.session, S.cwd)
+  S.handover = { transcript = path, offset = handover.size(path) }
   S.ready = false
   append("handover", { state = "start", sessionId = S.session })
   pcall(S.client.stop, S.client)

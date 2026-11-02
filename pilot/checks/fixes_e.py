@@ -320,8 +320,10 @@ try:
     A = run("spawn", "--name", "a")[1]
     wait_idle(A)
     run("send", A, "limit")
-    soon(lambda: len([p for p in prompts(A) if p["text"] == "limit"]) >= 4, 25)
-    times = [p["ts"] for p in prompts(A) if p["text"] == "limit"]
+    tries = lambda: [e["ts"] for e in journal(A) if e["kind"] == "turn" and e.get("state") == "start"]
+    soon(lambda: len(tries()) >= 4, 25)
+    times = tries()
+    check(len([p for p in prompts(A) if p["text"] == "limit"]) == 1, "journaled once, not per try", prompts(A))
     gaps = [round(b - a, 1) for a, b in zip(times, times[1:])]
     check(len(gaps) >= 3 and gaps[1] >= 1.7 * gaps[0] and gaps[2] >= 1.7 * gaps[1],
           "tried again after 1s, 2s, 4s, ...", gaps)

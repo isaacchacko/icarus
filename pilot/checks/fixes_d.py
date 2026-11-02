@@ -326,7 +326,7 @@ try:
     iso.wait(lambda: "reply to: m2" in said(A), "m1 and m2 delivered once logged in", 30)
     wait_idle(A)
     texts = [p["text"] for p in prompts(A)]
-    check(texts[-3:] == ["m1", "m1", "m2"] and "reply to: m1" in said(A), "m1 goes again, then m2, in order", texts[-3:])
+    check(texts[-2:] == ["m1", "m2"] and "reply to: m1" in said(A), "m1 goes again, then m2, in order, each journaled once", texts[-3:])
     check(queue_file(A) == [] and surface("acme/lab", "held-a0") is None and state(A) == "idle" and not run("status", A)[1].startswith("held"),
           "the queue is empty, the notice gone, the agent idle", (queue_file(A), state(A), run("status", A)))
 
@@ -347,7 +347,9 @@ try:
     iso.wait(lambda: run("status", B)[1] == "stopped", "B's supervisor ends with its adapter", 20)
     check(queue_file(B) == ["slow 30"], "the prompt in flight when the adapter died is kept", queue_file(B))
     run("send", B, "after")
-    iso.wait(lambda: [p["text"] for p in prompts(B)].count("slow 30") == 2, "it goes again after the restart", 30)
+    iso.wait(lambda: sum(f.get("method") == "session/prompt" and f["params"]["prompt"][0]["text"] == "slow 30"
+                         for f in fake_frames()) == 2, "it goes again after the restart", 30)
+    check([p["text"] for p in prompts(B)].count("slow 30") == 1, "journaled once", prompts(B))
     run("rm", B)
 
     print("\n# 16. iso rm stops the agent's background shells")

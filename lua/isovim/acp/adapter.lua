@@ -141,6 +141,17 @@ function M.session_params(kind, params, append_text)
   return params
 end
 
+-- What a throwaway session carries (isovim.acp.host's probe): for claude no transcript, tools or
+-- settings. The user's settings aren't only slow: a session that loaded them cost $1.97 to say ok,
+-- against $0.02, on 2026-11-01. Claude's default model is what most agents run, so a limit on it shows.
+function M.probe_params(kind, params)
+  if (kind or "claude") ~= "codex" then
+    params._meta = { claudeCode = { options = { persistSession = false, settingSources = {}, tools = {}, maxTurns = 1,
+      strictMcpConfig = true } } }
+  end
+  return params
+end
+
 -- How the supervisor starts it, in dir.
 ---@param spec? isovim.Agent the agent (its kind, read_only); claude when nil
 ---@return isovim.acp.TransportConfig
