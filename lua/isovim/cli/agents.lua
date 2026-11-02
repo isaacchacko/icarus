@@ -184,11 +184,17 @@ function commands.role(args)
   out(("%s is now a %s; it takes effect when it next restarts (iso restart %s)"):format(address, role, address))
 end
 
+-- iso rm <agent>...: stops each, tears it down here (its worktree, its snapshots), then has the TUI
+-- close its chat, so the TUI never waits on the git a teardown runs.
 function commands.rm(args)
-  local ws, agent = resolve_agent(args[1], true)
-  if not tui("require('isovim').remove_agent(...)", ws.id, agent.id) then
+  if #args == 0 then
+    fail("usage: iso rm <agent>...")
+  end
+  for _, query in ipairs(args) do
+    local ws, agent = resolve_agent(query, true)
     panes.stop(ws.id, agent.id)
     store.remove_agent(ws.id, agent.id)
+    tui("require('isovim').forget_agent(...)", ws.id, agent.id)
   end
 end
 

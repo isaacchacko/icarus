@@ -202,10 +202,11 @@ M.list = {
   },
   { name = "rm", module = "agents",
     audience = "user",
-    args = { "<agent>" },
+    args = { "<agent>..." },
     help = [=[
-       iso rm <agent>                stop an agent and remove it from its workspace; its children
-                                     go to its parent (archiving a workspace does the same)]=],
+       iso rm <agent>...             stop agents and remove them from their workspace; their
+                                     children go to their parent (archiving a workspace does
+                                     the same)]=],
   },
   { name = "pr", module = "workspaces",
     args = { "<ws>", "<text>" },
@@ -842,12 +843,13 @@ M.role_actions = {
                                      code when it changes on disk, when idle]=],
   },
   rm = { name = "rm", module = "roles",
-    args = { "<agent>" },
+    args = { "<agent>..." },
     flags = { ["--keep-branch"] = false, ["--force"] = false },
     summary = "remove an agent you manage once its work is done",
     help = [=[
-       iso rm <agent> [--keep-branch] [--force]
-                                     remove an agent you may restart once its work is done:
+       iso rm <agent>... [--keep-branch] [--force]
+                                     remove agents you may restart once their work is done,
+                                     several in one go (one refused doesn't stop the rest):
                                      not mid-turn or with a question in the Inbox. Its
                                      supervisor stops and its record and aN/ go, as d in the
                                      sidebar does; its children go to its parent. Its journal

@@ -620,13 +620,8 @@ end
 -- stay in iso/, the transcript headed with its name, so iso find and grep still see it; its pushed
 -- branches and PRs are left alone, and its local branch goes once origin has all of it, unless
 -- --keep-branch.
-function M.rm(args)
-  local force, keep_branch = flag(args, "--force"), flag(args, "--keep-branch")
-  local by, role, by_ws = caller()
-  if not by then
-    fail("only agents run iso <role> rm; from a shell, iso rm <agent>")
-  end
-  local ws, agent = c.resolve_agent(args[1] or fail("usage: iso <role> rm <agent> [--keep-branch] [--force]"), true)
+local function rm_one(query, by, role, by_ws, force, keep_branch)
+  local ws, agent = c.resolve_agent(query, true)
   local address = ws.id .. "/" .. agent.id
   if address == by then
     fail("an agent doesn't remove itself: its parent or its repo's router does")
@@ -672,6 +667,29 @@ function M.rm(args)
     end
   end
   out(("removed %s%s; its journal and transcript stay in iso/"):format(address, kept))
+end
+
+-- iso <role> rm <agent>... [--keep-branch] [--force]: several in one process, each checked on
+-- its own; one refused doesn't stop the rest.
+function M.rm(args)
+  local force, keep_branch = flag(args, "--force"), flag(args, "--keep-branch")
+  local by, role, by_ws = caller()
+  if not by then
+    fail("only agents run iso <role> rm; from a shell, iso rm <agent>")
+  elseif #args == 0 then
+    fail("usage: iso <role> rm <agent>... [--keep-branch] [--force]")
+  end
+  local refused = 0
+  for _, query in ipairs(args) do
+    local ok, err = c.try(rm_one, query, by, role, by_ws, force, keep_branch)
+    if not ok then
+      refused = refused + 1
+      io.stderr:write("iso: " .. tostring(err) .. "\n")
+    end
+  end
+  if refused > 0 then
+    fail(("%d of %d not removed"):format(refused, #args))
+  end
 end
 
 -- Runs from the tmux server: waits until the agent isn't busy, restarts it so it starts on its

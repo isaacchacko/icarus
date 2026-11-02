@@ -108,8 +108,11 @@ lifetimes, so agents outlive the TUI).
 - A supervisor restarts itself onto isovim's new code. Every 30s, and whenever it goes idle, it
   compares the mtime and size of the files it runs (`acp/agent_host.lua` and every isovim module it
   has loaded, so a change only the TUI runs, like the chat's, restarts nothing) with what it started
-  on. On a change it waits a random 0-60s, so a dozen agents don't restart in the same second, and
-  restarts if it's still idle: no turn, nothing queued or held, no question waiting, no handover. It
+  on. On a change it takes a turn: the host's supervisors restart one at a time, 12s apart
+  (`~/.isovim/run/code-restart.next` holds the next free turn), since each restart starts a new
+  adapter whose claude resumes its session, seconds of CPU apiece, and a self-update reaches them
+  all at once. At its turn it restarts if it's still idle: no turn, nothing queued or held, no
+  question waiting, no handover; one that isn't takes a new turn when it next is. It
   gets no message, since nothing was cut off. A changed file that doesn't compile keeps it on the old
   code, said once in its chat. A pull or isovim's self-update only has to change the files.
 - Fork copies the session, optionally up to a message.
@@ -568,7 +571,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 **Router only:** `surface question|file|folder|chat`, `pr`.
 
-**Router, repo-root and root:** `rm <agent> [--keep-branch] [--force]`.
+**Router, repo-root and root:** `rm <agent>... [--keep-branch] [--force]`.
 
 **Roots:** `answer`, `raise`.
 
@@ -602,13 +605,15 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   <agent>` once a worker's work has landed and nothing more is expected of it, unless the router keeps
   it as the standing owner of an area it keeps sending follow-ups to, which its Task Board line says.
   Cleaning up finished workers is the router's job, not the reaper's.
-- **`iso <role> rm <agent> [--keep-branch] [--force]`** is a router's, repo-root's or root's, on the
+- **`iso <role> rm <agent>... [--keep-branch] [--force]`** is a router's, repo-root's or root's, on the
   agents it may restart: its own descendants; for a router or repo-root any agent in its repo; for the
   root any on the host. It refuses an agent mid-turn or with a question or permission waiting in the
   Inbox, and a worktree with uncommitted files or commits no origin branch has (it lists them) unless
   `--force`, which drops the uncommitted files and keeps unpushed commits on the local branch. The
   removal is `iso rm`'s, `d` in the sidebar: the supervisor stops, the record and `aN/` go (teardown,
-  below), and the children go to its parent. The journal and the transcript stay in `iso/`, the
+  below), and the children go to its parent. Several agents go in one process, each checked on its
+  own, and `iso rm` runs the teardown itself, asking the TUI only to close the chat, so the TUI never
+  waits on its git. The journal and the transcript stay in `iso/`, the
   transcript headed `# <name> (removed <date> by <who>)`, so `iso find` and grep still find the agent.
   Pushed branches and PRs are left alone; the local branch is deleted once origin has all of it,
   unless `--keep-branch`.

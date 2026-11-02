@@ -505,17 +505,23 @@ function M.notify_remote(host, rows)
   end
 end
 
--- Stops the agent, closes its chat and drops it from the workspace.
-function M.remove_agent(ws, agent)
-  panes.stop(ws, agent)
+-- Closes a removed agent's chat and drops its row (the sidebar's refresh runs once for a burst).
+function M.forget_agent(ws, agent)
   for _, buf in ipairs(chat_bufs()) do
     if vim.b[buf].isovim_id == ws and vim.b[buf].isovim_agent == agent then
       vim.api.nvim_buf_delete(buf, { force = true })
     end
   end
   require("isovim.acp.chat").close(ws, agent)
-  store.remove_agent(ws, agent)
   M.refresh()
+end
+
+-- Stops the agent, closes its chat and drops it from the workspace (d in the sidebar). iso rm
+-- does the stop and the teardown itself, so the TUI never waits on its git, and calls forget_agent.
+function M.remove_agent(ws, agent)
+  panes.stop(ws, agent)
+  store.remove_agent(ws, agent)
+  M.forget_agent(ws, agent)
 end
 
 -- Terminals whose shell exited (iso closed, from tmux's session-closed hook): gone, with their chats.

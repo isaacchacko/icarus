@@ -542,10 +542,39 @@ local function idle()
     and #S.queue == 0 and not (S.asks and asks_mod.waiting(S.asks))
 end
 
+-- Restarts onto new code take turns host-wide, CODE_GAP seconds apart. Each starts a new adapter
+-- whose claude resumes its session, 4-12s of CPU apiece, and every supervisor sees a self-update
+-- at once: with a random 0-60s wait, ~18 restarted inside 75s on 2026-11-01 (12:46) and pinned
+-- the host. ~/.isovim/run/code-restart.next holds the next free turn; this takes it, under a
+-- lock, and says how long to wait for it, in ms.
+local CODE_GAP = 12
+local function code_turn()
+  local file = store.run .. "/code-restart.next"
+  local lock = file .. ".lock"
+  vim.fn.mkdir(store.run, "p")
+  local deadline = vim.uv.hrtime() + 2e9
+  while not vim.uv.fs_mkdir(lock, 448) and vim.uv.hrtime() < deadline do
+    -- A holder that died: taking a turn takes a millisecond.
+    local stat = vim.uv.fs_stat(lock)
+    if stat and os.time() - stat.mtime.sec > 10 then
+      vim.uv.fs_rmdir(lock)
+    else
+      vim.uv.sleep(5)
+    end
+  end
+  local ok, lines = pcall(vim.fn.readfile, file)
+  local now = os.time()
+  local at = math.max(now, ok and tonumber(lines[1] or "") or 0)
+  pcall(vim.fn.writefile, { tostring(at + CODE_GAP) }, file)
+  vim.uv.fs_rmdir(lock)
+  return (at - now) * 1000
+end
+
 -- isovim's code it runs changed on disk (a pull, isovim's self-update): it restarts onto it at its
--- next idle moment, with no message. Checked every 30s and whenever it goes idle. Each waits a
--- random 0-60s first, so a dozen agents don't restart in the same second, and goes only if it's
--- still idle then. A changed file that doesn't compile keeps it on the old code, said once.
+-- next idle moment, with no message. Checked every 30s and whenever it goes idle. It waits for its
+-- turn (code_turn), so the host's supervisors restart one at a time, and goes only if it's still
+-- idle then; one that isn't takes a new turn when it next is. A changed file that doesn't compile
+-- keeps it on the old code, said once.
 check_code = function()
   if S.code_due or not idle() then
     return
@@ -574,7 +603,7 @@ check_code = function()
       S.restart = { why = "onto isovim's new code (" .. table.concat(names, ", ") .. ")" }
       restart_now()
     end
-  end, math.random(0, 60000))
+  end, code_turn())
 end
 
 -- What the socket answers: iso's CLI and the TUI call these (isovim.acp.call).
@@ -1405,7 +1434,7 @@ function M.run(addr)
     os.exit(1)
   end
   S.ws, S.agent, S.spec = ws, agent, spec
-  -- LuaJIT starts every process on the same seed, which would line up check_code's waits.
+  -- LuaJIT starts every process on the same seed, which would line up the random waits (bugs.watch's).
   math.randomseed(vim.uv.hrtime() + vim.uv.os_getpid())
   changed_code()
   vim.uv.new_timer():start(30000, 30000, vim.schedule_wrap(check_code))
