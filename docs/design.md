@@ -266,7 +266,7 @@ host; General, Root and Terminals have none, and starting one there says why.
 
 - **Stored** as `iso/threads/<id>.jsonl` (`t1`, `t2`…), appended to, never rewritten: a header
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
-  address>, text, at, images?, ask?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
+  address>, text, at, images?, no_reply?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
   {state: start|end}` around the router's turn on one of its posts, `renamed {by, title}`, its
   title from then on (posts already sent keep their tags), and `waiting` (below). What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
@@ -310,17 +310,21 @@ host; General, Root and Terminals have none, and starting one there says why.
   waits on you: it's in the host's Inbox (`new reply`) until you open it. Threads always shows for
   a repo, even empty, with its last 5 resolved under the open ones, dimmed, each with its outcome
   (`thread ls --all` shows the rest); its count is the open ones.
-- **Whose turn:** a thread's row says `waiting on you`, `waiting on <worker>` or nothing. It's a
-  light mark, not the blocking `thread ask`: a post with `ask` (`iso router thread post <id> --ask`),
-  or `waiting {on: user|<agent address>|none, by, why?}` (`iso router thread waiting <id> ...`), which
-  a turn whose last message posts itself runs before it ends, since that's how most replies get
-  posted; the mark stands for the post that turn makes, and counts only once the turn is over.
-  Waiting on you, the thread is in the repo's and host's Inbox, and stays after you open it, until
-  you post or the router's next turn on it starts. Waiting on a worker clears once that worker has
-  finished or gone, and the router is told, so the thread doesn't sit: a turn's end isn't always
-  the end of its work, and the router marks it again if it isn't. "Finished" is the worker's state
-  not being mid-turn, 30s or more after the mark, as a mark often comes just before the worker
-  starts. There's no reminder about quiet threads otherwise.
+- **Whose turn:** apart from what you've read. After any agent's post it's your turn: the thread's
+  row says `waiting on you` (`● waiting on you` while the post is unread), and it's in the repo's and
+  host's Inbox, opened or not, until you post, it's resolved or you press `D` (on its row or on the
+  thread), which takes it out without replying, read and all, till the next post, so an unneeded
+  post can't pin it there. You'd rather be nagged than miss one, so the default is your turn and the
+  agent opts out when a post needs nothing from you: `iso router thread post <id> --no-reply`, `new
+  ... --no-reply`, or `iso router thread waiting <id> none|<agent>` (`waiting {on: user|<agent
+  address>|none, by, why?}`) in a turn whose last message posts itself, since that's how most replies
+  get posted and no flag reaches them: the mark stands for that post. A post made during a turn on
+  the thread counts only when the turn ends, the row saying `working…` until then. A thread an agent
+  opens with a first post is your turn unless it opts out. A row with `waiting on <worker>` clears
+  once that worker has finished or gone, and the router is told, so the thread doesn't sit: a turn's
+  end isn't always the end of its work, and the router marks it again if it isn't. "Finished" is
+  the worker's state not being mid-turn, 30s or more after the mark, as a mark often comes just
+  before the worker starts. There's no reminder about quiet threads otherwise.
 - **The title alone:** the UI asks for the title, then your first post, and only a post prompts
   the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
   post 30s on, and goes to the router as one. A first post within that time means one prompt, not

@@ -459,9 +459,9 @@ function M.surface_chunks(entry)
       row[#row + 1] = { "  " .. target.status, target.status_hl or "Comment" }
     end
   elseif kind == "thread" then
-    -- How many posts, then whose turn it is: a question or a mark waiting on you, the router's turn
-    -- on it, a reply of the router's you haven't read, the worker it waits on. A resolved one, its
-    -- outcome.
+    -- How many posts, then whose turn it is: a question or the thread waiting on you (a dot while a
+    -- reply's unread), the router's turn on it, a reply you haven't read that needs nothing from you,
+    -- the worker it waits on. A resolved one, its outcome.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
     if entry.resolved then
       row[#row + 1] = { "  ✓ " .. vim.trim((entry.outcome or "resolved"):gsub("%s+", " ")), "Comment" }
@@ -470,7 +470,7 @@ function M.surface_chunks(entry)
     elseif entry.working then
       row[#row + 1] = { "  working…", "Comment" }
     elseif entry.waiting_on == "user" then
-      row[#row + 1] = { "  waiting on you", "DiagnosticWarn" }
+      row[#row + 1] = { (entry.new_reply and "  ● " or "  ") .. "waiting on you", "DiagnosticWarn" }
     elseif entry.new_reply then
       row[#row + 1] = { "  new reply", "DiagnosticWarn" }
     elseif entry.waiting_on then
@@ -832,7 +832,7 @@ local function surface_rows(items, base, list, depth)
 end
 
 -- The sections a group's rows sit in, in this order: the Inbox (what needs you; questions only
--- ever here; a thread marked as waiting on you too), Threads (a repo's open ones, marked while one
+-- ever here; a thread whose turn is yours too), Threads (a repo's open ones, marked while one
 -- waits on you or has a reply you haven't read, then its last 5 resolved, dimmed), Surfaces
 -- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
 -- (the repo-root and its decision log) and Agents. An empty one isn't shown, but for a repo's
@@ -1778,6 +1778,7 @@ local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Root, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
+  { "D", "isovim_dismiss_thread", "take the thread out of the Inbox without replying or resolving it, till the agent's next post (D on the thread too)" },
   { "U", "isovim_mark_unread", "mark the surface or thread unread: back in the Inbox until you open it (u in its view, but a file's, where u is vim's undo)" },
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
@@ -2519,6 +2520,21 @@ M.actions = {
     require("isovim.keys").prs(key)
   end,
   -- U: the row's surface or thread back in the Inbox until it's opened.
+  isovim_dismiss_thread = function(item)
+    local thread = item and item.surface and item.surface.type == "thread" and item.surface
+    if not thread then
+      return vim.api.nvim_echo({ { "D takes a thread out of the Inbox", "Comment" } }, false, {})
+    elseif item.host then
+      return Snacks.notify.info(("That's on %s; dismiss it there"):format(item.host), { title = "isovim" })
+    elseif thread.resolved then
+      return vim.api.nvim_echo({ { "it's resolved: it's not in the Inbox", "Comment" } }, false, {})
+    end
+    require("isovim.threads").dismiss(thread.repo, thread.name)
+    M.surfaces().opened(thread.repo, thread.base)
+    M.surfaces().scan(thread.repo)
+    M.surfaces().recheck()
+    M.refresh()
+  end,
   isovim_mark_unread = function(item)
     if not (item and item.surface) then
       return vim.api.nvim_echo({ { "U marks a surface or thread unread", "Comment" } }, false, {})

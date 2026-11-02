@@ -606,8 +606,8 @@ local function worker_name(address)
 end
 
 -- The repo's threads as surfaces (isovim.threads): named by id, titled, the open ones newest first,
--- waiting on you while a router post is past what you've read or the router marked it so, then the
--- last few resolved, the latest first, which wait on nobody.
+-- waiting on you while a router post is past what you've read or it's your turn, then the last few
+-- resolved, the latest first, which wait on nobody.
 ---@return isovim.Surface[]
 function M.threads(repo)
   local threads = require("isovim.threads")
@@ -621,10 +621,10 @@ function M.threads(repo)
     return info.status == "open"
   end, all)) do
     local file = threads.file(repo, info.id)
-    -- A reply you haven't read, or a mark that outlasts your reading it; a question waiting is in the
-    -- Inbox as itself (below), the thread's row saying so. A mark made in a turn counts from that
-    -- turn's post.
-    local new_reply = info.last_reply > (seen[info.id] or 0)
+    -- A reply you haven't read, or your turn, which outlasts your reading it; a question waiting is in
+    -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
+    -- isn't yours.
+    local new_reply = not info.working and info.last_reply > (seen[info.id] or 0)
     local on_you = info.waiting_on == "user" and not info.working
     local needs_you = new_reply or on_you
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil

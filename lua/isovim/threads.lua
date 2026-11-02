@@ -6,8 +6,8 @@
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
 --   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
---   {kind = "post", by = "user"|<agent address>, text, at, images?, ask?}   ask: it wants something from
---                                                   the user, so the thread waits on them (below)
+--   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?}   no_reply: it needs
+--                                                   nothing from the user (below)
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
 --   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
@@ -24,12 +24,14 @@
 -- post. What the user has read (the last line seen, per thread) is run/<repo>/threads.json: a
 -- router post past it makes the thread wait on them (needs_you) until they open it.
 --
--- Whose turn it is, a light mark and not the blocking thread ask: a post with ask, or iso router
--- thread waiting, which a turn whose last message posts itself uses, since the mark stands for the
--- post that turn makes. Waiting on the user, the thread is in the Inbox, opened or not, until they
--- post or the router's next turn on it starts. Waiting on a worker clears once that worker has
--- finished or gone, and the router is told; M.listen, in the router's supervisor, sees to that, and
--- gives the router a thread the user stopped at the title of, the title as their first post.
+-- Whose turn it is is apart from what's been read. After an agent's post it's the user's turn, opened
+-- or not, so they never miss one: the thread is in the Inbox until they post, it's resolved or they
+-- dismiss it (D). The agent opts out when a post needs nothing from them: iso router thread post
+-- --no-reply, or iso router thread waiting <id> none|<worker> in a turn whose last message posts
+-- itself, the mark standing for that post. Posts during a turn on the thread count when it ends.
+-- Waiting on a worker clears once that worker has finished or gone, and the router is told; M.listen,
+-- in the router's supervisor, sees to that, and gives the router a thread the user stopped at the
+-- title of, the title as their first post.
 local store = require("isovim.store")
 
 local M = {}
@@ -81,12 +83,16 @@ function M.summary(entries)
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
   end
+  -- The router's turn on the thread, while it runs: whether it posted for the user, and its mark.
+  local turn
   for _, entry in ipairs(entries) do
     if entry.kind == "post" then
       info.posts = info.posts + 1
       if entry.by ~= "user" then
         info.last_reply = entry.seq
-        if entry.ask then
+        if turn then
+          turn.posted = turn.posted or not entry.no_reply
+        elseif not entry.no_reply then
           waits("user", entry.at)
         end
       elseif info.waiting_on == "user" then
@@ -105,8 +111,23 @@ function M.summary(entries)
       if info.working and info.waiting_on == "user" then
         waits(nil)
       end
+      if not info.working and turn then
+        if turn.mark then
+          waits(turn.mark ~= "none" and turn.mark or nil, turn.at)
+        elseif turn.posted then
+          waits("user", entry.at)
+        end
+      end
+      turn = info.working and {} or nil
     elseif entry.kind == "waiting" then
       waits(entry.on ~= "none" and entry.on or nil, entry.at)
+      -- The router's own mark stands for its turn's post; the user's D or a worker clearing doesn't,
+      -- but a worker clearing ends a mark on it.
+      if turn and entry.by == "isovim" then
+        turn.mark = turn.mark and "none"
+      elseif turn and entry.by ~= "user" then
+        turn.mark, turn.at = entry.on, entry.at
+      end
     end
   end
   info.questions = M.questions(entries)
@@ -239,10 +260,10 @@ function M.raise(repo, id, qid, by, why)
   return append(repo, id, { kind = "raised", qid = qid, by = by, why = why })
 end
 
--- A post in the thread; ask: it wants something from the user, so the thread waits on them.
+-- A post in the thread; no_reply: it needs nothing from the user, so it doesn't make it their turn.
 ---@param images? {path: string, mimeType: string}[]
 ---@return table? post, string? err
-function M.post(repo, id, by, text, images, ask)
+function M.post(repo, id, by, text, images, no_reply)
   local entries, err = exists(repo, id)
   if not entries then
     return nil, err
@@ -251,10 +272,10 @@ function M.post(repo, id, by, text, images, ask)
   if text == "" and not (images and images[1]) then
     return nil, "a post needs text"
   end
-  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil, ask = ask or nil })
+  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil, no_reply = no_reply or nil })
 end
 
--- Whose turn it is: on is "user", an agent's address, or "none".
+-- Whose turn it is from now on: on is "user", an agent's address, or "none".
 ---@return boolean? marked, string? err
 function M.wait_on(repo, id, on, by)
   local entries, err = exists(repo, id)
@@ -355,6 +376,21 @@ function M.mark_seen(repo, id, seq)
   vim.uv.fs_rename(tmp, path)
   local entries = M.read(repo, id) or {}
   return M.summary(entries).last_reply > was
+end
+
+-- D: the user takes the thread out of the Inbox without replying or resolving it, whether it waits on
+-- them, has a reply they haven't read, or both; the agent's next post brings it back.
+function M.dismiss(repo, id)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  if M.summary(entries).waiting_on == "user" then
+    append(repo, id, { kind = "waiting", on = "none", by = "user" })
+  end
+  local now = M.read(repo, id)
+  M.mark_seen(repo, id, now[#now].seq)
+  return true
 end
 
 -- How long a thread with only its title waits for a first post before the router gets the title, and

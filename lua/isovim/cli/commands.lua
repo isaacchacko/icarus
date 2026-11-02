@@ -790,7 +790,7 @@ M.role_actions = {
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
     help = [=[
-       iso thread new "<title>" ["first post"] [--ask]
+       iso thread new "<title>" ["first post"] [--no-reply]
                                      open a thread for each ask that's different, rather
                                      than burying it in your own chat; prints its id (t1,
                                      t2...).
@@ -802,18 +802,20 @@ M.role_actions = {
                                      for you (tool calls stay in your chat). A thread
                                      the user stopped at the title of comes the same
                                      way, the title as their first post
-       iso thread post <id> <text...> [--image <file>]... [--ask]
+       iso thread post <id> <text...> [--image <file>]... [--no-reply]
                                      post to a thread anytime: a follow-up, or what a
-                                     worker finished that it was about. --ask: it wants
-                                     something from the user, so the thread waits on
-                                     them, in their Inbox, until they post
-       iso thread waiting <id> user|<agent>|none
-                                     whose turn it is, a light mark that blocks nothing.
-                                     In a turn whose last message posts itself, run it
-                                     before you end the turn: it stands for that post.
-                                     user is as --ask; on an agent it clears once that
-                                     agent finishes or is removed, and you're told, so
-                                     the thread doesn't sit
+                                     worker finished that it was about. After a post
+                                     it's the user's turn, the thread in their Inbox
+                                     until they post. --no-reply: it needs nothing from
+                                     them
+       iso thread waiting <id> none|<agent>|user
+                                     whose turn it is from now on. In a turn whose last
+                                     message posts itself, run it before you end the
+                                     turn: it stands for that post, in place of the
+                                     user's turn. Whenever a post needs nothing from the
+                                     user, say so, or they're nagged. On an agent it
+                                     clears once that agent finishes or is removed, and
+                                     you're told, so the thread doesn't sit
        iso thread resolve <id> [<outcome...>]
                                      resolve it once it's settled, without being asked,
                                      with its outcome; it goes under the open ones, then

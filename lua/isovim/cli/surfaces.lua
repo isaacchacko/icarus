@@ -385,7 +385,7 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--ask] | post <id> <text...> [--image f] [--ask] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   if sub ~= "ls" and sub ~= "show" then
@@ -396,7 +396,7 @@ function M.thread(args)
     end
   end
   me = me or "user"
-  local ask = flag(args, "--ask")
+  local no_reply = flag(args, "--no-reply")
   local images = {}
   while true do
     local path = option(args, "--image")
@@ -413,16 +413,16 @@ function M.thread(args)
     end
     local first = vim.trim(table.concat(vim.list_slice(args, 2), " "))
     if first ~= "" then
-      threads.post(repo, id, me, first, images[1] and images or nil, ask)
+      threads.post(repo, id, me, first, images[1] and images or nil, no_reply)
     end
     out(id)
   elseif sub == "post" then
     local id = args[1] or fail(usage)
-    local post, err = threads.post(repo, id, me, table.concat(vim.list_slice(args, 2), " "), images[1] and images or nil, ask)
+    local post, err = threads.post(repo, id, me, table.concat(vim.list_slice(args, 2), " "), images[1] and images or nil, no_reply)
     if not post then
       fail(err)
     end
-    out(("posted to %s#%s%s"):format(repo, id, ask and ": it waits on the user now" or ""))
+    out(("posted to %s#%s%s"):format(repo, id, no_reply and ", needing no reply" or ": it's the user's turn"))
   elseif sub == "waiting" then
     local id = args[1] or fail(usage)
     local on = args[2] or fail(usage)
