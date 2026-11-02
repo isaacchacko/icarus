@@ -5,9 +5,21 @@
 // ~/.isovim/run/<ws>/browser.json, each with the agent that opened it ($ISOVIM_ADDR): agents in one
 // repo share a workspace, and in a signed-in session a command that lands on another's tab can do
 // real harm, so an agent's commands act on its own tabs unless --tab names another. A shell (no
-// $ISOVIM_ADDR) acts on the workspace's newest. No dependencies: Node's built-in fetch and WebSocket.
+// $ISOVIM_ADDR) acts on the workspace's newest. Every command stamps the tab it used (last_used), and
+// isovim.browser closes the ones left idle. No dependencies: Node's built-in fetch and WebSocket.
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -29,10 +41,13 @@ const USAGE = `usage: iso browser <command> [--ws <id>] [--tab <id>]
   fill <selector> <text>  set an input's value the way typing would
   shot <file.png>       screenshot the tab; with no tab of yours, opens a blank one
   close                 close the tab
-The workspace defaults to $ISOVIM_WS (agents have it). The tab defaults to your own newest: an agent's
+The workspace defaults to $ISOVIM_WS (agents have it), and an agent needn't pass --ws: its tabs are
+its own without it. The tab defaults to your own newest: an agent's
 commands never fall back to another agent's tab, and eval, click, fill and close fail if it has none.
 --tab <id> reaches any tab in the workspace, another agent's too, on purpose. In a shell (no
-$ISOVIM_ADDR) the tab defaults to the workspace's newest. Removing an agent closes its tabs.
+$ISOVIM_ADDR) the tab defaults to the workspace's newest. Removing an agent closes its tabs, and a
+tab unused for an hour (browser_tab_idle in ~/.isovim/config.json) while its owner isn't working is
+closed too: iso browser open <url> gets another, in the same signed-in profile.
 CDP endpoint for other tools: ${BASE}`;
 
 function fail(message) {
@@ -119,7 +134,7 @@ function tabsFile(ws) {
   return join(HOME, "run", ws, "browser.json");
 }
 
-// {id, owner?} each, newest last. A bare id is a tab from before tabs had owners: nobody's.
+// {id, owner?, last_used?} each, newest last. A bare id is a tab from before tabs had owners: nobody's.
 function readTabs(ws) {
   try {
     return JSON.parse(readFileSync(tabsFile(ws), "utf8")).map((tab) => (typeof tab === "string" ? { id: tab } : tab));
@@ -157,7 +172,10 @@ async function withTabs(ws, fn) {
     if (tabs) writeTabs(ws, tabs);
     return tabs;
   } finally {
-    rmdirSync(lock);
+    // Gone only if another took it over as stale: nothing to give back.
+    try {
+      rmdirSync(lock);
+    } catch {}
   }
 }
 
@@ -177,13 +195,15 @@ async function liveTabs(ws) {
   return tabs.map((tab) => ({ ...live.get(tab.id), owner: tab.owner }));
 }
 
+const now = () => Math.floor(Date.now() / 1000);
+
 // A new tab of this agent's at url, loaded.
 async function openTab(ws, url) {
   await start();
   const browser = await connect((await version()).webSocketDebuggerUrl);
   const { targetId } = await browser.send("Target.createTarget", { url, newWindow: true, background: true });
   browser.close();
-  await withTabs(ws, (tabs) => [...tabs, ME ? { id: targetId, owner: ME } : { id: targetId }]);
+  await withTabs(ws, (tabs) => [...tabs, { id: targetId, ...(ME ? { owner: ME } : {}), last_used: now() }]);
   const tab = (await liveTabs(ws)).find((t) => t.id === targetId);
   await waitForLoad(tab);
   return tab;
@@ -193,10 +213,16 @@ function listed(tabs) {
   return tabs.map((tab) => `${tab.id.slice(0, 8)} (${tab.owner || "nobody's"})`).join(", ") || "none";
 }
 
-// The tab a command acts on: --tab's, any in the workspace; else this agent's newest; else, in a
-// shell, the workspace's newest. An agent with no tab of its own gets ifNone()'s (a command that
-// can open one), or an error: never another agent's tab.
+// The tab a command acts on, stamped as used: --tab's, any in the workspace; else this agent's
+// newest; else, in a shell, the workspace's newest. An agent with no tab of its own gets ifNone()'s
+// (a command that can open one), or an error: never another agent's tab.
 async function pickTab(ws, id, ifNone) {
+  const tab = await findTab(ws, id, ifNone);
+  await withTabs(ws, (tabs) => tabs.map((t) => (t.id === tab.id ? { ...t, last_used: now() } : t)));
+  return tab;
+}
+
+async function findTab(ws, id, ifNone) {
   const tabs = await liveTabs(ws);
   if (id) return tabs.find((t) => t.id.startsWith(id)) || fail(`no tab ${id} in workspace ${ws}; its tabs: ${listed(tabs)}`);
   if (!ME) return tabs.at(-1) || fail(`workspace ${ws} has no tab; iso browser open <url>`);
@@ -340,18 +366,84 @@ const commands = {
     await fetch(`${BASE}/json/close/${tab.id}`);
     await withTabs(ws, (tabs) => tabs.filter((t) => t.id !== tab.id));
   },
-  // iso rm's (isovim.lifecycle): a removed agent's tabs close, in the workspace it was in.
-  async "close-agent"(ws, _id, [address]) {
-    let gone = [];
-    await withTabs(ws, (tabs) => {
-      gone = tabs.filter((tab) => tab.owner === address);
-      return gone.length > 0 ? tabs.filter((tab) => tab.owner !== address) : null;
-    });
-    if (gone.length > 0 && (await version())) {
-      for (const tab of gone) await fetch(`${BASE}/json/close/${tab.id}`);
+  // iso rm's (isovim.browser): a removed agent's tabs close, in every workspace it kept them in.
+  async "close-agent"(_ws, _id, [address]) {
+    const up = await version();
+    const live = new Map(up ? (await targets()).map((target) => [target.id, target]) : []);
+    for (const ws of tabWorkspaces()) {
+      const gone = [];
+      await withTabs(ws, (tabs) => {
+        gone.push(...tabs.filter((tab) => tab.owner === address));
+        return gone.length > 0 ? tabs.filter((tab) => tab.owner !== address) : null;
+      });
+      for (const tab of gone) {
+        if (up && live.has(tab.id)) await closeLogged(ws, tab, live.get(tab.id), "its agent was removed");
+      }
+    }
+  },
+  // isovim.browser's, once per host every few minutes. owners says how each tab's owner stands:
+  // "gone", "working" or "idle"; one it doesn't name appeared since it looked, and waits for the next
+  // sweep. A tab with no stamp (or no owner, from before tabs had them) starts its time now.
+  async sweep(_ws, _id, [owners, idle]) {
+    if (!(await version())) return;
+    const standing = JSON.parse(owners);
+    const limit = Number(idle);
+    for (const ws of tabWorkspaces()) {
+      await withTabs(ws, async (tabs) => {
+        const live = new Map((await targets()).map((target) => [target.id, target]));
+        const kept = [];
+        for (const tab of tabs) {
+          const target = live.get(tab.id);
+          if (!target) continue;
+          const state = tab.owner ? standing[tab.owner] : "idle";
+          const unused = tab.last_used === undefined ? 0 : now() - tab.last_used;
+          if (state === "gone") {
+            await closeLogged(ws, tab, target, "its owner is gone");
+          } else if (state === "idle" && limit > 0 && unused >= limit) {
+            await closeLogged(ws, tab, target, `unused for ${unused}s`);
+          } else {
+            kept.push({ ...tab, last_used: tab.last_used ?? now() });
+          }
+        }
+        return kept;
+      });
     }
   },
 };
+
+// Every workspace with a browser.json: a repo key, a pseudo-repo, or a name an agent gave --ws.
+function tabWorkspaces() {
+  const run = join(HOME, "run");
+  const found = [];
+  const dirs = (path) => {
+    try {
+      return readdirSync(path, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
+  };
+  for (const top of dirs(run)) {
+    if (existsSync(tabsFile(top))) found.push(top);
+    for (const below of dirs(join(run, top))) {
+      if (existsSync(tabsFile(`${top}/${below}`))) found.push(`${top}/${below}`);
+    }
+  }
+  return found;
+}
+
+// Closes a tab and says so in one file, moved aside past 1 MiB; a closed tab is cheap to reopen, so
+// nothing else hears of it.
+async function closeLogged(ws, tab, target, why) {
+  await fetch(`${BASE}/json/close/${tab.id}`);
+  const log = join(HOME, "browser-tabs.log");
+  try {
+    if (statSync(log).size > 1024 * 1024) renameSync(log, `${log}.1`);
+  } catch {}
+  const line = { time: new Date().toISOString(), ws, tab: tab.id.slice(0, 8), owner: tab.owner ?? null, url: target.url, why };
+  appendFileSync(log, `${JSON.stringify(line)}\n`);
+}
 
 const args = process.argv.slice(2);
 const ws = option(args, "--ws") || process.env.ISOVIM_WS;
@@ -361,6 +453,7 @@ if (!commands[command]) {
   console.log(USAGE);
   process.exit(command === "help" || command === "--help" || !command ? 0 : 1);
 }
-if (command !== "start" && !ws) fail("no workspace: pass --ws <id> or run inside an isovim agent ($ISOVIM_WS)");
-if (!["start", "open", "close-agent"].includes(command) && !(await version())) fail("the isovim Chrome isn't running; iso browser start");
+const anywhere = ["start", "close-agent", "sweep"].includes(command);
+if (!anywhere && !ws) fail("no workspace: pass --ws <id> or run inside an isovim agent ($ISOVIM_WS)");
+if (!anywhere && command !== "open" && !(await version())) fail("the isovim Chrome isn't running; iso browser start");
 await commands[command](ws, tab, args);

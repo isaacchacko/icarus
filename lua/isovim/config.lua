@@ -13,6 +13,8 @@
 --              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
 --              red to pink. Repos take the colors in the order they're first seen, wrapping round.
 --   enforce    true once iso cutover has run on this host (M.enforced)
+--   browser_tab_idle  seconds a tab in isovim's Chrome may go unused, its owner not working, before
+--              it's closed (isovim.browser); default 3600, 0 closes only tabs whose owner is gone
 --   compact_at the context size, in tokens, past which a router's, repo-root's or root's session is
 --              compacted when a turn ends (isovim.acp.host); default 250000, 0 turns it off
 local store = require("isovim.store")
@@ -26,6 +28,13 @@ function M.get()
   local ok, lines = pcall(vim.fn.readfile, M.path)
   local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
   return decoded and type(config) == "table" and config or {}
+end
+
+-- How long, in seconds, a tab may go unused before it's closed; 0 is never for that reason.
+---@return number
+function M.browser_tab_idle()
+  local idle = M.get().browser_tab_idle
+  return type(idle) == "number" and idle >= 0 and idle or 3600
 end
 
 -- The context size past which a long-lived role's session is compacted; 0 is never.

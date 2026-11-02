@@ -1727,6 +1727,8 @@ function M.run(addr)
   S.asks = asks_mod.new(ws, agent, journal_ask)
   -- Every supervisor subscribes to the bug queue; whichever claims a report first spawns its worker.
   pcall(require("isovim.bugs").watch)
+  -- And to tidying isovim's Chrome; the host's supervisors take turns.
+  pcall(require("isovim.browser").watch)
   local entries = journal.read(ws, agent)
   S.prompted = vim.iter(entries):any(function(entry)
     return entry.kind == "prompt"
