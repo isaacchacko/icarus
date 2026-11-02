@@ -14,7 +14,9 @@
 -- extmark per chip) keeps which address each one is, for <Tab>, gf and a yank, which gives the
 -- address. A chip whose target changed (an agent now idle) is drawn again as you come back to its
 -- buffer. <Tab> in normal mode with the cursor on one opens its target as a tab, gf too; elsewhere
--- <Tab> is vim's own (<C-i>, the jump forward). A web page opens in isovim's Chrome (iso browser
+-- <Tab> goes to the next one, so it alone walks them and opens where it lands (with none in the
+-- buffer it's vim's own, <C-i>, the jump forward). ]l and [l walk them, wrapping, with whatever else
+-- the buffer can land on (a chat's images and waiting questions). A web page opens in isovim's Chrome (iso browser
 -- open: a background window, so it never takes your focus), or the system's browser when that isn't
 -- running; a localhost one's chip says down, dim, while nothing listens on its port (a connect,
 -- in the background, at most every 30s). A router surfaces one with iso router surface link (in
@@ -397,6 +399,50 @@ function M.at_cursor()
   end
 end
 
+-- Moves the cursor to the next or previous stop in buf, wrapping: its links, drawn or not, and what
+-- opts.stops adds as {row, col}, 0-based, up to row opts.last. False with none.
+---@return boolean
+local function walk(buf, opts, direction)
+  local last = opts.last and opts.last() or vim.api.nvim_buf_line_count(buf) - 1
+  local stops = opts.stops and opts.stops() or {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, 0, -1, {})) do
+    if (drawn[buf] or {})[mark[1]] then
+      stops[#stops + 1] = { mark[2], mark[3] }
+    end
+  end
+  for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, last + 1, false)) do
+    for _, link in ipairs(M.find(line)) do
+      stops[#stops + 1] = { i - 1, link[1] }
+    end
+  end
+  stops = vim.tbl_filter(function(stop)
+    return stop[1] <= last
+  end, stops)
+  if #stops == 0 then
+    return false
+  end
+  table.sort(stops, function(a, b)
+    return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2])
+  end)
+  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+  row = row - 1
+  local target
+  for i = direction > 0 and 1 or #stops, direction > 0 and #stops or 1, direction do
+    local stop = stops[i]
+    local past = stop[1] > row or (stop[1] == row and stop[2] > col)
+    local before = stop[1] < row or (stop[1] == row and stop[2] < col)
+    if direction > 0 and past or direction < 0 and before then
+      target = stop
+      break
+    end
+  end
+  target = target or stops[direction > 0 and 1 or #stops]
+  vim.cmd("normal! m'")
+  vim.api.nvim_win_set_cursor(0, { target[1] + 1, target[2] })
+  vim.cmd("normal! zv")
+  return true
+end
+
 -- Opens what addr points at; false, said why, when it can't.
 function M.open(addr)
   local target, err = M.resolve(addr)
@@ -452,15 +498,28 @@ function M.refresh_all()
   end
 end
 
-function M.attach(buf, write)
+---@param opts? {stops?: fun(): {[1]: integer, [2]: integer}[], last?: fun(): integer, open?: fun(): boolean}
+function M.attach(buf, write, opts)
   writers[buf] = write
+  opts = opts or {}
   vim.keymap.set("n", "<Tab>", function()
     local addr = M.at_cursor()
     if addr then
       return M.open(addr)
+    elseif (opts.open and opts.open()) or walk(buf, opts, 1) then
+      return
     end
     vim.api.nvim_feedkeys(vim.v.count1 .. vim.keycode("<C-i>"), "n", false)
-  end, { buffer = buf, desc = "isovim: open the link under the cursor (else jump forward)" })
+  end, { buffer = buf, desc = "isovim: open the link under the cursor (else go to the next one)" })
+  for lhs, direction in pairs({ ["]l"] = 1, ["[l"] = -1 }) do
+    vim.keymap.set("n", lhs, function()
+      for _ = 1, vim.v.count1 do
+        if not walk(buf, opts, direction) then
+          return vim.api.nvim_echo({ { "no links here", "Comment" } }, false, {})
+        end
+      end
+    end, { buffer = buf, desc = ("isovim: the %s link, image or waiting question"):format(direction > 0 and "next" or "previous") })
+  end
   if vim.fn.maparg("gf", "n", false, true).buffer ~= 1 then
     vim.keymap.set("n", "gf", function()
       local addr = M.at_cursor()

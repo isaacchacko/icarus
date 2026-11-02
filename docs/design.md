@@ -361,8 +361,11 @@ back to the buffer. In the chat a line's addresses become chips once the line ha
 still streaming may be cut by a chunk); in a box (a thread's post, a PR's description) the chip's
 words are joined by no-break spaces so the box's wrapping keeps it whole; a page's comments quote
 and find their lines by the page's own text, addresses and all. `<Tab>` in normal mode with the
-cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` is vim's own (`<C-i>`, the
-jump forward). `iso <role> link <thing>` prints the address of an agent
+cursor on one opens its target as a tab, `gf` too; anywhere else `<Tab>` goes to the next one, so it
+alone walks them and opens where it lands (on an `[Image #n]`, that image; with none in the buffer
+it's vim's own `<C-i>`, the jump forward). `]l` and `[l` walk them, wrapping at the ends, and in a
+chat or thread stop at its images and its waiting questions (on the first option, where `<CR>`
+answers) too; they don't enter the composer. `iso <role> link <thing>` prints the address of an agent
 (`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or
 surface (its name) or a path; `iso router surface link <url|address|thing> [label] [--note "one
 line"]` puts a link in the repo's Inbox, its label and note dim, until you open it (`<CR>`; it's

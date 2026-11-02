@@ -2804,7 +2804,35 @@ local function bind(chat)
   -- written as the drawing writes the conversation.
   require("isovim.links").attach(buf, function(fn)
     edit(chat, fn)
-  end)
+  end, {
+    last = function()
+      return chat.lines - 1
+    end,
+    open = function()
+      return require("isovim.image").open_chip(chat)
+    end,
+    -- Besides links, ]l [l and <Tab> stop at its images and at what waits on you.
+    stops = function()
+      local stops = {}
+      for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, chat.lines, false)) do
+        for from in line:gmatch("()%[Image #%d+%]") do
+          stops[#stops + 1] = { i - 1, from - 1 }
+        end
+        local attached = line:find("\u{f03e} image: ", 1, true)
+        if attached then
+          stops[#stops + 1] = { i - 1, attached - 1 }
+        end
+      end
+      for _, box in ipairs(chat.boxes) do
+        local at = vim.api.nvim_buf_get_extmark_by_id(buf, BOXES, box.mark, { details = true })
+        if at[1] then
+          local option = vim.api.nvim_buf_get_extmarks(buf, OPTIONS, { at[1], 0 }, { at[3].end_row or at[1], -1 }, { limit = 1 })[1]
+          stops[#stops + 1] = { option and option[2] or at[1], 0 }
+        end
+      end
+      return stops
+    end,
+  })
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = GROUP,
     buffer = buf,
