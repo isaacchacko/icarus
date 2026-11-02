@@ -64,8 +64,8 @@ M.prs_keys = {
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"tasks"|"prs"|"page"|"question"
----@field pr_rows? table<integer, isovim.Pr> prs: the PR each line is, for its keys
+---@field kind "markdown"|"tasks"|"prs"|"decisions"|"page"|"question"
+---@field line_items? table<integer, table> prs and decisions: the PR or decision each line is, for its keys
 ---@field buf integer the rendered view
 ---@field input integer the input box
 ---@field under? integer the window the input box was opened under
@@ -212,6 +212,34 @@ end
 -- The PRs surface's lines, highlights and the PR on each line: its title, then each group that has
 -- PRs, a PR a line: its CI (or merged/closed glyph), #n and title, then dim: its review, the agent
 -- that registered it and its age.
+-- The views isovim draws itself, with no input box under them.
+local DRAWN = { tasks = true, prs = true, decisions = true }
+
+-- A view of what isovim makes rather than a file's: its entry, made afresh; nil for any other view.
+local function own_entry(view)
+  if view.kind == "prs" then
+    return surfaces.prs_entry(view.repo, true)
+  elseif view.kind == "decisions" then
+    return surfaces.decisions_entry(view.repo, true)
+  end
+end
+
+-- Where the root reasoned about a decision: its transcript, at the question's last mention.
+local function open_reasoning(decision)
+  local ws, agent = decision.by:match("^(.*)/([^/]+)$")
+  local path = ws and require("isovim.transcript").path(ws, agent)
+  if not (path and vim.uv.fs_stat(path)) then
+    return vim.notify(("isovim: %s has no transcript here"):format(decision.by), vim.log.levels.WARN)
+  end
+  local last
+  for i, line in ipairs(vim.fn.readfile(path)) do
+    if line:find(decision.name, 1, true) then
+      last = i
+    end
+  end
+  require("isovim").show(path, last)
+end
+
 -- A PR's line: its CI glyph (the merged or closed one once it's done), #n and title, its review,
 -- then dim the agent that registered it and its age; an isovim.boxes line.
 local function pr_line(pr)
@@ -297,6 +325,49 @@ local function prs_board(entry, width)
   return lines, marks, rows
 end
 
+-- The decision log's lines, highlights and the decision on each line: its title, then a box for each
+-- decision, newest first: when and who over the question, the answer and the why; its transcript's
+-- a key away.
+local function decisions_board(entry, width)
+  local boxes = require("isovim.boxes")
+  local seg, cat = boxes.seg, boxes.cat
+  boxes.highlights()
+  width = math.max(40, (width or 100) - 1)
+  local lines, marks, rows = {}, {}, {}
+  local function add(line, decision)
+    lines[#lines + 1] = line.text
+    for _, mark in ipairs(line.marks) do
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3] }
+    end
+    rows[#lines] = decision
+  end
+  add(cat(seg("Decisions", "Title"), seg("  " .. entry.repo, "Comment")))
+  local decisions = surfaces.decisions(entry.repo)
+  for _, decision in ipairs(decisions) do
+    local who = entry.repo == "root" and decision.by or decision.by:match("[^/]+$")
+    local where = decision.repo ~= entry.repo and ("  " .. decision.repo) or ""
+    add(seg(""))
+    add(boxes.top(width, cat(seg(os.date("%b %-d %H:%M", decision.at), "IsovimPrTitle"), seg("  " .. who .. where, "IsovimPrDim"))), decision)
+    for _, line in ipairs(boxes.markdown(decision.question or decision.name, width - 4)) do
+      add(boxes.side(width, line), decision)
+    end
+    add(boxes.side(width, seg("")), decision)
+    local answer = surfaces.answer_text(decision):gsub("\n", " · ")
+    add(boxes.side(width, cat(seg("→ ", "IsovimPrDim"), seg(answer, "Bold"))), decision)
+    if decision.why then
+      for _, line in ipairs(boxes.markdown(decision.why, width - 4)) do
+        add(boxes.side(width, line), decision)
+      end
+    end
+    add(boxes.bottom(width, (decision.why and "" or "no why given  ") .. "<CR> " .. who:match("[^/]+$") .. "'s transcript"), decision)
+  end
+  if #decisions == 0 then
+    add(seg(""))
+    add(seg("Nothing decided yet: what a root answers in root mode lands here.", "Comment"))
+  end
+  return lines, marks, rows
+end
+
 -- The lines the view shows for a surface, and their highlights: a markdown surface's body (drawn
 -- by render-markdown, so no highlights), the Task Board as board draws it, the PRs surface as
 -- prs_board does (with the PR on each line).
@@ -308,6 +379,8 @@ function M.render(entry, width)
     return board(entry)
   elseif entry.type == "prs" then
     return prs_board(entry, width)
+  elseif entry.type == "decisions" then
+    return decisions_board(entry, width)
   elseif entry.type == "page" then
     -- Its body line for line (no title over it, nothing trimmed from its top), so a comment's
     -- lines are the file's less where the body starts (isovim.pages.draw).
@@ -362,7 +435,7 @@ local function draw_surface(view, entry)
   local win = vim.fn.bufwinid(view.buf)
   view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
   local lines, marks, rows = M.render(entry, view.width)
-  view.pr_rows = rows
+  view.line_items = rows
   set_lines(view.buf, lines, marks)
   if view.kind == "page" then
     view.page_offset = (entry.body_line or 1) - 1 - (entry.error and 1 or 0)
@@ -786,12 +859,19 @@ local function bind(view)
   elseif view.kind == "prs" then
     for _, key in ipairs(M.prs_keys) do
       vim.keymap.set("n", key[1], function()
-        local pr = (view.pr_rows or {})[vim.api.nvim_win_get_cursor(0)[1]]
+        local pr = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
         if pr then
           key[3](pr, view)
         end
       end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
     end
+  elseif view.kind == "decisions" then
+    vim.keymap.set("n", "<CR>", function()
+      local decision = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
+      if decision then
+        open_reasoning(decision)
+      end
+    end, { buffer = view.buf, nowait = true, desc = "isovim: the root's transcript, at this question" })
   elseif view.kind == "page" then
     require("isovim.pages").bind(view)
   elseif view.kind == "markdown" then
@@ -881,7 +961,7 @@ local function make(entry)
     view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
     vim.b[view.buf].completion = false
   else
-    local filetype = ({ tasks = "isovim_tasks", prs = "isovim_prs" })[entry.type] or "markdown"
+    local filetype = ({ tasks = "isovim_tasks", prs = "isovim_prs", decisions = "isovim_decisions" })[entry.type] or "markdown"
     view.buf = scratch(("isovim-surface://%s"):format(id), filetype)
   end
   vim.b[view.buf].isovim_surface = id
@@ -951,7 +1031,7 @@ end
 -- anywhere else), whenever the view comes into a window, by Enter in an Inbox or by its tab.
 function M.dress(view, win)
   local question = view.kind == "question"
-  view_window(win, question, view.kind == "tasks" or view.kind == "prs")
+  view_window(win, question, DRAWN[view.kind] or false)
   if view.kind == "page" then
     require("isovim.pages").dress(win)
   end
@@ -1004,7 +1084,7 @@ function M.open(entry)
     end
     return view
   end
-  if view.kind == "tasks" or view.kind == "prs" then
+  if DRAWN[view.kind] then
     return view
   end
   -- render-markdown loads on the first markdown buffer and skips that one (its FileType has gone
@@ -1045,7 +1125,7 @@ function M.rebind()
       for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
         views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
       end
-      local entry = view.kind == "prs" and surfaces.prs_entry(view.repo, true) or surfaces.get(view.repo, view.name)
+      local entry = own_entry(view) or surfaces.get(view.repo, view.name)
       -- One opened before views had tabs gets its own.
       if vim.b[view.buf].isovim_scope == nil then
         vim.b[view.buf].isovim_scope = view.repo
@@ -1068,32 +1148,27 @@ function M.rebind()
   end
 end
 
--- A PRs surface's window resized: drawn again, its boxes to the new width.
+-- A PRs surface's or decision log's window resized: drawn again, its boxes to the new width.
 vim.api.nvim_create_autocmd("WinResized", {
   group = vim.api.nvim_create_augroup("isovim_prs_resize", { clear = true }),
   callback = function()
     for _, view in pairs(M.views) do
-      local win = view.kind == "prs" and vim.api.nvim_buf_is_valid(view.buf) and vim.fn.bufwinid(view.buf) or -1
+      local win = own_entry(view) and vim.api.nvim_buf_is_valid(view.buf) and vim.fn.bufwinid(view.buf) or -1
       if win ~= -1 and vim.api.nvim_win_get_width(win) ~= view.width then
-        return require("isovim.safe").wrap("drawing the PRs", M.refresh_prs)()
+        return require("isovim.safe").wrap("drawing the boards", M.refresh_boards)()
       end
     end
   end,
 })
 
--- The PRs surfaces open, drawn again from the PRs' cache: run as the sidebar refreshes, which it
--- does as a fetch lands, a PR is registered and a pr.* event comes.
-function M.refresh_prs()
+-- The PRs surfaces and decision logs open, drawn again from what they read: run as the sidebar
+-- refreshes, which it does as a fetch lands, a PR is registered, a pr.* event comes or a root answers.
+function M.refresh_boards()
   for _, view in pairs(M.views) do
-    if view.kind == "prs" and vim.api.nvim_buf_is_valid(view.buf) then
-      local entry = surfaces.prs_entry(view.repo, true)
-      if entry then
-        tab(view, entry)
-        draw_surface(view, entry)
-      else
-        view.pr_rows = nil
-        set_lines(view.buf, { ("%s has no PRs registered."):format(view.repo) })
-      end
+    local entry = vim.api.nvim_buf_is_valid(view.buf) and own_entry(view)
+    if entry then
+      tab(view, entry)
+      draw_surface(view, entry)
     end
   end
 end
@@ -1111,8 +1186,8 @@ end
 
 function M.changed(repo, entries)
   for _, view in pairs(M.views) do
-    -- The PRs surface isn't a file: M.refresh_prs draws it.
-    if view.repo == repo and view.kind ~= "prs" and vim.api.nvim_buf_is_valid(view.buf) then
+    -- These aren't its files: M.refresh_boards draws them.
+    if view.repo == repo and not own_entry(view) and vim.api.nvim_buf_is_valid(view.buf) then
       local entry = vim.iter(entries):find(function(each)
         return each.name == view.name
       end)

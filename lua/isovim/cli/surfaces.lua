@@ -251,6 +251,7 @@ end
 -- root.<scope>.decided and root.<scope>.raised.
 function M.answer(args)
   local raise = flag(args, "--raise")
+  local why = option(args, "--why")
   local query = table.remove(args, 1) or fail("usage: iso answer <question> <answer...>")
   local entry = find_question(query)
   local id = entry.repo .. "/" .. entry.name
@@ -267,14 +268,14 @@ function M.answer(args)
     elseif entry.answer then
       fail(("%s is already answered: %s"):format(id, surfaces.answer_text(entry.answer)))
     end
-    local why = vim.trim(table.concat(args, " "))
-    why = why ~= "" and why:gsub("%s+", " ") or nil
-    local raised, err = surfaces.raise(entry, me, why)
+    local raised_why = vim.trim(table.concat(args, " "))
+    raised_why = raised_why ~= "" and raised_why:gsub("%s+", " ") or nil
+    local raised, err = surfaces.raise(entry, me, raised_why)
     if not raised then
       fail(err)
     end
-    publish_root("raised", me, entry, { why = why })
-    out(id .. " is in the user's host Inbox now" .. (why and "" or "; a one-line why helps them: iso <role> raise <question> <why>"))
+    publish_root("raised", me, entry, { why = raised_why })
+    out(id .. " is in the user's host Inbox now" .. (raised_why and "" or "; a one-line why helps them: iso <role> raise <question> <why>"))
     c.tui("require('isovim.surfaces').recheck()")
     return
   end
@@ -284,7 +285,7 @@ function M.answer(args)
   elseif entry.answer then
     fail(("%s/%s is already answered: %s"):format(entry.repo, entry.name, surfaces.answer_text(entry.answer)))
   end
-  local answer, err = surfaces.answer(entry, args, me or "user")
+  local answer, err = surfaces.answer(entry, args, me or "user", why)
   if not answer then
     fail(err)
   end

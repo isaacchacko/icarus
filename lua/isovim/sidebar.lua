@@ -322,7 +322,9 @@ function M.delete_surface(item)
   end
   local surfaces, title = M.surfaces(), entry.title or entry.name
   local kind = entry.type
-  if kind == "tasks" or kind == "prs" then
+  if kind == "decisions" then
+    return Snacks.notify.info("The decision log is kept: it's what your roots decided", { title = "isovim" })
+  elseif kind == "tasks" or kind == "prs" then
     surfaces.hide(entry)
   elseif kind == "thread" then
     -- Resolved by you, kept with its posts (iso <role> thread ls --all, show): it leaves the list.
@@ -383,6 +385,7 @@ local SURFACE_GLYPHS = {
   chat = { "●", "DiagnosticOk" },
   tasks = { "\u{f0ae}", "Special" }, -- fa-tasks
   prs = { "\u{f407}", "Special" }, -- oct-git-pull-request
+  decisions = { "\u{f029b}", "Special" }, -- md-gavel
   broken = { "\u{f071}", "DiagnosticError" }, -- fa-warning
 }
 
@@ -434,6 +437,8 @@ function M.surface_chunks(entry)
         vim.list_extend(row, { { "  " .. task_glyph .. " ", task_hl }, { tostring(n), "Comment" } })
       end
     end
+  elseif kind == "decisions" then
+    row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
   elseif kind == "prs" then
     -- In the Inbox, how many wait on you; else how many it lists.
     if (entry.waiting or 0) > 0 then
@@ -817,10 +822,11 @@ end
 
 -- The sections a group's rows sit in, in this order: the Inbox (what needs you; questions only
 -- ever here), Threads (a repo's open ones, marked while one has a reply you haven't read), Surfaces
--- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths) and
--- Agents. An empty one isn't shown. The Inbox and Threads start open, the rest folded; each one's
--- state is kept per repo and host (isovim.collapsed, in the session). M.all_rows opens them all.
-local FOLDED = { Surfaces = true, Files = true, Agents = true }
+-- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
+-- (the repo-root and its decision log) and Agents. An empty one isn't shown. The Inbox and Threads
+-- start open, the rest folded; each one's state is kept per repo and host (isovim.collapsed, in the
+-- session). M.all_rows opens them all.
+local FOLDED = { Surfaces = true, Files = true, Root = true, Agents = true }
 local all_open = false
 
 local function section_folded(host, key, name)
@@ -847,12 +853,16 @@ M.set_section_folded = set_section_folded
 
 -- A group's sections under its header, each child on a tree guide. threads: whether it has a
 -- Threads section (a repo; Root's and General's threads, if any, are surfaces). pins: its pinned
--- paths' rows. agents: its listed agents, add_tasks: puts an agent's tasks under it.
+-- paths' rows. agents, roots: its listed agents and repo-roots, add_tasks: puts an agent's tasks under
+-- it. The log under a root that hasn't decided anything yet is only this host's to show.
 local function group_sections(items, base, host, key, opts)
   local inbox, threads, boards, others, files = {}, {}, {}, {}, {}
+  local log
   for _, entry in ipairs(opts.list) do
     local kind = entry.type
-    if kind == "thread" and opts.threads then
+    if kind == "decisions" then
+      log = entry
+    elseif kind == "thread" and opts.threads then
       threads[#threads + 1] = entry
     elseif entry.needs_you then
       inbox[#inbox + 1] = entry
@@ -914,12 +924,23 @@ local function group_sections(items, base, host, key, opts)
       items[#items + 1] = vim.tbl_extend("force", pin, { guide = guide(#files + i, n_files), section = "Files" })
     end
   end)
-  section("Agents", #opts.agents, function()
-    for i, entry in ipairs(opts.agents) do
+  local function agent_rows(list, name, n)
+    for i, entry in ipairs(list) do
       entry.group_key = key
-      items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = key, guide = guide(i, #opts.agents), section = "Agents" })
+      items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = key, guide = guide(i, n), section = name })
       opts.add_tasks(entry)
     end
+  end
+  log = log or (#opts.roots > 0 and not host and M.surfaces().decisions_entry(key, true)) or nil
+  local n_root = #opts.roots + (log and 1 or 0)
+  section("Root", n_root, function()
+    agent_rows(opts.roots, "Root", n_root)
+    if log then
+      items[#items + 1] = surface(log, "Root", n_root, n_root)
+    end
+  end, { count = log and log.count or 0, running_mark = opts.running_roots })
+  section("Agents", #opts.agents, function()
+    agent_rows(opts.agents, "Agents", #opts.agents)
   end, { running_mark = opts.running_mark })
 end
 
@@ -1015,14 +1036,22 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
           running_mark = i == 1 and running_mark(g.agents) or nil })
         add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
       end
-      -- Its sections, as a repo's (no Threads): its own row heads them.
+      -- Its sections, as a repo's (no Threads): its own row heads them, its decision log right under it.
       local pins = pin_rows(host, extra, ROOT_KEY)
+      local log = vim.iter(list):find(function(entry)
+        return entry.type == "decisions"
+      end) or (#agents > 0 and not host and surfaces_by_key and M.surfaces().decisions_entry(ROOT_KEY, true))
       if #list > 0 or #pins > 0 then
         if #agents == 0 then
           items[#items + 1] = { kind = "hint", text = icons.get("root") .. " root (none here now)" }
         end
-        group_sections(items, base_host, host, ROOT_KEY, { list = list, pins = pins, agents = {}, root_mode = has_root })
       end
+      if log then
+        items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "surface", surface = log, repo_key = ROOT_KEY, name = log.name, depth = 0, group_key = ROOT_KEY })
+      end
+      group_sections(items, base_host, host, ROOT_KEY, { list = vim.tbl_filter(function(entry)
+        return entry.type ~= "decisions"
+      end, list), pins = pins, agents = {}, roots = {}, root_mode = has_root })
     -- General shows on this host even when empty, so s on it spawns a general/aN.
     elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
       local collapsed = is_collapsed(host, "repo", g.key)
@@ -1046,15 +1075,26 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
         local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
           return entry.role == "repo-root"
         end))
+        local function is_repo_root(entry)
+          return entry.role == "repo-root"
+        end
+        local listed_roots, listed_others = {}, {}
+        for _, entry in ipairs(listed_agents(agents)) do
+          table.insert(is_repo_root(entry) and listed_roots or listed_others, entry)
+        end
         group_sections(items, base_host, host, g.key, {
           list = surfaces_by_key and list or {},
           threads = g.kind == "repo",
           pins = pin_rows(host, extra, g.key),
-          agents = listed_agents(agents),
+          agents = listed_others,
+          roots = listed_roots,
+          running_roots = running_mark(vim.tbl_filter(is_repo_root, g.agents)),
+          running_mark = running_mark(vim.tbl_filter(function(entry)
+            return not is_repo_root(entry)
+          end, g.agents)),
           add_tasks = function(entry)
             add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
           end,
-          running_mark = running_mark(g.agents),
           root_mode = root_mode,
         })
         if g.kind == "general" and #agents == 0 and not host then
@@ -1601,7 +1641,7 @@ local function refresh_now()
   require("isovim.landing").refresh()
   -- The PRs surfaces open follow the PRs' cache.
   if package.loaded["isovim.surface_view"] then
-    require("isovim.surface_view").refresh_prs()
+    require("isovim.surface_view").refresh_boards()
   end
   -- The tab bar tidied: windows marked, no stray [No Name] tab (isovim.tabs).
   require("isovim.tabs").sync()
@@ -1715,7 +1755,7 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Root, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
   { "U", "isovim_mark_unread", "mark the surface or thread unread: back in the Inbox until you open it (u in its view, but a file's, where u is vim's undo)" },

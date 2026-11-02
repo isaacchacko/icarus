@@ -481,6 +481,15 @@ folder or a link, which have no view of their own.
   draws from the cache at once with "refreshing…" in its header, says when gh gave nothing, and
   fetches again on a `pr.<repo>.<n>.ci|review|state` event. The sidebar's
   P toggle, which swapped a repo's agents for its PRs, is gone with the PR rows and their `y`.
+- The decision log is isovim's own view of what a root decided: `iso/decisions.jsonl` of the root's
+  scope (the repo-root's repo; `root/iso/` for the host root), append-only, a line a decision (when,
+  who, the question, the answer, why), written as `surfaces.answer` takes a root's answer, since the
+  event log ages out and an asker removes its question once it has the answer. It holds only roots'
+  decisions, not the ones you answered yourself, and it's a plain surface that's never in an Inbox:
+  nothing in it needs you. A root gives its why with `iso <role> answer <question> <answer...> --why
+  "..."`; a decision sent by `msg` leaves no answer, so it isn't logged. It opens as a tab, a box a
+  decision, newest first, and `<CR>` on one opens the root's transcript at the question's last
+  mention, the reasoning when no why was given. `d` won't remove it.
 - `d` on a surface's row removes it, the user's own action (the router-only rule for `iso/` is
   the agents'): a file or folder surface only points, so its `.surface` goes at once and what it
   names stays (a pinned path likewise unpins); a chat pointer goes at once too. Markdown, a page with
@@ -499,6 +508,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
 ├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
 └─  isovim - ? mini-animate …
 ♛ root  ⏺                   ← the host root, with the crown
+  󰊛 Decisions 3             ← what it decided, right under it, no section
 ▾ isovim ●             2    ← repo header in its color; opens the router; at the right, how
                                many of its agents run (the working color while any works)
   ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
@@ -509,6 +519,9 @@ Inbox 2                     ← the shown host's: every surface that needs you
   └─  hot reload
   ▸ Surfaces 3              ← the Task Board, the PRs, pages, write-ups (folded at first)
   ▸ Files 1                 ← file and folder surfaces, pinned paths (folded at first)
+  ▾ Root 12            1    ← the repo-root and what roots decided here, how many on the left
+  ├─  repo-root
+  └─ 󰊛 Decisions 12
   ▾ Agents 2           1    ← how many run at the right (folded at first)
   ├─  router · rework vocab
   └─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
@@ -531,13 +544,14 @@ its color and short name (root's or general's for theirs), then the surface's ma
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
 surfaces are reached by showing that host.
 
-A repo's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files, Agents, each a header
+A repo's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files, Root, Agents, each a header
 with its count that Enter or Tab folds, its rows on dim tree guides (`├─`, `└─` for the last); an
 empty one isn't shown. The Inbox holds only the surfaces that need you (questions live only there),
 and a surface moves to its section once it's dealt with. Threads holds the repo's open threads and
 says when one has a reply you haven't read; Surfaces the Task Board first, then the PRs, pages and
 write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
-explorer's, `E`); Agents the agents, with how many run at the right. The Inbox and Threads start
+explorer's, `E`); Root the repo-root and its decision log (see Surfaces), with how many decisions
+it holds and whether the root runs; Agents the rest of the agents, with how many run at the right. The Inbox and Threads start
 open and the rest folded, and each section's fold is kept per repo in the session. Root and General
 get the same sections where they have something; threads are a repo's only. The repo's own fold
 still folds it whole. Each surface

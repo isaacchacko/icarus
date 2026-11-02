@@ -25,6 +25,8 @@
 --   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
 --                   one lists (resolved ones don't), waiting on you while a router post is unread
 -- The PRs surface is isovim's own, no file: M.list adds it for a repo with PRs registered (M.prs_entry).
+-- So is the decision log, M.list adding it for a scope whose root has decided something: decisions.jsonl
+-- in iso/, a line a decision (M.decisions), which no scan reads. It's never in an Inbox.
 -- A surface's name is its file's stem; no .md and .surface share one. One that's broken gets a
 -- <file>.surface.error beside it (foo.surface's is foo.surface.error) saying why, rewritten as
 -- the reason changes and deleted once it's fixed or gone.
@@ -54,7 +56,7 @@ end
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
+---@field type "markdown"|"tasks"|"prs"|"decisions"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
 ---@field address? string link: what it points at, an iso: address or a web page's URL
 ---@field note? string link: the router's one line about it
 ---@field marked_unread? boolean you marked it unread (M.mark_unread): it waits on you until you open it
@@ -970,10 +972,62 @@ function M.parse_answer(entry, value)
     entry.multi and "; give several for a multi question" or "")
 end
 
+-- The decision log of a scope: a repo-root's repo, or "root" for the host root's. Append-only and
+-- its own file, as the event log ages out and an asker removes its question once answered.
+local function decisions_file(key)
+  return M.dir(key) .. "/decisions.jsonl"
+end
+
+-- The scope's decisions, newest first: {at, by, repo, name, question, labels?, other?, why?}.
+---@return table[]
+function M.decisions(key)
+  local list = {}
+  for line in (read_file(decisions_file(key)) or ""):gmatch("[^\n]+") do
+    local ok, decision = pcall(vim.json.decode, line)
+    if ok and type(decision) == "table" then
+      table.insert(list, 1, decision)
+    end
+  end
+  table.sort(list, function(a, b)
+    return (a.at or 0) > (b.at or 0)
+  end)
+  return list
+end
+
+-- Only the active root answers as an agent (isovim.rootmode.may_answer), so by is a root: its
+-- decision goes in its own scope's log, whichever repo's question it was.
+local function log_decision(question, answer, why)
+  local ws, id = answer.by:match("^(.*)/([^/]+)$")
+  local key = ws and require("isovim.scope").of_agent(ws, id) or question.repo
+  vim.fn.mkdir(M.dir(key), "p")
+  local file = io.open(decisions_file(key), "a")
+  if file then
+    file:write(vim.json.encode({ at = answer.at, by = answer.by, repo = question.repo, name = question.name,
+      question = question.question or question.title, labels = answer.labels, other = answer.other, why = why }), "\n")
+    file:close()
+  end
+end
+
+-- The decision log as a surface: nil for a scope with no decisions, unless empty (the sidebar's row
+-- under a root that hasn't decided anything yet).
+---@param empty? boolean
+---@return isovim.Surface?
+function M.decisions_entry(key, empty)
+  local file = decisions_file(key)
+  local _, count = (read_file(file) or ""):gsub("\n", "")
+  if count == 0 and not empty then
+    return nil
+  end
+  return { repo = canon(key), name = "Decisions", base = "Decisions", type = "decisions", title = "Decisions", file = file,
+    error_file = "", created = 0, needs_you = false, count = count, sig = tostring(count) }
+end
+
 -- Answers a pending question: value as M.parse_answer takes it, or {labels, other?}. by is who
--- answered ("user" by default, or an agent's address). Publishes surface.<repo>.<name>.answered.
+-- answered ("user" by default, or an agent's address). A root's answer goes in its decision log, with
+-- why if it gave one. Publishes surface.<repo>.<name>.answered.
+---@param why? string
 ---@return {labels: string[], other?: string, by: string, at: number}? answer, string? err
-function M.answer(entry, value, by)
+function M.answer(entry, value, by, why)
   local current = M.get(entry.repo, entry.name)
   if not current or current.type ~= "question" then
     return nil, ("%s/%s isn't a question any more"):format(entry.repo, entry.name)
@@ -1005,6 +1059,9 @@ function M.answer(entry, value, by)
     return nil, err
   end
   answer.by, answer.at = by or "user", os.time()
+  if answer.by ~= "user" then
+    log_decision(current, answer, why)
+  end
   if current.thread then
     -- Asked in a thread: its answer goes there, where the asker's thread ask waits for it.
     locked(entry.repo, function()
@@ -1118,6 +1175,8 @@ function M.mark_unread(entry)
       or "it waits on you until it's answered"
   elseif entry.type == "chat" then
     said = "it waits on you until you open it"
+  elseif entry.type == "decisions" then
+    said = "it's a log: nothing in it waits on you"
   else
     local repo = canon(entry.repo)
     locked(repo, function()
@@ -1259,10 +1318,12 @@ function M.list(repo)
   if board and read_unread(repo)[board.base] then
     board.needs_you, board.marked_unread = true, true
   end
-  if board and not vim.iter(list):any(function(entry)
-    return entry.name == board.name
-  end) then
-    list = vim.list_extend(vim.list_slice(list), { board })
+  for _, own in ipairs({ board or false, M.decisions_entry(repo) or false }) do
+    if own and not vim.iter(list):any(function(entry)
+      return entry.name == own.name
+    end) then
+      list = vim.list_extend(vim.list_slice(list), { own })
+    end
   end
   local hidden = read_hidden(repo)
   if next(hidden) then
@@ -1289,8 +1350,8 @@ function M.open(entry)
   if entry.error then
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
-  if entry.type == "prs" then
-    -- Drawn by isovim, its PRs one a row.
+  if entry.type == "prs" or entry.type == "decisions" then
+    -- Drawn by isovim: its PRs, or its decisions.
     require("isovim.surface_view").open(entry)
   elseif entry.type == "markdown" or entry.type == "tasks" then
     -- Rendered, with an input box to the repo's router under it.

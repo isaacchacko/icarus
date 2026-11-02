@@ -342,7 +342,7 @@ M.list = {
   { name = "answer", module = "surfaces",
     audience = "user",
     args = { "<question>", "<option>..." },
-    flags = { ["--raise"] = false },
+    flags = { ["--raise"] = false, ["--why"] = "<text>" },
     summary = "answer a question surface",
     help = [=[
        iso answer <question> [<answer...>]
@@ -355,7 +355,8 @@ M.list = {
                                      tagged root deciding and wait on you only once
                                      raised); you can answer any of them anyway, and
                                      the first answer wins. A root answers with iso
-                                     <root|repo-root> answer, or gives one to you with
+                                     <root|repo-root> answer, --why "<reason>" saying
+                                     why in its decision log, or gives one to you with
                                      iso <role> raise <question> [why] (or --raise)]=],
   },
   { name = "rootmode", module = "rootmode",

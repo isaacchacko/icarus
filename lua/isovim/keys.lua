@@ -464,7 +464,7 @@ local function surface_preview(entry)
       return vim.fn.readdir(path), nil
     end
     return { path }, nil, vim.uv.fs_stat(path) and path or nil
-  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" or entry.type == "page" then
+  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" or entry.type == "decisions" or entry.type == "page" then
     return (require("isovim.surface_view").render(entry)), "markdown"
   end
   return { (entry.title or entry.name or "?") .. " (" .. tostring(entry.type) .. ")" }
