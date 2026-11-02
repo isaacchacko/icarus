@@ -1392,6 +1392,9 @@ end
 function RENDER.working(chat, entry)
   chat.busy = entry.state == "start"
   chat.since = chat.busy and entry.at or nil
+  if entry.died then
+    add_block(chat, { ("the router stopped during its turn on this, so it may not have answered · %s"):format(clock(entry.at)) }, "IsovimPrDim")
+  end
 end
 
 function RENDER.queued(chat, entry)

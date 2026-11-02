@@ -325,6 +325,10 @@ host; General, Root and Terminals have none, and starting one there says why.
   end isn't always the end of its work, and the router marks it again if it isn't. "Finished" is
   the worker's state not being mid-turn, 30s or more after the mark, as a mark often comes just
   before the worker starts. There's no reminder about quiet threads otherwise.
+  A router's supervisor that dies mid-turn never writes that turn's end, so the TUI (every 5s) and
+  the supervisor once it's back (every 10s) end any turn 15s or older whose router isn't mid-turn:
+  `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says
+  the router stopped during it, since it may not have answered; a retry of the turn clears it.
 - **The title alone:** the UI asks for the title, then your first post, and only a post prompts
   the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
   post 30s on, and goes to the router as one. A first post within that time means one prompt, not

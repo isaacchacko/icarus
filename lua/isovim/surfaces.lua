@@ -1616,6 +1616,12 @@ function M.watch(on_change)
           return (ws and store.agent(ws, id) ~= nil) ~= (entry.error == nil)
         end
       end)
+      -- A thread still working, whose router's supervisor may have died mid-turn.
+      if vim.iter(entries):any(function(entry)
+        return entry.type == "thread" and entry.working
+      end) and require("isovim.threads").end_dead_turns(repo) then
+        stale = true
+      end
       if stale then
         rescan(repo)
       end

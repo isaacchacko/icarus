@@ -16,7 +16,8 @@
 -- waiting as a question surface (named <id>-<qid>, its file the thread's), so the Inbox, root mode
 -- and iso answer take it as any question; its answer is appended here, where the asker's thread
 -- ask waits for it.
---   {kind = "working", state = "start"|"end", at}   the router's turn on one of its posts
+--   {kind = "working", state = "start"|"end", died?, at}   the router's turn on one of its posts;
+--                                                   died: it stopped mid-turn (M.end_dead_turns)
 --   {kind = "waiting", on = "user"|<agent address>|"none", by, why?, at}   whose turn it is
 -- A post of the user's goes to the router as a prompt tagged "[thread <repo>#<id> "<title>"]";
 -- the supervisor (isovim.acp.host) marks that turn working in the thread and posts the turn's last
@@ -107,12 +108,16 @@ function M.summary(entries)
       info.title = entry.title
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
+      info.working_at = entry.at
       -- A turn on their post is the answer to whatever waited on them.
       if info.working and info.waiting_on == "user" then
         waits(nil)
       end
       if not info.working and turn then
-        if turn.mark then
+        -- Its supervisor died: whatever it marked or posted, the user has to hear of it.
+        if entry.died then
+          waits("user", entry.at)
+        elseif turn.mark then
           waits(turn.mark ~= "none" and turn.mark or nil, turn.at)
         elseif turn.posted then
           waits("user", entry.at)
@@ -327,10 +332,10 @@ function M.rename(repo, id, by, title)
   return title
 end
 
--- The router's turn on the thread started or ended (the supervisor's).
-function M.working(repo, id, state)
+-- The router's turn on the thread started or ended (the supervisor's); died: it stopped mid-turn.
+function M.working(repo, id, state, died)
   if vim.uv.fs_stat(M.file(repo, id)) then
-    append(repo, id, { kind = "working", state = state })
+    append(repo, id, { kind = "working", state = state, died = died or nil })
   end
 end
 
@@ -396,7 +401,8 @@ end
 -- How long a thread with only its title waits for a first post before the router gets the title, and
 -- how long a draft in its composer holds that off, from its last keystroke. And how long a worker
 -- that's a thread's wait gets to start: it's marked as it's messaged, often before it's working.
-local TITLE_WAIT, DRAFT_WAIT, WORKER_START = 30, 300, 30
+-- And how long a router's turn on a thread gets to show as its state: it's written just before.
+local TITLE_WAIT, DRAFT_WAIT, WORKER_START, TURN_START = 30, 300, 30, 15
 
 local function draft_file(repo, id)
   return store.run_dir(repo) .. "/thread-draft-" .. id
@@ -420,9 +426,32 @@ local function drafted(repo, id)
   return stat ~= nil and os.time() - stat.mtime.sec < DRAFT_WAIT
 end
 
+-- Ends the turns nothing will end: a router's supervisor that dies mid-turn never writes the end, and
+-- until it's written the thread says working… and stays out of the Inbox. Run by that supervisor
+-- once it's back and by the TUI, which sees it whether or not it comes back. True if it ended one.
+---@return boolean
+function M.end_dead_turns(repo)
+  local status = require("isovim.status")
+  local ended, alive = false, nil
+  for _, info in ipairs(M.list(repo)) do
+    if info.working and os.time() - (info.working_at or 0) >= TURN_START then
+      if alive == nil then
+        local router = store.router(repo)
+        alive = router ~= nil and status.owner_state(router) == "working"
+      end
+      if not alive then
+        M.working(repo, info.id, "end", true)
+        ended = true
+      end
+    end
+  end
+  return ended
+end
+
 -- One look over the repo's open threads: say(text) sends the router a message.
 function M.sweep(repo, say)
   local status = require("isovim.status")
+  M.end_dead_turns(repo)
   for _, info in ipairs(M.list(repo)) do
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     local state = worker and status.owner_state(worker)
