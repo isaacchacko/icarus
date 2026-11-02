@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // `iso browser`: one isovim Chrome per host for agents to drive over CDP. It runs with its own
 // profile (your Chrome cookies copied in on first start), opens in the background and never
-// takes keyboard focus; you reach it with cmd+tab. Each workspace keeps its own tabs in
-// ~/.isovim/run/<ws>/browser.json. No dependencies: Node's built-in fetch and WebSocket.
+// takes keyboard focus; you reach it with cmd+tab. Each workspace keeps its tabs in
+// ~/.isovim/run/<ws>/browser.json, each with the agent that opened it ($ISOVIM_ADDR): agents in one
+// repo share a workspace, and in a signed-in session a command that lands on another's tab can do
+// real harm, so an agent's commands act on its own tabs unless --tab names another. A shell (no
+// $ISOVIM_ADDR) acts on the workspace's newest. No dependencies: Node's built-in fetch and WebSocket.
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -12,19 +15,24 @@ const HOME = process.env.ISOVIM_HOME || join(homedir(), ".isovim");
 const PORT = Number(process.env.ISOVIM_BROWSER_PORT || 9333);
 const BASE = `http://127.0.0.1:${PORT}`;
 const PROFILE = join(HOME, "browser", "profile");
+// The agent running this; none in a shell.
+const ME = process.env.ISOVIM_ADDR || null;
 
 const USAGE = `usage: iso browser <command> [--ws <id>] [--tab <id>]
   start                 launch the isovim Chrome (in the background) if it isn't running
-  tabs                  this workspace's tabs: id, url, title
-  open <url>            open a tab for this workspace (in a background window), print its id
-  go <url>              navigate the tab
-  text                  the page's visible text
+  tabs                  this workspace's tabs, every agent's: id, owner, url, title
+  open <url>            open a tab of your own (in a background window), print its id
+  go <url>              navigate the tab; with no tab of yours, opens one there
+  text                  the page's visible text; with no tab of yours, opens a blank one
   eval <js>             evaluate JS in the page, print the result as JSON
   click <selector>      click the first element matching a CSS selector
   fill <selector> <text>  set an input's value the way typing would
-  shot <file.png>       screenshot the tab
+  shot <file.png>       screenshot the tab; with no tab of yours, opens a blank one
   close                 close the tab
-The workspace defaults to $ISOVIM_WS (agents have it); the tab to the workspace's newest.
+The workspace defaults to $ISOVIM_WS (agents have it). The tab defaults to your own newest: an agent's
+commands never fall back to another agent's tab, and eval, click, fill and close fail if it has none.
+--tab <id> reaches any tab in the workspace, another agent's too, on purpose. In a shell (no
+$ISOVIM_ADDR) the tab defaults to the workspace's newest. Removing an agent closes its tabs.
 CDP endpoint for other tools: ${BASE}`;
 
 function fail(message) {
@@ -111,17 +119,46 @@ function tabsFile(ws) {
   return join(HOME, "run", ws, "browser.json");
 }
 
+// {id, owner?} each, newest last. A bare id is a tab from before tabs had owners: nobody's.
 function readTabs(ws) {
   try {
-    return JSON.parse(readFileSync(tabsFile(ws), "utf8"));
+    return JSON.parse(readFileSync(tabsFile(ws), "utf8")).map((tab) => (typeof tab === "string" ? { id: tab } : tab));
   } catch {
     return [];
   }
 }
 
 function writeTabs(ws, tabs) {
-  mkdirSync(dirname(tabsFile(ws)), { recursive: true });
-  writeFileSync(tabsFile(ws), JSON.stringify(tabs));
+  const tmp = `${tabsFile(ws)}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(tabs));
+  renameSync(tmp, tabsFile(ws));
+}
+
+// fn(tabs) under the workspace's lock: what it returns is written back, whatever it's a list of,
+// so no two agents' read-then-write can drop a tab. A holder that died leaves the lock behind; one
+// this old is taken over, as holding it takes a moment.
+async function withTabs(ws, fn) {
+  const lock = `${tabsFile(ws)}.lock`;
+  mkdirSync(dirname(lock), { recursive: true });
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 10000) rmdirSync(lock);
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  try {
+    const tabs = await fn(readTabs(ws));
+    if (tabs) writeTabs(ws, tabs);
+    return tabs;
+  } finally {
+    rmdirSync(lock);
+  }
 }
 
 async function targets() {
@@ -129,18 +166,56 @@ async function targets() {
   return (await response.json()).filter((target) => target.type === "page");
 }
 
-// The workspace's tabs that still exist, newest last.
+// The workspace's tabs that still exist, newest last: Chrome's targets, each with its owner. Chrome
+// is asked under the lock, so a tab another agent has just added is in what's compared.
 async function liveTabs(ws) {
-  const live = new Map((await targets()).map((target) => [target.id, target]));
-  const tabs = readTabs(ws).filter((id) => live.has(id));
-  writeTabs(ws, tabs);
-  return tabs.map((id) => live.get(id));
+  let live;
+  const tabs = await withTabs(ws, async (kept) => {
+    live = new Map((await targets()).map((target) => [target.id, target]));
+    return kept.filter((tab) => live.has(tab.id));
+  });
+  return tabs.map((tab) => ({ ...live.get(tab.id), owner: tab.owner }));
 }
 
-async function pickTab(ws, id) {
+// A new tab of this agent's at url, loaded.
+async function openTab(ws, url) {
+  await start();
+  const browser = await connect((await version()).webSocketDebuggerUrl);
+  const { targetId } = await browser.send("Target.createTarget", { url, newWindow: true, background: true });
+  browser.close();
+  await withTabs(ws, (tabs) => [...tabs, ME ? { id: targetId, owner: ME } : { id: targetId }]);
+  const tab = (await liveTabs(ws)).find((t) => t.id === targetId);
+  await waitForLoad(tab);
+  return tab;
+}
+
+function listed(tabs) {
+  return tabs.map((tab) => `${tab.id.slice(0, 8)} (${tab.owner || "nobody's"})`).join(", ") || "none";
+}
+
+// The tab a command acts on: --tab's, any in the workspace; else this agent's newest; else, in a
+// shell, the workspace's newest. An agent with no tab of its own gets ifNone()'s (a command that
+// can open one), or an error: never another agent's tab.
+async function pickTab(ws, id, ifNone) {
   const tabs = await liveTabs(ws);
-  const tab = id ? tabs.find((t) => t.id.startsWith(id)) : tabs.at(-1);
-  return tab || fail(id ? `no tab ${id} in workspace ${ws}` : `workspace ${ws} has no tab; iso browser open <url>`);
+  if (id) return tabs.find((t) => t.id.startsWith(id)) || fail(`no tab ${id} in workspace ${ws}; its tabs: ${listed(tabs)}`);
+  if (!ME) return tabs.at(-1) || fail(`workspace ${ws} has no tab; iso browser open <url>`);
+  const mine = tabs.filter((tab) => tab.owner === ME);
+  if (mine.length > 0) return mine.at(-1);
+  if (ifNone) return ifNone();
+  fail(
+    `${ME} has no tab of its own (its tabs: none), and won't act on another agent's. ` +
+      `iso browser open <url> opens one, or --tab <id> reaches another on purpose; this workspace's tabs: ${listed(tabs)}`,
+  );
+}
+
+// A read with no tab of the agent's to read: it gets a blank one of its own, and is told.
+function blankTab(ws) {
+  return async () => {
+    const tab = await openTab(ws, "about:blank");
+    process.stderr.write(`iso browser: ${ME} had no tab of its own, so this opened a blank one, ${tab.id.slice(0, 8)}\n`);
+    return tab;
+  };
 }
 
 // One CDP session over a WebSocket: send(method, params) resolves with the result.
@@ -203,25 +278,30 @@ const commands = {
     console.log(BASE);
   },
   async tabs(ws) {
-    for (const tab of await liveTabs(ws)) console.log(`${tab.id.slice(0, 8)}  ${tab.url}  ${tab.title}`);
+    for (const tab of await liveTabs(ws)) {
+      console.log(`${tab.id.slice(0, 8)}  ${tab.owner || "-"}${tab.owner && tab.owner === ME ? " (you)" : ""}  ${tab.url}  ${tab.title}`);
+    }
   },
   async open(ws, _tab, [url]) {
     if (!url) fail("usage: iso browser open <url>");
-    await start();
-    const browser = await connect((await version()).webSocketDebuggerUrl);
-    const { targetId } = await browser.send("Target.createTarget", { url, newWindow: true, background: true });
-    browser.close();
-    writeTabs(ws, [...readTabs(ws), targetId]);
-    await waitForLoad(await pickTab(ws, targetId));
-    console.log(targetId.slice(0, 8));
+    console.log((await openTab(ws, url)).id.slice(0, 8));
   },
   async go(ws, id, [url]) {
-    const tab = await pickTab(ws, id);
+    if (!url) fail("usage: iso browser go <url>");
+    let opened = false;
+    const tab = await pickTab(ws, id, async () => {
+      opened = true;
+      return openTab(ws, url);
+    });
+    if (opened) {
+      process.stderr.write(`iso browser: ${ME} had no tab of its own, so this opened one, ${tab.id.slice(0, 8)}\n`);
+      return;
+    }
     await onTab(tab, (cdp) => cdp.send("Page.navigate", { url }));
     await waitForLoad(tab);
   },
   async text(ws, id) {
-    console.log(await evaluate(await pickTab(ws, id), "document.body.innerText"));
+    console.log(await evaluate(await pickTab(ws, id, blankTab(ws)), "document.body.innerText"));
   },
   async eval(ws, id, rest) {
     console.log(JSON.stringify(await evaluate(await pickTab(ws, id), rest.join(" ")), null, 2));
@@ -251,17 +331,25 @@ const commands = {
   },
   async shot(ws, id, [file]) {
     if (!file) fail("usage: iso browser shot <file.png>");
-    const { data } = await onTab(await pickTab(ws, id), (cdp) => cdp.send("Page.captureScreenshot", { format: "png" }));
+    const { data } = await onTab(await pickTab(ws, id, blankTab(ws)), (cdp) => cdp.send("Page.captureScreenshot", { format: "png" }));
     writeFileSync(file, Buffer.from(data, "base64"));
     console.log(file);
   },
   async close(ws, id) {
     const tab = await pickTab(ws, id);
     await fetch(`${BASE}/json/close/${tab.id}`);
-    writeTabs(
-      ws,
-      readTabs(ws).filter((t) => t !== tab.id),
-    );
+    await withTabs(ws, (tabs) => tabs.filter((t) => t.id !== tab.id));
+  },
+  // iso rm's (isovim.lifecycle): a removed agent's tabs close, in the workspace it was in.
+  async "close-agent"(ws, _id, [address]) {
+    let gone = [];
+    await withTabs(ws, (tabs) => {
+      gone = tabs.filter((tab) => tab.owner === address);
+      return gone.length > 0 ? tabs.filter((tab) => tab.owner !== address) : null;
+    });
+    if (gone.length > 0 && (await version())) {
+      for (const tab of gone) await fetch(`${BASE}/json/close/${tab.id}`);
+    }
   },
 };
 
@@ -274,5 +362,5 @@ if (!commands[command]) {
   process.exit(command === "help" || command === "--help" || !command ? 0 : 1);
 }
 if (command !== "start" && !ws) fail("no workspace: pass --ws <id> or run inside an isovim agent ($ISOVIM_WS)");
-if (command !== "start" && command !== "open" && !(await version())) fail("the isovim Chrome isn't running; iso browser start");
+if (!["start", "open", "close-agent"].includes(command) && !(await version())) fail("the isovim Chrome isn't running; iso browser start");
 await commands[command](ws, tab, args);

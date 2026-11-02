@@ -165,6 +165,11 @@ function M.teardown(key, record, ended)
   elseif not (ended or panes.stopped_here[key .. "/" .. id]) then
     events.publish_agent(key, id, "exited", { reason = "removed" })
   end
+  -- Its tabs in isovim's Chrome, in the background: this mustn't wait on Chrome.
+  if vim.uv.fs_stat(store.run .. "/" .. key .. "/browser.json") then
+    pcall(vim.system, { "node", vim.fs.dirname(panes.bin) .. "/iso-browser.mjs", "close-agent", "--ws", key, key .. "/" .. id },
+      { detach = true, stdin = false, stdout = false, stderr = false })
+  end
   local plan = M.plan(key, id, record)
   local done = {}
   if plan and not plan.link then
