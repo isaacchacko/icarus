@@ -53,7 +53,9 @@ set_state() {
   [ -n "$ISOVIM_ACP" ] && return
   local previous="" addr scope id
   IFS= read -r previous 2>/dev/null <"$ISOVIM_STATE"
-  printf %s "$1" >"$ISOVIM_STATE"
+  # A second line is why, when it matters (isovim.status.reason).
+  printf %s "$1${2:+
+$2}" >"$ISOVIM_STATE"
   [ "$previous" = "$1" ] && return
   [ -n "$previous" ] && previous="\"$previous\"" || previous=null
   addr="$(address)"
@@ -181,6 +183,10 @@ notification)
   [ -n "$ISOVIM_ACP" ] && exit 0
   case "$(cat)" in
   *idle_prompt* | *"waiting for your input"*) ;;
+  *permission*)
+    set_state attention permission
+    notify "needs you"
+    ;;
   *)
     set_state attention
     notify "needs you"

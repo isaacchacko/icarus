@@ -475,7 +475,10 @@ was read (consumed, a thread's last line seen); for an agent, its seen file is d
 epoch's first second, so a turn it finished reads as unread again, and a chat on screen, which
 otherwise counts as read, stays unread until you open it. What someone's blocked on stays, and the key says so and does
 nothing: an unanswered question, a page with a comment awaiting your reply, and the PRs surface
-while PRs wait on you, as those follow the PRs. So does an agent's held queue, until it's fixed. An
+while PRs wait on you, as those follow the PRs. So does an agent blocked on a permission, which
+only you can give (an ACP agent's request is a question surface, a pane agent's the reason on its
+state file's second line), and an agent's held queue, until it's fixed. An agent in attention for
+any other reason can go read. An
 agent mid-turn or that hasn't taken one has nothing to mark. In a thread `u` depends on the cursor: on
 the conversation it toggles, in the draft it's the draft's undo (`g-` is undo anywhere); a plain
 agent's chat keeps `u` as undo, so `U` on its conversation or row is the way there. A surfaced file

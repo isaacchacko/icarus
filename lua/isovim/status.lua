@@ -115,13 +115,26 @@ function M.marked_unread(ws, agent)
   return mtime(store.seen_file(ws, agent)) == MARKED_UNREAD
 end
 
+-- Whether it's stuck on a permission only you can give: an ACP agent's is a question surface in its
+-- repo's Inbox (isovim.acp.asks), a pane agent's its hook's reason.
+local function needs_permission(ws, agent)
+  if M.state(ws, agent) == "attention" and M.reason(ws, agent) == "permission" then
+    return true
+  end
+  local surfaces = require("isovim.surfaces")
+  return #vim.fn.glob(("%s/%s-perm-*.surface"):format(surfaces.dir(surfaces.key(ws) or "general"), agent), false, true) > 0
+end
+
 -- U on an agent's row, or on its chat's conversation: if it's holding your attention it goes read,
 -- as opening it does, else it goes unread until you next open it. What it can't do yet says so, and
--- so does a held queue, which waits on you until it's fixed. Says what it did, in one quiet line.
+-- so does what only you can clear: a permission it's stuck on, or a held queue. Says what it did, in
+-- one quiet line.
 function M.toggle_read(ws, agent)
   local now, seen = M.get(ws, agent), store.seen_file(ws, agent)
   local said
-  if M.state(ws, agent) == "held" then
+  if needs_permission(ws, agent) then
+    said = "it's blocked on a permission only you can give: it stays until you answer"
+  elseif M.state(ws, agent) == "held" then
     said = "its prompts wait on something it can't do itself: it waits on you until that's fixed"
   elseif now == "attention" or now == "unread" then
     local file = io.open(seen, "w")
