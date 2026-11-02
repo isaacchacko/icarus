@@ -1457,6 +1457,15 @@ function RENDER.notice(chat, entry)
   add_block(chat, { "[" .. (entry.text or "") .. "]" }, "IsovimAcpNotice")
 end
 
+-- A session the supervisor compacted when a turn ended: not a turn, one dim line.
+function RENDER.compact(chat, entry)
+  local function k(tokens)
+    return ("%dk"):format(math.floor((tonumber(tokens) or 0) / 1000 + 0.5))
+  end
+  add_block(chat, { entry.error and ("compacting at %s failed: %s"):format(k(entry.before), entry.error)
+    or ("compacted %s → %s"):format(k(entry.before), k(entry.after)) }, "IsovimAcpNotice")
+end
+
 function RENDER.session(chat, entry)
   chat.busy, chat.handover = false, false
   drop_boxes(chat)

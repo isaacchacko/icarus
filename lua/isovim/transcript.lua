@@ -74,7 +74,8 @@ local function turns(file, agent_name)
   local out = {}
   for line in io.lines(file) do
     local ok, entry = pcall(vim.json.decode, line)
-    if ok and type(entry) == "table" and not entry.isMeta then
+    -- A compact's summary isn't something anyone said.
+    if ok and type(entry) == "table" and not entry.isMeta and not entry.isCompactSummary then
       local role, content
       if entry.type == "user" or entry.type == "assistant" then
         role, content = entry.type, entry.message and entry.message.content

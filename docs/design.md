@@ -142,6 +142,22 @@ goes back first in the queue, which holds. It reaches the session once:
   killed, and the agent's first message says so too, or it would wait on what's gone. `--now` skips the
   wait, with the same line and message, and still never cuts a running turn. `iso restart`, `R`'s, is
   yours and never waits. This holds for Claude only: Codex's process tree is untested.
+- A long-lived role's session is compacted. All of a repo's threads share its router's one session,
+  and after an idle gap the expired cache rewrites all of it (630k tokens was about $5 for one call).
+  So when a turn leaves a router's, repo-root's or root's session past `compact_at` tokens
+  (`~/.isovim/config.json`; default 250000, 0 turns it off; the size is the adapter's `usage_update`,
+  input + output + cache read + cache write) with nothing queued, no question or permission waiting
+  and no restart or session switch pending, the supervisor sends it `/compact <what to keep>` right
+  then, while the cache is warm. It keeps the open threads and where they stand, the running workers
+  and standing owners, what's waiting on the user and today's decisions; thread files, the Task Board
+  and transcripts stay on disk. A compact turn isn't the user's: no prompt or turn in the journal, no
+  state change (so no "finished" and no unread mark), no thread post, the adapter's updates for it
+  dropped, and the chat shows one dim line (`compacted 212k → 18k`, a `compact` journal entry).
+  `~/.isovim/compactions.log` gets one JSON line for each (time, agent, session, tokens before and
+  after, error), to judge the threshold by. What
+  arrives meanwhile queues until it's done. A session a summary can't bring under `compact_at` waits
+  for half of `compact_at` more growth, so it isn't compacted every turn. Codex's isn't compacted:
+  codex-acp has no compact command and reports no context size.
 - A supervisor restarts itself onto isovim's new code. Every 30s, and whenever it goes idle, it
   compares the mtime and size of the files it runs (`acp/agent_host.lua` and every isovim module it
   has loaded, so a change only the TUI runs, like the chat's, restarts nothing) with what it started

@@ -25,7 +25,9 @@ session/fork copies it, up to the agent message _meta.jetbrains.air.fork.message
 adapter's fork point), into a new one. "history" answers with the session's earlier prompts, so a
 check sees what a resumed, forked or rewound session remembers. "ask" asks two questions as a form
 elicitation (elicitation/create, as the adapter presents AskUserQuestion) when the client offers
-forms, and replies with what came back.
+forms, and replies with what came back. Every prompt ends with a usage_update of the session's context
+size: "grow <n>" sets it, and "/compact ..." drops it to $FAKE_COMPACT_TO (default 18000) after a tool call,
+a chunk that isn't conversation and the agent's delay, as claude-agent-acp's /compact does.
 
 The system prompt is kept as Claude Code 2.1.314 keeps it: session/new stores _meta.systemPrompt.append
 as the session's prompt snapshot, and session/resume, session/load and session/fork keep the one the
@@ -63,6 +65,8 @@ pending = {}
 session_hooks = {}
 next_id = [1000]
 running = {"prompt": None, "cancelled": False}
+# Each session's context size, once "grow" set it.
+context_used = {}
 state_lock = threading.Lock()
 client = {"capabilities": {}}
 SESSIONS = (LOG + ".sessions") if LOG else None
@@ -254,7 +258,16 @@ def prompt(rid, params):
     remember(session, {"role": "user", "text": text})
     user_entry(session, text)
     turn["messageId"], turn["text"] = None, ""
-    if text == "history":
+    if text.startswith("/compact"):
+        tool(session, call_id, "Compact conversation", "other", "pending")
+        chunk(session, "a summary that isn't conversation")
+        time.sleep(DELAY)
+        tool(session, call_id, None, None, "completed")
+        context_used[session] = int(os.environ.get("FAKE_COMPACT_TO", "18000"))
+    elif text.startswith("grow "):
+        context_used[session] = int(text.split()[1])
+        chunk(session, "grew")
+    elif text == "history":
         chunk(session, "history: " + " | ".join(earlier))
     elif text == "system":
         chunk(session, "system: " + ((load_session(session) or {}).get("system") or ""))
@@ -420,6 +433,8 @@ def prompt(rid, params):
         remember(session, {"role": "agent", "id": turn["messageId"], "text": turn["text"]})
     with state_lock:
         running["prompt"] = None
+    if session in context_used:
+        update(session, {"sessionUpdate": "usage_update", "used": context_used[session], "size": 1000000})
     send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": stop}})
 
 

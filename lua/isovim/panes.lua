@@ -206,6 +206,9 @@ local V0 = {
   update = " After you push to isovim's own main, run `iso {role} update`: it fast-forwards the checkout "
     .. "isovim runs from to origin's main (when it's clean and on main; untracked files are fine), and the "
     .. "open TUI hot reloads or restarts onto it.",
+  compact = " Your memory is compacted: when a turn leaves your session past a size (compact_at in "
+    .. "~/.isovim/config.json), isovim summarizes it, with no message, and you go on from the summary. So keep "
+    .. "durable facts where they outlive it: the Task Board, threads, pages and iso/ files, not only your head.",
   bug = " When isovim itself gets in your way, file it: `iso bug <what happened>` (a bug, a complaint or a "
     .. "request; --image <file> attaches a screenshot). It returns at once with the report's id, and a worker "
     .. "of isovim's turns it into a GitHub issue, keeping out anything private.",
@@ -314,7 +317,8 @@ local AGENTS_BEFORE = V0.agents:gsub(vim.pesc("a promotion gives you the new rol
 ---@param before? boolean the text as it was before 2026-11-01
 local function v0_text(role, before)
   local parts = { V0.intro, V0.work .. ((role == "worker" or role == "router") and V0.scripts or ""), V0.messages,
-    before and AGENTS_BEFORE or V0.agents .. V0.restart .. V0.update .. V0.bug, V0.events, V0.browser, V0.role[role] or V0.role.worker }
+    before and AGENTS_BEFORE or V0.agents .. V0.restart .. V0.update .. V0.bug, V0.events, V0.browser,
+    (V0.role[role] or V0.role.worker) .. ((not before and role ~= "worker" and V0.role[role]) and V0.compact or "") }
   return (table.concat(parts, "\n\n"):gsub("{role}", role))
 end
 

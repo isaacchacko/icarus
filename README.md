@@ -112,11 +112,12 @@ Everything lives in `~/.isovim/`:
     "aliases": { "box": "desktop" },
     "repo_dirs": ["~/clients"],
     "idle_after": 30,
+    "compact_at": 250000,
     "prompts": { "root": "~/notes/root.md", "router": "~/.isovim/prompts/router.md", "worker": null },
     "repo_defaults": { "glyph": "", "palette": ["teal", "magenta", "#ff9e64"] }
   }
   ```
-  `hosts` are your other machines by ssh name. `prompts` names a file (relative to `~`) for each role; isovim fills in the seeded file for a role with no entry, and `null` gives a role none. `repo_defaults` is the glyph and the colors new repos are given; without it, the repo glyph and the twelve colors red to pink. Every write isovim makes to `config.json` or `repos/` is sent to your other hosts (`iso sync` sends it now); each host keeps its own `self` and `hosts`, and base clones stay put.
+  `compact_at` is the context size, in tokens, past which a router's, repo-root's or root's session is compacted when a turn ends, while its cache is warm, so a pause doesn't make the next call rewrite all of it (default 250000, 0 turns it off; the chat shows `compacted 212k → 18k`, nothing else notices, and `~/.isovim/compactions.log` has a line for each). `hosts` are your other machines by ssh name. `prompts` names a file (relative to `~`) for each role; isovim fills in the seeded file for a role with no entry, and `null` gives a role none. `repo_defaults` is the glyph and the colors new repos are given; without it, the repo glyph and the twelve colors red to pink. Every write isovim makes to `config.json` or `repos/` is sent to your other hosts (`iso sync` sends it now); each host keeps its own `self` and `hosts`, and base clones stay put.
 - **`repos/<owner>/<repo>/config.json`** is a repo's: `glyph`, `color` (`#rrggbb` or a palette name), and its scripts in Superset's format: `setup`, `teardown`, `run`, `worktree_setup` (run in each new worktree) and `actions` (name → command list, for `iso <role> run <action>`). Scripts run with Superset's variables plus `ISOVIM_WORKTREE_NAME` and `COMPOSE_PROJECT_NAME` (both the worktree's name); `env` (name → value, or `false` for none) overrides them. A new repo gets the palette's next color. Its scripts are imported once from the repo's own `.isovim/config.json` or `.superset/config.json`. Beside it, `base-clone/` is the clone worktrees and read-only agents come from.
 - **`hooks/idle`**, any executable, runs once every agent has been quiet for `idle_after` minutes.
 

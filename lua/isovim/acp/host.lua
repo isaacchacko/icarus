@@ -112,6 +112,9 @@ local S = {
   code_due = false, -- a restart onto changed code waits its turn (check_code)
   broken = nil, ---@type string? the changed file that doesn't compile, said once
   inbox = false, -- subscribed to the Inbox as a root (subscribe_inbox)
+  context = nil, ---@type integer? the session's context size, from its last usage_update
+  compacting = nil, ---@type {before: integer, after?: integer}? a compact turn is running
+  compact_floor = 0, -- what the last compact left, or what it failed at: the next waits for growth past it
 }
 
 -- Prompt ids, unique in the journal across restarts.
@@ -237,7 +240,7 @@ local function show_update(update)
   end
 end
 
-local deliver, reload, restart_now, restart_due, check_code
+local deliver, reload, restart_now, restart_due, check_code, compact, compact_due
 
 -- The next queued prompt goes, unless the session isn't up (a handover, a restart).
 local function next_prompt()
@@ -257,7 +260,13 @@ local function next_prompt()
   if prompt then
     deliver(prompt)
   else
-    set_state("idle")
+    -- After a compact it's idle already, and rewriting the state would mark the agent unread.
+    if status.state(S.ws, S.agent) ~= "idle" then
+      set_state("idle")
+    end
+    if compact_due() then
+      return compact()
+    end
     check_code()
   end
 end
@@ -558,6 +567,67 @@ deliver = function(prompt)
   S.client:request("session/prompt", { sessionId = S.session, prompt = blocks },
     function(result, err)
       turn_ended(prompt, result, err)
+    end)
+end
+
+-- What keeps a long-lived role's session from growing without end. All of a repo's threads share
+-- its router's session, and after an idle gap the expired cache rewrites all of it (630k tokens was
+-- about $5 for one call), so it's compacted as soon as a turn leaves it past compact_at (config),
+-- while the cache is still warm: reading it costs a tenth of rewriting it. A worker's session ends
+-- with its work, and Claude compacts one that fills up by itself. Codex's isn't compacted: its
+-- adapter (codex-acp 2.5.0) has no compact command and reports no context size.
+local COMPACTED = { router = true, ["repo-root"] = true, root = true }
+local COMPACT = "/compact Keep what you need to go on running this repo: the open threads and where each stands; the "
+  .. "running workers and standing owners, by address, and what each is on; what's waiting on the user; and the "
+  .. "decisions the user made today, in their words. Thread files, the Task Board and transcripts stay on disk: "
+  .. "name where the details are rather than copying them."
+
+-- Each compact, one JSON line in ~/.isovim/compactions.log, to judge compact_at by.
+local function log_compact(entry)
+  local file = io.open(store.root .. "/compactions.log", "a")
+  if file then
+    file:write(vim.json.encode(vim.tbl_extend("force", entry, { time = os.date("%FT%T%z"), agent = S.ws .. "/" .. S.agent,
+      session = S.session })), "\n")
+    file:close()
+  end
+end
+
+-- Whether to compact now: past compact_at, and past what the last compact left by half of it, so a
+-- session a summary can't bring under compact_at isn't compacted every turn. Nothing may be waiting
+-- on the session: no queue, no question, no restart, no turn Claude started itself.
+compact_due = function()
+  if not S.context or S.running or S.spec.kind == "codex" or not COMPACTED[store.role(S.spec)]
+    or not S.ready or S.busy or S.held or S.handover or S.after_turn or S.restart or #S.queue > 0
+    or (S.asks and asks_mod.waiting(S.asks)) then
+    return false
+  end
+  local at = require("isovim.config").compact_at()
+  return at > 0 and S.context >= math.max(at, S.compact_floor + at / 2)
+end
+
+-- A compact turn isn't the user's: no prompt or turn in the journal, no state change (so no
+-- "finished", no unread mark), nothing posted to a thread. S.busy keeps what arrives in the queue
+-- until it's done. The chat gets one line, and the adapter's own updates for it go nowhere.
+compact = function()
+  S.busy = true
+  S.compacting = { before = S.context }
+  out(("\n[compacting at %d tokens]\n"):format(S.context))
+  S.client:request("session/prompt", { sessionId = S.session, prompt = { { type = "text", text = COMPACT } } },
+    function(result, err)
+      local done = S.compacting
+      S.busy, S.compacting = false, nil
+      local failed = err and tostring(err.message or vim.inspect(err))
+        or (result and result.stopReason == "cancelled" and "cancelled")
+        or (not done.after and "the adapter reported no new size") or nil
+      if not failed then
+        S.context = done.after
+      end
+      S.compact_floor = failed and done.before or done.after
+      local entry = { before = done.before, after = done.after, error = failed or nil }
+      append("compact", entry)
+      pcall(log_compact, entry)
+      out(("\n[%s]\n"):format(failed or ("compacted to %d tokens"):format(done.after)))
+      next_prompt()
     end)
 end
 
@@ -952,10 +1022,27 @@ local handlers = {
       S.running = params.message.state ~= "idle"
       if restart_due() then
         restart_now()
+      elseif compact_due() then
+        compact()
       end
     elseif method == "session/update" and type(params.update) == "table" then
       -- A load replays history that the journal already holds.
       if S.replaying then
+        return
+      end
+      if params.update.sessionUpdate == "usage_update" then
+        -- input + output + cache read + cache write of the session's last call, or what a compact
+        -- left (the adapter sends 0 when it can't say, and the turn's result corrects it).
+        local used = tonumber(params.update.used)
+        if used and used > 0 then
+          S.context = used
+          if S.compacting then
+            S.compacting.after = used
+          end
+        end
+      end
+      -- A compact turn's own updates aren't the conversation; the size stays for the chat's bar.
+      if S.compacting and params.update.sessionUpdate ~= "usage_update" then
         return
       end
       -- One whose journal wasn't kept: what you said in it comes back as prompts.
@@ -1097,6 +1184,7 @@ end
 -- the agent's own session reopened as its supervisor starts.
 local function session_ready(how, fresh, extra, resumed)
   subscribe_inbox()
+  S.context, S.compact_floor = nil, 0
   local last = last_recorded() or (how == "fork" and S.source_entry or nil)
   local tell = role_changed(resumed, how, last)
   append("session", vim.tbl_extend("force", extra or {}, { how = how, sessionId = S.session, imports = S.imported,

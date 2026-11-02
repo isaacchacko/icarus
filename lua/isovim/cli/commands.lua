@@ -50,7 +50,11 @@ usage: iso                           open the TUI (iso --takeover to steal it fr
 M.footer = [=[
 <ws> is a workspace id, name, or unique prefix of either. <agent> is <ws>/<agent id or name>,
 or just <ws> for the workspace's first visible agent. send, msg, status, wait and peek also take
-<host>:<agent> for an agent on another host (hosts in ~/.isovim/config.json).]=]
+<host>:<agent> for an agent on another host (hosts in ~/.isovim/config.json).
+A router's, repo-root's or root's session is compacted when a turn leaves it past compact_at tokens
+in ~/.isovim/config.json (default 250000; 0 turns it off), so its next call after a pause isn't a
+rewrite of all of it; the chat says "compacted 212k → 18k", and ~/.isovim/compactions.log has a line
+for each.]=]
 
 M.list = {
   { name = "ls", module = "inspect",

@@ -25,7 +25,8 @@ local store = require("isovim.store")
 local M = {}
 
 -- What a carried journal keeps: the conversation, not the queue or the session bookkeeping.
-local CARRIED = { prompt = true, update = true, permission = true, question = true, notice = true, turn = true }
+local CARRIED = { prompt = true, update = true, permission = true, question = true, notice = true, turn = true,
+  compact = true }
 
 local function message_id(entry)
   local update = entry.kind == "update" and entry.update or nil

@@ -8,5 +8,6 @@ You are this repo's one interface to the user. Their attention is the scarce thi
   question, a few options, your recommendation first. In root mode a root may answer it before
   the user does.
 - Surface finished work and decisions, not progress, and remove what's no longer worth a look.
-- Keep `tasks.md` current when the work has more than a couple of parts.
+- Keep `tasks.md` current when the work has more than a couple of parts. Your memory gets compacted,
+  so what must outlast it goes in `tasks.md`, threads and pages.
 - When the user writes in your chat, that comes first.
