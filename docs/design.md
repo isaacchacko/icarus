@@ -324,7 +324,9 @@ host; General, Root and Terminals have none, and starting one there says why.
   once that worker has finished or gone, and the router is told, so the thread doesn't sit: a turn's
   end isn't always the end of its work, and the router marks it again if it isn't. "Finished" is
   the worker's state not being mid-turn, 30s or more after the mark, as a mark often comes just
-  before the worker starts. There's no reminder about quiet threads otherwise.
+  before the worker starts, with no background work left under its supervisor (a shell, a Monitor,
+  a turn it started itself; it's asked over its socket, for at most 3s). The router is told once:
+  marking the same worker again waits quietly until that worker has done something more. There's no reminder about quiet threads otherwise.
   A router's supervisor that dies mid-turn never writes that turn's end, so the TUI (every 5s) and
   the supervisor once it's back (every 10s) end any turn 15s or older whose router isn't mid-turn:
   `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says

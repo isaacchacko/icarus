@@ -898,6 +898,11 @@ function CALLS.status()
     journal = S.writer.path, handover = S.handover ~= nil }
 end
 
+-- What it's still doing between turns, for a thread that waits on it (isovim.threads.sweep).
+function CALLS.background()
+  return { work = background_work() }
+end
+
 function CALLS.cancel()
   return { cancelled = cancel_turn() }
 end

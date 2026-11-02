@@ -125,6 +125,10 @@ function M.summary(entries)
       end
       turn = info.working and {} or nil
     elseif entry.kind == "waiting" then
+      -- isovim telling the router a worker finished: told once, till that worker does more.
+      if entry.by == "isovim" then
+        info.told_of, info.told_at = info.waiting_on, entry.at
+      end
       waits(entry.on ~= "none" and entry.on or nil, entry.at)
       -- The router's own mark stands for its turn's post; the user's D or a worker clearing doesn't,
       -- but a worker clearing ends a mark on it.
@@ -448,6 +452,30 @@ function M.end_dead_turns(repo)
   return ended
 end
 
+-- Whether an agent between turns still has work going under its supervisor (a background shell, a
+-- Monitor, a turn it started itself), which it'll come back to. Bounded and in its own process, as a
+-- stuck worker must not hang its router's supervisor; one that can't say counts as having none.
+local function has_background(address)
+  local ws, id = address:match("^(.*)/([^/]+)$")
+  local sock = require("isovim.acp").socket(ws, id)
+  if not vim.uv.fs_stat(sock) then
+    return false
+  end
+  local asked = vim.system({ vim.v.progpath, "--headless", "--server", sock, "--remote-expr",
+    [[luaeval("vim.json.encode(require('isovim.acp.host').call('background', vim.empty_dict()))")]] },
+    { text = true, timeout = 3000 }):wait()
+  local ok, answer = pcall(vim.json.decode, asked.stdout or "")
+  return ok and type(answer) == "table" and type(answer.work) == "table" and #answer.work > 0
+end
+
+-- Whether the router marked a worker it's already been told of, that hasn't done anything since:
+-- it knows, and asked to go on waiting.
+local function told_already(info, worker)
+  local ws, id = worker:match("^(.*)/([^/]+)$")
+  local stat = info.told_of == worker and vim.uv.fs_stat(store.state_file(ws, id))
+  return stat and stat.mtime.sec <= (info.told_at or 0)
+end
+
 -- One look over the repo's open threads: say(text) sends the router a message.
 function M.sweep(repo, say)
   local status = require("isovim.status")
@@ -455,10 +483,12 @@ function M.sweep(repo, say)
   for _, info in ipairs(M.list(repo)) do
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     local state = worker and status.owner_state(worker)
-    if state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START) then
+    if state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START
+      and not told_already(info, worker) and not has_background(worker)) then
       append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = state })
       say(("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
-        .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled."):format(info.id, info.title,
+        .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled. Marking the same worker "
+        .. "again waits quietly until it does more."):format(info.id, info.title,
         worker, state == "gone" and "is gone" or "has finished its turn", info.id))
     end
     if info.posts == 0 and info.created_by == "user" and os.time() - (info.at or 0) >= TITLE_WAIT and not drafted(repo, info.id) then
