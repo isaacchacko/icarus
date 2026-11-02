@@ -79,6 +79,31 @@ function M.descendants(pid)
   return found, groups[pid]
 end
 
+-- What's running in process groups of their own below pid, a line each: an adapter's claude and
+-- its stdio MCP servers are in the adapter's group, and Claude puts each Bash (run_in_background, a
+-- Monitor) in one of its own. A Bash reads as what it was asked to run, not the wrapper Claude runs it in.
+---@return string[]
+function M.background_shells(pid)
+  local below, own_pgid = M.descendants(pid)
+  local seen, shells = {}, {}
+  for _, proc in ipairs(below) do
+    if proc.pgid ~= own_pgid and not seen[proc.pgid] then
+      local ps = io.popen(("ps -o stat= -o command= -p %d 2>/dev/null"):format(proc.pid))
+      local stat, command = (ps and ps:read("*a") or ""):match("^%s*(%S+)%s+(.-)%s*$")
+      if ps then
+        ps:close()
+      end
+      -- A zombie has only to be reaped.
+      if stat and not stat:find("Z", 1, true) then
+        seen[proc.pgid] = true
+        local asked = (command:match("eval '(.-)'") or command):gsub("%s+", " "):gsub("^cd [^&]-&& ", "")
+        shells[#shells + 1] = #asked > 60 and asked:sub(1, 57) .. "..." or asked
+      end
+    end
+  end
+  return shells
+end
+
 -- Stops every process below pid (descendants), each process group of theirs that isn't pid's own
 -- whole, then any left with SIGKILL.
 function M.kill_descendants(found, own_pgid)

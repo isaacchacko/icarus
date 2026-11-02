@@ -545,10 +545,12 @@ local function check_manages(by, role, by_ws, ws, address, verb)
   end
 end
 
--- iso <role> restart [<agent>] ["note"]: an ACP agent (default: you) restarts on its session at the
--- same address once its running turn ends, keeping its queue, and its first message then says who
--- restarted it and the note (isovim.acp.host).
+-- iso <role> restart [<agent>] ["note"] [--now]: an ACP agent (default: you) restarts on its session
+-- at the same address once its running turn and its background work end (--now doesn't wait for the
+-- work), keeping its queue, and its first message then says who restarted it and the note
+-- (isovim.acp.host).
 function M.restart(args)
+  local now = flag(args, "--now")
   local by, role, by_ws, by_id = caller()
   if not by then
     fail("only agents run iso <role> restart; from a shell, iso restart <agent>")
@@ -575,14 +577,20 @@ function M.restart(args)
   if blocked then
     fail(("%s keeps running, not restarted: %s"):format(address, blocked))
   end
-  local ok, result = require("isovim.acp").call(ws.id, agent.id, "restart", { text = text, by = by })
+  local ok, result = require("isovim.acp").call(ws.id, agent.id, "restart", { text = text, by = by, now = now or nil })
   if not ok then
     fail(("could not reach %s to restart it: %s"):format(address, tostring(result)))
   end
+  local background = type(result) == "table" and result.background or {}
   if self then
-    out("End your turn now: isovim then restarts you on this session, your queue kept, and your next message says so.")
+    out("End your turn now: isovim then restarts you on this session, your queue kept, and your next message says so."
+      .. (now and "" or " It waits for your background work to end, an hour at most; --now doesn't."))
   elseif type(result) == "table" and result.waits then
-    out(("%s restarts once its turn ends, its queue kept; then it's told you restarted it"):format(address))
+    local waits_on = result.turn and "its turn ends" or "its background work ends"
+    out(("%s restarts once %s, its queue kept; then it's told you restarted it"):format(address, waits_on))
+    if #background > 0 then
+      out(("It waits on: %s. An hour at most; --now doesn't wait."):format(table.concat(background, ", ")))
+    end
   else
     out(("%s is restarting on its session, its queue kept; then it's told you restarted it"):format(address))
   end

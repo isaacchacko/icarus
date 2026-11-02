@@ -37,7 +37,8 @@ fails with a usage limit, and so does every prompt while $FAKE_LIMIT_FILE exists
 attempt in the session as Claude does: a user entry and an API error entry in the transcript under
 $CLAUDE_CONFIG_DIR (only when that's set, never the real ~/.claude), which a session opened with
 persistSession false doesn't write. "bg <cmd>" runs cmd as Claude runs a background Bash: a child of this
-process in a process group of its own, still running after the turn.
+process in a process group of its own, still running after the turn. "auto <n>" ends the turn, then
+says the session runs for n seconds (_claude/sdkMessage), as for a turn Claude starts itself.
 
 Every frame it receives goes to $FAKE_ACP_LOG (JSON lines), the first with the env it started
 with, so checks can see what the client sent. A prompt that arrives while another is running is
@@ -119,6 +120,11 @@ def transcript(sid, row):
     os.makedirs(project, exist_ok=True)
     with open(os.path.join(project, sid + ".jsonl"), "a") as f:
         f.write(json.dumps(row) + "\n")
+
+
+def state_changed(sid, state):
+    send({"jsonrpc": "2.0", "method": "_claude/sdkMessage", "params": {"sessionId": sid,
+          "message": {"type": "system", "subtype": "session_state_changed", "state": state}}})
 
 
 def user_entry(sid, text):
@@ -279,6 +285,14 @@ def prompt(rid, params):
             result = (answer or {}).get("result") or {}
             tool(session, call_id, None, None, "completed" if result.get("action") == "accept" else "failed")
             chunk(session, "answer: " + json.dumps(result, sort_keys=True))
+    elif text.startswith("auto "):
+        def own_turn(seconds):
+            time.sleep(0.2)
+            state_changed(session, "running")
+            time.sleep(seconds)
+            state_changed(session, "idle")
+        threading.Thread(target=own_turn, args=(float(text[5:]),), daemon=True).start()
+        chunk(session, "auto")
     elif text.startswith("bg "):
         # As Claude runs a run_in_background Bash: its own child, in a process group (session) of
         # its own, left running when the turn ends.

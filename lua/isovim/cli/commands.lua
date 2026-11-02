@@ -830,17 +830,23 @@ M.role_actions = {
   },
   restart = { name = "restart", module = "roles",
     args = { "<agent>", "<text>" },
-    summary = "restart an agent (default: you) on its session once its turn ends",
+    flags = { ["--now"] = false },
+    summary = "restart an agent (default: you) on its session once its turn and background work end",
     help = [=[
-       iso restart [<agent>] ["note"]
+       iso restart [<agent>] ["note"] [--now]
                                      restart an ACP agent (default: you) on its session at the
                                      same address once its running turn ends, its queue kept;
                                      its next message says who restarted it, and the note
                                      (else to continue where it left off). You restart
                                      yourself and the agents below you; a router or repo-root
                                      any agent in its repo; the root any on this host.
+                                     It also waits for the agent's background shells (a
+                                     background Bash, a Monitor) to end, an hour at most,
+                                     then kills them and says what it killed. --now doesn't
+                                     wait for them; it still never cuts a running turn.
                                      Supervisors also restart themselves onto isovim's new
-                                     code when it changes on disk, when idle]=],
+                                     code when it changes on disk, when idle, by the same
+                                     rule]=],
   },
   rm = { name = "rm", module = "roles",
     args = { "<agent>..." },

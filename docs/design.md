@@ -130,6 +130,18 @@ goes back first in the queue, which holds. It reaches the session once:
   restarted by <who>: <note>]` (with no note, to continue where it left off) first in its queue on
   disk, and has the tmux server run `iso restart`, what `R` in the sidebar does. The next supervisor
   resumes the session at the same address and sends the queue, that message first.
+- A restart waits on **background work** too, since one kills it. Between turns Claude can be running a
+  background Bash or a Monitor, or a turn of its own when one of them reports back, which isovim's idea
+  of a turn doesn't see. So it's busy while a process below the adapter is in a process group of its
+  own (Claude puts each Bash in one; its stdio MCP servers stay in the adapter's group; a zombie doesn't
+  count), or while Claude says the session runs (`session_state_changed`, asked for with
+  `emitRawSDKMessages`), which also covers its background agents. It looks with `ps` every 30s, at each
+  turn's end and when Claude says it's idle, and once more after a shell ends, as Claude takes a moment
+  to start the turn that tells it. The agent keeps taking prompts meanwhile. After an hour
+  (`ISOVIM_BACKGROUND_WAIT`, in seconds) it restarts anyway; the chat gets one line saying what that
+  killed, and the agent's first message says so too, or it would wait on what's gone. `--now` skips the
+  wait, with the same line and message, and still never cuts a running turn. `iso restart`, `R`'s, is
+  yours and never waits. This holds for Claude only: Codex's process tree is untested.
 - A supervisor restarts itself onto isovim's new code. Every 30s, and whenever it goes idle, it
   compares the mtime and size of the files it runs (`acp/agent_host.lua` and every isovim module it
   has loaded, so a change only the TUI runs, like the chat's, restarts nothing) with what it started
@@ -137,8 +149,8 @@ goes back first in the queue, which holds. It reaches the session once:
   (`~/.isovim/run/code-restart.next` holds the next free turn), since each restart starts a new
   adapter whose claude resumes its session, seconds of CPU apiece, and a self-update reaches them
   all at once. At its turn it restarts if it's still idle: no turn, nothing queued or held, no
-  question waiting, no handover; one that isn't takes a new turn when it next is. It
-  gets no message, since nothing was cut off. A changed file that doesn't compile keeps it on the old
+  question waiting, no handover, no background work; one that isn't takes a new turn when it next is.
+  It gets no message, since nothing was cut off (unless background work outlasted the hour). A changed file that doesn't compile keeps it on the old
   code, said once in its chat. A pull or isovim's self-update only has to change the files.
 - Fork copies the session, optionally up to a message.
 - Rewind means editing one of your earlier prompts: isovim forks at the message before it, starts the

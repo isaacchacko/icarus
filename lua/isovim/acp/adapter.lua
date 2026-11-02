@@ -136,7 +136,9 @@ function M.session_params(kind, params, append_text)
     params.systemPrompt = { mode = "append", content = { { type = "text", text = append_text } } }
   else
     params._meta.systemPrompt = { append = append_text }
-    params._meta.claudeCode = { options = { settings = require("isovim.panes").hook_settings() } }
+    params._meta.claudeCode = { options = { settings = require("isovim.panes").hook_settings() },
+      -- So the supervisor sees a turn Claude starts itself, between the prompts it sends.
+      emitRawSDKMessages = { { type = "system", subtype = "session_state_changed" } } }
   end
   return params
 end
