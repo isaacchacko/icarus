@@ -57,6 +57,7 @@ end
 ---@field type "markdown"|"tasks"|"prs"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
 ---@field address? string link: what it points at, an iso: address or a web page's URL
 ---@field note? string link: the router's one line about it
+---@field marked_unread? boolean you marked it unread (M.mark_unread): it waits on you until you open it
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -494,6 +495,18 @@ local function parse(repo, base, state, taken)
   return entry
 end
 
+-- What you marked unread (M.mark_unread), by base: run/<repo>/unread.json. Apart from the scan's
+-- state, which drops what's no file (the PRs surface), and from what was read (consumed, a thread's
+-- last line seen), which it leaves alone.
+local function unread_file(repo)
+  return store.run_dir(canon(repo)) .. "/unread.json"
+end
+
+local function read_unread(repo)
+  local ok, value = pcall(vim.json.decode, read_file(unread_file(repo)) or "")
+  return ok and type(value) == "table" and value or {}
+end
+
 -- A surface's name from its file under iso/: its stem.
 function M.name_of(base)
   base = base:gsub("^pages/", "")
@@ -536,6 +549,12 @@ function M.read(repo, state)
     return parse(repo, base, state, taken)
   end, bases)
   vim.list_extend(list, M.threads(repo))
+  local unread = read_unread(repo)
+  for _, entry in ipairs(next(unread) and list or {}) do
+    if unread[entry.base] and entry.type ~= "question" then
+      entry.needs_you, entry.marked_unread = true, true
+    end
+  end
   return list
 end
 
@@ -1087,9 +1106,48 @@ local function changed(repo)
   end
 end
 
+-- u in a view, U on a row: the surface or thread back in the Inbox, needs_you, staying there after
+-- you leave it even though it's open now, until you next open it (M.opened). A question has nothing
+-- to mark: one unanswered waits on you whether or not you've opened it, with no read state at all.
+-- Says what it did, in one quiet line.
+function M.mark_unread(entry)
+  local said = "marked unread"
+  if entry.type == "question" then
+    said = entry.answer and "it's answered: nothing to mark"
+      or entry.deciding and "a root is deciding it first"
+      or "it waits on you until it's answered"
+  elseif entry.type == "chat" then
+    said = "it waits on you until you open it"
+  else
+    local repo = canon(entry.repo)
+    locked(repo, function()
+      local unread = read_unread(repo)
+      unread[entry.base] = true
+      write_json(unread_file(repo), unread)
+    end)
+    changed(repo)
+  end
+  vim.api.nvim_echo({ { said, "Comment" } }, false, {})
+end
+
+-- You opened it: what you marked unread is read again.
+function M.opened(repo, base)
+  repo = canon(repo)
+  if not read_unread(repo)[base] then
+    return
+  end
+  locked(repo, function()
+    local unread = read_unread(repo)
+    unread[base] = nil
+    write_json(unread_file(repo), unread)
+  end)
+  changed(repo)
+end
+
 -- Removes a surface: its file, its error file, a page's comments. A file or folder surface only
 -- points, so what it names stays. The scan publishes surface.<repo>.<name>.removed.
 function M.remove(entry)
+  M.opened(entry.repo, entry.base)
   os.remove(entry.file)
   if entry.error_file and entry.error_file ~= "" then
     os.remove(entry.error_file)
@@ -1198,6 +1256,9 @@ function M.list(repo)
   repo = canon(repo)
   local list = M.cache[repo] or M.scan(repo)
   local board = M.prs_entry(repo)
+  if board and read_unread(repo)[board.base] then
+    board.needs_you, board.marked_unread = true, true
+  end
   if board and not vim.iter(list):any(function(entry)
     return entry.name == board.name
   end) then
@@ -1219,6 +1280,7 @@ end
 -- consumable.
 function M.open(entry)
   local isovim = require("isovim")
+  M.opened(entry.repo, entry.base)
   local function reveal(path)
     if not pcall(isovim.reveal, entry.repo, path) then
       isovim.show(path)

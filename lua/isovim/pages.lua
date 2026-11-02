@@ -489,6 +489,7 @@ M.help_keys = {
   { "a", "reply to the comment under the cursor" },
   { "]c / [c", "the next / previous comment" },
   { "r", "show or hide the resolved comments" },
+  { "u", "mark the page unread: back in the Inbox until you open it again" },
   { "i o", "type to the repo's router" },
   { "<C-c>", "in the box: cancel the comment or reply" },
 }

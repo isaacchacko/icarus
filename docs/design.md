@@ -419,6 +419,17 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   page wherever a comment asks, then resolves it with a note, and the comment leaves the page. A
   reply with `--ask` asks you something: the page waits on you, in the Inbox, until you reply.
 
+**Marking unread.** `u` in a surface's view (markdown, a page, the Task Board, the PRs) or on a
+thread's conversation, or `U` on any surface's or thread's row in the sidebar, puts it back in the
+Inbox as unread, and it stays there after you leave it even though it's open now, until you next
+open it (by its row or its tab). It's a flag per surface in `run/<repo>/unread.json`, apart from what
+was read (consumed, a thread's last line seen), which it leaves alone. A question has nothing to
+mark: it holds no read state, and one unanswered waits on you whether or not you've opened it, so `u`
+says that. In a thread `u` depends on the cursor: on the conversation it marks unread, in the draft
+it's the draft's undo (`g-` is undo anywhere); a plain agent's chat keeps `u` as undo. A surfaced file
+opens as a real, editable buffer, so `u` there stays vim's undo: `U` on its row marks it, as on a
+folder or a link, which have no view of their own.
+
 - Rerunning a question reattaches to the same one, and returns its answer if it's already been given.
 - A question opens as a tab in the main window like a markdown surface, never as a popup, drawn in the chat's question-box style. `<CR>` on an option or its number picks it; in a
   multi question they tick it (`<Space>` too) and Submit or `s` sends. One that takes your own words

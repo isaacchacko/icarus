@@ -436,7 +436,7 @@ function M.surface_chunks(entry)
     end
   elseif kind == "prs" then
     -- In the Inbox, how many wait on you; else how many it lists.
-    if entry.needs_you then
+    if (entry.waiting or 0) > 0 then
       row[#row + 1] = { ("  %d waiting on you"):format(entry.waiting), "DiagnosticWarn" }
     else
       row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
@@ -457,7 +457,7 @@ function M.surface_chunks(entry)
       row[#row + 1] = { "  ? waiting on you", "DiagnosticWarn" }
     elseif entry.working then
       row[#row + 1] = { "  working…", "Comment" }
-    elseif entry.needs_you then
+    elseif entry.needs_you and not entry.marked_unread then
       row[#row + 1] = { "  new reply", "DiagnosticWarn" }
     end
   elseif kind == "page" then
@@ -471,6 +471,9 @@ function M.surface_chunks(entry)
     row[#row + 1] = { "  missing", "DiagnosticWarn" }
   elseif kind == "broken" and entry.error then
     row[#row + 1] = { "  " .. entry.error, "DiagnosticError" }
+  end
+  if entry.marked_unread then
+    row[#row + 1] = { "  unread", "DiagnosticWarn" }
   end
   -- A markdown surface or the Task Board that doesn't parse still opens, saying why.
   if entry.error and kind ~= "broken" then
@@ -894,7 +897,7 @@ local function group_sections(items, base, host, key, opts)
       items[#items + 1] = surface(entry, "Threads", i, #threads)
     end
   end, { unread = vim.iter(threads):any(function(entry)
-    return entry.needs_you
+    return entry.needs_you and not entry.marked_unread
   end) })
   local surfaces_list = vim.list_extend(boards, others)
   section("Surfaces", #surfaces_list, function()
@@ -1711,6 +1714,7 @@ local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
+  { "U", "isovim_mark_unread", "mark the surface or thread unread: back in the Inbox until you open it (u in its view, but a file's, where u is vim's undo)" },
   { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
@@ -1790,6 +1794,9 @@ function M.help()
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
+  section("A surface's view (markdown, a page, the Task Board, the PRs, a question)", {
+    { "u", "mark it unread: back in the Inbox until you open it again (an unanswered question waits anyway; a file's u is vim's undo: U on its row)" },
+  })
   section("Links (iso: addresses, drawn as chips in chats, threads, pages and PRs)", {
     { "<Tab>", "on a link: open what it points at, as a tab (elsewhere, vim's jump forward)" },
     { "gf", "on a link: the same" },
@@ -2446,6 +2453,16 @@ M.actions = {
       key = nil
     end
     require("isovim.keys").prs(key)
+  end,
+  -- U: the row's surface or thread back in the Inbox until it's opened.
+  isovim_mark_unread = function(item)
+    if not (item and item.surface) then
+      return vim.api.nvim_echo({ { "U marks a surface or thread unread", "Comment" } }, false, {})
+    elseif item.host then
+      return Snacks.notify.info(("That's on %s; mark it there"):format(item.host), { title = "isovim" })
+    end
+    M.surfaces().mark_unread(item.surface)
+    M.refresh()
   end,
   -- t: a new thread in the row's repo, an agent's row's too (none in General, Root or Terminals).
   isovim_new_thread = function(item)

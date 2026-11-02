@@ -358,6 +358,7 @@ local set_lines
 
 -- A view drawn from its surface: its lines, and for the PRs surface the PR on each.
 local function draw_surface(view, entry)
+  view.base = entry.base
   local win = vim.fn.bufwinid(view.buf)
   view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
   local lines, marks, rows = M.render(entry, view.width)
@@ -391,7 +392,7 @@ local function winbar(view)
     return view.entry.multi and " ↳ your own answer, with what's ticked · <CR> sends" or " ↳ your own answer · <CR> sends"
   end
   local reader = M.reader(view.repo)
-  return reader and (" ↳ to %s · <CR> sends · <C-v> image"):format(reader:gsub("%%", "%%%%"))
+  return reader and (" ↳ to %s · <CR> sends · <C-v> image · u above marks it unread"):format(reader:gsub("%%", "%%%%"))
     or (" no router in %s to send to"):format(view.repo)
 end
 
@@ -804,6 +805,14 @@ local function bind(view)
       end, { buffer = view.buf, nowait = true, desc = "isovim: type to the repo's router" })
     end
   end
+  -- u: back in the Inbox until it's opened again (a question says why it needs no marking).
+  vim.keymap.set("n", "u", function()
+    local entry = view.kind == "question" and view.entry
+      or view.kind == "prs" and surfaces.prs_entry(view.repo) or surfaces.get(view.repo, view.name)
+    if entry then
+      surfaces.mark_unread(entry)
+    end
+  end, { buffer = view.buf, nowait = true, desc = "isovim: mark it unread" })
   -- The input box goes with the view: once no window shows the view (another buffer took its
   -- window, or it closed), its box closes too, rather than stay behind under whatever's there. The
   -- last window beside the sidebar is emptied instead, as :q there would otherwise quit isovim.
@@ -816,6 +825,10 @@ local function bind(view)
       require("isovim.safe").schedule("a surface's view", function()
         if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == view.buf then
           M.dress(view, win)
+          -- Come back to by its tab: what you marked unread is read again.
+          if view.base then
+            surfaces.opened(view.repo, view.base)
+          end
         end
       end)
     end,

@@ -2393,9 +2393,14 @@ local function map_keys(chat)
     end, "earlier prompts while the composer is empty")
   end
   for _, lhs in ipairs({ "u", "g-" }) do
+    -- A thread's u on the conversation marks it unread; in the draft it's the draft's undo.
+    local thread_u = lhs == "u" and chat.thread
     map("n", lhs, function()
+      if thread_u and not mine() then
+        return M.thread_unread(chat)
+      end
       step(chat, -1)
-    end, "undo in the composer")
+    end, thread_u and "mark the thread unread (in the composer: undo)" or "undo in the composer")
   end
   for _, lhs in ipairs({ "<C-r>", "g+" }) do
     map("n", lhs, function()
@@ -2463,6 +2468,7 @@ M.help_keys = {
   thread = {
     { "<CR>", "in its composer: post to the router (a new thread's first <CR> takes its title)" },
     { "r", "on the thread: resolve it, or open it again" },
+    { "u", "on the thread: mark it unread, back in the Inbox until you open it again (in the composer, undo)" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
@@ -2502,7 +2508,7 @@ local function composer_hint(chat)
   elseif chat.thread and #chat.boxes > 0 then
     return "  its number (or an option's name) and <CR> answers · anything else posts · <CR> on an option above"
   elseif chat.thread then
-    return "  <CR> posts to the router · <S-CR> new line · <C-v> image · r on the thread resolves it · <C-h> the sidebar"
+    return "  <CR> posts to the router · <S-CR> new line · <C-v> image · on the thread: r resolves it, u marks it unread · <C-h> the sidebar"
   end
   local around = (queue.window(chat) and "<C-j> the queue · " or "") .. "<C-k> the chat · <C-h> the sidebar"
   if #chat.boxes > 0 then
@@ -2552,6 +2558,11 @@ local GROUP = vim.api.nvim_create_augroup("isovim_acp_chat", { clear = false })
 pcall(vim.api.nvim_del_augroup_by_name, "isovim_acp_column")
 
 -- The options and variables of a chat's buffer.
+-- A thread's surface's base, as isovim.surfaces lists it.
+local function thread_base(chat)
+  return "threads/" .. chat.thread .. ".jsonl"
+end
+
 -- A thread's view is a chat whose agent is "thread:<id>" ("thread:new" before it has a title).
 local function thread_of(agent)
   return agent:match("^thread:(t%d+)$"), agent == "thread:new"
@@ -2630,6 +2641,10 @@ local function bind(chat)
       -- window's buffer before going to it), and that one kept its numbers.
       for _, win in ipairs(vim.fn.win_findbuf(buf)) do
         chat_window(win)
+      end
+      -- A thread come back to: what you marked unread is read again.
+      if chat.thread then
+        require("isovim.surfaces").opened(ws, thread_base(chat))
       end
       update_bar(chat)
       M.settle(chat)
@@ -3250,6 +3265,15 @@ function M.thread_seen(chat)
       surfaces.recheck()
     end
   end
+end
+
+-- u on a thread's conversation: back in the Inbox until you open it again. One resolved isn't
+-- listed, so there's nothing to go back to.
+function M.thread_unread(chat)
+  if chat.resolved then
+    return vim.api.nvim_echo({ { "it's resolved: r opens it again", "Comment" } }, false, {})
+  end
+  require("isovim.surfaces").mark_unread({ repo = chat.ws, type = "thread", base = thread_base(chat) })
 end
 
 -- Shows the chat as a tab in the main window (isovim.show), at its end, typing in its composer.
