@@ -545,6 +545,8 @@ local function check_manages(by, role, by_ws, ws, address, verb)
   end
 end
 
+M.check_manages = check_manages
+
 -- iso <role> restart [<agent>] ["note"] [--now]: an ACP agent (default: you) restarts on its session
 -- at the same address once its running turn and its background work end (--now doesn't wait for the
 -- work), keeping its queue, and its first message then says who restarted it and the note

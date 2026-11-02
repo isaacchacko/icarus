@@ -356,4 +356,13 @@ function M.waiting(asks)
   return next(asks.pending) ~= nil
 end
 
+function M.waiting_permission(asks)
+  for _, ask in pairs(asks.pending) do
+    if ask.kind == "permission" then
+      return true
+    end
+  end
+  return false
+end
+
 return M

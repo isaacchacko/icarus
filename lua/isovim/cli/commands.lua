@@ -36,7 +36,7 @@ end
 -- What every role runs as iso <role> <action>: the bare command of that name (one without an entry
 -- is left out, so `listen` appears when it lands), or the entry in M.role_actions.
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
-  "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug", "link" }
+  "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug", "link", "queue" }
 M.only = {
   worker = { "wt", "setup", "teardown", "run", "page", "thread" },
   router = { "surface", "page", "thread", "pr", "rm", "wt", "setup", "teardown", "run" },
@@ -297,12 +297,29 @@ M.list = {
   { name = "msg", module = "messaging",
     audience = "user",
     args = { "parent|children|<address>", "<text>..." },
-    flags = { ["--image"] = "<path>" },
+    flags = { ["--image"] = "<path>", ["--first"] = false, ["--now"] = false },
     summary = "iso send to its parent, its children, or any agent",
     help = [=[
-       iso msg <parent|children|agent> [--image <file>]... <text...>
+       iso msg [--first|--now] <parent|children|agent> [--image <file>]... <text...>
                                      iso send to the agent that started this one, to each agent
-                                     it started, or to any agent]=],
+                                     it started, or to any agent. --first and --now, before the
+                                     target, are for an agent you may restart, or your child:
+                                     --first puts it at the front of its queue, behind anything
+                                     the user wrote, without touching the running turn; --now
+                                     does too and cancels the turn, telling it to carry on after
+                                     this message. --now is refused while a permission waits or
+                                     the turn is on the user's own prompt, and to a lower role
+                                     for a higher one's turn]=],
+  },
+  { name = "queue", module = "messaging",
+    audience = "user",
+    args = { "drop|<agent>", "<agent>", "<text>" },
+    summary = "list an agent's queued messages, or drop one",
+    help = [=[
+       iso queue <agent>             an agent's queued messages, in the order they'll go: id,
+                                     sender, age, text (one you may restart, or your child)
+       iso queue drop <agent> <id>   remove one, the others keeping their places and stamps.
+                                     Only the user drops what the user wrote]=],
   },
   { name = "bug", module = "bugs",
     audience = "anyone",

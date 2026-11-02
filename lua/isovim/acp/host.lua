@@ -75,6 +75,8 @@ local M = {}
 ---@field publish? boolean whether to publish msg.<scope>.<id> (prompts from iso send/msg)
 ---@field via "iso"|"composer"|"spawn" where it came from: iso send/msg, the TUI's composer, iso spawn
 ---@field images? isovim.acp.Image[] what it attaches, [Image #n] in its text for images[n]
+---@field user? boolean iso send or msg from a shell: the user's words, as a composer prompt is
+---@field at? integer when it queued, epoch seconds
 ---@field tried? integer it has gone before, and failed: the size of Claude's transcript just before (in_session)
 
 local S = {
@@ -114,6 +116,7 @@ local S = {
   inbox = false, -- subscribed to the Inbox as a root (subscribe_inbox)
   context = nil, ---@type integer? the session's context size, from its last usage_update
   compacting = nil, ---@type {before: integer, after?: integer}? a compact turn is running
+  turn_prompt = nil, ---@type isovim.acp.Prompt? what the running turn is on
   compact_floor = 0, -- what the last compact left, or what it failed at: the next waits for growth past it
 }
 
@@ -179,7 +182,8 @@ end
 
 local function queue_items()
   return vim.tbl_map(function(prompt)
-    return { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images }
+    return { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images,
+      at = prompt.at, user = prompt.user }
   end, vim.tbl_filter(function(prompt)
     return not prompt.reload
   end, S.queue))
@@ -197,7 +201,8 @@ local function save_queue()
   for _, prompt in ipairs(S.queue) do
     if not prompt.reload then
       kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
-        message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images, tried = prompt.tried }
+        message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images, tried = prompt.tried,
+        at = prompt.at, user = prompt.user }
     end
   end
   local path = queue_file(S.ws, S.agent)
@@ -458,7 +463,7 @@ end
 -- The turn ended: say so, and send the next queued prompt. One that failed on something that
 -- passes goes back to the front of the queue, which is held.
 local function turn_ended(prompt, result, err)
-  S.busy = false
+  S.busy, S.turn_prompt = false, nil
   local reason = result and result.stopReason or nil
   append("turn", { state = "end", id = prompt.id, stopReason = reason, error = err and err.message or nil })
   -- A turn on a thread's post: its last message is the thread's reply (isovim.threads).
@@ -519,6 +524,7 @@ deliver = function(prompt)
     return reload()
   end
   S.busy = true
+  S.turn_prompt = prompt
   S.prompted = true
   -- The files as they were before this turn, for a rewind to put back.
   local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
@@ -631,9 +637,29 @@ compact = function()
     end)
 end
 
--- Takes a prompt: sends it now, or queues it while a turn runs (or before the session is up).
+-- A prompt the user wrote: nobody else may drop it or go ahead of it.
+local function users(prompt)
+  return prompt.via == "composer" or prompt.user == true
+end
+
+-- Where iso msg --first or --now puts a prompt: at the front, behind what has to go first (a pending
+-- reload, the role's prompt, the spawn's, one that failed and is being picked up) and, unless the
+-- user is sending it, behind every prompt the user wrote.
+local function front_of_queue(by_user)
+  local at = 1
+  for i, prompt in ipairs(S.queue) do
+    if prompt.reload or prompt.tried or prompt.via == "role" or prompt.via == "spawn" or (not by_user and users(prompt)) then
+      at = i + 1
+    end
+  end
+  return at
+end
+
+-- Takes a prompt: sends it now, or queues it while a turn runs (or before the session is up), at
+-- the end, or with first near the front (front_of_queue).
 ---@param prompt isovim.acp.Prompt
-local function submit(prompt)
+---@param first? boolean
+local function submit(prompt, first)
   prompt.id = next_id()
   local queued = S.busy or not S.ready or S.held ~= nil
   if prompt.publish then
@@ -641,12 +667,19 @@ local function submit(prompt)
       text = prompt.message or prompt.text, queued = queued })
   end
   if queued then
-    S.queue[#S.queue + 1] = prompt
+    prompt.at = os.time()
+    local position = first and front_of_queue(prompt.user) or #S.queue + 1
+    table.insert(S.queue, position, prompt)
     save_queue()
-    append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images,
-      position = #S.queue })
-    out(("\n(queued %d) %s\n"):format(#S.queue, prompt.text))
-    return { id = prompt.id, queued = true, position = #S.queue }
+    -- Anywhere but the end, the chat's copy of the queue needs all of it.
+    if position < #S.queue then
+      append("queue", { items = queue_items() })
+    else
+      append("queued", { id = prompt.id, text = prompt.text, from = prompt.from, via = prompt.via, images = prompt.images,
+        position = position })
+    end
+    out(("\n(queued %d) %s\n"):format(position, prompt.text))
+    return { id = prompt.id, queued = true, position = position }
   end
   deliver(prompt)
   return { id = prompt.id, queued = false }
@@ -866,14 +899,48 @@ function CALLS.restart(payload)
 end
 
 -- Each image gets a chip in the text if it has none, so [Image #n] is always there for images[n].
----@param payload {text: string, from?: string, kind?: string, stamp?: string, message?: string, publish?: boolean, images?: isovim.acp.Image[]}
+-- place (iso msg): "first" queues it near the front (front_of_queue), and "now" does too and cancels
+-- the running turn. A compact isn't a turn to cancel: it ends soon, and the prompt goes next. "now"
+-- is refused, in the answer's refused, while a permission waits (the cancel would lose that request)
+-- and, unless the user is sending it, while the running turn is one the user asked for.
+---@param payload {text: string, from?: string, kind?: string, stamp?: string, message?: string, publish?: boolean, images?: isovim.acp.Image[], user?: boolean, place?: "first"|"now"}
 function CALLS.prompt(payload)
   if type(payload.text) ~= "string" or vim.trim(payload.text) == "" then
     error("a prompt needs text")
   end
+  local now = payload.place == "now" and S.busy and not S.compacting
+  if now and S.asks and asks_mod.waiting_permission(S.asks) then
+    return { refused = "it has a permission request waiting, which cancelling its turn would lose" }
+  elseif now and not payload.user and S.turn_prompt and users(S.turn_prompt) then
+    return { refused = "its running turn is on a prompt the user wrote; --first queues behind that" }
+  end
   local text, attached = images.renumber(payload.text, payload.images or {}, "append")
-  return submit({ text = text, from = payload.from, kind = payload.kind, stamp = payload.stamp, images = attached[1] and attached or nil,
-    message = payload.message, publish = payload.publish, via = payload.publish and "iso" or "composer" })
+  local result = submit({ text = text, from = payload.from, kind = payload.kind, stamp = payload.stamp, images = attached[1] and attached or nil,
+    message = payload.message, publish = payload.publish, via = payload.publish and "iso" or "composer", user = payload.user or nil },
+    payload.place ~= nil)
+  if now then
+    result.cancelled = cancel_turn()
+  end
+  return result
+end
+
+-- Removes one queued prompt (iso queue drop), keeping every other's place and stamp. Nobody but the
+-- user drops what the user wrote, and a reload, the role's prompt or the spawn's aren't anyone's to drop.
+---@param payload {id: string, user?: boolean}
+function CALLS.queue_drop(payload)
+  for i, prompt in ipairs(S.queue) do
+    if prompt.id == payload.id and not prompt.reload then
+      if prompt.via == "role" or prompt.via == "spawn" then
+        return { refused = "it's isovim's, what the agent starts on" }
+      elseif users(prompt) and not payload.user then
+        return { refused = "the user wrote it, so only the user drops it" }
+      end
+      table.remove(S.queue, i)
+      queue_changed()
+      return { dropped = true }
+    end
+  end
+  return { refused = "nothing queued has that id (it may have been sent)" }
 end
 
 -- Reloads the session with the agent's record as it is now, so a promoted agent gets its new
@@ -895,7 +962,7 @@ end
 
 function CALLS.status()
   return { state = status.state(S.ws, S.agent), ready = S.ready, busy = S.busy, queue = #S.queue, session = S.session,
-    journal = S.writer.path, handover = S.handover ~= nil }
+    journal = S.writer.path, handover = S.handover ~= nil, in_turn = S.busy and not S.compacting }
 end
 
 -- What it's still doing between turns, for a thread that waits on it (isovim.threads.sweep).

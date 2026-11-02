@@ -80,7 +80,15 @@ lifetimes, so agents outlive the TUI).
 - A prompt sent while the agent is busy is **queued** and delivered when its turn ends. This covers
   yours and other agents' alike, so nothing is ever typed into a shared box.
 - The queue shows by itself while prompts wait, in a window under the chat (see The chat).
-  It can be edited, reordered, cleared or "sent now" (which cancels the running turn).
+  It can be edited, reordered, cleared or "sent now" (which cancels the running turn). Agents steer
+  one another's from the CLI, on agents they may restart (their children among them):
+  `iso <role> msg --first <agent> <text>` puts a message at the front without touching the turn,
+  `--now` does too and cancels the turn, the message itself saying to carry on after it, and
+  `iso <role> queue <agent>` and `queue drop <agent> <id>` list and remove. None of them edits a
+  message, so stamps survive. Nobody but you goes ahead of or drops a prompt you wrote: `--first`
+  and `--now` land behind it, and a drop refuses it. `--now` is refused while a permission waits
+  (the cancel would lose it), while the turn is on your own prompt, and to a lower role for a
+  higher one's turn (a router, for a repo-root or root).
 - A prompt that queues while you edit the queue isn't lost when you write it: it goes after yours.
 - A prompt can carry images, as Claude Code's does: each is a file under the repo's `iso/images/`,
   shown in the text as `[Image #n]`, and travels by path (the queue and the journal keep paths, not
