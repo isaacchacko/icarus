@@ -91,9 +91,13 @@ function M.action(name, action)
   return config and type(config.actions) == "table" and resolve(name, config.actions[action]) or nil
 end
 
--- A checkout of the repo here: the first of the projects workspaces used or the clones found
--- (store.projects) whose origin is the repo.
+-- A checkout of the repo here: the one it was made a project from, else the first of the projects
+-- workspaces used or the clones found (store.projects) whose origin is the repo.
 local function find_checkout(name)
+  local recorded = repos.project_dir(name)
+  if recorded then
+    return recorded
+  end
   for _, project in ipairs(store.projects()) do
     local dir = vim.fs.normalize(project)
     if repos.of(dir) == name then

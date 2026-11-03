@@ -215,6 +215,10 @@ local function repo_dir(repo)
   end
   local repos = require("isovim.repos")
   local want = repos.normalize(repo) or fail(("--repo %s is neither a dir nor owner/repo"):format(repo))
+  local recorded = repos.project_dir(want)
+  if recorded then
+    return vim.uv.fs_realpath(recorded)
+  end
   local dirs = vim.tbl_map(function(ws)
     return ws.dir
   end, store.list())

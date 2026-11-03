@@ -1093,6 +1093,14 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
       table.insert(groups, #groups, made)
     end
   end
+  -- And one made a project here with nothing in it yet (<leader>iC).
+  for _, key in ipairs(not host and repos.projects() or {}) do
+    if not by_repo[key] then
+      local made = { key = key, kind = "repo", name = key, agents = {}, style = repos.style(key) }
+      by_repo[key] = made
+      table.insert(groups, #groups, made)
+    end
+  end
   -- Root mode, as iso rootmode set it here; another host's is guessed from its roots.
   local rootmode = not host and require("isovim.rootmode") or nil
   local has_root = rootmode and rootmode.on("host") or (not rootmode and groups[1] and groups[1].kind == "root")
@@ -1924,6 +1932,7 @@ local LIST_KEYS = {
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
+  { "C", "isovim_create_project", "make a project from a clone's dir, its glyph and color picked; on one that's set up, change them" },
   { "P", "isovim_open_prs", "the project's PRs surface (the root's in Root)" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
@@ -2675,6 +2684,9 @@ M.actions = {
   isovim_toggle_hidden = toggle("show_hidden"),
   -- P: the PRs surface of the row's repo, or the root's; from General, Terminals or a row of
   -- neither, the current scope's.
+  isovim_create_project = function()
+    require("isovim.keys").create_project()
+  end,
   isovim_open_prs = function(item)
     local key = item and (item.repo_key or item.group_key or (item.ws and not item.host and M.group_key(item.ws)))
     if not key or key == GENERAL_KEY or item.kind == "terminals" or item.kind == "terminal" then

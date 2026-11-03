@@ -35,6 +35,7 @@ for _, accent in ipairs(ACCENTS) do
   M.palette[accent[1]] = accent[2]
   DEFAULT_PALETTE[#DEFAULT_PALETTE + 1] = accent[1]
 end
+M.palette_names = DEFAULT_PALETTE
 
 -- "owner/repo" for GitHub, "host/path" for other hosts, the last two folders for a local path, all
 -- lowercase (hosts ignore case); nil when the URL doesn't give a name safe as a path under ~/.isovim/repos.
@@ -177,6 +178,34 @@ function M.list()
   end
   table.sort(names)
   return names
+end
+
+-- A repo made a project here with no agent yet (<leader>iC): the clone it's in, kept in iso/ rather
+-- than its config, which syncs to hosts where that dir means nothing.
+local function project_file(name)
+  return store.path(name) .. "/project.json"
+end
+
+function M.add_project(name, dir)
+  vim.fn.mkdir(store.path(name), "p")
+  vim.fn.writefile({ vim.json.encode({ dir = vim.fn.fnamemodify(dir, ":~") }) }, project_file(name))
+end
+
+-- The clone recorded for a repo, while it's still there.
+---@return string?
+function M.project_dir(name)
+  local ok, lines = pcall(vim.fn.readfile, project_file(name))
+  local decoded, project = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  local dir = decoded and type(project) == "table" and type(project.dir) == "string" and vim.fs.normalize(project.dir)
+  return dir and vim.fn.isdirectory(dir) == 1 and dir or nil
+end
+
+-- The repos made projects on this host.
+---@return string[]
+function M.projects()
+  return vim.tbl_filter(function(key)
+    return vim.uv.fs_stat(project_file(key)) ~= nil
+  end, require("isovim.surfaces").repos())
 end
 
 -- The repo's config: {} when it has no file, nil when its file isn't a JSON object.

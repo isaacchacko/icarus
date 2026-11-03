@@ -92,6 +92,7 @@ end
 local function actions()
   return {
     { "s", spawn, keys.GROUP, "s" },
+    { "c", keys.create_project, keys.GROUP, "C" },
     { "p", keys.jump, keys.GLOBAL, "<leader><leader>" },
     { "j", require("isovim.jump").picker, keys.GROUP, "j" },
     { "i", function()

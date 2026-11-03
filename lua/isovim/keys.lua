@@ -174,6 +174,13 @@ function M.scopes()
       list[#list + 1] = entry.scope
     end
   end
+  -- The ones with no agent yet.
+  for _, key in ipairs(repos.projects()) do
+    if not seen[key] then
+      seen[key] = true
+      list[#list + 1] = key
+    end
+  end
   return vim.list_extend(list, { scope.GENERAL, scope.TERMINALS })
 end
 
@@ -646,6 +653,127 @@ function M.prs(key)
   surfaces.open(surfaces.prs_entry(key, true))
 end
 
+-- The clone text names and what it's called: its top dir and owner/repo; nil and why it's none.
+---@return string? top, string? name_or_why
+local function clone_at(text)
+  local dir = vim.uv.fs_realpath(vim.fs.normalize(vim.trim(text)))
+  if not dir or vim.fn.isdirectory(dir) == 0 then
+    return nil, text .. " isn't a directory"
+  end
+  local top = vim.system({ "git", "-C", dir, "rev-parse", "--show-toplevel" }, { text = true }):wait()
+  if top.code ~= 0 then
+    return nil, dir .. " isn't a git clone"
+  end
+  local root = vim.trim(top.stdout)
+  local url = repos.remote_url(root)
+  local name = url and repos.normalize(url)
+  if not url then
+    return nil, root .. " has no origin"
+  elseif not (name and store.valid_key(name)) then
+    return nil, ("%s's origin (%s) gives no owner/repo"):format(root, url)
+  end
+  return root, name
+end
+
+-- A list to choose from, cancelled by Esc; an item with no value asks for one in the prompt it names.
+local function choose(title, items, done)
+  Snacks.picker.pick({
+    source = "isovim_project_style",
+    title = title,
+    layout = { preset = "select" },
+    items = items,
+    format = function(item)
+      return item.chunks
+    end,
+    confirm = function(picker, item)
+      picker:close()
+      if not item then
+        return
+      end
+      vim.schedule(function()
+        if item.value then
+          return done(item.value)
+        end
+        vim.ui.input({ prompt = item.prompt }, function(text)
+          local value = text and item.check(vim.trim(text))
+          if text and not value then
+            return toast(("%s isn't %s: nothing changed"):format(vim.trim(text), item.wanted), "warn")
+          end
+          return value and done(value)
+        end)
+      end)
+    end,
+  })
+end
+
+local function glyph_items(current, is_current)
+  local items = { { value = current, text = "repo current", chunks = { { current, "Special" }, { "  " .. (is_current and "current" or "default"), "Comment" } } } }
+  local seen = { [current] = true }
+  local words = vim.tbl_keys(icons.words)
+  table.sort(words)
+  for _, word in ipairs(words) do
+    local glyph = icons.words[word]
+    if not seen[glyph] then
+      seen[glyph] = true
+      items[#items + 1] = { value = glyph, text = word, chunks = { { glyph, "Special" }, { "  " .. word } } }
+    end
+  end
+  items[#items + 1] = { text = "type a glyph", prompt = "Glyph: ", wanted = "a glyph up to two cells wide", chunks = { { "…", "Comment" }, { "  type any glyph", "Comment" } },
+    check = function(text)
+      return text ~= "" and vim.fn.strdisplaywidth(text) <= 2 and text or nil
+    end }
+  return items
+end
+
+local function color_items(glyph, current)
+  local function item(name, label)
+    local hl = repos.highlight(name)
+    return { value = name, text = name, chunks = { { glyph, hl }, { "  " }, { name, hl }, label and { "  " .. label, "Comment" } or nil } }
+  end
+  local items = current and { item(current, "current") } or {}
+  for _, name in ipairs(repos.palette_names) do
+    if name ~= current then
+      items[#items + 1] = item(name)
+    end
+  end
+  items[#items + 1] = { text = "type a color", prompt = "Color (#rrggbb): ", wanted = "#rrggbb", chunks = { { "…", "Comment" }, { "  type #rrggbb", "Comment" } },
+    check = function(text)
+      return text:match("^#%x%x%x%x%x%x$") and text:lower() or nil
+    end }
+  return items
+end
+
+-- <leader>iC: makes a project of a clone: its dir, then a glyph and a color, Esc at any step leaving
+-- everything as it was. No agent starts: s on its row spawns one in it, from the clone recorded here.
+-- On a repo already set up, its glyph and color come first and it's only those that change.
+function M.create_project()
+  local known = repos.project_dir(current_scope())
+  vim.ui.input({ prompt = "Project's dir (a git clone): ", default = known and vim.fn.fnamemodify(known, ":~") or "~/", completion = "dir" }, function(text)
+    if not text or vim.trim(text) == "" then
+      return
+    end
+    local dir, name = clone_at(text)
+    if not dir then
+      return toast(name .. ": no project made", "warn")
+    end
+    local config = repos.config(name)
+    if not config then
+      return toast(("%s's config.json isn't JSON: fix it first"):format(name), "warn")
+    end
+    local glyph = type(config.glyph) == "string" and config.glyph ~= "" and config.glyph or nil
+    choose("Glyph · " .. name, glyph_items(glyph or repos.defaults().glyph, glyph ~= nil), function(picked)
+      local color = type(config.color) == "string" and config.color or nil
+      choose("Color · " .. name, color_items(picked, color), function(chosen)
+        config.glyph, config.color = picked, chosen
+        repos.set_config(name, config)
+        repos.add_project(name, dir)
+        sidebar().reveal_repo_inbox(nil, name)
+        toast(("%s is a project, from %s: s spawns in it"):format(name, vim.fn.fnamemodify(dir, ":~")))
+      end)
+    end)
+  end)
+end
+
 -- The prompt queue of the ACP agent whose chat you're in, else the one on screen: its window under
 -- the chat, opened even when nothing waits.
 function M.prompt_queue()
@@ -738,6 +866,7 @@ M.GROUP = {
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
   { "P", M.pick_repo, "pick a project (or Root)" },
+  { "C", M.create_project, "make a project from a clone's dir, with its glyph and color" },
   { "o", function()
     M.prs()
   end, "the project's PRs surface" },

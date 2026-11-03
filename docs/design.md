@@ -634,7 +634,13 @@ chat, which isn't a project, the one before; it survives restarts with the scope
 host's is kept apart. So nothing's hidden silently, the row says how many other projects have
 something that needs you. A file surface's tab is its project's wherever the file is, so opening it
 doesn't move the list. On Terminals, Enter on a terminal opens it, `n` makes one, `r` / `d` / `o`
-rename, remove and open its port, and `<leader>iT` lands there. In the host's Inbox, each
+rename, remove and open its port, and `<leader>iT` lands there. `<leader>iC` makes a project without
+an agent: a dir that's a git clone with an origin (anything else is refused and nothing's made; it
+doesn't clone or `git init`), a glyph and a color, Esc at any step changing nothing. The glyph and
+color go in `~/.isovim/repos/<owner>/<repo>/config.json`, and the clone's dir, this host's alone, in
+its `iso/project.json`, which is what puts it in the switcher with nothing in it and where a later
+`s` or `iso spawn --repo owner/repo` finds the clone. No agent starts. On a repo already set up, its
+current glyph and color come first and only those change. In the host's Inbox, each
 surface waiting on you is a row of its own, in the order `<leader>in` walks them: its repo's glyph in
 its color and short name (root's or general's for theirs), then the surface's mark and title, cut to
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
@@ -833,6 +839,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `b` | the previous agent |
 | `p` | the previous project, at the agent last open there |
 | `P` | pick a project (or Root) |
+| `C` | make a project from a clone's dir, with its glyph and color (see The sidebar); `C` in the sidebar and `c` on the landing too |
 | `[` / `]` | the sidebar's previous / next project |
 | `o` | the current project's PRs surface |
 | `g` / `T` | general / terminals |
