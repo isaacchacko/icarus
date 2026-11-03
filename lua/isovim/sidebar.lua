@@ -227,6 +227,8 @@ local KINDS = {
         row[#row + 1] = { "  ● waiting on you", "DiagnosticWarn" }
       elseif item.unread then
         row[#row + 1] = { "  ● new reply", "DiagnosticWarn" }
+      elseif item.resolved_unread then
+        row[#row + 1] = { "  ● resolved", "DiagnosticWarn" }
       end
       row[#row + 1] = item.running_mark
       return row
@@ -507,10 +509,12 @@ function M.surface_chunks(entry)
   elseif kind == "thread" then
     -- How many posts, then whose turn it is: a question or the thread waiting on you (a dot while a
     -- reply's unread), the router's turn on it, a reply you haven't read that needs nothing from you,
-    -- the worker it waits on. A resolved one, its outcome.
+    -- the worker it waits on. A resolved one, its outcome, marked till you've read what an agent resolved.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
     if entry.resolved then
-      row[#row + 1] = { "  ✓ " .. vim.trim((entry.outcome or "resolved"):gsub("%s+", " ")), "Comment" }
+      local outcome = entry.outcome and vim.trim((entry.outcome:gsub("%s+", " ")))
+      row[#row + 1] = entry.needs_you and { "  ● resolved" .. (outcome and (": " .. outcome) or ""), "DiagnosticWarn" }
+        or { "  ✓ " .. (outcome or "resolved"), "Comment" }
     elseif (entry.pending or 0) > 0 then
       row[#row + 1] = { "  ? waiting on you", "DiagnosticWarn" }
     elseif entry.working then
@@ -921,6 +925,9 @@ local function group_sections(items, base, host, key, opts)
       log = entry
     elseif kind == "thread" and entry.resolved then
       resolved[#resolved + 1] = opts.threads and entry or nil
+      if opts.threads and entry.needs_you then
+        inbox[#inbox + 1] = entry
+      end
     elseif kind == "thread" and opts.threads then
       threads[#threads + 1] = entry
       if entry.waiting_on == "user" then
@@ -973,6 +980,8 @@ local function group_sections(items, base, host, key, opts)
     return entry.new_reply and not entry.marked_unread
   end), on_you = vim.iter(threads):any(function(entry)
     return entry.waiting_on == "user"
+  end), resolved_unread = vim.iter(resolved):any(function(entry)
+    return entry.needs_you
   end) })
   local surfaces_list = vim.list_extend(boards, others)
   section("Surfaces", #surfaces_list, function()
@@ -2654,14 +2663,14 @@ M.actions = {
     end
     require("isovim.keys").prs(key)
   end,
-  -- U: the row's surface or thread back in the Inbox until it's opened.
+  -- D: the row's thread marked read. U: the row's surface, thread or agent, read or unread.
   isovim_dismiss_thread = function(item)
     local thread = item and item.surface and item.surface.type == "thread" and item.surface
     if not thread then
       return vim.api.nvim_echo({ { "D takes a thread out of the Inbox", "Comment" } }, false, {})
     elseif item.host then
       return Snacks.notify.info(("That's on %s; dismiss it there"):format(item.host), { title = "isovim" })
-    elseif thread.resolved then
+    elseif thread.resolved and not thread.needs_you then
       return vim.api.nvim_echo({ { "it's resolved: it's not in the Inbox", "Comment" } }, false, {})
     end
     M.surfaces().mark_read(thread)

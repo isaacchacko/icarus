@@ -1366,8 +1366,10 @@ function RENDER.resolved(chat, entry)
   chat.resolved = { by = entry.by, outcome = entry.outcome }
   local body = entry.outcome and boxes.markdown(entry.outcome, box_width(chat) - 4) or { boxes.seg("No outcome given.", "IsovimPrDim") }
   local who = entry.by == "user" and "you" or (entry.by or "?"):match("([^/]+)$")
-  draw_box(chat, boxes.cat(boxes.seg("✓ resolved", "IsovimPrOk"), boxes.seg((" by %s · %s"):format(who, clock(entry.at)), "IsovimPrDim")),
+  local row = draw_box(chat, boxes.cat(boxes.seg("✓ resolved", "IsovimPrOk"), boxes.seg((" by %s · %s"):format(who, clock(entry.at)), "IsovimPrDim")),
     body, "IsovimPrOk")
+  -- Where opening it lands (M.open_thread).
+  chat.outcome_mark = vim.api.nvim_buf_set_extmark(chat.buf, BOXES, row, 0, {})
   update_banner(chat)
 end
 
@@ -1438,7 +1440,7 @@ function RENDER.renamed(chat, entry)
 end
 
 function RENDER.reopened(chat, entry)
-  chat.resolved = nil
+  chat.resolved, chat.outcome_mark = nil, nil
   add_block(chat, { ("opened again by %s · %s"):format(entry.by == "user" and "you" or entry.by or "?", clock(entry.at)) }, "IsovimPrDim")
   update_banner(chat)
 end
@@ -1818,7 +1820,7 @@ reset = function(chat)
   chat.history_images = {}
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
   chat.busy, chat.handover, chat.resolved, chat.banner, chat.thread_info = false, false, nil, nil, nil
-  chat.related_rows = nil
+  chat.related_rows, chat.outcome_mark = nil, nil
   if vim.api.nvim_buf_is_loaded(chat.buf) then
     for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS }) do
       vim.api.nvim_buf_clear_namespace(chat.buf, ns, 0, -1)
@@ -3502,7 +3504,7 @@ end
 function M.dismiss_thread()
   local chat = by_buf(vim.api.nvim_get_current_buf())
   local entry = chat and chat.thread and thread_surface(chat)
-  if entry and not entry.resolved then
+  if entry and (not entry.resolved or entry.needs_you) then
     require("isovim.surfaces").mark_read(entry)
   end
 end
@@ -3538,9 +3540,11 @@ function M.open_thread(repo, id, qid)
   local box = qid and vim.iter(chat.boxes):find(function(each)
     return each.id == id .. "-" .. qid
   end)
-  local at = box and vim.api.nvim_buf_get_extmark_by_id(chat.buf, BOXES, box.mark, {})[1]
+  -- A question it was opened at, else a resolved thread's outcome, the last thing said.
+  local mark = box and box.mark or (not qid and chat.outcome_mark)
+  local at = mark and vim.api.nvim_buf_get_extmark_by_id(chat.buf, BOXES, mark, {})[1]
   if at then
-    -- In normal mode on the question, its options under the cursor.
+    -- In normal mode at its top, what it says under the cursor.
     vim.schedule(function()
       vim.cmd.stopinsert()
       local win = vim.fn.bufwinid(chat.buf)

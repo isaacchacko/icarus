@@ -345,6 +345,12 @@ host; General, Root and Terminals have none, and starting one there says why.
   the supervisor once it's back (every 10s) end any turn 15s or older whose router isn't mid-turn:
   `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says
   the router stopped during it, since it may not have answered; a retry of the turn clears it.
+- **Resolved by an agent:** so a thread doesn't quietly disappear, one an agent resolves (`tell` on
+  its `resolved` entry) is unread until you open it. It's in the repo's and host's Inbox and in
+  Threads, even past the last 5, its row `● resolved: <outcome>`; opening it, `U` or `D` clears it,
+  and it joins the resolved list. It isn't your turn, as you needn't reply. Opening any resolved
+  thread lands in normal mode on its outcome's box. One you resolved isn't marked, and the router
+  isn't told of any of this. Threads resolved before this have no `tell`, so aren't marked.
 - **Parents and children:** a thread can have a parent in the same repo: `parent` on its header, or
   `parent {on: <id>|none, by}` to change it, refusing a cycle. Children aren't stored; they're found
   by scanning the repo's threads, resolved ones included. Under the banner, only when they exist,

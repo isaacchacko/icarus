@@ -23,7 +23,8 @@
 --   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
 --                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
 --   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
---                   one lists (resolved ones don't), waiting on you while a router post is unread
+--                   one lists, waiting on you while a router post is unread, then those an agent
+--                   resolved that you haven't read, and the last few resolved
 -- The PRs surface is isovim's own, no file: M.list adds it for a repo with PRs registered (M.prs_entry).
 -- So is the decision log, M.list adding it for a scope whose root has decided something: decisions.jsonl
 -- in iso/, a line a decision (M.decisions), which no scan reads. It's never in an Inbox.
@@ -575,39 +576,10 @@ local function worker_name(address)
   return record and record.name or id or address
 end
 
--- How many resolved threads the sidebar lists, under the open ones.
-local RESOLVED_LISTED = 5
-
--- What a thread's row calls the worker it waits on: its name, else its id.
-local function worker_name(address)
-  local ws, id = address:match("^(.*)/([^/]+)$")
-  local record = ws and store.agent(ws, id)
-  return record and record.name or id or address
-end
-
--- How many resolved threads the sidebar lists, under the open ones.
-local RESOLVED_LISTED = 5
-
--- What a thread's row calls the worker it waits on: its name, else its id.
-local function worker_name(address)
-  local ws, id = address:match("^(.*)/([^/]+)$")
-  local record = ws and store.agent(ws, id)
-  return record and record.name or id or address
-end
-
--- How many resolved threads the sidebar lists, under the open ones.
-local RESOLVED_LISTED = 5
-
--- What a thread's row calls the worker it waits on: its name, else its id.
-local function worker_name(address)
-  local ws, id = address:match("^(.*)/([^/]+)$")
-  local record = ws and store.agent(ws, id)
-  return record and record.name or id or address
-end
-
 -- The repo's threads as surfaces (isovim.threads): named by id, titled, the open ones newest first,
--- waiting on you while a router post is past what you've read or it's your turn, then the last few
--- resolved, the latest first, which wait on nobody.
+-- waiting on you while a router post is past what you've read or it's your turn, then those an agent
+-- resolved that you haven't read, unread until you open them, then the last few other resolved, the
+-- latest first.
 ---@return isovim.Surface[]
 function M.threads(repo)
   local threads = require("isovim.threads")
@@ -681,7 +653,14 @@ function M.threads(repo)
   table.sort(resolved, function(a, b)
     return (a.resolved_at or 0) > (b.resolved_at or 0)
   end)
-  for _, info in ipairs(vim.list_slice(resolved, 1, RESOLVED_LISTED)) do
+  local function unread(info)
+    return info.resolved_seq ~= nil and info.resolved_seq > (seen[info.id] or 0)
+  end
+  local listed = vim.tbl_filter(unread, resolved)
+  vim.list_extend(listed, vim.list_slice(vim.tbl_filter(function(info)
+    return not unread(info)
+  end, resolved), 1, RESOLVED_LISTED))
+  for _, info in ipairs(listed) do
     list[#list + 1] = {
       repo = repo,
       name = info.id,
@@ -692,7 +671,7 @@ function M.threads(repo)
       error_file = "",
       created = info.at or 0,
       posts = info.posts,
-      needs_you = false,
+      needs_you = unread(info),
       resolved = true,
       outcome = info.outcome,
       pending = 0,
@@ -1252,7 +1231,7 @@ local function unmarkable(entry)
       or "it waits on you until it's answered: its asker is blocked on it"
   elseif entry.type == "decisions" then
     return "it's a log: nothing in it waits on you"
-  elseif entry.type == "thread" and entry.resolved then
+  elseif entry.type == "thread" and entry.resolved and not entry.needs_you then
     return "it's resolved: r in it opens it again"
   elseif entry.type == "page" and (entry.waiting or 0) > 0 then
     return entry.waiting == 1 and "a comment here waits on your reply" or ("%d comments here wait on your reply"):format(entry.waiting)

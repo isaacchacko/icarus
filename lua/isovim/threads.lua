@@ -11,7 +11,8 @@
 --   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?, keeps_wait?}
 --                                                   no_reply: it needs nothing from the user (below);
 --                                                   keeps_wait: the turn that made it also marked a worker
---   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
+--   {kind = "resolved", by, outcome?, tell?, at}, {kind = "reopened", by, at}   tell: an agent resolved
+--                                                   it, so it's unread until the user opens it
 --   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
 --   {kind = "answered", qid, labels, other?, by, at}, {kind = "raised", qid, by, why?, at}
@@ -109,9 +110,10 @@ function M.summary(entries)
       end
     elseif entry.kind == "resolved" then
       info.status, info.outcome, info.resolved_at = "resolved", entry.outcome, entry.at
+      info.resolved_seq = entry.tell and entry.seq or nil
       waits(nil)
     elseif entry.kind == "reopened" then
-      info.status, info.outcome = "open", nil
+      info.status, info.outcome, info.resolved_seq = "open", nil, nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
       info.title = entry.title
     elseif entry.kind == "parent" then
@@ -349,7 +351,7 @@ function M.resolve(repo, id, by, outcome, reopen)
     return nil, id .. " is resolved already"
   end
   outcome = outcome and vim.trim(outcome) ~= "" and vim.trim(outcome) or nil
-  append(repo, id, { kind = "resolved", by = by, outcome = outcome })
+  append(repo, id, { kind = "resolved", by = by, outcome = outcome, tell = by ~= "user" or nil })
   return "resolved"
 end
 
@@ -468,8 +470,8 @@ function M.mark_seen(repo, id, seq)
   file:write(vim.json.encode(seen))
   file:close()
   vim.uv.fs_rename(tmp, path)
-  local entries = M.read(repo, id) or {}
-  return M.summary(entries).last_reply > was
+  local info = M.summary(M.read(repo, id) or {})
+  return info.last_reply > was or (info.resolved_seq or 0) > was
 end
 
 -- D: the user takes the thread out of the Inbox without replying or resolving it, whether it waits on
