@@ -300,7 +300,8 @@ host; General, Root and Terminals have none, and starting one there says why.
   anytime with `iso router thread post <id> "..."`, opens a thread for a new topic itself with
   `iso router thread new "<title>" ["first post"]` rather than bury it in its chat, and resolves one
   with `iso router thread resolve <id> ["outcome"]`; `thread ls [--all]` and `thread show <id>` read
-  them, which any role may; only routers (and you, from a shell) make, post and resolve.
+  them. Any role may do all of this, workers posting on any thread: the router owns them, but only
+  the bypass's rules below are enforced.
 - **Questions in a thread:** `iso router thread ask <id> <json|file|->` asks the user in the thread
   rather than the repo's Inbox: the same JSON as `surface question`, appended as `ask {qid, question,
   options, multi, other, by}`, and it blocks until it's answered, then prints the answer (run it in

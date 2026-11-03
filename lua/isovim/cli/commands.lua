@@ -893,8 +893,10 @@ M.role_actions = {
                                      a new title (posts already sent keep their tags)
        iso thread ls [--all]         the repo's open threads (--all: resolved too)
        iso thread show <id>          a thread's posts
-                                     Routers make, post, rename and resolve threads; any other
-                                     role reads them (ls, show)]=],
+                                     Any role can make, post on, rename and resolve threads
+                                     and read them (ls, show); routers own them. Only a router
+                                     can make, move or end a bypass, and a worker can't resolve
+                                     a bypassed thread]=],
   },
   promote = { name = "promote", module = "roles",
     args = { "<agent>|router|repo-root|root", "router|repo-root|root", "<text>" },

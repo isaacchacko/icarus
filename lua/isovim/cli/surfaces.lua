@@ -405,7 +405,8 @@ function M.page(args)
 end
 
 -- iso <role> thread new|post|waiting|parent|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
--- repo's. Routers (and the user, from a shell) make, post and resolve them; other roles read.
+-- repo's. Any role may make, post and resolve them, workers posting what they found as they do; only
+-- the bypass rules are enforced: a router alone moves one, and a worker can't resolve a bypassed thread.
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
