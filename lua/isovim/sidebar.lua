@@ -36,7 +36,7 @@ end
 -- [ and ]); how many others have something that needs you, so nothing's hidden silently; how many
 -- of its agents run.
 function M.switcher_row(item, glyph, glyph_hl, label)
-  local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "‹ ", "Comment" }, { glyph, glyph_hl }, { " " }, { label, "Title" }, { " ›", "Comment" } }
+  local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "‹ ", "Comment" }, { glyph, glyph_hl }, { " " }, { label, glyph_hl }, { " ›", "Comment" } }
   if item.others > 0 then
     row[#row + 1] = { ("  +%d need you"):format(item.others), "DiagnosticWarn" }
   end
