@@ -317,6 +317,16 @@ function M.register(buf, row, col, end_col, addr, parts)
   return id
 end
 
+-- Forgets the chips on rows from..to, about to be written over.
+function M.forget(buf, from, to)
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, { from, 0 }, { to - 1, -1 }, {})) do
+    if drawn[buf] then
+      drawn[buf][mark[1]] = nil
+    end
+  end
+  vim.api.nvim_buf_clear_namespace(buf, NS, from, to)
+end
+
 -- Writes into buf with fn: the buffer made modifiable meanwhile (the chat passes its own writer,
 -- which keeps its guard and following right).
 local function plain_write(buf)
@@ -435,8 +445,9 @@ end
 local function walk(buf, opts, direction)
   local last = opts.last and opts.last() or vim.api.nvim_buf_line_count(buf) - 1
   local stops = opts.stops and opts.stops() or {}
-  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, 0, -1, {})) do
-    if (drawn[buf] or {})[mark[1]] then
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, 0, -1, { details = true })) do
+    -- One whose text was written over has closed up: it's no chip now.
+    if (drawn[buf] or {})[mark[1]] and (mark[4].end_col or mark[3]) > mark[3] then
       stops[#stops + 1] = { mark[2], mark[3] }
     end
   end

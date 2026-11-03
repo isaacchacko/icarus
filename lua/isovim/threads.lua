@@ -5,7 +5,9 @@
 --
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
---   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
+--   {kind = "thread", id, title, created_by, at, status = "open", parent?}    its header, first
+--   {kind = "parent", on = <id>|"none", by, at}     its parent thread from then on (children aren't
+--                                                   stored: M.related finds them by scanning)
 --   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?}   no_reply: it needs
 --                                                   nothing from the user (below)
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
@@ -80,7 +82,7 @@ end
 function M.summary(entries)
   local head = entries[1] or {}
   local info = { id = head.id, title = head.title or head.id or "?", created_by = head.created_by, at = head.at,
-    status = head.status or "open", posts = 0, last_reply = 0, working = false }
+    status = head.status or "open", posts = 0, last_reply = 0, working = false, parent = head.parent }
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
   end
@@ -106,6 +108,8 @@ function M.summary(entries)
       info.status, info.outcome = "open", nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
       info.title = entry.title
+    elseif entry.kind == "parent" then
+      info.parent = entry.on ~= "none" and entry.on or nil
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
       info.working_at = entry.at
@@ -198,10 +202,20 @@ local function append(repo, id, entry)
   return entry
 end
 
--- A new thread in repo, titled title, by (user or an agent's address); its id, or nil and why.
+-- Why parent can't be a thread's parent here, or nil: it's a thread of the same repo, named by id.
+local function parent_refusal(repo, parent)
+  if not parent:match("^t%d+$") then
+    return ("the parent is a thread of this repo, by its id (t3), not %s"):format(parent)
+  elseif not M.read(repo, parent) then
+    return ("%s has no thread %s"):format(repo, parent)
+  end
+end
+
+-- A new thread in repo, titled title, by (user or an agent's address), under parent if given; its
+-- id, or nil and why.
 ---@return string? id, string? err
-function M.new(repo, title, by)
-  local why = M.refusal(repo)
+function M.new(repo, title, by, parent)
+  local why = M.refusal(repo) or (parent and parent_refusal(repo, parent))
   if why then
     return nil, why
   end
@@ -222,7 +236,7 @@ function M.new(repo, title, by)
     fd = vim.uv.fs_open(M.file(repo, id), "wx", 420)
   until fd
   vim.uv.fs_close(fd)
-  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open" })
+  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open", parent = parent })
   return id
 end
 
@@ -334,6 +348,57 @@ function M.rename(repo, id, by, title)
   end
   append(repo, id, { kind = "renamed", by = by, title = title })
   return title
+end
+
+-- Puts the thread under parent, or under nothing ("none"), refusing a cycle.
+---@return boolean? set, string? err
+function M.set_parent(repo, id, parent, by)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  if parent ~= "none" then
+    local why = parent_refusal(repo, parent)
+    if why then
+      return nil, why
+    end
+    -- Up from the new parent: reaching this thread would make a cycle.
+    local at, seen = parent, {}
+    while at and not seen[at] do
+      if at == id then
+        return nil, parent == id and (id .. " can't be its own parent")
+          or ("%s is under %s already: that would be a cycle"):format(parent, id)
+      end
+      seen[at] = true
+      local above = M.read(repo, at)
+      at = above and M.summary(above).parent
+    end
+  end
+  append(repo, id, { kind = "parent", on = parent, by = by })
+  return true
+end
+
+-- The thread's parent, if any, and its children, oldest first, resolved ones too.
+---@return string? parent, string[] children
+function M.related(repo, id)
+  local parent, children = nil, {}
+  for _, info in ipairs(M.list(repo, true)) do
+    if info.id == id then
+      parent = info.parent
+    elseif info.parent == id then
+      table.insert(children, 1, info.id)
+    end
+  end
+  return parent, children
+end
+
+-- The thread the router's running turn is on, if there's just the one: a thread a router makes
+-- during it goes under it by default. No command needs telling, as a turn is marked in its thread.
+function M.turn_thread(repo)
+  local working = vim.tbl_filter(function(info)
+    return info.working
+  end, M.list(repo))
+  return #working == 1 and working[1].id or nil
 end
 
 -- The router's turn on the thread started or ended (the supervisor's); died: it stopped mid-turn.
@@ -519,8 +584,9 @@ function M.listen(repo, say)
 end
 
 -- Follows a thread file: on_entry(entry) for each line from line from+1 on, as it's appended
--- (watching its folder), on_reset() if the file shrinks or goes. Returns stop and where it's read to.
-function M.follow(repo, id, on_entry, on_reset, from)
+-- (watching its folder), on_reset() if the file shrinks or goes, on_other() when another thread's
+-- file changes. Returns stop and where it's read to.
+function M.follow(repo, id, on_entry, on_reset, from, on_other)
   local read = from or 0
   local watcher = vim.uv.new_fs_event()
   local stopped = false
@@ -548,6 +614,8 @@ function M.follow(repo, id, on_entry, on_reset, from)
     watcher:start(M.dir(repo), {}, vim.schedule_wrap(function(err, name)
       if not err and (name == nil or name == id .. ".jsonl") then
         drain()
+      elseif not err and on_other and name:match("%.jsonl$") then
+        on_other()
       end
     end))
   end

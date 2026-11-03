@@ -809,7 +809,7 @@ M.role_actions = {
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
     help = [=[
-       iso thread new "<title>" ["first post"] [--no-reply]
+       iso thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none]
                                      open a thread for each ask that's different, rather
                                      than burying it in your own chat; prints its id (t1,
                                      t2...).
@@ -821,6 +821,12 @@ M.role_actions = {
                                      for you (tool calls stay in your chat). A thread
                                      the user stopped at the title of comes the same
                                      way, the title as their first post
+       iso thread parent <id> <parent>|none
+                                     put a thread under another of this repo, refusing a
+                                     cycle. thread new takes --parent, and during your
+                                     turn on a thread it goes under that thread unless
+                                     --parent none. Its parent and children show at the
+                                     top of its view
        iso thread post <id> <text...> [--image <file>]... [--no-reply]
                                      post to a thread anytime: a follow-up, or what a
                                      worker finished that it was about. After a post

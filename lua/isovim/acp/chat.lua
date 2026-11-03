@@ -1239,6 +1239,55 @@ local function update_banner(chat)
   chat.drawing_banner = nil
 end
 
+-- The rows under the banner: one for the thread's parent and one for its children, only when they
+-- exist, as link chips with their state (isovim.links), so ]l and <Tab> work on them.
+local function update_related(chat)
+  if not (chat.thread and chat.banner) or safe.text_locked() then
+    return
+  end
+  local links = require("isovim.links")
+  local function row(lead, ids)
+    local text, chips = lead, {}
+    for i, id in ipairs(ids) do
+      local addr = ("iso:thread/%s#%s"):format(chat.ws, id)
+      local parts = links.parts(addr)
+      local chip = table.concat(vim.tbl_map(function(part)
+        return part[1]
+      end, parts))
+      chips[i] = { #text, #text + #chip, addr, parts }
+      text = text .. chip .. (i < #ids and "   " or "")
+    end
+    return { text = text, lead = #lead, chips = chips }
+  end
+  local parent, children = threads.related(chat.ws, chat.thread)
+  local rows = {}
+  if parent then
+    rows[#rows + 1] = row("↑ parent  ", { parent })
+  end
+  if #children > 0 then
+    rows[#rows + 1] = row("↓ children  ", children)
+  end
+  local texts = vim.tbl_map(function(each)
+    return each.text
+  end, rows)
+  local had = chat.related_rows or 0
+  if vim.deep_equal(texts, vim.api.nvim_buf_get_lines(chat.buf, 2, 2 + had, false)) then
+    return
+  end
+  edit(chat, function(buf)
+    links.forget(buf, 2, 2 + had)
+    vim.api.nvim_buf_clear_namespace(buf, NS, 2, 2 + had)
+    vim.api.nvim_buf_set_lines(buf, 2, 2 + had, false, texts)
+    for i, each in ipairs(rows) do
+      span(buf, 1 + i, 0, each.lead, "IsovimPrDim", 150)
+      for _, chip in ipairs(each.chips) do
+        links.register(buf, 1 + i, chip[1], chip[2], chip[3], chip[4])
+      end
+    end
+  end)
+  chat.related_rows = #rows
+end
+
 -- A rounded box of body lines under title, as a block; returns its first row.
 local function draw_box(chat, title, body, border, tint, mine)
   local boxes = require("isovim.boxes")
@@ -1283,6 +1332,11 @@ function RENDER.thread(chat, entry)
     end
   end
   chat.banner = true
+  update_related(chat)
+end
+
+function RENDER.parent(chat)
+  update_related(chat)
 end
 
 function RENDER.post(chat, entry)
@@ -1527,7 +1581,8 @@ function M.bar_parts(chat)
   end
   if chat.pending_title or chat.thread then
     if chat.pending_title then
-      add(THREAD_GLYPH .. " a new thread in " .. chat.ws .. ": its title first", "IsovimAcpSpinner")
+      add(THREAD_GLYPH .. (chat.pending_parent and (" a new thread under " .. chat.pending_parent) or (" a new thread in " .. chat.ws))
+        .. ": its title first", "IsovimAcpSpinner")
     elseif chat.renaming then
       add("✎ its new title: <CR> renames it · <C-c> keeps " .. (chat.title or chat.thread), "IsovimAcpSpinner")
     elseif #chat.boxes > 0 then
@@ -1763,10 +1818,12 @@ reset = function(chat)
   chat.history_images = {}
   chat.marks, chat.boxes, chat.options, chat.thought = {}, {}, {}, nil
   chat.busy, chat.handover, chat.resolved, chat.banner, chat.thread_info = false, false, nil, nil, nil
+  chat.related_rows = nil
   if vim.api.nvim_buf_is_loaded(chat.buf) then
     for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS }) do
       vim.api.nvim_buf_clear_namespace(chat.buf, ns, 0, -1)
     end
+    require("isovim.links").forget(chat.buf, 0, vim.api.nvim_buf_line_count(chat.buf))
     edit(chat, function(buf)
       vim.api.nvim_buf_set_lines(buf, 0, body_end(chat), false, { "" })
     end)
@@ -2503,6 +2560,11 @@ local function map_keys(chat)
       step(chat, -1)
     end, thread_u and "mark the thread read or unread (in the composer: undo)" or "undo in the composer")
   end
+  if chat.thread or chat.pending_title then
+    map("n", "t", function()
+      return mine() and "t" or "<Cmd>lua require('isovim.acp.chat').child_thread()<CR>"
+    end, "a new thread under this one (in the composer: vim's t)", { expr = true, nowait = false })
+  end
   map("n", "U", function()
     return mine() and "U" or "<Cmd>lua require('isovim.acp.chat').toggle_read()<CR>"
   end, "mark it read or unread (in the composer: vim's U)", { expr = true, nowait = false })
@@ -2576,6 +2638,7 @@ M.help_keys = {
     { "D", "on the thread: mark it read, whatever it was (in the composer, vim's D)" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
+    { "t", "on the thread: a new thread under this one (in the composer, vim's t). The parent and children show under its banner, as links" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
     { "", "otherwise as a chat: insert keys go to the draft, u undoes it, ]] [[ your posts" },
   },
@@ -2713,6 +2776,7 @@ local function new_chat(ws, agent, buf, lines)
   for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS, COMPOSER }) do
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   end
+  require("isovim.links").forget(buf, 0, vim.api.nvim_buf_line_count(buf))
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", unpack(lines) })
   return chat
@@ -2901,7 +2965,9 @@ local function follow(chat, from)
       ingest(chat, entry, false)
     end), safe.wrap("the thread", function()
       start_over(chat)
-    end), from)
+    end), from, safe.wrap("the thread's relatives", function()
+      update_related(chat)
+    end))
     chat.drain, chat.journal_at = drain, at
     chat.stop = function()
       chat.dead = true
@@ -3452,6 +3518,7 @@ local function show_thread(chat)
   update_bar(chat)
   M.settle(chat)
   M.thread_seen(chat)
+  update_related(chat)
   return chat
 end
 
@@ -3487,8 +3554,9 @@ function M.open_thread(repo, id, qid)
   return chat
 end
 
--- A new thread in repo: its view opens with the composer asking for its title first.
-function M.new_thread(repo)
+-- A new thread in repo, under parent if given: its view opens with the composer asking for its title
+-- first.
+function M.new_thread(repo, parent)
   local why = threads.refusal(repo)
   if why then
     return say("no thread: " .. why, vim.log.levels.WARN)
@@ -3498,7 +3566,17 @@ function M.new_thread(repo)
     chat = make(repo, "thread:new")
     chats[key(repo, "thread:new")] = chat
   end
+  chat.pending_parent = parent
   return show_thread(chat)
+end
+
+-- t on a thread's conversation: a new thread under it.
+function M.child_thread()
+  local chat = by_buf(vim.api.nvim_get_current_buf())
+  if chat and chat.thread then
+    return M.new_thread(chat.ws, chat.thread)
+  end
+  say("give this thread its title first")
 end
 
 -- <CR> in a thread's composer: its title (a new thread), else a post, sent to the router as a
@@ -3514,7 +3592,7 @@ function M.post_thread(chat, text)
     M.set_draft(chat, before)
     return update_bar(chat)
   elseif chat.pending_title then
-    local id, err = threads.new(chat.ws, text, "user")
+    local id, err = threads.new(chat.ws, text, "user", chat.pending_parent)
     if not id then
       return say("no thread: " .. tostring(err), vim.log.levels.WARN)
     end
@@ -3523,7 +3601,7 @@ function M.post_thread(chat, text)
     pcall(chat.stop)
     chats[key(chat.ws, chat.agent)] = nil
     unbind(chat)
-    chat.agent, chat.thread, chat.pending_title, chat.dead = "thread:" .. id, id, nil, nil
+    chat.agent, chat.thread, chat.pending_title, chat.pending_parent, chat.dead = "thread:" .. id, id, nil, nil, nil
     chats[key(chat.ws, chat.agent)] = chat
     pcall(vim.api.nvim_buf_set_name, chat.buf, ("isovim-thread://%s/%s"):format(chat.ws, id))
     vim.b[chat.buf].isovim_surface = chat.ws .. "/" .. id

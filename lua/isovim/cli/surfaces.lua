@@ -380,12 +380,12 @@ function M.page(args)
   out(("%s/%s %s %s"):format(repo, name, id, sub == "reply" and (ask and "asks the user now" or "has your reply") or "is resolved"))
 end
 
--- iso <role> thread new|post|waiting|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
+-- iso <role> thread new|post|waiting|parent|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
 -- repo's. Routers (and the user, from a shell) make, post and resolve them; other roles read.
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   if sub ~= "ls" and sub ~= "show" then
@@ -397,6 +397,7 @@ function M.thread(args)
   end
   me = me or "user"
   local no_reply = flag(args, "--no-reply")
+  local parent = option(args, "--parent")
   local images = {}
   while true do
     local path = option(args, "--image")
@@ -407,7 +408,15 @@ function M.thread(args)
     images[#images + 1] = { path = path, mimeType = require("isovim.acp.images").mime(path) or fail(path .. " isn't a png, jpeg, gif or webp") }
   end
   if sub == "new" then
-    local id, err = threads.new(repo, args[1] or fail(usage), me)
+    -- A router's turn on a thread: what it splits off goes under that thread, unless it says not.
+    local under = parent ~= "none" and parent or nil
+    if not parent and me ~= "user" then
+      under = threads.turn_thread(repo)
+      if under then
+        note(("it goes under %s, the thread of this turn (--parent none opts out)"):format(under))
+      end
+    end
+    local id, err = threads.new(repo, args[1] or fail(usage), me, under)
     if not id then
       fail(err)
     end
@@ -438,6 +447,14 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s %s"):format(repo, id, on == "none" and "waits on nobody" or ("waits on " .. on)))
+  elseif sub == "parent" then
+    local id = args[1] or fail(usage)
+    local above = args[2] or fail(usage)
+    local set, err = threads.set_parent(repo, id, above, me)
+    if not set then
+      fail(err)
+    end
+    out(("%s#%s %s"):format(repo, id, above == "none" and "has no parent" or ("is under " .. above)))
   elseif sub == "resolve" then
     local id = args[1] or fail(usage)
     local status, err = threads.resolve(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
@@ -483,14 +500,17 @@ function M.thread(args)
     end
     for _, info in ipairs(list) do
       out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
-        (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
+        (info.parent and ("  under " .. info.parent) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
     end
   elseif sub == "show" then
     local id = args[1] or fail(usage)
     local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
     for _, entry in ipairs(entries) do
       if entry.kind == "thread" then
-        out(("%s: %s (started by %s, %s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0)))
+        out(("%s: %s (started by %s, %s%s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0),
+          entry.parent and (", under " .. entry.parent) or ""))
+      elseif entry.kind == "parent" then
+        out(("\n[%s by %s]"):format(entry.on == "none" and "no parent" or ("under " .. tostring(entry.on)), entry.by or "?"))
       elseif entry.kind == "post" then
         out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
         out(entry.text)

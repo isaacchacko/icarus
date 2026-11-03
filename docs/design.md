@@ -276,7 +276,8 @@ host; General, Root and Terminals have none, and starting one there says why.
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
   address>, text, at, images?, no_reply?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
   {state: start|end}` around the router's turn on one of its posts, `renamed {by, title}`, its
-  title from then on (posts already sent keep their tags), and `waiting` (below). What you've read is
+  title from then on (posts already sent keep their tags), `waiting` (below) and `parent` (below).
+  What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
 - **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
   its own, drawn as the PR view is (isovim.boxes, its helpers shared with isovim.pr_view): a banner
@@ -339,6 +340,15 @@ host; General, Root and Terminals have none, and starting one there says why.
   the supervisor once it's back (every 10s) end any turn 15s or older whose router isn't mid-turn:
   `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says
   the router stopped during it, since it may not have answered; a retry of the turn clears it.
+- **Parents and children:** a thread can have a parent in the same repo: `parent` on its header, or
+  `parent {on: <id>|none, by}` to change it, refusing a cycle. Children aren't stored; they're found
+  by scanning the repo's threads, resolved ones included. Under the banner, only when they exist,
+  a line for the parent and one for the children show each as a link chip with its state, so `]l`
+  and `<Tab>` work on them, updating as those threads change. `iso router thread new --parent <id>`
+  and `iso router thread parent <id> <parent>|none` set it. A router's `thread new` during its turn
+  on a thread goes under that thread by default (`--parent none` opts out): the turn is already
+  marked in its thread's file, so the command only has to look. `t` on a thread's conversation
+  starts a child of it; `<leader>it` and `t` in the sidebar start one with no parent.
 - **The title alone:** the UI asks for the title, then your first post, and only a post prompts
   the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
   post 30s on, and goes to the router as one. A first post within that time means one prompt, not
