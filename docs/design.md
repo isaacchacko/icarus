@@ -588,6 +588,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
 ▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
                                have something that needs you, how many of its agents run
   ⏺ 󰑩 router                ← its router, whatever's folded, hidden or not; none, no row
+  ⏺  repo-root             ← its repo-root under it, likewise
   ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
   ├─ ? merge the fix?          holds what needs you (questions only ever here)
   └─ ✎ review notes
@@ -596,8 +597,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
   └─  hot reload
   ▸ Surfaces 3              ← the Task Board, the PRs, pages, write-ups (folded at first)
   ▸ Files 1                 ← file and folder surfaces, pinned paths (folded at first)
-  ▾ Root 12            1    ← the repo-root and what roots decided here, how many on the left
-  ├─  repo-root
+  ▾ Root 12                 ← what its roots decided, how many on the left; gone with none
   └─ 󰊛 Decisions 12
   ▾ Agents 2           1    ← how many run at the right, hidden ones too (folded at first)
   ├─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
@@ -636,10 +636,10 @@ empty one isn't shown. The Inbox holds only the surfaces that need you (question
 and a surface moves to its section once it's dealt with. Threads holds the repo's open threads and
 says when one has a reply you haven't read; Surfaces the Task Board first, then the PRs, pages and
 write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
-explorer's, `E`); Root the repo-root and its decision log (see Surfaces), with how many decisions
-it holds and whether the root runs; Agents the rest of the agents but the router, with how many run
-at the right. The router has a row of its own right under the project's, with a glyph of its own
-(`md-router_wireless`, in the tab bar, the statusline and pickers too). The Inbox and Threads start
+explorer's, `E`); Root its decision log (see Surfaces), with how many decisions it holds, gone when
+there are none; Agents the rest of the agents, with how many run at the right. The router has a row
+of its own right under the project's, with a glyph of its own (`md-router_wireless`, in the tab bar,
+the statusline and pickers too), and the repo-root one under that; both show whatever's folded. The Inbox and Threads start
 open and the rest folded, and each section's fold is kept per project in the session. Root and
 General get the same sections where they have something; threads are a repo's only. The fold on the
 project's row still folds it whole. Each surface

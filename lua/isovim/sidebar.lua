@@ -881,7 +881,7 @@ end
 -- ever here; a thread whose turn is yours too), Threads (a repo's open ones, marked while one
 -- waits on you or has a reply you haven't read, then its last 5 resolved, dimmed), Surfaces
 -- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
--- (the repo-root and its decision log) and Agents. An empty one isn't shown, but for a repo's
+-- (what its roots decided) and Agents. An empty one isn't shown, but for a repo's
 -- Threads. The Inbox and Threads start open, the rest folded; each one's state is kept per repo and
 -- host (isovim.collapsed, in the session). M.all_rows opens them all.
 local FOLDED = { Surfaces = true, Files = true, Root = true, Agents = true }
@@ -911,8 +911,7 @@ M.set_section_folded = set_section_folded
 
 -- A group's sections under its header, each child on a tree guide. threads: whether it has a
 -- Threads section (a repo; Root's and General's threads, if any, are surfaces). pins: its pinned
--- paths' rows. agents, roots: its listed agents and repo-roots, add_tasks: puts an agent's tasks under
--- it. The log under a root that hasn't decided anything yet is only this host's to show.
+-- paths' rows. agents: its listed agents, add_tasks: puts an agent's tasks under it.
 local function group_sections(items, base, host, key, opts)
   local inbox, threads, resolved, boards, others, files = {}, {}, {}, {}, {}, {}
   local log
@@ -997,14 +996,9 @@ local function group_sections(items, base, host, key, opts)
       opts.add_tasks(entry)
     end
   end
-  log = log or (#opts.roots > 0 and not host and M.surfaces().decisions_entry(key, true)) or nil
-  local n_root = #opts.roots + (log and 1 or 0)
-  section("Root", n_root, function()
-    agent_rows(opts.roots, "Root", n_root)
-    if log then
-      items[#items + 1] = surface(log, "Root", n_root, n_root)
-    end
-  end, { count = log and log.count or 0, running_mark = opts.running_roots })
+  section("Root", log and 1 or 0, function()
+    items[#items + 1] = surface(log, "Root", 1, 1)
+  end, { count = log and log.count })
   section("Agents", #opts.agents, function()
     agent_rows(opts.agents, "Agents", #opts.agents)
   end, { running_mark = opts.running_mark })
@@ -1159,7 +1153,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         end
         group_sections(items, base_host, host, ROOT_KEY, { list = vim.tbl_filter(function(entry)
           return entry.type ~= "decisions"
-        end, list), pins = pin_rows(host, extra, ROOT_KEY), agents = {}, roots = {}, root_mode = has_root })
+        end, list), pins = pin_rows(host, extra, ROOT_KEY), agents = {}, root_mode = has_root })
       end
     -- The current project always shows (General when empty, so s on it spawns a general/aN); with
     -- every project listed, those with something in them.
@@ -1183,37 +1177,33 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         ws_name = g.name,
         running_mark = running_mark(g.agents),
       })
-      -- Its router, under the project's row whatever's folded, hidden or not; only a jump, which lists
-      -- hidden agents when asked, leaves a hidden one out.
-      for _, entry in ipairs(g.agents) do
-        if entry.role == "router" and (not all_open or listed(entry)) then
-          entry.group_key = g.key
-          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 0, group_key = g.key })
-          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+      -- Its router, then its repo-root, under the project's row whatever's folded, hidden or not; only
+      -- a jump, which lists hidden agents when asked, leaves a hidden one out.
+      for _, role in ipairs({ "router", "repo-root" }) do
+        for _, entry in ipairs(g.agents) do
+          if entry.role == role and (not all_open or listed(entry)) then
+            entry.group_key = g.key
+            items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 0, group_key = g.key })
+            add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+          end
         end
       end
       if not collapsed then
         local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
           return entry.role == "repo-root"
         end))
-        local function is_repo_root(entry)
-          return entry.role == "repo-root"
-        end
-        local listed_roots, listed_others = {}, {}
-        for _, entry in ipairs(listed_agents(agents)) do
-          if entry.role ~= "router" then
-            table.insert(is_repo_root(entry) and listed_roots or listed_others, entry)
-          end
+        local function pinned(entry)
+          return entry.role == "router" or entry.role == "repo-root"
         end
         group_sections(items, base_host, host, g.key, {
           list = surfaces_by_key and list or {},
           threads = g.kind == "repo",
           pins = pin_rows(host, extra, g.key),
-          agents = listed_others,
-          roots = listed_roots,
-          running_roots = running_mark(vim.tbl_filter(is_repo_root, g.agents)),
+          agents = vim.tbl_filter(function(entry)
+            return not pinned(entry)
+          end, listed_agents(agents)),
           running_mark = running_mark(vim.tbl_filter(function(entry)
-            return not is_repo_root(entry) and entry.role ~= "router"
+            return not pinned(entry)
           end, g.agents)),
           add_tasks = function(entry)
             add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
@@ -1438,8 +1428,9 @@ local function collect()
         live = live + 1
       end
       ws.active = math.max(ws.active, running[agent.id] or 0)
-      -- A hidden router still shows, under the project's row.
-      if not listed(agent) and not is_terminal(agent) and store.role(agent) ~= "router" then
+      -- A hidden router or repo-root still shows, under the project's row.
+      local role = store.role(agent)
+      if not listed(agent) and not is_terminal(agent) and role ~= "router" and role ~= "repo-root" then
         hidden = hidden + 1
       end
       -- Every agent goes on, as another host's do: host_rows leaves hidden ones out of the rows, not
