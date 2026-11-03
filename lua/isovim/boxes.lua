@@ -193,23 +193,31 @@ function M.markdown(text, width)
       i = i + 1
     end
   end
-  -- Each chip's parts highlighted, and the whole of it marked with its address (mark[4]).
+  -- Each chip's parts highlighted, and the whole of it marked with its address (mark[4]). They come
+  -- in the text's order, so each is the next one found: several can read the same (one host's long
+  -- URLs), or one begin as another does. One that didn't survive (cut in a table) is passed over.
+  local upto = 1
   for _, line in ipairs(out) do
-    for _, each in ipairs(chips) do
-      local from = 1
-      while true do
-        local s, e = line.text:find(each.chip, from, true)
-        if not s then
+    local from = 1
+    while true do
+      local index, s, e
+      for k = upto, #chips do
+        s, e = line.text:find(chips[k].chip, from, true)
+        if s then
+          index = k
           break
         end
-        local at = s - 1
-        for _, part in ipairs(each.parts) do
-          line.marks[#line.marks + 1] = { at, at + #part[1], part[2] }
-          at = at + #part[1]
-        end
-        line.marks[#line.marks + 1] = { s - 1, e, nil, each.addr }
-        from = e + 1
       end
+      if not index then
+        break
+      end
+      local each, at = chips[index], s - 1
+      for _, part in ipairs(each.parts) do
+        line.marks[#line.marks + 1] = { at, at + #part[1], part[2] }
+        at = at + #part[1]
+      end
+      line.marks[#line.marks + 1] = { s - 1, e, nil, each.addr }
+      upto, from = index + 1, e + 1
     end
   end
   return out

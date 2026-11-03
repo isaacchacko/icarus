@@ -32,7 +32,8 @@ local NS = vim.api.nvim_create_namespace("isovim_links")
 local NBSP = "\194\160"
 M.NBSP = NBSP
 
--- Where an address ends: before white space, a closing bracket or quote, or trailing punctuation.
+-- Where an address ends: before white space, a closing bracket or quote, or trailing punctuation
+-- (or a bold's closing asterisks).
 local WORD = "[^%s%)%]>\"'`]"
 local STARTS = { "iso:%a+/" .. WORD, "https?://" .. WORD }
 
@@ -57,7 +58,7 @@ function M.scan(text)
       at = text:find("%s", from) or #text + 1
     else
       -- An angle bracket that opens no placeholder (a tag after it) ends it.
-      local address = (angle and raw:sub(1, angle - 1) or raw):gsub("[%.,;:!?]+$", "")
+      local address = (angle and raw:sub(1, angle - 1) or raw):gsub("[%.,;:!?%*]+$", "")
       if address:match("^iso:%a+/.") or address:match("^https?://.") then
         found[#found + 1] = { from - 1, from - 1 + #address, address }
       end
