@@ -44,7 +44,7 @@ local function spoken(lhs)
   return table.concat(words, " ")
 end
 
--- A description up to its first aside: "pick a repo (or Root, General, Terminals)" reads "pick a repo".
+-- A description up to its first aside: "pick a project (or Root)" reads "pick a project".
 local function short(text)
   return (text:gsub("%s*%(.*$", ""):gsub("[,:;].*$", ""))
 end
@@ -72,7 +72,7 @@ end
 -- s: pick a repo set up here (or General), then spawn there, as s on its row in the sidebar. The
 -- page belongs to no repo, so it asks rather than spawn where <leader>is would.
 local function spawn()
-  vim.ui.select(vim.list_extend(repos.list(), { "general" }), { prompt = "Spawn a worker in which repo?" }, function(name)
+  vim.ui.select(vim.list_extend(repos.list(), { "general" }), { prompt = "Spawn a worker in which project?" }, function(name)
     if name then
       sidebar().spawn(name)
     end
@@ -81,7 +81,7 @@ end
 
 -- m: pick a repo set up here, then the host, as m on its row in the sidebar.
 local function send_repo()
-  vim.ui.select(repos.list(), { prompt = "Send which repo to another host?" }, function(name)
+  vim.ui.select(repos.list(), { prompt = "Send which project to another host?" }, function(name)
     if name then
       sidebar().actions.isovim_move({ kind = "repo", ws = name, repo_key = name, ws_name = name })
     end
@@ -127,7 +127,7 @@ end
 local function repo_rows(width)
   local names = repos.list()
   if #names == 0 then
-    return { { { "None yet: s spawns an agent in the repo you're in.", "IsovimLandingPhrase" } } }
+    return { { { "None yet: s spawns an agent in the project you're in.", "IsovimLandingPhrase" } } }
   end
   local rows, row = {}, {}
   for _, name in ipairs(names) do
@@ -153,12 +153,12 @@ local function page()
   local function add(row)
     rows[#rows + 1] = row
   end
-  add({ { "isovim", "IsovimLandingTitle" }, { "  ·  ", "Comment" }, { "agents at work in your repos; what needs you comes to you", "IsovimLandingPhrase" } })
+  add({ { "isovim", "IsovimLandingTitle" }, { "  ·  ", "Comment" }, { "agents at work in your projects; what needs you comes to you", "IsovimLandingPhrase" } })
   add({})
   add(inbox_row())
   add({})
   for _, line in ipairs({
-    { "Repos", "the sidebar on the left lists them, each with its agents under it" },
+    { "Projects", "a repo, General or Terminals: the sidebar shows one at a time ([ and ])" },
     { "Agents", "each one an ACP session with a role: worker < router < repo-root < root" },
     { "Inbox", "surfaces an agent left for you: a question, a file, a chat" },
     { "Terminals", "shells of your own, beside the agents" },
@@ -176,7 +176,7 @@ local function page()
     add({ { "  " .. padded(action[1], 4), "IsovimLandingKey" }, { padded(labels[i], label_width + 4) }, { where(action[3], action[4]), "Comment" } })
   end
   add({})
-  add({ { "repos on this host", "Comment" } })
+  add({ { "projects on this host", "Comment" } })
   for _, row in ipairs(repo_rows(70)) do
     table.insert(row, 1, { "  " })
     add(row)

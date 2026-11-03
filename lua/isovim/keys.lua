@@ -186,7 +186,7 @@ function M.pick_repo()
   end
   Snacks.picker.pick({
     source = "isovim_repos",
-    title = "Repos",
+    title = "Projects",
     layout = { preset = "select" },
     items = vim.tbl_map(function(name)
       return { name = name, text = scope.label(name), count = counts[name] }
@@ -307,7 +307,7 @@ function M.previous_repo()
       return M.select_scope(name)
     end
   end
-  toast("No other repo yet")
+  toast("No other project yet")
 end
 
 -- What the jump offers: the rows that stand for something (agents, surfaces, the Inbox's items,
@@ -632,9 +632,9 @@ end
 -- {lhs, fn, description}, all in normal mode; `?` in the sidebar lists them.
 M.GLOBAL = {
   { "<leader><leader>", M.jump, "jump to anything the sidebar shows (H: hidden agents too)" },
-  { "<leader>ff", M.find_files, "find a file in the repo" },
-  { "<leader>/", M.grep, "grep the repo and its agents' transcripts" },
-  { "<leader>,", M.buffers, "the repo's buffers" },
+  { "<leader>ff", M.find_files, "find a file in the project" },
+  { "<leader>/", M.grep, "grep the project and its agents' transcripts" },
+  { "<leader>,", M.buffers, "the project's buffers" },
   { "<leader>fr", M.recent_agents, "recent agents" },
   { "<leader>fR", function()
     Snacks.picker.recent()
@@ -645,41 +645,47 @@ M.GROUP = {
   { "n", function()
     isovim().next_needs_you()
   end, "next agent that needs you" },
-  { "i", inbox("repo"), "the repo's Inbox" },
+  { "i", inbox("repo"), "the project's Inbox" },
   { "h", inbox("host"), "the host's Inbox" },
-  { "r", open_role("router", "router"), "the repo's router" },
+  { "r", open_role("router", "router"), "the project's router" },
   { "R", M.nearest_root, "the nearest root (repo-root, else host root)" },
   { "H", M.open_host_root, "the host root" },
-  { "w", M.workers, "a worker in the repo" },
+  { "w", M.workers, "a worker in the project" },
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
-  { "P", M.pick_repo, "pick a repo (or Root, General, Terminals)" },
+  { "P", M.pick_repo, "pick a project (or Root)" },
   { "o", function()
     M.prs()
-  end, "the repo's PRs surface" },
-  { "p", M.previous_repo, "the previous repo (at the agent you last had open there)" },
+  end, "the project's PRs surface" },
+  { "p", M.previous_repo, "the previous project (at the agent you last had open there)" },
   { "g", function()
     M.select_scope(scope.GENERAL)
   end, "General (agents in no repo)" },
   { "T", function()
     sidebar().focus_window("terminals")
   end, "Terminals in the sidebar" },
-  { "s", M.spawn, "spawn a worker over ACP in the repo" },
+  { "s", M.spawn, "spawn a worker over ACP in the project" },
   { "t", function()
     local scope = require("isovim.scope")
     local current = isovim().current_scope
     require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
-  end, "a new thread with the repo's router" },
+  end, "a new thread with the project's router" },
   { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)
   end, "the previous host" },
+  { "[", function()
+    sidebar().step_project(-1)
+  end, "the previous project in the sidebar" },
+  { "]", function()
+    sidebar().step_project(1)
+  end, "the next project in the sidebar" },
   { ">", function()
     sidebar().step_host(1)
   end, "the next host" },
   { "x", function()
     sidebar().toggle_root_mode()
-  end, "root mode on or off for the repo in focus (in Root or General: the host)" },
+  end, "root mode on or off for the project in focus (in Root or General: the host)" },
   { "j", function()
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },
@@ -737,7 +743,7 @@ M.RETIRED = {
   end, "o in the sidebar" },
   { "f", function()
     isovim().find()
-  end, "<leader>/ (this repo's transcripts)" },
+  end, "<leader>/ (this project's transcripts)" },
   { "r", function()
     isovim().run_script()
   end, "iso <role> run (no key yet)" },

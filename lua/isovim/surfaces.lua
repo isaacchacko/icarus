@@ -1481,6 +1481,8 @@ function M.open(entry)
     M.consume(entry)
   elseif entry.type == "file" or entry.type == "folder" then
     if entry.exists then
+      -- Its tab is its repo's, wherever the file is: opening it doesn't leave the project.
+      vim.b[vim.fn.bufadd(entry.path)].isovim_scope = entry.repo
       reveal(entry.path)
       M.consume(entry)
     end

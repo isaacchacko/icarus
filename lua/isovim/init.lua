@@ -22,6 +22,7 @@ M.recent = {} ---@type string[] workspace ids, most recently selected first
 M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib, <leader>ip)
 M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
 M.recent_scopes = {} ---@type string[] the scopes current_scope was, most recent first (<leader>ip)
+M.host_projects = {} ---@type table<string, string> the project the list shows of each other host
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
 M.collapsed = {} ---@type table<string, true> the sidebar's collapsed groups: [host:]repo:<key>, [host:]repo_inbox:<key>, [host:]inbox
 
@@ -38,6 +39,7 @@ function M.remember(key, value)
     recent = M.recent,
     recent_agents = M.recent_agents,
     recent_scopes = M.recent_scopes,
+    host_projects = M.host_projects,
     expanded = M.expanded,
     collapsed = M.collapsed,
   })
@@ -76,6 +78,10 @@ end
 -- Every change of the current scope goes through here, so <leader>ip knows the one before. Moving
 -- between agents in the same repo leaves the history as it is.
 local function enter_scope(name)
+  if M.current_scope ~= name then
+    -- The sidebar lists the current project (isovim.sidebar).
+    require("isovim.sidebar").refresh()
+  end
   M.current_scope = name
   if M.recent_scopes[1] ~= name then
     M.remember("recent_scopes", vim.list_extend({ name }, vim.tbl_filter(function(other)
@@ -681,6 +687,7 @@ function M.setup(opts)
   M.recent = session.recent or {}
   M.recent_agents = session.recent_agents or {}
   M.recent_scopes = session.recent_scopes or {}
+  M.host_projects = session.host_projects or {}
   M.expanded = session.expanded or {}
   M.collapsed = session.collapsed or {}
 
@@ -888,9 +895,9 @@ function M.setup(opts)
   require("isovim.orphan").start()
 
   enter_dir(M.current)
-  -- A hot reload stays in the scope it was in (Terminals, or Root on the root's chat, aren't the
-  -- workspace's); a start takes the workspace's.
-  enter_scope(M.current_scope or (reloading and M.recent_scopes[1]) or (M.current and scope.of_workspace(M.current)) or scope.GENERAL)
+  -- A hot reload or a restart stays in the scope it was in (Terminals, or Root on the root's chat,
+  -- aren't the workspace's), so the sidebar stays on its project.
+  enter_scope(M.current_scope or M.recent_scopes[1] or (M.current and scope.of_workspace(M.current)) or scope.GENERAL)
   scope.apply(M.current, M.current_scope, is_sidebar)
   notify_changes(true)
   -- Files agents edit reload in their buffers (autoread) as an agent's state moves and, while one

@@ -1,6 +1,8 @@
--- The sidebar: a column of two windows under its title in the tab line, the shown host's list (its
--- Inbox, root, repos, General and Terminals) and a footer, and the file explorer that can take its
--- place.
+-- The sidebar: a column of two windows under its title in the tab line, and the file explorer that
+-- can take its place. A footer, and the shown host's list: its Inbox, its Root section, then the
+-- project switcher's row and the current project's sections. A project is a repo, General or
+-- Terminals, and the current one follows the focused tab (the current scope; Root's isn't a project,
+-- so on the root's chat it stays the one before).
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
@@ -17,6 +19,7 @@ local isovim = require("isovim")
 local M = {}
 
 M.local_groups = {} ---@type table<string, table> this host's groups by key, from the last refresh
+M.projects, M.project = {}, nil ---@type string[], string? the shown host's projects and the one the list shows
 
 -- Only what waits on you: a raised decision or a question. A finished turn (the green dot) doesn't.
 -- A hidden agent's counts too: hiding an agent never hides what needs you.
@@ -27,6 +30,18 @@ end
 -- Whether the list shows the agent: hidden ones only while H shows them, or while they need you.
 local function listed(agent)
   return not agent.hidden or isovim.show_hidden or agent.status == "attention"
+end
+
+-- The project switcher's row: the current project between ‹ ›, as the host's name is (the keys are
+-- [ and ]); how many others have something that needs you, so nothing's hidden silently; how many
+-- of its agents run.
+function M.switcher_row(item, glyph, glyph_hl, label)
+  local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "‹ ", "Comment" }, { glyph, glyph_hl }, { " " }, { label, "Title" }, { " ›", "Comment" } }
+  if item.others > 0 then
+    row[#row + 1] = { ("  +%d need you"):format(item.others), "DiagnosticWarn" }
+  end
+  row[#row + 1] = item.running_mark
+  return row
 end
 
 -- A path as the sidebar names it: relative to the workspace's project dir when inside it.
@@ -79,6 +94,13 @@ local KINDS = {
         glyph, glyph_hl, name_hl = item.mark.glyph, item.mark.hl, item.mark.hl
       end
       local label = item.group_kind == "repo" and item.name:match("[^/]+$") or item.name
+      if item.switcher then
+        if item.group_kind == "general" then
+          glyph, glyph_hl = icons.get("general")
+          label = "General"
+        end
+        return M.switcher_row(item, glyph, glyph_hl, label)
+      end
       local row = { { chevron, "Comment" } }
       if item.group_kind == "general" then
         glyph, glyph_hl = icons.get("general")
@@ -98,15 +120,39 @@ local KINDS = {
       return row
     end,
     open = function(item)
+      if item.group_kind == "general" and not item.host then
+        return require("isovim.keys").select_scope(scope.GENERAL)
+      end
       M.open_router(item)
     end,
     id = { "host", "repo_key" },
+  },
+  -- The Root section's head: the host root, its decision log and what it brought up under it, kept
+  -- while it has any of those with no root running. Enter or Tab folds it.
+  root_head = {
+    format = function(item)
+      local glyph, glyph_hl = icons.get("root")
+      local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "Root", "Title" } }
+      if item.idle then
+        row[#row + 1] = { "  (none here now)", "Comment" }
+      end
+      row[#row + 1] = item.running_mark
+      return row
+    end,
+    open = function(item)
+      M.set_collapsed(item.host, "host_root", nil, not item.collapsed)
+      M.refresh()
+    end,
+    id = { "host" },
   },
   -- Terminals, the list's last group, as General is one: its terminals and repo script panes under
   -- it. Enter or Tab collapses it.
   terminals = {
     format = function(item)
       local glyph, glyph_hl = icons.get("terminals")
+      if item.switcher then
+        return M.switcher_row(item, glyph, glyph_hl, "Terminals")
+      end
       return { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "terminals", "Comment" }, item.running_mark }
     end,
     open = function(item)
@@ -982,10 +1028,38 @@ local function pin_rows(host, extra, key)
   return pins
 end
 
--- One host's list, its groups, and its Inbox for the list's top (a row per surface waiting on you). host/ssh are nil for this host. surfaces_by_key nil: no surfaces
--- module (or the host hasn't answered).
+-- Which of a host's projects the list shows: here, the current scope or the one before it that's a
+-- project (so it follows the focused tab and a restart keeps it); another host's as you left it.
+local function current_project(host, keys)
+  local tried = host and { isovim.host_projects[host] } or vim.list_extend({ isovim.current_scope }, isovim.recent_scopes)
+  for _, name in ipairs(tried) do
+    if vim.tbl_contains(keys, name) then
+      return name
+    end
+  end
+  return host and keys[1] or GENERAL_KEY
+end
+
+-- Makes key the project the list shows (the root's key: opens the Root section, which isn't one).
+local function show_project(host, key)
+  if not key then
+    return
+  elseif key == ROOT_KEY then
+    set_collapsed(host, "host_root", nil, false)
+  elseif host then
+    isovim.host_projects[host] = key
+    isovim.remember("host_projects", isovim.host_projects)
+  elseif current_project(nil, M.projects) ~= key then
+    isovim.set_scope(key)
+  end
+end
+
+-- One host's list and its Inbox for the list's top (a row per surface waiting on you): its Root
+-- section, then the project switcher's row and that project's sections; with M.all_rows every
+-- project's, each under a plain header. host/ssh are nil for this host. surfaces_by_key nil: no
+-- surfaces module (or the host hasn't answered). terminals: its Terminals rows.
 ---@return table[] items, table[] inbox
-local function host_rows(host, ssh, entries, surfaces_by_key, extra)
+local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   local items, inbox = {}, {}
   local groups, by_repo = group(entries)
   if not host then
@@ -1047,36 +1121,54 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
       })
     end
   end
+  -- The projects, and how many besides the one shown have something that needs you.
+  local project, others = nil, 0
+  if not all_open then
+    local keys = {}
+    for _, g in ipairs(groups) do
+      if g.kind ~= "root" then
+        keys[#keys + 1] = g.key
+      end
+    end
+    keys[#keys + 1] = scope.TERMINALS
+    project = current_project(host, keys)
+    M.projects, M.project = keys, project
+    for _, g in ipairs(groups) do
+      if g.kind ~= "root" and g.key ~= project and (waiting(surfaces_by_key and surfaces_by_key[g.key]) > 0 or vim.iter(g.agents):any(M.needs_you)) then
+        others = others + 1
+      end
+    end
+  end
   for _, g in ipairs(groups) do
     local agents = vim.tbl_filter(listed, g.agents)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
     if g.kind == "root" then
-      for i, entry in ipairs(agents) do
-        items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = -1, group_key = ROOT_KEY, glyph = "root",
-          running_mark = i == 1 and running_mark(g.agents) or nil })
-        add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
-      end
-      -- Its sections, as a repo's (no Threads): its own row heads them, its decision log right under it.
-      local pins = pin_rows(host, extra, ROOT_KEY)
-      local log = vim.iter(list):find(function(entry)
-        return entry.type == "decisions"
-      end) or (#agents > 0 and not host and surfaces_by_key and M.surfaces().decisions_entry(ROOT_KEY, true))
-      if #list > 0 or #pins > 0 then
-        if #agents == 0 then
-          items[#items + 1] = { kind = "hint", text = icons.get("root") .. " root (none here now)" }
+      local folded = is_collapsed(host, "host_root")
+      items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "root_head", repo_key = ROOT_KEY, collapsed = folded, idle = #agents == 0, running_mark = running_mark(g.agents) })
+      if not folded then
+        for i, entry in ipairs(agents) do
+          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = 0, group_key = ROOT_KEY, glyph = "root" })
+          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
         end
+        -- Its decision log, then its sections as a repo's (no Threads).
+        local log = vim.iter(list):find(function(entry)
+          return entry.type == "decisions"
+        end) or (#agents > 0 and not host and surfaces_by_key and M.surfaces().decisions_entry(ROOT_KEY, true))
+        if log then
+          items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "surface", surface = log, repo_key = ROOT_KEY, name = log.name, depth = 0, group_key = ROOT_KEY })
+        end
+        group_sections(items, base_host, host, ROOT_KEY, { list = vim.tbl_filter(function(entry)
+          return entry.type ~= "decisions"
+        end, list), pins = pin_rows(host, extra, ROOT_KEY), agents = {}, roots = {}, root_mode = has_root })
       end
-      if log then
-        items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "surface", surface = log, repo_key = ROOT_KEY, name = log.name, depth = 0, group_key = ROOT_KEY })
-      end
-      group_sections(items, base_host, host, ROOT_KEY, { list = vim.tbl_filter(function(entry)
-        return entry.type ~= "decisions"
-      end, list), pins = pins, agents = {}, roots = {}, root_mode = has_root })
-    -- General shows on this host even when empty, so s on it spawns a general/aN.
-    elseif g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host) then
+    -- The current project always shows (General when empty, so s on it spawns a general/aN); with
+    -- every project listed, those with something in them.
+    elseif g.key == project or (all_open and (g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host))) then
       local collapsed = is_collapsed(host, "repo", g.key)
       items[#items + 1] = vim.tbl_extend("force", base_host, {
         kind = "repo",
+        switcher = not all_open,
+        others = others,
         repo_key = g.key,
         group_kind = g.kind,
         name = g.kind == "repo" and g.name or "general",
@@ -1122,6 +1214,12 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra)
         end
       end
     end
+  end
+  if all_open or project == scope.TERMINALS then
+    local collapsed = is_collapsed(host, "terminals")
+    items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "terminals", switcher = not all_open, others = others, count = #terminals, collapsed = collapsed,
+      running_mark = running_mark(terminals) })
+    vim.list_extend(items, collapsed and {} or terminals)
   end
   if host and #entries == 0 and #items <= 1 then
     items[#items + 1] = { kind = "hint", text = "no agents" }
@@ -1343,7 +1441,7 @@ local function collect()
       end
     end
   end
-  local items, inbox, terminals
+  local items, inbox
   local peers = remote.peers()
   for _, name in ipairs(vim.list_slice(hosts(), 2)) do
     local ssh = peers[name]
@@ -1360,9 +1458,8 @@ local function collect()
         items = { { kind = "hint", text = waiting_on } }
         inbox = { { kind = "hint", text = ("Inbox · %s %s"):format(name, waiting_on) } }
       else
-        items, inbox = host_rows(name, ssh, remote_entries(name, ssh, rows), remote_surfaces(name, ssh))
+        items, inbox = host_rows(name, ssh, remote_entries(name, ssh, rows), remote_surfaces(name, ssh), nil, remote_terminals(name, ssh, rows))
       end
-      terminals = rows and not remote.down(name) and remote_terminals(name, ssh, rows) or {}
     end
   end
 
@@ -1371,15 +1468,11 @@ local function collect()
   table.sort(workspaces, function(a, b)
     return a[isovim.sort] > b[isovim.sort]
   end)
-  terminals = terminals or local_terminals(workspaces)
   if not items then
     local entries, extra = local_entries(workspaces)
-    items, inbox = host_rows(nil, nil, entries, local_surfaces(), extra)
+    items, inbox = host_rows(nil, nil, entries, local_surfaces(), extra, local_terminals(workspaces))
   end
   local list = vim.list_extend(vim.list_extend({}, inbox), items)
-  local collapsed = is_collapsed(shown, "terminals")
-  list[#list + 1] = { kind = "terminals", host = shown, count = #terminals, collapsed = collapsed, running_mark = running_mark(terminals) }
-  vim.list_extend(list, collapsed and {} or terminals)
   -- So you know they're there.
   if not shown and hidden > 0 then
     list[#list + 1] = { kind = "hint", text = ("%d hidden · H"):format(hidden) }
@@ -1771,22 +1864,24 @@ local COLUMN_KEYS = {
   { "<c-l>", "isovim_focus_chat", "back to the window you came from (<C-h> there), typing again if you were" },
   { "<", "isovim_prev_host", "the host list shows the previous host" },
   { ">", "isovim_next_host", "the host list shows the next host" },
+  { "[", "isovim_prev_project", "the list shows the previous project" },
+  { "]", "isovim_next_project", "the list shows the next project" },
   { "u", "isovim_usage", "measure the shown host's CPU and RAM (in the footer)" },
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on a repo, its router; on the Inbox, a section (Threads, Surfaces, Files, Root, Agents) or Terminals, collapse or expand it; a pinned file as a tab" },
-  { "<Tab>", "isovim_toggle_expand", "open or collapse the repo, its Inbox or a section, or Terminals (from a row in one, collapse it)" },
-  { "s", "isovim_spawn", "spawn a worker over ACP in its repo (its worktree comes on its first edit), or in General" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Inbox, Root or a section (Threads, Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
+  { "<Tab>", "isovim_toggle_expand", "open or collapse the project, its Inbox or a section, or Root (from a row in one, collapse it)" },
+  { "s", "isovim_spawn", "spawn a worker over ACP in its project (its worktree comes on its first edit), or in General" },
   { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },
   { "U", "isovim_toggle_read", "mark the surface, thread or agent's chat read if it's holding your attention, out of the Inbox till something new, else unread, until you open it. A waiting question, a page awaiting your reply or an agent blocked on a permission stays: it says so" },
-  { "t", "isovim_new_thread", "a new thread with the row's repo's router (on a repo or an agent; isovim.threads): its title, then your first post" },
+  { "t", "isovim_new_thread", "a new thread with the project's router (isovim.threads): its title, then your first post" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
-  { "m", "isovim_move", "send it to another host, picked from the peers: on a repo, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
-  { "x", "isovim_root_mode", "root mode on or off for the repo (on the root's rows, the Inbox's title or General: the host; on a surface in the Inbox, its repo)" },
+  { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
+  { "x", "isovim_root_mode", "root mode on or off for the project (in Root, on the Inbox's title or in General: the host; on a surface in the Inbox, its project)" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's" },
   { "c", "isovim_changes", "its changes since its base" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
@@ -1794,7 +1889,7 @@ local LIST_KEYS = {
   { "H", "isovim_toggle_hidden", "show or hide hidden agents" },
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
-  { "P", "isovim_open_prs", "the PRs surface of the row's repo (the root's on its rows; on General or Terminals, the current repo's)" },
+  { "P", "isovim_open_prs", "the project's PRs surface (the root's in Root)" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
 -- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
@@ -1849,7 +1944,7 @@ function M.help()
     lines[#lines + 1] = ""
   end
   section("Sidebar (any of its windows)", COLUMN_KEYS)
-  section("Host list (its Inbox, root, repos, General, Terminals; a robot marks a repo script's pane)", LIST_KEYS)
+  section("Host list (its Inbox, Root, the current project; a robot marks a repo script's pane)", LIST_KEYS)
   section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
@@ -1949,6 +2044,23 @@ local function column()
   return windows()
 end
 
+-- The list shows the project by places from the shown one ([ and ]), from anywhere, its row under
+-- the cursor. It opens nothing: Enter on its row does.
+function M.step_project(by)
+  column()
+  local all, at = M.projects, 1
+  for i, name in ipairs(all) do
+    if name == M.project then
+      at = i
+    end
+  end
+  local name = all[(at - 1 + by) % #all + 1]
+  local host = shown_host()
+  show_project(host, name)
+  keep = name == scope.TERMINALS and { kind = "terminals", host = host } or { kind = "repo", host = host, repo_key = name }
+  refresh_now()
+end
+
 -- The host list shows the host by places from the shown one (< and >), from anywhere.
 function M.step_host(by)
   column()
@@ -2001,6 +2113,7 @@ function M.open_row(item)
   elseif KINDS[item.kind].open then
     KINDS[item.kind].open(item)
   end
+  show_project(host, item.kind == "terminal" and scope.TERMINALS or item.group_key or item.repo_key)
   if item.kind == "waiting" then
     set_collapsed(host, "inbox", nil, false)
   elseif item.kind == "terminal" then
@@ -2027,6 +2140,7 @@ function M.focus_window(role)
   leave_main()
   if role == "terminals" then
     local host = shown_host()
+    show_project(host, scope.TERMINALS)
     if is_collapsed(host, "terminals") then
       set_collapsed(host, "terminals", nil, false)
     end
@@ -2061,6 +2175,7 @@ function M.reveal_repo_inbox(host, key)
       remote.invalidate(host)
     end
   end
+  show_project(host, key)
   for _, what in ipairs({ "repo", "repo_inbox" }) do
     if is_collapsed(host, what, key) then
       set_collapsed(host, what, key, false)
@@ -2102,7 +2217,7 @@ function M.focus_inbox(which)
     key = isovim.current and M.group_key(isovim.current)
   end
   if not key then
-    return Snacks.notify.info("No repo selected", { title = "isovim" })
+    return Snacks.notify.info("No project selected", { title = "isovim" })
   end
   M.reveal_repo_inbox(nil, key)
   local here = vim.api.nvim_win_get_cursor(0)[1]
@@ -2127,7 +2242,7 @@ function M.open_router(item)
       return isovim.open(entry.ws, entry.agent)
     end
   end
-  Snacks.notify.info(("No router in %s; Tab opens it"):format(item.group_kind == "repo" and item.repo_key or "general"), { title = "isovim" })
+  Snacks.notify.info(("No router in %s"):format(item.repo_key), { title = "isovim" })
 end
 
 -- A new workspace named name in dir ("" for its own dir): in a repo, a worktree of its own by
@@ -2275,6 +2390,12 @@ M.actions = {
     end
   end,
   isovim_usage = measure,
+  isovim_next_project = function()
+    M.step_project(1)
+  end,
+  isovim_prev_project = function()
+    M.step_project(-1)
+  end,
   isovim_next_host = function()
     step_host(1)
   end,
@@ -2502,7 +2623,13 @@ M.actions = {
     elseif item.kind == "repo" then
       set_collapsed(host, "repo", item.repo_key, not item.collapsed)
       keep = { kind = "repo", host = host, repo_key = item.repo_key }
-    elseif item.group_key and item.group_key ~= ROOT_KEY then
+    elseif item.kind == "root_head" then
+      set_collapsed(host, "host_root", nil, not item.collapsed)
+      keep = { kind = "root_head", host = host }
+    elseif item.group_key == ROOT_KEY then
+      set_collapsed(host, "host_root", nil, true)
+      keep = { kind = "root_head", host = host }
+    elseif item.group_key then
       set_collapsed(host, "repo", item.group_key, true)
       keep = { kind = "repo", host = host, repo_key = item.group_key }
     else

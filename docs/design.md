@@ -12,6 +12,7 @@ gets. It's a personal tool, not built for teams.
 |---|---|
 | **host** | a machine |
 | **repo** | a codebase identified by its remote, `owner/repo` |
+| **project** | what the sidebar shows one of at a time: a repo, General or Terminals |
 | **pseudo-repo** | `root` (the host root, pinned first), `general` (agents with no repo, and files outside every repo), `terminals` |
 | **agent** | one ACP session run by a supervisor, addressed `<owner>/<repo>/aN` |
 | **role** | `worker` < `router` < `repo-root` < `root` |
@@ -574,15 +575,19 @@ S (7) - swarming            ← style meter: live agents on this host
 Inbox 2                     ← the shown host's: every surface that needs you
 ├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
 └─  isovim - ? mini-animate …
-♛ root  ⏺                   ← the host root, with the crown
-  󰊛 Decisions 3             ← what it decided, right under it, no section
-▾ isovim ●             2    ← repo header in its color; opens the router; at the right, how
-                               many of its agents run (the working color while any works)
+▾ ♛ Root               1    ← the host root and what it brought up; kept while it has anything
+  ⏺ ♛ root
+  󰊛 Decisions 3             ← what it decided
+  ▾ Inbox 1                 ← its own, as a project's sections
+  ├─ ? which host?
+  ▸ Surfaces 2
+▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
+                               have something that needs you, how many of its agents run
   ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
   ├─ ? merge the fix?          holds what needs you (questions only ever here)
   └─ ✎ review notes
   ▾ Threads 2  ● new reply  ← its open threads, marked while a reply waits unread
-  ├─  repo structure
+  ├─  project structure
   └─  hot reload
   ▸ Surfaces 3              ← the Task Board, the PRs, pages, write-ups (folded at first)
   ▸ Files 1                 ← file and folder surfaces, pinned paths (folded at first)
@@ -592,9 +597,6 @@ Inbox 2                     ← the shown host's: every surface that needs you
   ▾ Agents 2           1    ← how many run at the right (folded at first)
   ├─  router · rework vocab
   └─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
-▾  general                 ← fa-globe: agents in no repo
-▾ 󰆍 terminals 2             ← md-console: this host's terminals; script panes marked with a robot
-    zsh
 ─────────────────────────
 cpu 12%  ram 18/24G         ← the footer, the column's only other window; u to measure
 Settings
@@ -603,15 +605,27 @@ ISOVIM 2de9e2b
 
 The column is two windows, the list and the footer. The list starts with the Inbox of the host it
 shows, so `<` and `>` switch it with the rest (on another host it says whose, `Inbox 2 ·
-cleopatra`); `<leader>ih` brings it back to this host. Terminals is the list's last group, as General
-is one: Enter on a terminal opens it, `n` makes one, `r` / `d` / `o` rename, remove and open its
-port, and `<leader>iT` lands on it. Each
+cleopatra`); `<leader>ih` brings it back to this host. Under it comes Root, the host root with its
+decision log and the surfaces and files it brought up, which folds as a section does and stays while
+it has anything, no root running or not.
+
+Then the project switcher, and only the current project. A project is a repo, General or Terminals:
+every repo on the host and those two, in that order. `[` and `]` (`<leader>i[` and `<leader>i]` from
+anywhere) step it, as `<` and `>` step the host, opening nothing; Enter on its row opens the project's
+router, or General's agent last open, and `<leader>ip` and `<leader>iP` go there as they did. It
+follows the focused tab: open a chat in another project (from the Inbox, a link, `<leader><leader>`,
+which searches every project) and the list goes there, so it's the current scope, or on the root's
+chat, which isn't a project, the one before; it survives restarts with the scope, and each other
+host's is kept apart. So nothing's hidden silently, the row says how many other projects have
+something that needs you. A file surface's tab is its project's wherever the file is, so opening it
+doesn't move the list. On Terminals, Enter on a terminal opens it, `n` makes one, `r` / `d` / `o`
+rename, remove and open its port, and `<leader>iT` lands there. In the host's Inbox, each
 surface waiting on you is a row of its own, in the order `<leader>in` walks them: its repo's glyph in
 its color and short name (root's or general's for theirs), then the surface's mark and title, cut to
 the window's width, and a raised question's why, dimmed. Enter opens it as a tab. There is no Inbox of the other hosts: their
 surfaces are reached by showing that host.
 
-A repo's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files, Root, Agents, each a header
+A project's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files, Root, Agents, each a header
 with its count that Enter or Tab folds, its rows on dim tree guides (`├─`, `└─` for the last); an
 empty one isn't shown. The Inbox holds only the surfaces that need you (questions live only there),
 and a surface moves to its section once it's dealt with. Threads holds the repo's open threads and
@@ -619,9 +633,9 @@ says when one has a reply you haven't read; Surfaces the Task Board first, then 
 write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
 explorer's, `E`); Root the repo-root and its decision log (see Surfaces), with how many decisions
 it holds and whether the root runs; Agents the rest of the agents, with how many run at the right. The Inbox and Threads start
-open and the rest folded, and each section's fold is kept per repo in the session. Root and General
-get the same sections where they have something; threads are a repo's only. The repo's own fold
-still folds it whole. Each surface
+open and the rest folded, and each section's fold is kept per project in the session. Root and
+General get the same sections where they have something; threads are a repo's only. The fold on the
+project's row still folds it whole. Each surface
 type has its own row format. In root mode, an Inbox
 shows a "root mode" marker beside its count; a question its root is deciding says "root deciding",
 quietly, and one it raised to you shows its why after "↑".
@@ -769,18 +783,18 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 ## Keys
 
-Plain nvim keys keep their meaning: windows, buffers, hunks, lazygit. File keys translate to repos
+Plain nvim keys keep their meaning: windows, buffers, hunks, lazygit. File keys translate to projects
 and agents, and everything isovim-specific lives under `<leader>i`.
 
 **Global**
 - `<leader><leader>` jumps to anything the sidebar shows, each drawn as its row on the left (the
   Inbox's items first, then what you opened last) with a preview on the right: an agent's status
   and its chat's end (its chat buffer if loaded, else its transcript or its journal's last 64 KB), a
-  surface as it opens, a file or folder, a repo's or Terminals' rows, a terminal's pane; all local,
+  surface as it opens, a file or folder, a project's rows, a terminal's pane; all local,
   nothing waiting on the network or an agent, opening it as `<CR>` on its row would and moving the sidebar's
-  cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a repo; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
+  cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a project; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
   included.
-- `<leader>,` shows the repo's buffers; `<leader>fr` shows recent agents (`<leader>fR` recent files).
+- `<leader>,` shows the project's buffers; `<leader>fr` shows recent agents (`<leader>fR` recent files).
 - `<leader>e` opens or closes the sidebar.
 
 **`<leader>i`**
@@ -788,18 +802,19 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | key | does |
 |---|---|
 | `n` | the next thing that needs you |
-| `i` / `h` | the repo / host Inbox (the host's is at the top of the list) |
+| `i` / `h` | the project's / host's Inbox (the host's is at the top of the list) |
 | `r` | the router |
 | `R` | the nearest root |
 | `H` | the host root |
 | `w` / `a` | pick a worker / pick any agent |
 | `b` | the previous agent |
-| `p` | the previous repo, at the agent last open there |
-| `P` | pick a repo (Root, General and Terminals among them) |
-| `o` | the current repo's PRs surface |
+| `p` | the previous project, at the agent last open there |
+| `P` | pick a project (or Root) |
+| `[` / `]` | the sidebar's previous / next project |
+| `o` | the current project's PRs surface |
 | `g` / `T` | general / terminals |
 | `s` / `t` / `N` | spawn / new thread / new terminal |
-| `x` | root mode for this repo |
+| `x` | root mode for this project |
 | `j` | jump |
 | `<` / `>` | switch host |
 | `q` | the prompt queue (opened even when empty, to add a line) |
@@ -809,8 +824,8 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 
 **The landing**
 - On start, when there is nothing to resume, the editing area shows the landing (`isovim.landing`):
-  what isovim is, the Inbox count, the repos in `~/.isovim/repos`, the keys that matter (their words
-  read from the key tables, as `?` does) and quick actions on single keys: `s` spawn in a repo picked,
+  what isovim is, the Inbox count, the projects (the repos in `~/.isovim/repos`), the keys that matter (their words
+  read from the key tables, as `?` does) and quick actions on single keys: `s` spawn in a project picked,
   `p` anything in the sidebar (as `<leader><leader>`), `j` jump to a dir, `i` the host's Inbox, `n` a terminal, `m` send a repo to a host, `?` help.
   `<leader>il` brings it back. It belongs to no workspace, so no layout keeps it.
 
@@ -837,8 +852,8 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 - `<C-h>` goes to the sidebar from anything in the main column (a chat and its input box, the queue,
   a surface or question and its input box), in insert mode too: in an input box it takes the place of vim's backspace,
   which is `<BS>`. It lands in the sidebar window you were last in (the list at first), on the row
-  you left there, found by what it stands for (an agent, repo, surface or PR) since rows move as
-  the list refreshes; if that row is gone, on the agent you came from, then its repo.
+  you left there, found by what it stands for (an agent, project, surface or PR) since rows move as
+  the list refreshes; if that row is gone, on the agent you came from, then its project.
 - `<C-l>` from the sidebar goes back to the window you came from, typing again where you were if
   you were (the main window if it shows something else now).
 
@@ -848,6 +863,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 |---|---|
 | `<CR>` / `<Tab>` | open / collapse |
 | `<` / `>` | switch host |
+| `[` / `]` | switch project |
 | `<C-l>` | back to the window you came from |
 | `s` / `t` / `n` | spawn / new thread (on a repo's or agent's row) / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |
@@ -855,7 +871,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `o` / `c` | open the port / changes |
 | `u` | measure CPU/RAM |
 | `H` / `L` | toggles |
-| `P` | the row's repo's PRs surface (the root's on its rows; on General or Terminals, the current repo's); one with none registered says so |
+| `P` | the project's PRs surface (the root's in Root); one with none registered says so |
 | `?` | help |
 
 `m` sends the row under the cursor to a host picked from the peers (this one left out), by `iso move`.
