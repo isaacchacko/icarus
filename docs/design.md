@@ -351,6 +351,27 @@ host; General, Root and Terminals have none, and starting one there says why.
   and it joins the resolved list. It isn't your turn, as you needn't reply. Opening any resolved
   thread lands in normal mode on its outcome's box. One you resolved isn't marked, and the router
   isn't told of any of this. Threads resolved before this have no `tell`, so aren't marked.
+- **Bypass:** so a thread that goes back and forth with one worker has less overhead, a router can send
+  it straight there: `iso router thread bypass <id> <worker>`, on any open thread however old, a wait on
+  that worker replaced, needing nothing of a thread but its entries, nor of either's system prompt, as `bypass {on: <worker address>|none, by,
+  why?}` entries in the thread's file, so it survives a restart and its history reads. `bypass <id>`
+  shows it, as `thread ls` and `show` do; `bypass <id> <other>` moves it and `bypass <id> none` ends it.
+  Only a router's role runs these, and a worker holds one at most, a second refused by naming the
+  thread it has. The target is a worker of this repo on this host, not a router, a repo-root, a
+  terminal or a script's pane. On create the worker gets one prompt with the title, how to read the
+  thread and the rules. While it stands, the user's posts, images and all, go straight to the worker
+  in the same `[thread ...]` tag, queuing on it like any prompt, with a line reminding it of the rules,
+  and the router hears nothing of them; the title-alone prompt too. Its supervisor sees the tag as a
+  router's does, so the turn shows working in the thread (the `working` entry says whose) and its
+  last message is posted, and whose-turn marks, `thread waiting` and `--no-reply` work the same for
+  it. It can't resolve it or move it: `iso worker
+  thread release <reason>` messages the router, stamped, naming the thread, and changes nothing, and
+  the router ends it or doesn't. A bypass ends on its own when the thread is resolved, and when the
+  worker is removed or stays down for 30s; a restart comes back within that and keeps it. Who has to
+  hear of an end is worked out from the file and told once, by the router's supervisor: the worker
+  if it's still there, the router unless it did it (`bypass_told {upto}`). After an end the next post
+  goes to the router. The view says `→ goes to <worker>` under the banner as a link, by the parent
+  and children; the row is as it was, and there are no new keys.
 - **Parents and children:** a thread can have a parent in the same repo: `parent` on its header, or
   `parent {on: <id>|none, by}` to change it, refusing a cycle. Children aren't stored; they're found
   by scanning the repo's threads, resolved ones included. Under the banner, only when they exist,

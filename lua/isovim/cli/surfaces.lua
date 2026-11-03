@@ -409,19 +409,26 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
+  local no_reply = flag(args, "--no-reply")
+  local parent = option(args, "--parent")
   if sub ~= "ls" and sub ~= "show" then
-    local ws, id = me and me:match("^(.*)/([^/]+)$")
+    local ws, id = (me or ""):match("^(.*)/([^/]+)$")
     local record = ws and store.agent(ws, id)
-    if record and store.role(record) ~= "router" then
-      fail(("only routers make, post and resolve threads; %s reads them with thread ls and show"):format(store.role(record)))
+    local role = record and store.role(record)
+    local holds = role == "worker" and threads.holder(repo, me)
+    if sub == "bypass" and role ~= "router" then
+      fail("only a router makes, moves or ends a bypass" .. (role == "worker" and "; iso worker thread release <reason> asks it to" or ""))
+    elseif sub == "release" and not holds then
+      fail(role == "worker" and "you hold no thread's bypass, so there's nothing to release"
+        or "iso worker thread release is a bypassed worker's, to ask its router to end it")
+    elseif sub == "resolve" and role == "worker" and args[1] and threads.summary(threads.read(repo, args[1]) or {}).bypass then
+      fail("a worker can't resolve a bypassed thread; iso worker thread release <reason> asks the router, and can carry the outcome you'd propose")
     end
   end
   me = me or "user"
-  local no_reply = flag(args, "--no-reply")
-  local parent = option(args, "--parent")
   local images = {}
   while true do
     local path = option(args, "--image")
@@ -435,7 +442,7 @@ function M.thread(args)
     -- A router's turn on a thread: what it splits off goes under that thread, unless it says not.
     local under = parent ~= "none" and parent or nil
     if not parent and me ~= "user" then
-      under = threads.turn_thread(repo)
+      under = threads.turn_thread(repo, me)
       if under then
         note(("it goes under %s, the thread of this turn (--parent none opts out)"):format(under))
       end
@@ -471,6 +478,40 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s %s"):format(repo, id, on == "none" and "waits on nobody" or ("waits on " .. on)))
+  elseif sub == "bypass" then
+    local id = args[1] or fail(usage)
+    local on = args[2]
+    if not on then
+      local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
+      local info = threads.summary(entries)
+      return out(info.bypass and ("%s goes to %s"):format(id, info.bypass) or ("%s has no bypass: it goes to the router"):format(id))
+    end
+    if on ~= "none" then
+      local ws, agent = c.resolve_agent(on:find("/", 1, true) and on or (repo .. "/" .. on))
+      on = ws.id .. "/" .. agent.id
+    end
+    local why = threads.bypass_refusal(repo, id, on)
+    if why then
+      fail(why)
+    end
+    if on ~= "none" then
+      local info = threads.summary(threads.read(repo, id))
+      require("isovim.cli.messaging").send({ on, threads.bypass_prompt(repo, id, info.title, me) })
+    end
+    threads.set_bypass(repo, id, on, me)
+    out(on == "none" and ("%s goes to the router again"):format(id) or ("%s goes to %s"):format(id, on))
+  elseif sub == "release" then
+    local reason = vim.trim(table.concat(args, " "))
+    if reason == "" then
+      fail(usage)
+    end
+    local id = threads.holder(repo, me)
+    local info = threads.summary(threads.read(repo, id))
+    require("isovim.cli.messaging").send({ store.router(repo) or fail(repo .. " has no router here"),
+      ("[bypass release] %s asks to be let off thread %s %q: %s\n\n(Nothing has changed. iso router thread bypass %s none ends it, "
+        .. "and the user's next post comes to you; if it carries an outcome you agree with, iso router thread resolve %s \"...\" ends it too.)")
+        :format(me, id, info.title, reason, id, id) })
+    out(("asked the router to end %s's bypass; nothing changes until it does"):format(id))
   elseif sub == "parent" then
     local id = args[1] or fail(usage)
     local above = args[2] or fail(usage)
@@ -524,7 +565,7 @@ function M.thread(args)
     end
     for _, info in ipairs(list) do
       out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
-        (info.parent and ("  under " .. info.parent) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
+        (info.parent and ("  under " .. info.parent) or "") .. (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
     end
   elseif sub == "show" then
     local id = args[1] or fail(usage)
@@ -533,6 +574,9 @@ function M.thread(args)
       if entry.kind == "thread" then
         out(("%s: %s (started by %s, %s%s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0),
           entry.parent and (", under " .. entry.parent) or ""))
+      elseif entry.kind == "bypass" then
+        out(("\n[%s by %s%s]"):format(entry.on == "none" and "bypass ended" or ("bypass to " .. tostring(entry.on)), entry.by or "?",
+          entry.why and (": " .. entry.why) or ""))
       elseif entry.kind == "parent" then
         out(("\n[%s by %s]"):format(entry.on == "none" and "no parent" or ("under " .. tostring(entry.on)), entry.by or "?"))
       elseif entry.kind == "post" then

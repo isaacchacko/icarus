@@ -817,6 +817,8 @@ M.role_actions = {
       ask = { args = { "<text>", "<path>" } },
       ls = { flags = { ["--all"] = false } },
       show = { args = { "<text>" } },
+      bypass = { args = { "<text>", "<text>" } },
+      release = { args = { "<text>..." } },
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
     help = [=[
@@ -832,6 +834,28 @@ M.role_actions = {
                                      for you (tool calls stay in your chat). A thread
                                      the user stopped at the title of comes the same
                                      way, the title as their first post
+       iso thread bypass <id> [<worker>|none]
+                                     routers only: send the user's posts on a thread straight
+                                     to a worker, for a thread that will go back and forth
+                                     with one, at less cost, and you stay its owner. Any open
+                                     thread can have one, however old, whatever its history;
+                                     a wait on that worker is replaced. With no worker it says
+                                     who has it (ls and show say too); another worker moves
+                                     it; none ends it, and the next post comes to you. A worker
+                                     holds one at most, and it must be a worker of this repo
+                                     on this host. The worker gets a prompt with the rules. The
+                                     user's posts then reach it as prompts tagged with the
+                                     thread, images and all, queuing like any prompt, and you
+                                     get no prompt for them. Its turn works as yours: its last
+                                     message is posted, and waiting and --no-reply work for it.
+                                     You can still post there. It ends on its own when the
+                                     thread is resolved, by anyone, or the worker is removed or
+                                     stays down 30s (a restart keeps it), and you and it are
+                                     told once
+       iso thread release <reason...>
+                                     a bypassed worker: ask the router to end the bypass,
+                                     with the outcome you'd propose, as you can't resolve or
+                                     move it. It changes nothing until the router does
        iso thread parent <id> <parent>|none
                                      put a thread under another of this repo, refusing a
                                      cycle. thread new takes --parent, and during your

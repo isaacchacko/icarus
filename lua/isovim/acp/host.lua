@@ -560,7 +560,7 @@ deliver = function(prompt)
   S.thread_turn = nil
   if thread_repo and vim.uv.fs_stat(threads.file(thread_repo, thread_id)) then
     S.thread_turn = { repo = thread_repo, id = thread_id, text = "" }
-    pcall(threads.working, thread_repo, thread_id, "start")
+    pcall(threads.working, thread_repo, thread_id, "start", nil, S.ws .. "/" .. S.agent)
   end
   -- A page's comment or dive (isovim.pages): the turn shows on its line.
   local page_repo, page_name, page_id = require("isovim.pages").tagged(prompt.text)

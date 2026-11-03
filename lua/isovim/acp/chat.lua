@@ -1246,26 +1246,32 @@ local function update_related(chat)
     return
   end
   local links = require("isovim.links")
-  local function row(lead, ids)
+  local function row(lead, addresses)
     local text, chips = lead, {}
-    for i, id in ipairs(ids) do
-      local addr = ("iso:thread/%s#%s"):format(chat.ws, id)
+    for i, addr in ipairs(addresses) do
       local parts = links.parts(addr)
       local chip = table.concat(vim.tbl_map(function(part)
         return part[1]
       end, parts))
       chips[i] = { #text, #text + #chip, addr, parts }
-      text = text .. chip .. (i < #ids and "   " or "")
+      text = text .. chip .. (i < #addresses and "   " or "")
     end
     return { text = text, lead = #lead, chips = chips }
   end
-  local parent, children = threads.related(chat.ws, chat.thread)
+  local function thread_address(id)
+    return ("iso:thread/%s#%s"):format(chat.ws, id)
+  end
+  local parent, children, bypass = threads.related(chat.ws, chat.thread)
+  chat.bypass = bypass
   local rows = {}
+  if bypass then
+    rows[#rows + 1] = row("→ goes to  ", { "iso:agent/" .. bypass })
+  end
   if parent then
-    rows[#rows + 1] = row("↑ parent  ", { parent })
+    rows[#rows + 1] = row("↑ parent  ", { thread_address(parent) })
   end
   if #children > 0 then
-    rows[#rows + 1] = row("↓ children  ", children)
+    rows[#rows + 1] = row("↓ children  ", vim.tbl_map(thread_address, children))
   end
   local texts = vim.tbl_map(function(each)
     return each.text
@@ -1336,6 +1342,10 @@ function RENDER.thread(chat, entry)
 end
 
 function RENDER.parent(chat)
+  update_related(chat)
+end
+
+function RENDER.bypass(chat)
   update_related(chat)
 end
 
@@ -1448,8 +1458,9 @@ end
 function RENDER.working(chat, entry)
   chat.busy = entry.state == "start"
   chat.since = chat.busy and entry.at or nil
+  chat.working_by = chat.busy and entry.by or chat.working_by
   if entry.died then
-    add_block(chat, { ("the router stopped during its turn on this, so it may not have answered · %s"):format(clock(entry.at)) }, "IsovimPrDim")
+    add_block(chat, { ("%s stopped during its turn on this, so it may not have answered · %s"):format((chat.working_by or "the router"):match("([^/]+)$"), clock(entry.at)) }, "IsovimPrDim")
   end
 end
 
@@ -1595,7 +1606,7 @@ function M.bar_parts(chat)
       local secs = chat.since and math.max(0, math.floor(sec + usec / 1e6 - chat.since)) or 0
       add(FRAMES[frame] .. " ", "IsovimAcpSpinner")
       chat.router = chat.router or store.router(chat.ws) or "the router"
-      add(("%s is working on it… (%s)"):format(chat.router, look.duration(secs)), "IsovimAcpSpinnerNote")
+      add(("%s is working on it… (%s)"):format(chat.working_by or chat.router, look.duration(secs)), "IsovimAcpSpinnerNote")
     elseif chat.resolved then
       -- Its outcome is in the box above; the bar only says how to open it again.
       add("✓ resolved · r on the thread opens it again", "IsovimAcpIdle")
@@ -2678,7 +2689,7 @@ local function composer_hint(chat)
   elseif chat.thread and #chat.boxes > 0 then
     return "  its number (or an option's name) and <CR> answers · anything else posts · <CR> on an option above"
   elseif chat.thread then
-    return "  <CR> posts to the router · <S-CR> new line · <C-v> image · on the thread: r resolves it, u marks it unread · <C-h> the sidebar"
+    return "  <CR> posts to " .. (chat.bypass and chat.bypass:match("([^/]+)$") or "the router") .. " · <S-CR> new line · <C-v> image · on the thread: r resolves it, u marks it unread · <C-h> the sidebar"
   end
   local around = (queue.window(chat) and "<C-j> the queue · " or "") .. "<C-k> the chat · <C-h> the sidebar"
   if #chat.boxes > 0 then
@@ -3653,7 +3664,8 @@ function M.post_thread(chat, text)
   chat.recall = nil
   M.set_draft(chat, { "" })
   to_bottom(chat)
-  local router = store.router(chat.ws)
+  -- To its bypass's worker, if it has one, else the router.
+  local router, bypassed = threads.recipient(chat.ws, chat.thread)
   if not router then
     return say(chat.ws .. " has no router to send it to; it's kept in the thread", vim.log.levels.WARN)
   end
@@ -3661,7 +3673,7 @@ function M.post_thread(chat, text)
   for _, image in ipairs(attached or {}) do
     vim.list_extend(cmd, { "--image", image.path })
   end
-  cmd[#cmd + 1] = threads.prompt(chat.ws, chat.thread, chat.title or chat.thread, text)
+  cmd[#cmd + 1] = threads.prompt(chat.ws, chat.thread, chat.title or chat.thread, text) .. (bypassed and threads.BYPASS_NOTE or "")
   vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
     if result.code ~= 0 then
       say(("posted, but %s wasn't told: %s"):format(router, vim.trim(result.stderr or "")), vim.log.levels.WARN)
