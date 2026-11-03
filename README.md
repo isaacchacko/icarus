@@ -95,7 +95,7 @@ Agents run `iso <worker|router|repo-root|root> <action>`, checked against their 
 - **Yours**: `iso` opens the TUI. `spawn [--repo owner/repo|dir]` (with no parent), `jump` (fzf, one level at a time, `.` and `..`), `attach`, `phone`, `handover`, `move`, `rm`, `restart`, `rename`, `rootmode`, `answer`, `listen`, `verify`, `sync`, `checkhealth`.
 - **Retired**: `task`, `pin` and `ask` still work for workspace agents until cutover; v0's replacements are the router's `tasks.md`, `surface file|folder` and `surface question`. `doctor` is a hidden alias of `checkhealth` until 2026-12-01.
 
-Every message between agents carries isovim's stamp, `[from <host>:<agent> · m<id>]`, proven from the sending process, and it arrives as its own prompt; the receiver is told whether it's real, and only the host root's speak for you.
+Every message between agents carries isovim's stamp, `[from <host>:<agent> · m<id>]`, proven from the sending process. Messages that piled up while an agent worked arrive together as one turn, each with its own stamp, and anything else in the queue keeps its own turn. The receiver is told whether each is real, and only the host root's speak for you.
 
 ### Events
 

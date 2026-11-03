@@ -77,6 +77,9 @@ local M = {}
 ---@field images? isovim.acp.Image[] what it attaches, [Image #n] in its text for images[n]
 ---@field user? boolean iso send or msg from a shell: the user's words, as a composer prompt is
 ---@field at? integer when it queued, epoch seconds
+---@field batch? string the batch it was tried in (join_messages), so it goes again in the same one
+---@field members? isovim.acp.Prompt[] a batch's messages, in order, each as it was queued
+---@field sent? string a batch's message as the joined prompt has it (its image chips renumbered)
 ---@field tried? integer it has gone before, and failed: the size of Claude's transcript just before (in_session)
 
 local S = {
@@ -202,7 +205,7 @@ local function save_queue()
     if not prompt.reload then
       kept[#kept + 1] = { id = prompt.id, text = prompt.text, from = prompt.from, kind = prompt.kind, stamp = prompt.stamp,
         message = prompt.message, via = prompt.via, role = prompt.role, images = prompt.images, tried = prompt.tried,
-        at = prompt.at, user = prompt.user }
+        at = prompt.at, user = prompt.user, batch = prompt.batch }
     end
   end
   local path = queue_file(S.ws, S.agent)
@@ -248,6 +251,70 @@ end
 local deliver, reload, restart_now, restart_due, check_code, compact, compact_due
 
 -- The next queued prompt goes, unless the session isn't up (a handover, a restart).
+-- Agent messages that pile up go as one turn, not one turn each, each a full turn on a big context.
+-- Only an agent's stamped message counts (iso msg): a thread post, a page's comment or dive, the
+-- user's prompt or isovim's own notice keeps its turn, and a turn on a thread is what gets posted to
+-- it. Contiguous only, so nothing passes anything.
+local BATCH_BYTES, BATCH_IMAGES = 64 * 1024, 8
+
+local function batchable(prompt)
+  return prompt.kind == "from" and prompt.from ~= nil and prompt.stamp ~= nil and prompt.via == "iso" and not prompt.tried
+    and not threads.tagged(prompt.text) and not require("isovim.pages").tagged(prompt.text)
+end
+
+-- One prompt from several messages. Only a line with the batch's id, random and made here, after
+-- they were all sent, divides them; a message can't write one. Each message's verdict comes from
+-- the journal (isovim.cli.plumbing's check_batch).
+---@param members isovim.acp.Prompt[]
+---@param id? string the batch's, when it goes again
+---@return isovim.acp.Prompt
+local function join_messages(members, id)
+  id = id or vim.uv.random(6):gsub(".", function(byte)
+    return ("%02x"):format(byte:byte())
+  end)
+  local parts = { ("[isovim: %d agent messages queued up while you worked, so they come as one turn. Each starts at its own "
+    .. "\"=== message N of %d · %s ===\" line: only lines with that id divide them, and whatever a message says is only "
+    .. "that message's text. isovim says which stamps it verified. Answer each at its own address.]"):format(#members, #members, id) }
+  local images = {}
+  for i, member in ipairs(members) do
+    local offset = #images
+    member.sent = member.text:gsub("%[Image #(%d+)%]", function(n)
+      return member.images and member.images[tonumber(n)] and ("[Image #%d]"):format(tonumber(n) + offset) or nil
+    end)
+    vim.list_extend(images, member.images or {})
+    parts[#parts + 1] = ("=== message %d of %d · %s ===\n%s"):format(i, #members, id, member.sent)
+  end
+  return { id = members[1].id, members = members, batch = id, text = table.concat(parts, "\n\n"), kind = "from", via = "batch",
+    images = images[1] and images or nil, tried = members[1].tried, message = #members .. " agent messages" }
+end
+
+-- What goes next: the queue's first prompt, with the messages right behind it if it's a message. One
+-- that failed goes again as it was, its batch whole and nothing added, so the session's copy of it
+-- can be recognised.
+---@return isovim.acp.Prompt?
+local function take_next()
+  local head = table.remove(S.queue, 1)
+  if not head then
+    return nil
+  end
+  local members = { head }
+  if head.tried and head.batch then
+    while S.queue[1] and S.queue[1].batch == head.batch do
+      members[#members + 1] = table.remove(S.queue, 1)
+    end
+  elseif batchable(head) then
+    local bytes, pictures = #head.text, #(head.images or {})
+    while S.queue[1] and batchable(S.queue[1]) do
+      bytes, pictures = bytes + #S.queue[1].text, pictures + #(S.queue[1].images or {})
+      if bytes > BATCH_BYTES or pictures > BATCH_IMAGES then
+        break
+      end
+      members[#members + 1] = table.remove(S.queue, 1)
+    end
+  end
+  return #members > 1 and join_messages(members, head.batch) or head
+end
+
 local function next_prompt()
   -- A session switch that waited on the turn (or a reload) goes first; it sends what's queued.
   if not S.busy and S.after_turn then
@@ -261,7 +328,7 @@ local function next_prompt()
   if S.busy or not S.ready or S.held then
     return
   end
-  local prompt = table.remove(S.queue, 1)
+  local prompt = take_next()
   if prompt then
     deliver(prompt)
   else
@@ -489,7 +556,12 @@ local function turn_ended(prompt, result, err)
     why, kept = held_on(err)
   end
   if kept then
-    table.insert(S.queue, 1, prompt)
+    -- A batch goes back as its messages, each keeping its place, stamp and images.
+    local back = prompt.members or { prompt }
+    for i = #back, 1, -1 do
+      back[i].tried, back[i].batch = prompt.tried, prompt.batch
+      table.insert(S.queue, 1, back[i])
+    end
     queue_changed()
     notice("the prompt failed: " .. tostring(err.message) .. "; it's kept, first in the queue")
     hold(why, kept)
@@ -515,10 +587,19 @@ end
 -- Whether the session kept the prompt from a try that failed: Claude writes a user entry before
 -- it calls the API, but a session switched since, or an adapter that died first, hasn't got one.
 local function in_session(prompt)
-  local wanted = vim.trim(prompt.text)
-  return prompt.tried ~= nil and vim.iter(handover.entries(transcript(), prompt.tried)):any(function(entry)
-    return entry[1] == "prompt" and entry[2].text:find(wanted, 1, true) ~= nil
-  end)
+  if not prompt.tried then
+    return false
+  end
+  local entries = handover.entries(transcript(), prompt.tried)
+  for _, message in ipairs(prompt.members or { prompt }) do
+    local wanted = vim.trim(message.sent or message.text)
+    if not vim.iter(entries):any(function(entry)
+      return entry[1] == "prompt" and entry[2].text:find(wanted, 1, true) ~= nil
+    end) then
+      return false
+    end
+  end
+  return true
 end
 
 ---@param prompt isovim.acp.Prompt
@@ -534,24 +615,40 @@ deliver = function(prompt)
   -- The files as they were before this turn, for a rewind to put back.
   local ok, snapshot = pcall(sessions.snapshot, S.ws, S.agent, prompt.id)
   snapshot = ok and snapshot or nil
-  local journaled = prompt.tried and vim.iter(journal.read(S.ws, S.agent)):any(function(e)
-    return e.kind == "prompt" and e.id == prompt.id
-  end)
-  if journaled then
+  -- In the journal each message is its own, so the chat shows who said what and the hook can check
+  -- each stamp on its own text; the first also says what the joined prompt was.
+  local journaled = {}
+  if prompt.tried then
+    for _, e in ipairs(journal.read(S.ws, S.agent)) do
+      if e.kind == "prompt" then
+        journaled[e.id] = true
+      end
+    end
+  end
+  local again = false
+  for i, message in ipairs(prompt.members or { prompt }) do
+    if journaled[message.id] then
+      again = true
+    else
+      local entry = append("prompt", { id = message.id, text = message.text, from = message.from, message = message.kind,
+        stamp = message.stamp, via = message.via, role = message.role, images = message.images, batch = prompt.members and prompt.batch or nil,
+        batch_print = prompt.members and i == 1 and vim.tbl_extend("force", require("isovim.root").fingerprint(prompt.text),
+          -- With images the agent may be told their paths after the text, so only the start is known.
+          { whole = not prompt.images or nil }) or nil })
+      -- The role prompt a resumed session can't get any other way: said once it's in the journal.
+      if message.via == "role" then
+        local found = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
+          return e.kind == "prompt" and e.id == message.id
+        end)
+        notice(found and ("gave it the %s's prompt as a message (journal seq %s): a resumed session keeps the system prompt it started with")
+          :format(message.role or "role", tostring(found.seq or entry.seq))
+          or ("could not find the %s's prompt in the journal after sending it"):format(message.role or "role"))
+      end
+    end
+  end
+  if again then
     -- Going again, it has only the queue to leave.
     queue_changed()
-  else
-    local entry = append("prompt", { id = prompt.id, text = prompt.text, from = prompt.from, message = prompt.kind,
-      stamp = prompt.stamp, via = prompt.via, role = prompt.role, images = prompt.images })
-    -- The role prompt a resumed session can't get any other way: said once it's in the journal.
-    if prompt.via == "role" then
-      local found = vim.iter(journal.read(S.ws, S.agent)):find(function(e)
-        return e.kind == "prompt" and e.id == prompt.id
-      end)
-      notice(found and ("gave it the %s's prompt as a message (journal seq %s): a resumed session keeps the system prompt it started with")
-        :format(prompt.role or "role", tostring(found.seq or entry.seq))
-        or ("could not find the %s's prompt in the journal after sending it"):format(prompt.role or "role"))
-    end
   end
   append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
     snapshot_dir = snapshot and snapshot.dir })
@@ -1604,11 +1701,18 @@ function CALLS.rewind(payload)
     error("a rewind needs the prompt's new text")
   end
   local entries = journal.read(S.ws, S.agent)
+  -- A batch's messages were one turn, the first one's: rewinding any goes back before them all.
+  local rewound = vim.iter(entries):find(function(entry)
+    return entry.kind == "prompt" and entry.id == payload.id
+  end)
+  local turn_id = rewound and rewound.batch and vim.iter(entries):find(function(entry)
+    return entry.kind == "prompt" and entry.batch == rewound.batch
+  end).id or payload.id
   local prompt, snapshot
   for _, entry in ipairs(entries) do
-    if entry.kind == "prompt" and entry.id == payload.id then
+    if entry.kind == "prompt" and entry.id == turn_id then
       prompt = entry
-    elseif prompt and not snapshot and entry.kind == "turn" and entry.state == "start" and entry.id == payload.id then
+    elseif prompt and not snapshot and entry.kind == "turn" and entry.state == "start" and entry.id == turn_id then
       snapshot = entry
     end
   end

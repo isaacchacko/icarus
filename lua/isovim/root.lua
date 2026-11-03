@@ -111,7 +111,7 @@ function M.caller()
 end
 
 -- The text as the receiver will see it: Claude wraps a long message in <pasted_content> tags and
--- may rewrap its lines, and several queued messages can arrive as one prompt.
+-- may rewrap its lines.
 local function normalize(text)
   text = text:gsub("</?pasted_content[^>]*>", "")
   return vim.trim((text:gsub("%s+", " ")))
@@ -149,6 +149,26 @@ function M.find(id)
       end
     end
   end
+end
+
+-- What M.same_text compares a text's start against.
+---@return {sum: string, len: integer}
+function M.fingerprint(text)
+  local sent = normalize(text)
+  return { sum = digest(sent), len = #sent }
+end
+
+-- The batch id of a prompt isovim.acp.host put together from queued agent messages: read only from
+-- the prompt's very start, where nothing a message says can be.
+---@return string?
+function M.batch_id(prompt)
+  return normalize(prompt):match("^%[isovim: %d+ agent messages queued up.-· (%x+) ===")
+end
+
+-- Whether the prompt starts with the stamp, the one thing that makes it a message: anything after
+-- that is only what the message says.
+function M.opens_with(prompt, tag)
+  return vim.startswith(normalize(prompt), normalize(tag))
 end
 
 -- The stamps in a message ([from ...] and [ask from ...] tags), with what the text claims.

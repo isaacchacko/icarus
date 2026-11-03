@@ -86,7 +86,20 @@ lifetimes, so agents outlive the TUI).
   `iso <role> msg --first <agent> <text>` puts a message at the front without touching the turn,
   `--now` does too and cancels the turn, the message itself saying to carry on after it, and
   `iso <role> queue <agent>` and `queue drop <agent> <id>` list and remove. None of them edits a
-  message, so stamps survive. Nobody but you goes ahead of or drops a prompt you wrote: `--first`
+  message, so stamps survive. Agent messages that piled up go together as one turn, not one turn each:
+  when a turn ends and the queue's first prompt is an agent's stamped message (`iso msg`), it goes with
+  the agent messages right behind it, up to 64 KiB and 8 images. Contiguous only, so nothing passes
+  anything: a prompt of yours, a thread post, a page's comment or dive, or isovim's own notice stops
+  the batch and keeps its own turn. Every role does this. The joined prompt opens with a header and
+  divides the messages with lines carrying a random id made when it's joined, which no message can
+  have written. Until then the queue window and `iso queue` show each message, and the journal and
+  chat show each as its own prompt, with its stamp. The prompt hook checks each stamp on the text
+  journaled for it, and says so per message, so a forged stamp or divider inside one message is only
+  text and gets no verdict, and a root's authority covers only what its own message says. An ACP
+  agent's single message is read the same way: only a stamp at its very start counts. A batch that
+  fails on a usage limit or a login goes back as its messages, and goes again whole in the same batch
+  with the same id and nothing added; if the session kept it, it gets the note to pick it up rather
+  than a copy. Nobody but you goes ahead of or drops a prompt you wrote: `--first`
   and `--now` land behind it, and a drop refuses it. `--now` is refused while a permission waits
   (the cancel would lose it), while the turn is on your own prompt, and to a lower role for a
   higher one's turn (a router, for a repo-root or root).
