@@ -336,7 +336,11 @@ host; General, Root and Terminals have none, and starting one there says why.
   the worker's state not being mid-turn, 30s or more after the mark, as a mark often comes just
   before the worker starts, with no background work left under its supervisor (a shell, a Monitor,
   a turn it started itself; it's asked over its socket, for at most 3s). The router is told once:
-  marking the same worker again waits quietly until that worker has done something more. There's no reminder about quiet threads otherwise.
+  marking the same worker again waits quietly until that worker has done something more. It's told
+  only when it has no turn running or queued, and whatever's still so then, as a nudge queued behind
+  its turn could arrive after it had settled the thread. Any router post clears a wait on a worker,
+  as it's said where things stand, unless the same turn marked it (`keeps_wait` on a post outside a
+  turn on the thread, where the mark can come first). There's no reminder about quiet threads otherwise.
   A router's supervisor that dies mid-turn never writes that turn's end, so the TUI (every 5s) and
   the supervisor once it's back (every 10s) end any turn 15s or older whose router isn't mid-turn:
   `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says

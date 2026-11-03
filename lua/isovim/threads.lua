@@ -8,8 +8,9 @@
 --   {kind = "thread", id, title, created_by, at, status = "open", parent?}    its header, first
 --   {kind = "parent", on = <id>|"none", by, at}     its parent thread from then on (children aren't
 --                                                   stored: M.related finds them by scanning)
---   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?}   no_reply: it needs
---                                                   nothing from the user (below)
+--   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?, keeps_wait?}
+--                                                   no_reply: it needs nothing from the user (below);
+--                                                   keeps_wait: the turn that made it also marked a worker
 --   {kind = "resolved", by, outcome?, at}, {kind = "reopened", by, at}
 --   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
@@ -32,7 +33,8 @@
 -- dismiss it (D). The agent opts out when a post needs nothing from them: iso router thread post
 -- --no-reply, or iso router thread waiting <id> none|<worker> in a turn whose last message posts
 -- itself, the mark standing for that post. Posts during a turn on the thread count when it ends.
--- Waiting on a worker clears once that worker has finished or gone, and the router is told; M.listen,
+-- Waiting on a worker clears on the router's next post, unless that turn marked it too, or once that
+-- worker has finished or gone, and the router is told, when it's free to hear it; M.listen,
 -- in the router's supervisor, sees to that, and gives the router a thread the user stopped at the
 -- title of, the title as their first post.
 local store = require("isovim.store")
@@ -94,9 +96,13 @@ function M.summary(entries)
       if entry.by ~= "user" then
         info.last_reply = entry.seq
         if turn then
-          turn.posted = turn.posted or not entry.no_reply
+          turn.posted, turn.spoke = turn.posted or not entry.no_reply, true
+        elseif entry.keeps_wait then
+          -- It marked a worker in the same turn: that's what it waits on.
         elseif not entry.no_reply then
           waits("user", entry.at)
+        elseif info.waiting_on ~= "user" then
+          waits(nil)
         end
       elseif info.waiting_on == "user" then
         waits(nil)
@@ -125,6 +131,8 @@ function M.summary(entries)
           waits(turn.mark ~= "none" and turn.mark or nil, turn.at)
         elseif turn.posted then
           waits("user", entry.at)
+        elseif turn.spoke and info.waiting_on ~= "user" then
+          waits(nil)
         end
       end
       turn = info.working and {} or nil
@@ -283,6 +291,17 @@ function M.raise(repo, id, qid, by, why)
   return append(repo, id, { kind = "raised", qid = qid, by = by, why = why })
 end
 
+-- Whether by marked a worker during the turn it's in now, outside a turn on this thread (that keeps
+-- track itself): its state file was last written as the turn started.
+local function marked_this_turn(info, by)
+  if info.working or not info.waiting_on or info.waiting_on == "user" or by == "user" then
+    return false
+  end
+  local ws, agent = by:match("^(.*)/([^/]+)$")
+  local stat = ws and vim.uv.fs_stat(store.state_file(ws, agent))
+  return stat ~= nil and (info.waiting_at or 0) >= stat.mtime.sec
+end
+
 -- A post in the thread; no_reply: it needs nothing from the user, so it doesn't make it their turn.
 ---@param images? {path: string, mimeType: string}[]
 ---@return table? post, string? err
@@ -295,7 +314,8 @@ function M.post(repo, id, by, text, images, no_reply)
   if text == "" and not (images and images[1]) then
     return nil, "a post needs text"
   end
-  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil, no_reply = no_reply or nil })
+  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil,
+    no_reply = no_reply or nil, keeps_wait = marked_this_turn(M.summary(entries), by) or nil })
 end
 
 -- Whose turn it is from now on: on is "user", an agent's address, or "none".
@@ -541,15 +561,17 @@ local function told_already(info, worker)
   return stat and stat.mtime.sec <= (info.told_at or 0)
 end
 
--- One look over the repo's open threads: say(text) sends the router a message.
-function M.sweep(repo, say)
+-- One look over the repo's open threads: say(text) sends the router a message. Telling it of a worker
+-- waits till busy() says it's free, as queued it could arrive after the router has settled the thread
+-- anyway; what's still so then is looked at afresh.
+function M.sweep(repo, say, busy)
   local status = require("isovim.status")
   M.end_dead_turns(repo)
   for _, info in ipairs(M.list(repo)) do
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     local state = worker and status.owner_state(worker)
-    if state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START
-      and not told_already(info, worker) and not has_background(worker)) then
+    if worker and not busy() and (state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START
+      and not told_already(info, worker) and not has_background(worker))) then
       append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = state })
       say(("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
         .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled. Marking the same worker "
@@ -568,10 +590,11 @@ end
 -- is open: every 10s, and soon after one of the repo's agents changes state or goes.
 ---@param repo string
 ---@param say fun(text: string)
-function M.listen(repo, say)
+---@param busy fun(): boolean
+function M.listen(repo, say, busy)
   local safe = require("isovim.safe")
   local sweep = safe.wrap("threads.sweep", function()
-    M.sweep(repo, say)
+    M.sweep(repo, say, busy)
   end)
   local tick, soon = assert(vim.uv.new_timer()), assert(vim.uv.new_timer())
   tick:start(5000, 10000, vim.schedule_wrap(sweep))

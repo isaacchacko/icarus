@@ -839,7 +839,8 @@ M.role_actions = {
                                      turn: it stands for that post, in place of the
                                      user's turn. Whenever a post needs nothing from the
                                      user, say so, or they're nagged. On an agent it
-                                     clears once that agent finishes or is removed, and
+                                     clears on your next post unless that turn marks it,
+                                     or once that agent finishes or is removed, and
                                      you're told, so the thread doesn't sit
        iso thread resolve <id> [<outcome...>]
                                      resolve it once it's settled, without being asked,

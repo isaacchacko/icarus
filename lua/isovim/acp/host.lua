@@ -1260,6 +1260,8 @@ local function subscribe_threads()
   S.thread_sweep = true
   threads.listen(store.canon(S.ws), function(text)
     submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
+  end, function()
+    return S.busy or #S.queue > 0
   end)
 end
 
