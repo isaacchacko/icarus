@@ -327,6 +327,18 @@ function M.forget(buf, from, to)
   vim.api.nvim_buf_clear_namespace(buf, NS, from, to)
 end
 
+-- The chips drawn in buffer from become to's, ids and all, in place of what it had: a chat drawn again
+-- in a buffer of its own takes over its old one (isovim.acp.chat's swap).
+function M.move(from, to)
+  M.forget(to, 0, vim.api.nvim_buf_line_count(to))
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(from, NS, 0, -1, { details = true })) do
+    local opts = mark[4]
+    opts.ns_id, opts.id = nil, mark[1]
+    vim.api.nvim_buf_set_extmark(to, NS, mark[2], mark[3], opts)
+  end
+  drawn[to], drawn[from] = drawn[from], nil
+end
+
 -- Writes into buf with fn: the buffer made modifiable meanwhile (the chat passes its own writer,
 -- which keeps its guard and following right).
 local function plain_write(buf)

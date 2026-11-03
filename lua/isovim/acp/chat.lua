@@ -3321,6 +3321,7 @@ local function swap(build)
       vim.api.nvim_buf_set_extmark(buf, ns, mark[2], mark[3], opts)
     end
   end
+  require("isovim.links").move(hidden, buf)
   pcall(vim.api.nvim_buf_delete, hidden, { force = true })
   chat.buf, chat.backlog, chat.backlog_at = buf, nil, nil
   chat.last = vim.api.nvim_buf_get_lines(buf, chat.lines - 1, chat.lines, false)[1] or ""
