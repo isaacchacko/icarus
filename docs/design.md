@@ -99,7 +99,12 @@ lifetimes, so agents outlive the TUI).
   agent's single message is read the same way: only a stamp at its very start counts. A batch that
   fails on a usage limit or a login goes back as its messages, and goes again whole in the same batch
   with the same id and nothing added; if the session kept it, it gets the note to pick it up rather
-  than a copy. Nobody but you goes ahead of or drops a prompt you wrote: `--first`
+  than a copy. Your posts on one thread waiting in an agent's queue, its router's or a bypass holder's,
+  join too, and not only when side by side: when the first reaches the front, the later ones come
+  with it, past whatever was between, in order, images and all, as one prompt in the thread's form.
+  That's the one thing that moves past others, and it only moves your posts earlier. The turn is one
+  turn on the thread, marked working once, its last message posted once. Other threads' posts stay
+  apart. Nobody but you goes ahead of or drops a prompt you wrote: `--first`
   and `--now` land behind it, and a drop refuses it. `--now` is refused while a permission waits
   (the cancel would lose it), while the turn is on your own prompt, and to a lower role for a
   higher one's turn (a router, for a repo-root or root).

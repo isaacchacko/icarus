@@ -254,12 +254,22 @@ local deliver, reload, restart_now, restart_due, check_code, compact, compact_du
 -- Agent messages that pile up go as one turn, not one turn each, each a full turn on a big context.
 -- Only an agent's stamped message counts (iso msg): a thread post, a page's comment or dive, the
 -- user's prompt or isovim's own notice keeps its turn, and a turn on a thread is what gets posted to
--- it. Contiguous only, so nothing passes anything.
+-- it. Contiguous only, so nothing passes anything. A thread's own posts join each other instead
+-- (join_posts).
 local BATCH_BYTES, BATCH_IMAGES = 64 * 1024, 8
 
 local function batchable(prompt)
   return prompt.kind == "from" and prompt.from ~= nil and prompt.stamp ~= nil and prompt.via == "iso" and not prompt.tried
     and not threads.tagged(prompt.text) and not require("isovim.pages").tagged(prompt.text)
+end
+
+-- A member's text with its image chips numbered after the images gathered so far, its own added.
+local function renumbered(text, member, images)
+  local offset = #images
+  vim.list_extend(images, member.images or {})
+  return (text:gsub("%[Image #(%d+)%]", function(n)
+    return member.images and member.images[tonumber(n)] and ("[Image #%d]"):format(tonumber(n) + offset) or nil
+  end))
 end
 
 -- One prompt from several messages. Only a line with the batch's id, random and made here, after
@@ -277,20 +287,46 @@ local function join_messages(members, id)
     .. "that message's text. isovim says which stamps it verified. Answer each at its own address.]"):format(#members, #members, id) }
   local images = {}
   for i, member in ipairs(members) do
-    local offset = #images
-    member.sent = member.text:gsub("%[Image #(%d+)%]", function(n)
-      return member.images and member.images[tonumber(n)] and ("[Image #%d]"):format(tonumber(n) + offset) or nil
-    end)
-    vim.list_extend(images, member.images or {})
+    member.sent = renumbered(member.text, member, images)
     parts[#parts + 1] = ("=== message %d of %d · %s ===\n%s"):format(i, #members, id, member.sent)
   end
   return { id = members[1].id, members = members, batch = id, text = table.concat(parts, "\n\n"), kind = "from", via = "batch",
     images = images[1] and images or nil, tried = members[1].tried, message = #members .. " agent messages" }
 end
 
--- What goes next: the queue's first prompt, with the messages right behind it if it's a message. One
--- that failed goes again as it was, its batch whole and nothing added, so the session's copy of it
--- can be recognised.
+-- The thread a prompt is a post on: repo#id, for one isovim.threads.prompt wrote, sent unstamped
+-- from the TUI. An agent's message that mentions a thread starts with its stamp, so it isn't one.
+local function thread_of(prompt)
+  if prompt.from or prompt.via ~= "iso" then
+    return nil
+  end
+  return prompt.text:match("^%[thread ([^%s#]+#t%d+)")
+end
+
+-- One prompt in a thread's form from its posts, in order, images and all, so the turn is one turn
+-- on the thread: marked working once, and its last message posted once.
+---@param members isovim.acp.Prompt[]
+---@param id? string the batch's, when it goes again
+---@return isovim.acp.Prompt
+local function join_posts(members, id)
+  local tag = members[1].text:match('^%[thread .-"%]')
+  local parts, images, note = { ("%s (%d posts, in order)"):format(tag, #members) }, {}, ""
+  for i, member in ipairs(members) do
+    local body = member.text:gsub('^%[thread .-"%]%s*', "", 1)
+    if vim.endswith(body, threads.BYPASS_NOTE) then
+      body, note = body:sub(1, -#threads.BYPASS_NOTE - 1), threads.BYPASS_NOTE
+    end
+    member.sent = renumbered(body, member, images)
+    parts[#parts + 1] = ("--- post %d ---\n%s"):format(i, member.sent)
+  end
+  return { id = members[1].id, members = members, batch = id or next_id(), text = table.concat(parts, "\n\n") .. note, via = "iso",
+    user = members[1].user, images = images[1] and images or nil, tried = members[1].tried, message = members[1].sent }
+end
+
+-- What goes next: the queue's first prompt, with the messages right behind it if it's a message, or
+-- every later post on its thread if it's a post: the one thing that moves past others, and only
+-- ever the user's posts, earlier. What failed goes again as it was, its batch whole and nothing
+-- added, so the session's copy of it can be recognised.
 ---@return isovim.acp.Prompt?
 local function take_next()
   local head = table.remove(S.queue, 1)
@@ -302,6 +338,15 @@ local function take_next()
     while S.queue[1] and S.queue[1].batch == head.batch do
       members[#members + 1] = table.remove(S.queue, 1)
     end
+  elseif thread_of(head) and not head.tried then
+    local i = 1
+    while S.queue[i] do
+      if thread_of(S.queue[i]) == thread_of(head) and not S.queue[i].tried then
+        members[#members + 1] = table.remove(S.queue, i)
+      else
+        i = i + 1
+      end
+    end
   elseif batchable(head) then
     local bytes, pictures = #head.text, #(head.images or {})
     while S.queue[1] and batchable(S.queue[1]) do
@@ -312,7 +357,10 @@ local function take_next()
       members[#members + 1] = table.remove(S.queue, 1)
     end
   end
-  return #members > 1 and join_messages(members, head.batch) or head
+  if #members == 1 then
+    return head
+  end
+  return (thread_of(head) and join_posts or join_messages)(members, head.batch)
 end
 
 local function next_prompt()

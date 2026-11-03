@@ -27,7 +27,8 @@
 --   {kind = "waiting", on = "user"|<agent address>|"none", by, why?, at}   whose turn it is
 -- A post of the user's goes to the router as a prompt tagged "[thread <repo>#<id> "<title>"]";
 -- the supervisor (isovim.acp.host) marks that turn working in the thread and posts the turn's last
--- message there when it ends, so the router just answers. It posts more with iso router thread
+-- message there when it ends, so the router just answers. Posts on one thread that wait in its queue
+-- go together, as one prompt and one turn. It posts more with iso router thread
 -- post. What the user has read (the last line seen, per thread) is run/<repo>/threads.json: a
 -- router post past it makes the thread wait on them (needs_you) until they open it.
 --
