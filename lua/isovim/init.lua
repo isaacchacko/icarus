@@ -20,6 +20,7 @@ M.show_tasks = false -- agents' tasks show under their rows
 M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> workspace id -> where its explorer was left
 M.recent = {} ---@type string[] workspace ids, most recently selected first
 M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib, <leader>ip)
+M.recent_views = {} ---@type string[] what you looked at (isovim.tabs.view_key), most recent first (<leader>,, <leader><leader>)
 M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
 M.recent_scopes = {} ---@type string[] the scopes current_scope was, most recent first (<leader>ip)
 M.host_projects = {} ---@type table<string, string> the project the list shows of each other host
@@ -38,6 +39,7 @@ function M.remember(key, value)
     explorer_roots = M.explorer_roots,
     recent = M.recent,
     recent_agents = M.recent_agents,
+    recent_views = M.recent_views,
     recent_scopes = M.recent_scopes,
     host_projects = M.host_projects,
     expanded = M.expanded,
@@ -686,6 +688,7 @@ function M.setup(opts)
   M.explorer_roots = session.explorer_roots or {}
   M.recent = session.recent or {}
   M.recent_agents = session.recent_agents or {}
+  M.recent_views = session.recent_views or vim.deepcopy(M.recent_agents)
   M.recent_scopes = session.recent_scopes or {}
   M.host_projects = session.host_projects or {}
   M.expanded = session.expanded or {}
@@ -720,6 +723,12 @@ function M.setup(opts)
       local ws = vim.b[ev.buf].isovim_id
       if ws then
         status.mark_seen(ws, vim.b[ev.buf].isovim_agent or "main")
+      end
+      local view = require("isovim.tabs").view_key(ev.buf)
+      if view and M.recent_views[1] ~= view then
+        M.remember("recent_views", vim.list_extend({ view }, vim.tbl_filter(function(other)
+          return other ~= view
+        end, vim.list_slice(M.recent_views, 1, 100))))
       end
       -- Reaching another workspace's buffer (e.g. with :b) selects that workspace; another scope's
       -- (a file outside every repo, the root's chat) makes that scope current. A terminal is

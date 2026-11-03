@@ -809,13 +809,15 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 
 **Global**
 - `<leader><leader>` jumps to anything the sidebar shows, each drawn as its row on the left (the
-  Inbox's items first, then what you opened last) with a preview on the right: an agent's status
+  Inbox's items first, then anything by when you last looked at it) with a preview on the right: an agent's status
   and its chat's end (its chat buffer if loaded, else its transcript or its journal's last 64 KB), a
   surface as it opens, a file or folder, a project's rows, a terminal's pane; all local,
   nothing waiting on the network or an agent, opening it as `<CR>` on its row would and moving the sidebar's
   cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a project; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
   included.
-- `<leader>,` shows the project's buffers; `<leader>fr` shows recent agents (`<leader>fR` recent files).
+- `<leader>,` shows the project's open views, what the tab bar holds (agents, surfaces, threads, PRs,
+  pages, terminals, files), each drawn as the jump draws its row, the one you looked at last first and
+  the one on screen last, so Enter flips back. `<leader>fr` shows recent agents (`<leader>fR` recent files).
 - `<leader>e` opens or closes the sidebar.
 
 **`<leader>i`**

@@ -22,6 +22,21 @@ local M = {}
 
 local GROUP = vim.api.nvim_create_augroup("isovim_tabs", { clear = true })
 
+-- What a buffer is a view of, the same however it's opened: an agent's "<ws>/<agent>", a surface's,
+-- thread's or PR's "<repo>/<name>", a file's path; nil for anything else.
+---@return string?
+function M.view_key(buf)
+  buf = M.owner(buf)
+  local ws, agent = M.agent_of(buf)
+  if ws then
+    return ws .. "/" .. agent
+  elseif vim.b[buf].isovim_surface then
+    return vim.b[buf].isovim_surface
+  end
+  local path = vim.api.nvim_buf_get_name(buf)
+  return vim.bo[buf].buftype == "" and path ~= "" and path or nil
+end
+
 -- The agent a buffer is the tab of: its chat's.
 ---@return string? ws, string? agent
 function M.agent_of(buf)

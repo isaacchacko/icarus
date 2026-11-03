@@ -259,11 +259,6 @@ function M.grep()
   Snacks.picker.grep({ cwd = dir, dirs = vim.list_extend({ dir }, M.transcript_dirs(dir)), title = "Grep · " .. scope.label(current_scope()) })
 end
 
--- The listed buffers are the current scope's (isovim.scope).
-function M.buffers()
-  Snacks.picker.buffers({ title = "Buffers · " .. scope.label(current_scope()) })
-end
-
 function M.recent_agents()
   local here = shown()
   pick_agents("Recent agents", find(function(entry)
@@ -336,13 +331,34 @@ local function jump_chunks(row)
   return chunks
 end
 
--- The jump's items: the Inbox's first, in its order; then agents and terminals, the one opened last
--- first (as by_recency); then the rest in the list's order.
-local function jump_items(hidden)
+-- What a row opens, as isovim.tabs.view_key names it; nil for a row that isn't a view here.
+local function row_view(row)
+  if row.host then
+    return nil
+  elseif row.kind == "agent" or row.kind == "terminal" then
+    return row.ws .. "/" .. row.agent
+  elseif row.kind == "surface" or row.kind == "waiting" then
+    return row.surface.path or (row.repo_key .. "/" .. row.name)
+  elseif row.kind == "pr" then
+    return ("%s/#%d"):format(row.repo_key, row.pr.number or 0)
+  elseif row.kind == "path" then
+    return row.path
+  end
+end
+
+-- Each view's place in what you looked at, most recent first.
+local function view_ranks()
   local rank = {}
-  for i, key in ipairs(isovim().recent_agents) do
+  for i, key in ipairs(isovim().recent_views) do
     rank[key] = i
   end
+  return rank
+end
+
+-- The jump's items: the Inbox's first, in its order; then everything by when you last looked at it;
+-- then agents you haven't, by when they last changed state; then the rest in the list's order.
+local function jump_items(hidden)
+  local rank = view_ranks()
   local items = {}
   local rows = require("isovim.sidebar").all_rows(hidden)
   -- And every PR registered here, each opening its own view, after the list's rows.
@@ -358,11 +374,14 @@ local function jump_items(hidden)
   for i, row in ipairs(rows) do
     if jumpable(row) then
       local chunks = jump_chunks(row)
-      local order = { 2, 0, i }
+      local order = { 3, 0, i }
+      local seen = rank[row_view(row) or ""]
       if row.kind == "waiting" then
         order = { 0, 0, i }
+      elseif seen then
+        order = { 1, seen, i }
       elseif (row.kind == "agent" or row.kind == "terminal") and not row.host then
-        order = { 1, rank[row.ws .. "/" .. row.agent] or math.huge, -vim.fn.getftime(store.state_file(row.ws, row.agent)) }
+        order = { 2, 0, -vim.fn.getftime(store.state_file(row.ws, row.agent)) }
       end
       items[#items + 1] = vim.tbl_extend("force", row, {
         row = row,
@@ -383,6 +402,71 @@ local function jump_items(hidden)
     return false
   end)
   return items, rows
+end
+
+-- <leader>,: the current project's open views, what the tab bar holds, each drawn as the jump draws
+-- its row, the one you looked at last first and the one on screen last, so Enter flips back. Enter
+-- shows it as picking its tab does.
+function M.buffers()
+  local tabs = require("isovim.tabs")
+  local win = vim.api.nvim_get_current_win()
+  local on_screen = tabs.owner(vim.api.nvim_win_get_buf(isovim().is_sidebar(win) and isovim().main_win() or win))
+  local by_view = {}
+  for _, row in ipairs(require("isovim.sidebar").all_rows(true)) do
+    local view = jumpable(row) and row_view(row)
+    if view then
+      by_view[view] = row
+    end
+  end
+  local rank, items = view_ranks(), {}
+  for _, info in ipairs(vim.fn.getbufinfo({ buflisted = 1 })) do
+    local view = tabs.view_key(info.bufnr)
+    if view then
+      local row = by_view[view]
+      local chunks = row and jump_chunks(row)
+      if not chunks then
+        local icon, hl = tabs.icon(info.name)
+        if not icon and pcall(require, "mini.icons") then
+          icon, hl = require("mini.icons").get("file", info.name)
+        end
+        chunks = { { icon or " ", hl }, { " " }, { tabs.name(info.bufnr) or vim.fn.fnamemodify(info.name, ":t") } }
+      end
+      items[#items + 1] = {
+        buf = info.bufnr,
+        chunks = chunks,
+        order = { info.bufnr == on_screen and 1 or 0, rank[view] or math.huge, -info.lastused },
+        text = table.concat(vim.tbl_map(function(chunk)
+          return chunk[1]
+        end, chunks)),
+      }
+    end
+  end
+  if #items == 0 then
+    return toast("Nothing open in " .. scope.label(current_scope()))
+  end
+  table.sort(items, function(a, b)
+    for i = 1, 3 do
+      if a.order[i] ~= b.order[i] then
+        return a.order[i] < b.order[i]
+      end
+    end
+    return false
+  end)
+  Snacks.picker.pick({
+    source = "isovim_views",
+    title = "Open · " .. scope.label(current_scope()),
+    layout = { preset = "select" },
+    items = items,
+    format = function(item)
+      return item.chunks
+    end,
+    confirm = function(picker, item)
+      picker:close()
+      if item then
+        isovim().show(item.buf)
+      end
+    end,
+  })
 end
 
 local PREVIEW_LINES = 40
@@ -634,7 +718,7 @@ M.GLOBAL = {
   { "<leader><leader>", M.jump, "jump to anything the sidebar shows (H: hidden agents too)" },
   { "<leader>ff", M.find_files, "find a file in the project" },
   { "<leader>/", M.grep, "grep the project and its agents' transcripts" },
-  { "<leader>,", M.buffers, "the project's buffers" },
+  { "<leader>,", M.buffers, "the project's open views, the last you looked at first" },
   { "<leader>fr", M.recent_agents, "recent agents" },
   { "<leader>fR", function()
     Snacks.picker.recent()
