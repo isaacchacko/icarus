@@ -476,6 +476,11 @@ local function turn_ended(prompt, result, err)
     end
     pcall(threads.working, thread.repo, thread.id, "end")
   end
+  local page = S.page_turn
+  S.page_turn = nil
+  if page then
+    pcall(require("isovim.pages").turn_ended, page.repo, page.name, page.id)
+  end
   if not err then
     S.backoff = nil
   end
@@ -556,6 +561,13 @@ deliver = function(prompt)
   if thread_repo and vim.uv.fs_stat(threads.file(thread_repo, thread_id)) then
     S.thread_turn = { repo = thread_repo, id = thread_id, text = "" }
     pcall(threads.working, thread_repo, thread_id, "start")
+  end
+  -- A page's comment or dive (isovim.pages): the turn shows on its line.
+  local page_repo, page_name, page_id = require("isovim.pages").tagged(prompt.text)
+  S.page_turn = nil
+  if page_repo then
+    S.page_turn = { repo = page_repo, name = page_name, id = page_id }
+    pcall(require("isovim.pages").turn_started, page_repo, page_name, page_id)
   end
   -- The session's title in the history picker: its first prompt.
   pcall(sessions.note, S.ws, S.agent, S.session, { title = (prompt.message or prompt.text):sub(1, 120) })
@@ -1134,6 +1146,13 @@ local handlers = {
         thread.text = thread.text .. (params.update.content.text or "")
       elseif thread and kind == "tool_call" then
         thread.text = ""
+      end
+      -- What a page's turn is doing, shown on its line: as a tool starts, never per chunk.
+      local page = S.page_turn
+      local doing = page and kind == "tool_call" and type(params.update.title) == "string" and params.update.title
+      if doing and os.time() - (page.told or 0) >= 2 then
+        page.told = os.time()
+        pcall(require("isovim.pages").turn_doing, page.repo, page.name, page.id, vim.fn.strcharpart(doing:gsub("%s+", " "), 0, 50))
       end
     end
   end,

@@ -764,6 +764,7 @@ M.role_actions = {
       reply = { args = { "<text>", "<text>", "<text>..." }, flags = { ["--ask"] = false } },
       resolve = { args = { "<text>", "<text>", "<text>..." } },
       dive = { args = { "<text>", "<text>", "<text>" } },
+      waiting = { args = { "<text>", "<text>", "<text>" } },
     },
     summary = "read, answer and resolve the user's comments on a page; answer a dive with a child page",
     help = [=[
@@ -785,7 +786,11 @@ M.role_actions = {
                                      answer a [page dive] prompt: <child> is the new page
                                      you've written, iso/pages/<child>.md. It becomes
                                      <page>'s child (parent: in its frontmatter), and a
-                                     link to it takes the place of the question]=],
+                                     link to it takes the place of the question
+       iso page waiting <page> <id> <agent>|none
+                                     a comment or dive you've handed to a worker: its line
+                                     says "with <worker>" until that worker finishes or is
+                                     removed, and you're told, then "no answer yet"]=],
   },
   link = { name = "link", module = "surfaces", shared = true,
     args = { "<text>" },

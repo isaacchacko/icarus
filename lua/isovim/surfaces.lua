@@ -558,6 +558,33 @@ function M.relate_pages(list)
   for _, entry in pairs(pages) do
     entry.sig = vim.fn.sha256(("%s|%s|%d"):format(entry.sig, tostring(entry.parent), entry.beneath or 0))
   end
+  -- What's moving on it and beneath it: M.watch sets this again as the activity changes.
+  M.relate_activity(list, pages)
+end
+
+-- Each page's count of what's being answered, on it or beneath it.
+function M.relate_activity(list, pages)
+  if not pages then
+    pages = {}
+    for _, entry in ipairs(list) do
+      if entry.type == "page" then
+        pages[entry.name] = entry
+      end
+    end
+  end
+  local any = next(pages)
+  local activity = any and require("isovim.pages").activity(pages[any].repo) or {}
+  for _, entry in pairs(pages) do
+    entry.moving = nil
+  end
+  for name, page in pairs(activity) do
+    local n = require("isovim.pages").moving(page)
+    local at = n > 0 and pages[name] or nil
+    while at do
+      at.moving = (at.moving or 0) + n
+      at = at.parent and pages[at.parent] or nil
+    end
+  end
 end
 
 -- A repo's surfaces, parsed, by name; nothing is written.
@@ -1362,6 +1389,7 @@ function M.remove(entry)
   if entry.type == "page" then
     os.remove(require("isovim.pages").comments_file(entry.repo, entry.name))
     os.remove(require("isovim.pages").dives_file(entry.repo, entry.name))
+    require("isovim.pages").forget_activity(entry.repo, entry.name)
   end
   M.scan(entry.repo)
   changed(entry.repo)
@@ -1650,6 +1678,29 @@ function M.watch(on_change)
         watch_dir(M.dir(repo), changed)
         rescan(repo)
       end
+      -- What the router's doing about its pages: told at once, as nothing in iso/ changes for it.
+      local run = store.run_dir(repo)
+      local key = "activity:" .. repo
+      if not handles[key] and vim.fn.isdirectory(run) == 1 then
+        local handle = assert(vim.uv.new_fs_event())
+        if handle:start(run, {}, function(err, name)
+          if not err and name == require("isovim.pages").ACTIVITY_NAME then
+            soon(key, function()
+              if M.cache[repo] then
+                M.relate_activity(M.cache[repo])
+                if notify then
+                  notify(repo, M.cache[repo])
+                end
+              end
+              require("isovim.pages").activity_changed(repo)
+            end)
+          end
+        end) then
+          handles[key] = handle
+        else
+          handle:close()
+        end
+      end
       -- Its pages and their comments, once it has any (made later: within 5s, and scanned then).
       for _, sub in ipairs({ "pages", "threads" }) do
         if vim.fn.isdirectory(M.dir(repo) .. "/" .. sub) == 1 and watch_dir(M.dir(repo) .. "/" .. sub, changed) then
@@ -1688,6 +1739,12 @@ function M.watch(on_change)
           return (ws and store.agent(ws, id) ~= nil) ~= (entry.error == nil)
         end
       end)
+      -- A page's item whose turn or prompt nothing will finish.
+      if vim.iter(entries):any(function(entry)
+        return entry.type == "page" and (entry.moving or 0) > 0
+      end) then
+        require("isovim.pages").end_stale(repo)
+      end
       -- A thread still working, whose router's supervisor may have died mid-turn.
       if vim.iter(entries):any(function(entry)
         return entry.type == "thread" and entry.working

@@ -341,7 +341,7 @@ end
 function M.page(args)
   local pages = require("isovim.pages")
   local sub = table.remove(args, 1)
-  local usage = "usage: iso <role> page comments <page> [--all] | dive <page> <id> <child> | reply <page> <id> <text...> [--ask] | resolve <page> <id> [<note...>]"
+  local usage = "usage: iso <role> page comments <page> [--all] | dive <page> <id> <child> | waiting <page> <id> <agent>|none | reply <page> <id> <text...> [--ask] | resolve <page> <id> [<note...>]"
   if sub == "comments" then
     local all = flag(args, "--all")
     local repo, name = page_ref(args[1] or fail(usage))
@@ -368,6 +368,18 @@ function M.page(args)
     end
     surfaces.scan(repo)
     return out(address)
+  elseif sub == "waiting" then
+    local repo, name = page_ref(args[1] or fail(usage))
+    local id, on = args[2] or fail(usage), args[3] or fail(usage)
+    if on ~= "none" then
+      local ws, agent = c.resolve_agent(on:find("/", 1, true) and on or (repo .. "/" .. on))
+      on = ws.id .. "/" .. agent.id
+    end
+    local marked, err = pages.wait_on(repo, name, id, on)
+    if not marked then
+      fail(err)
+    end
+    return out(("%s/%s %s %s"):format(repo, name, id, on == "none" and "is with nobody" or ("is with " .. on)))
   elseif sub ~= "reply" and sub ~= "resolve" then
     fail(usage)
   end

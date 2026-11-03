@@ -239,6 +239,9 @@ function M.animate(on)
       -- Under textlock it can't draw (E565): the next tick does.
       if not safe.text_locked() then
         on_tick()
+        if package.loaded["isovim.pages"] then
+          require("isovim.pages").tick()
+        end
       end
     end))
   elseif not on then

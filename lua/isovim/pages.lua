@@ -28,7 +28,14 @@
 -- sets parent: in its frontmatter and puts a link to it in place of the blurb. [[ goes up to the
 -- parent, ]] back down, and a breadcrumb sits over a page with a parent. isovim.surfaces works out
 -- parents (one whose parent is gone is top-level) and how many are beneath each.
+--
+-- Signs of life: what the router is doing about a comment or dive shows on its line, live. It's in
+-- run/<repo>/page-activity.json, {page = {id = {state, at, doing?, worker?, told_of?, told_at?}}}, written
+-- only as a state changes: queued as the TUI sends it, turn as the router's supervisor delivers it
+-- (doing, its current tool, as those start), ended as that turn ends, with no answer. worker while iso
+-- <role> page waiting says it's with one. An answer (a reply, a resolve, the dive) takes it out.
 local surfaces = require("isovim.surfaces")
+local store = require("isovim.store")
 
 local M = {}
 
@@ -157,7 +164,7 @@ end
 -- A reply under comment id; ask: it asks the user something, so the page waits on them.
 ---@return isovim.PageComment? comment, string? err
 function M.reply(repo, name, id, by, text, ask)
-  return update(repo, name, function(list)
+  local result, err = update(repo, name, function(list)
     local comment = find(list, id)
     if not comment then
       return nil, ("%s has no comment %s"):format(name, id)
@@ -165,12 +172,16 @@ function M.reply(repo, name, id, by, text, ask)
     comment.replies[#comment.replies + 1] = { by = by, text = text, at = os.time(), ask = ask or nil }
     return comment
   end)
+  if result and by ~= "user" then
+    M.set_activity(repo, name, id, nil)
+  end
+  return result, err
 end
 
 -- Resolves comment id, with a note of what changed; it leaves the page (r shows it again).
 ---@return isovim.PageComment? comment, string? err
 function M.resolve(repo, name, id, by, note)
-  return update(repo, name, function(list)
+  local result, err = update(repo, name, function(list)
     local comment = find(list, id)
     if not comment then
       return nil, ("%s has no comment %s"):format(name, id)
@@ -180,6 +191,169 @@ function M.resolve(repo, name, id, by, note)
     comment.status, comment.resolved_by, comment.resolved_at, comment.note = "resolved", by, os.time(), note
     return comment
   end)
+  if result then
+    M.set_activity(repo, name, id, nil)
+  end
+  return result, err
+end
+
+-- Activity.
+
+local function activity_file(repo)
+  return store.run_dir(repo) .. "/page-activity.json"
+end
+M.ACTIVITY_NAME = "page-activity.json"
+
+-- Every page's activity in the repo.
+function M.activity(repo)
+  local file = io.open(activity_file(repo), "rb")
+  local ok, value = pcall(vim.json.decode, file and file:read("*a") or "")
+  if file then
+    file:close()
+  end
+  return ok and type(value) == "table" and value or {}
+end
+
+-- Changes what's known of item id on the page with fn(item), which returns what it is now (nil: gone).
+local function change_activity(repo, name, id, fn)
+  surfaces.locked(repo, function()
+    local all = M.activity(repo)
+    local page = all[name] or {}
+    local before = page[id]
+    page[id] = fn(before)
+    if vim.deep_equal(before, page[id]) then
+      return
+    end
+    all[name] = next(page) and page or nil
+    vim.fn.mkdir(store.run_dir(repo), "p")
+    local path = activity_file(repo)
+    if next(all) then
+      write_whole(path, vim.json.encode(all))
+    else
+      os.remove(path)
+    end
+  end)
+end
+
+-- The item is in state now (queued, ended), or gone with nil.
+function M.set_activity(repo, name, id, state, fields)
+  change_activity(repo, name, id, function(item)
+    return state and vim.tbl_extend("force", { state = state, at = os.time(), told_of = item and item.told_of,
+      told_at = item and item.told_at }, fields or {}) or nil
+  end)
+end
+
+-- The tagged prompt's item, as a supervisor delivers it: repo, page, id.
+function M.tagged(text)
+  local repo, name, id = (text or ""):match("^[^\n]-%[page %a+ ([^%s#]+)/([^/%s#]+)#(%w+)%]")
+  return repo, name, id
+end
+
+-- The router's turn on the item started: forward from queued, or from a turn that failed and goes
+-- again. One answered meanwhile, or handed to a worker, stays as it is.
+function M.turn_started(repo, name, id)
+  change_activity(repo, name, id, function(item)
+    return item and item.state ~= "worker" and { state = "turn", at = os.time() } or item
+  end)
+end
+
+-- What that turn is doing now, as a tool call starts.
+function M.turn_doing(repo, name, id, doing)
+  change_activity(repo, name, id, function(item)
+    return item and item.state == "turn" and vim.tbl_extend("force", item, { doing = doing }) or item
+  end)
+end
+
+-- That turn ended: if it's still marked as the turn's, it ended with no answer and nobody marked.
+function M.turn_ended(repo, name, id)
+  change_activity(repo, name, id, function(item)
+    return item and item.state == "turn" and { state = "ended", at = os.time() } or item
+  end)
+end
+
+-- iso <role> page waiting: the item is with a worker, or (none) with nobody.
+---@return boolean? ok, string? err
+function M.wait_on(repo, name, id, worker)
+  local known = vim.iter(M.comments(repo, name)):any(function(each)
+    return each.id == id
+  end) or vim.iter(M.dives(repo, name)):any(function(each)
+    return each.id == id
+  end)
+  if not known then
+    return nil, ("%s has no comment or dive %s"):format(name, id)
+  end
+  change_activity(repo, name, id, function(item)
+    if worker == "none" then
+      return nil
+    end
+    return { state = "worker", worker = worker, at = os.time(), told_of = item and item.told_of, told_at = item and item.told_at }
+  end)
+  return true
+end
+
+-- A removed page's activity goes with it.
+function M.forget_activity(repo, name)
+  surfaces.locked(repo, function()
+    local all = M.activity(repo)
+    if all[name] then
+      all[name] = nil
+      write_whole(activity_file(repo), vim.json.encode(all))
+    end
+  end)
+end
+
+-- The items' states that are moving.
+local MOVING = { queued = true, turn = true, worker = true }
+
+-- How many of a page's items are moving.
+function M.moving(page)
+  local n = 0
+  for _, item in pairs(page or {}) do
+    n = n + (MOVING[item.state] and 1 or 0)
+  end
+  return n
+end
+
+-- From the router's supervisor: an item with a worker that has finished or gone says so, as a thread's
+-- wait does (isovim.threads.sweep), once; then it has no answer yet.
+function M.sweep(repo, say, busy, finished)
+  for name, page in pairs(M.activity(repo)) do
+    for id, item in pairs(page) do
+      if item.state == "worker" and not busy() then
+        local how = finished(item.worker, item.at, item.told_of == item.worker and item.told_at or nil)
+        if how then
+          change_activity(repo, name, id, function()
+            return { state = "ended", at = os.time(), told_of = item.worker, told_at = os.time() }
+          end)
+          say(("[isovim] %s/%s#%s was with %s, which %s. Answer it, or mark it again with `iso router page waiting %s %s "
+            .. "<agent>`, which then waits quietly until that worker does more."):format(repo, name, id, item.worker, how, name, id))
+        end
+      end
+    end
+  end
+end
+
+-- From the TUI: a prompt or a turn nothing will finish: a router dead mid-turn, or a queued prompt
+-- dropped. It has no answer yet, as nothing's on it.
+function M.end_stale(repo)
+  local router = store.router(repo)
+  local alive
+  local ended = false
+  for name, page in pairs(M.activity(repo)) do
+    for id, item in pairs(page) do
+      local age = os.time() - (item.at or 0)
+      if (item.state == "turn" and age >= 15) or (item.state == "queued" and age >= 30) then
+        if alive == nil then
+          alive = router ~= nil and require("isovim.status").owner_state(router) == "working"
+        end
+        if not alive then
+          M.set_activity(repo, name, id, "ended")
+          ended = true
+        end
+      end
+    end
+  end
+  return ended
 end
 
 -- Dives.
@@ -259,9 +433,10 @@ function M.dive_prompt(repo, name, dive, lines, row)
   end, vim.split(dive.quote, "\n", { plain = true })), "\n")) or ""
   return ("[page dive %s/%s#%s] on %sline %d of %s:\n%s%s\n\n%s\n\n(The user asks this inside the page, and the answer is a new "
     .. "page, not a chat reply: write it to %s/<child>.md, as deep as the question needs, then run iso <role> page dive %s %s "
-    .. "<child>, which makes it this page's child and puts a link to it in place of their question. Nothing else need be said.)")
+    .. "<child>, which makes it this page's child and puts a link to it in place of their question. Nothing else need be said. "
+    .. "Handing it to a worker? iso <role> page waiting %s %s <agent>|none shows them who has it.)")
     :format(repo, name, dive.id, dive.heading ~= "" and ('"' .. dive.heading .. '" ') or "", dive.line, M.file(repo, name),
-      table.concat(around, "\n"), quote, dive.question, M.dir(repo), name, dive.id)
+      table.concat(around, "\n"), quote, dive.question, M.dir(repo), name, dive.id, name, dive.id)
 end
 
 -- Sends text to the repo's router with iso send; on failure, done(false, why).
@@ -277,12 +452,23 @@ end
 
 -- Sends each blurb on the repo's pages not sent yet, the key's and a hand edit's alike. A rescan or a
 -- restart finds it in the page's dives and leaves it. One written twice is two; one answered and
--- written again is new.
+-- written again is new. A blurb taken out by hand has nothing left to show on.
 function M.sync(repo, entries)
   if not require("isovim.surface_view").reader(repo) then
     return
   end
+  local activity = M.activity(repo)
   for _, entry in ipairs(entries) do
+    for id in pairs(entry.type == "page" and activity[entry.name] or {}) do
+      local dive = id:match("^d%d+$") and vim.iter(M.dives(repo, entry.name)):find(function(each)
+        return each.id == id
+      end)
+      if dive and not vim.iter(M.blurbs(vim.split(entry.body or "", "\n", { plain = true }))):any(function(each)
+        return each.question == dive.question
+      end) then
+        M.set_activity(repo, entry.name, id, nil)
+      end
+    end
     if entry.type == "page" and entry.body and entry.body:find("[?", 1, true) then
       local lines = vim.split(entry.body, "\n", { plain = true })
       local blurbs = M.blurbs(lines)
@@ -307,8 +493,10 @@ function M.sync(repo, entries)
         return #sends > 0
       end)
       for _, each in ipairs(sends) do
+        M.set_activity(repo, entry.name, each.dive.id, "queued")
         send(repo, M.dive_prompt(repo, entry.name, each.dive, lines, each.row), function(ok, why)
           if not ok then
+            M.set_activity(repo, entry.name, each.dive.id, nil)
             update_dives(repo, entry.name, function(list)
               for _, dive in ipairs(list) do
                 if dive.id == each.dive.id then
@@ -428,6 +616,7 @@ function M.dive(repo, name, id, child)
       end
     end
   end)
+  M.set_activity(repo, name, id, nil)
   return address, note
 end
 
@@ -510,16 +699,16 @@ end
 function M.prompt(repo, name, comment, reply)
   local where = ("%s/%s#%s"):format(repo, name, comment.id)
   if reply then
-    return ("[page reply %s] %s\n\n(on your page %s; reply with iso <role> page reply %s %s \"...\" [--ask], resolve with iso <role> page resolve %s %s \"what changed\")")
-      :format(where, reply, M.file(repo, name), name, comment.id, name, comment.id)
+    return ("[page reply %s] %s\n\n(on your page %s; reply with iso <role> page reply %s %s \"...\" [--ask], resolve with iso <role> page resolve %s %s \"what changed\"; handing it to a worker? iso <role> page waiting %s %s <agent>|none shows them who has it)")
+      :format(where, reply, M.file(repo, name), name, comment.id, name, comment.id, name, comment.id)
   end
   local quoted = vim.tbl_map(function(line)
     return "> " .. line
   end, vim.split(comment.quote, "\n", { plain = true }))
   local lines = comment.from == comment.to and ("line %d"):format(comment.from) or ("lines %d-%d"):format(comment.from, comment.to)
-  return ("[page comment %s] on %s%s of %s:\n%s\n\n%s\n\n(change the page wherever this asks, then iso <role> page resolve %s %s \"what changed\"; or iso <role> page reply %s %s \"...\" [--ask] to answer or ask the user)")
+  return ("[page comment %s] on %s%s of %s:\n%s\n\n%s\n\n(change the page wherever this asks, then iso <role> page resolve %s %s \"what changed\"; or iso <role> page reply %s %s \"...\" [--ask] to answer or ask the user; handing it to a worker? iso <role> page waiting %s %s <agent>|none shows them who has it)")
     :format(where, comment.heading ~= "" and ('"' .. comment.heading .. '" ') or "", lines, M.file(repo, name),
-      table.concat(quoted, "\n"), comment.text, name, comment.id, name, comment.id)
+      table.concat(quoted, "\n"), comment.text, name, comment.id, name, comment.id, name, comment.id)
 end
 
 -- The view (the TUI's): comments drawn on a page's buffer, their keys, the input box's modes.
@@ -527,6 +716,7 @@ end
 local NS = vim.api.nvim_create_namespace("isovim_page_comments")
 local DIVES = vim.api.nvim_create_namespace("isovim_page_dives")
 local CRUMBS = vim.api.nvim_create_namespace("isovim_page_crumbs")
+local ACTIVITY = vim.api.nvim_create_namespace("isovim_page_activity")
 local ICON = "\u{f075}" -- fa-comment
 vim.api.nvim_set_hl(0, "IsovimPageDive", { default = true, link = "DiagnosticVirtualTextInfo" })
 
@@ -607,6 +797,82 @@ function M.draw_dives(view)
     vim.api.nvim_buf_set_extmark(buf, DIVES, blurb.row - 1, blurb.from, { end_col = blurb.to, hl_group = "IsovimPageDive",
       priority = 300 })
   end
+  -- Its lines were just written, which takes the window's fill with them.
+  view.activity, view.shown_fill = nil, nil
+  M.draw_activity(view)
+end
+
+-- What an item's line says of it now, as virtual text chunks.
+local function item_chunks(item)
+  if item.state == "ended" then
+    return { { "  no answer yet", "DiagnosticWarn" } }
+  end
+  local glyph, hl = require("isovim.status").icon("working")
+  local what = item.state == "queued" and "queued" or item.state == "worker"
+    and ("with " .. (item.worker or "?"):match("([^/]+)$")) or "router on it"
+  if item.state == "turn" and item.doing then
+    what = what .. " · " .. item.doing
+  end
+  return { { "  " .. glyph .. " ", hl or "DiagnosticInfo" }, { what, "Comment" } }
+end
+
+-- Signs of life: each moving or stuck item's line says so, and the top how many are moving. Reads
+-- the file only as it changes (view.activity, cleared then); the spinner's tick just draws again.
+function M.draw_activity(view)
+  local buf = view.buf
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, ACTIVITY, 0, -1)
+  view.activity = view.activity or M.activity(view.repo)[view.name] or {}
+  local page = view.activity
+  view.moving = M.moving(page)
+  if next(page) then
+    local taken = {}
+    local dives = M.dives(view.repo, view.name)
+    for _, blurb in ipairs(M.blurbs(vim.api.nvim_buf_get_lines(buf, 0, -1, false))) do
+      local dive = vim.iter(dives):find(function(each)
+        return not taken[each.id] and each.status ~= "answered" and each.question == blurb.question
+      end)
+      if dive then
+        taken[dive.id] = true
+        if page[dive.id] then
+          vim.api.nvim_buf_set_extmark(buf, ACTIVITY, blurb.row - 1, 0, { virt_text = item_chunks(page[dive.id]), virt_text_pos = "eol" })
+        end
+      end
+    end
+    for _, placed in ipairs(view.placed or {}) do
+      local item = page[placed.comment.id]
+      if item then
+        vim.api.nvim_buf_set_extmark(buf, ACTIVITY, placed.last - 1, 0, { virt_text = item_chunks(item), virt_text_pos = "eol" })
+      end
+    end
+  end
+  if view.moving > 0 then
+    local glyph, hl = require("isovim.status").icon("working")
+    vim.api.nvim_buf_set_extmark(buf, ACTIVITY, 0, 0, { virt_lines = { { { glyph .. " ", hl or "DiagnosticInfo" },
+      { ("%d being answered"):format(view.moving), "Comment" } } }, virt_lines_above = true })
+  end
+  M.show_crumbs(view)
+end
+
+-- The activity file changed: the repo's page views read it again.
+function M.activity_changed(repo)
+  for _, view in pairs(require("isovim.surface_view").views) do
+    if view.kind == "page" and view.repo == repo then
+      view.activity = nil
+      M.draw_activity(view)
+    end
+  end
+end
+
+-- The spinner's tick: a page on screen with something moving draws its spinners again.
+function M.tick()
+  for _, view in pairs(package.loaded["isovim.surface_view"] and require("isovim.surface_view").views or {}) do
+    if view.kind == "page" and (view.moving or 0) > 0 and vim.fn.bufwinid(view.buf) ~= -1 then
+      M.draw_activity(view)
+    end
+  end
 end
 
 -- The page entry named name in view's repo.
@@ -646,10 +912,16 @@ end
 
 -- Virtual lines over a buffer's first line show only once the window is told to fill them.
 function M.show_crumbs(view)
+  local crumbs = #vim.api.nvim_buf_get_extmarks(view.buf, CRUMBS, 0, -1, {}) > 0
+  local fill = (crumbs and 2 or 0) + ((view.moving or 0) > 0 and 1 or 0)
+  if fill == view.shown_fill then
+    return
+  end
+  view.shown_fill = fill
   for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
     vim.api.nvim_win_call(win, function()
       if vim.fn.line("w0") == 1 then
-        vim.fn.winrestview({ topfill = 2 })
+        vim.fn.winrestview({ topfill = fill })
       end
     end)
   end
@@ -791,6 +1063,7 @@ function M.submit(view, text)
   end
   view.page_mode = nil
   vim.api.nvim_buf_set_lines(view.input, 0, -1, false, { "" })
+  M.set_activity(view.repo, view.name, comment.id, "queued")
   M.draw(view)
   local win = vim.fn.bufwinid(view.input)
   if win ~= -1 then
@@ -798,6 +1071,7 @@ function M.submit(view, text)
   end
   send(view.repo, M.prompt(view.repo, view.name, comment, mode.reply and text or nil), function(ok, why)
     if not ok then
+      M.set_activity(view.repo, view.name, comment.id, nil)
       vim.notify(("isovim: %s %s is kept, but its router wasn't told: %s"):format(view.name, comment.id, why), vim.log.levels.WARN)
     end
   end)
@@ -987,6 +1261,7 @@ M.help_keys = {
 function M.dress(win, view)
   vim.wo[win][0].signcolumn = "yes:1"
   if view then
+    view.shown_fill = nil
     M.show_crumbs(view)
   end
 end

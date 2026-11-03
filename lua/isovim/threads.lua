@@ -556,30 +556,39 @@ local function has_background(address)
   return ok and type(answer) == "table" and type(answer.work) == "table" and #answer.work > 0
 end
 
--- Whether the router marked a worker it's already been told of, that hasn't done anything since:
--- it knows, and asked to go on waiting.
-local function told_already(info, worker)
+-- How a worker something waits on has finished, in words, or nil if it hasn't: gone, or between turns
+-- with nothing going, WORKER_START after the mark. told_at: the router was told of it then, and marked
+-- it again, so it waits quietly until that worker has done something since.
+local function finished(worker, marked_at, told_at)
+  local state = require("isovim.status").owner_state(worker)
+  if state == "gone" then
+    return "is gone"
+  elseif state ~= "idle" or os.time() - (marked_at or 0) < WORKER_START or has_background(worker) then
+    return nil
+  end
   local ws, id = worker:match("^(.*)/([^/]+)$")
-  local stat = info.told_of == worker and vim.uv.fs_stat(store.state_file(ws, id))
-  return stat and stat.mtime.sec <= (info.told_at or 0)
+  local stat = told_at and vim.uv.fs_stat(store.state_file(ws, id))
+  if stat and stat.mtime.sec <= told_at then
+    return nil
+  end
+  return "has finished its turn"
 end
 
 -- One look over the repo's open threads: say(text) sends the router a message. Telling it of a worker
 -- waits till busy() says it's free, as queued it could arrive after the router has settled the thread
 -- anyway; what's still so then is looked at afresh.
 function M.sweep(repo, say, busy)
-  local status = require("isovim.status")
   M.end_dead_turns(repo)
+  require("isovim.pages").sweep(repo, say, busy, finished)
   for _, info in ipairs(M.list(repo)) do
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
-    local state = worker and status.owner_state(worker)
-    if worker and not busy() and (state == "gone" or (state == "idle" and os.time() - (info.waiting_at or 0) >= WORKER_START
-      and not told_already(info, worker) and not has_background(worker))) then
-      append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = state })
+    local how = worker and not busy() and finished(worker, info.waiting_at, info.told_of == worker and info.told_at or nil)
+    if how then
+      append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = how == "is gone" and "gone" or "idle" })
       say(("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
         .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled. Marking the same worker "
         .. "again waits quietly until it does more."):format(info.id, info.title,
-        worker, state == "gone" and "is gone" or "has finished its turn", info.id))
+        worker, how, info.id))
     end
     if info.posts == 0 and info.created_by == "user" and os.time() - (info.at or 0) >= TITLE_WAIT and not drafted(repo, info.id) then
       append(repo, info.id, { kind = "post", by = "user", text = info.title })

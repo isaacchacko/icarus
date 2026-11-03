@@ -521,6 +521,16 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   A page with a parent has a breadcrumb over it, `root › … › this`, in virtual lines so a page's lines
   stay the file's lines. Virtual lines can't hold the cursor, so its entries are drawn as links but
   gone to with `[[`.
+- **Signs of life:** what the router is doing about a comment or a dive shows on its line, live, so
+  stuck reads differently from busy: `queued` with a spinner as it's sent, `router on it` while its
+  turn is on that prompt (with its current tool, updated as tools start, never per chunk), `with
+  <worker>` from `iso <role> page waiting <page> <id> <agent>|none`, and `no answer yet`, with no
+  spinner, if the turn ends with it unanswered and nobody marked, or the router died or dropped the
+  prompt. A worker finishing or being removed tells the router, as a thread's wait does, and it then
+  reads `no answer yet`. A reply, a resolve or the dive clears it. While any move, `2 being answered`
+  shows over the page and on its row, counting those beneath. It's `run/<repo>/page-activity.json`,
+  written only as a state changes; views draw again on that and the spinner's tick. Prompts for
+  comments and dives mention the command.
 - **In the sidebar** only top-level pages are rows, each with how many are beneath it (`↳ 3`). The rest
   are reached through links and the jump picker, and what needs you beneath still reaches the Inbox
   as its own row. Removing a page leaves its children, top-level now as their parent is gone; so does

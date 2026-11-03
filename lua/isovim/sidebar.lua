@@ -541,6 +541,10 @@ function M.surface_chunks(entry)
     elseif (entry.comments_open or 0) > 0 then
       row[#row + 1] = { ("  \u{f075} %d"):format(entry.comments_open), "Comment" }
     end
+    -- How many of its and its children's comments and questions are being answered.
+    if (entry.moving or 0) > 0 then
+      row[#row + 1] = { ("  %s %d being answered"):format(status.icon("working"), entry.moving), "DiagnosticInfo" }
+    end
     -- How many pages are beneath it, as only a top-level one has a row.
     if (entry.beneath or 0) > 0 then
       row[#row + 1] = { ("  ↳ %d"):format(entry.beneath), "Comment" }
