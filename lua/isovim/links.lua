@@ -1,13 +1,16 @@
 -- Links: a one-line pointer to anything in isovim, written as an address in text, so an agent's
 -- words can point at what they mention and you go there with <Tab>:
 --   iso:agent/<owner>/<repo>/aN          an agent's chat (root/aN, general/aN too)
---   iso:thread/<repo>#t3                  a thread
+--   iso:thread/<owner>/<repo>#t3          a thread
 --   iso:pr/<owner>/<repo>#12              a PR's view
---   iso:surface/<repo>/<name>             a surface (the Task Board is tasks, the PRs PRs)
---   iso:page/<repo>/<name>[#c4]           a page, at a comment
+--   iso:surface/<owner>/<repo>/<name>     a surface (the Task Board is tasks, the PRs PRs)
+--   iso:page/<owner>/<repo>/<name>[#c4]   a page, at a comment
 --   iso:file/<path>                       a file or folder (absolute; ~ is home)
 --   http(s)://...                         a web page: a dev server on localhost or 127.0.0.1:<port>,
 --                                         a preview deploy, a dashboard (a GitHub PR's URL is a PR)
+-- A bare <repo> in place of <owner>/<repo> means the one repo on this host of that name; with two,
+-- it's refused rather than guessed. An address that leads nowhere is drawn as broken, and opening
+-- one says why, in one notification per address and reason, not one per try.
 -- In a chat, a thread, a page or a PR's view each address is drawn as a chip in its place: the
 -- target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread
 -- open or resolved, a file missing), the line exactly as long as the chip, and a side table (an
@@ -84,12 +87,39 @@ local function short(path)
   return vim.fn.fnamemodify(path, ":~")
 end
 
+-- The repo key a name in an address means: as written if it has its owner (or is root or general),
+-- else the one repo on this host of that name. Nil and why with none, or with several.
+---@return string? repo, string? why
+local function whole_repo(name)
+  if name:find("/", 1, true) or store.pseudo[name] or name == "_" then
+    return name
+  end
+  local found = vim.tbl_filter(function(key)
+    return (key:match("/([^/]+)$") or ""):lower() == name:lower()
+  end, require("isovim.surfaces").repos())
+  if #found == 1 then
+    return found[1]
+  elseif #found > 1 then
+    return nil, ("%s could be %s: write it as <owner>/<repo>"):format(name, table.concat(found, " or "))
+  end
+  return nil, ("no repo on this host is named %s: write it as <owner>/<repo>"):format(name)
+end
+
 -- What an address points at, as drawn and opened: {glyph, hl, label, status?, status_hl?, open()},
 -- or nil and why not.
 function M.resolve(addr)
   local p = M.parse(addr)
   if not p then
     return nil, addr .. " isn't an isovim address"
+  end
+  local why
+  if p.repo then
+    p.repo, why = whole_repo(p.repo)
+  elseif p.kind == "agent" and not store.agent(p.ws, p.id) then
+    p.ws, why = whole_repo(p.ws)
+  end
+  if why then
+    return nil, why
   end
   if p.kind == "agent" then
     local spec = store.agent(p.ws, p.id)
@@ -243,13 +273,13 @@ function M.reachable(host)
 end
 
 -- A chip's parts, {text, hl}: the target's glyph, its label, how it is; an address that leads
--- nowhere, a warning glyph and the address. sep joins them (a no-break space keeps a box's
+-- nowhere, a broken link's glyph, the word and the address, on a colored ground. sep joins them (a no-break space keeps a box's
 -- wrapping from cutting one).
 function M.parts(addr, sep)
   sep = sep or " "
   local target = M.resolve(addr)
   if not target then
-    return { { "\u{f127}" .. sep, "DiagnosticWarn" }, { (addr:gsub("^iso:", "")), "DiagnosticWarn" } }
+    return { { "\u{f127}" .. sep .. "broken" .. sep, "IsovimLinkBroken" }, { (addr:gsub("^iso:", "")), "IsovimLinkBroken" } }
   end
   local label = target.label:gsub(" ", sep)
   local parts = { { target.glyph .. sep, target.hl or "Special" }, { label, "IsovimLink" } }
@@ -266,6 +296,7 @@ function M.chip(addr, sep)
 end
 
 vim.api.nvim_set_hl(0, "IsovimLink", { default = true, link = "Underlined" })
+vim.api.nvim_set_hl(0, "IsovimLinkBroken", { default = true, link = "DiagnosticVirtualTextError" })
 
 -- The side table: which address each chip drawn in a buffer is, by its extmark.
 _G.isovim_links = _G.isovim_links or {}
@@ -442,11 +473,19 @@ local function walk(buf, opts, direction)
   return true
 end
 
+-- What each address was last warned about, so a <Tab> on it again doesn't stack another notification
+-- (its chip still says broken); a new reason is told.
+_G.isovim_link_warned = _G.isovim_link_warned or {}
+local warned = _G.isovim_link_warned
+
 -- Opens what addr points at; false, said why, when it can't.
 function M.open(addr)
   local target, err = M.resolve(addr)
   if not target then
-    vim.notify("isovim: " .. tostring(err), vim.log.levels.WARN)
+    if warned[addr] ~= err then
+      warned[addr] = err
+      vim.notify("isovim: " .. tostring(err), vim.log.levels.WARN)
+    end
     return false
   end
   vim.cmd.stopinsert()

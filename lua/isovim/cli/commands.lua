@@ -791,9 +791,11 @@ M.role_actions = {
                                      (localhost:3000 too) is its own address. Written in a post,
                                      a thread, a page or a PR comment, isovim draws it as a
                                      chip (glyph, label, state) that <Tab> or gf opens:
-                                     iso:agent/<owner>/<repo>/aN, iso:thread/<repo>#t3,
-                                     iso:pr/<owner>/<repo>#12, iso:surface/<repo>/<name>,
-                                     iso:page/<repo>/<name>[#c4], iso:file/<path>]=],
+                                     iso:agent/<owner>/<repo>/aN,
+                                     iso:thread/<owner>/<repo>#t3,
+                                     iso:pr/<owner>/<repo>#12,
+                                     iso:surface/<owner>/<repo>/<name>,
+                                     iso:page/<owner>/<repo>/<name>[#c4], iso:file/<path>]=],
   },
   thread = { name = "thread", module = "surfaces",
     subs = {

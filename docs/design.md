@@ -355,12 +355,18 @@ words point at what they mention and you go there with a key (isovim.links):
 | address | opens |
 |---|---|
 | `iso:agent/<owner>/<repo>/aN` (`root/aN`, `general/aN`) | the agent's chat |
-| `iso:thread/<repo>#t3` | the thread |
+| `iso:thread/<owner>/<repo>#t3` | the thread |
 | `iso:pr/<owner>/<repo>#12` | the PR's view |
-| `iso:surface/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
-| `iso:page/<repo>/<name>[#c4]` | the page, at the comment |
+| `iso:surface/<owner>/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
+| `iso:page/<owner>/<repo>/<name>[#c4]` | the page, at the comment |
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
 | `http(s)://...` (`localhost`, `127.0.0.1:<port>` too) | the web page in isovim's Chrome (`iso browser open`: a background window, your focus kept), or the system's browser when that isn't running; a GitHub PR's URL is the PR |
+
+A bare `<repo>` in place of `<owner>/<repo>` means the one repo on this host of that name. With two
+of that name it's refused rather than guessed: the chip is broken, and opening it names both. An
+address that leads nowhere is drawn as `broken` and the address, on a colored ground
+(`IsovimLinkBroken`), and opening it says why, in one notification per address and reason rather
+than one per try.
 
 In a chat, a thread, a page and a PR's view each address is drawn as a chip in its place: the
 target's glyph, a short label and how it is (an agent working or idle, a PR's state, a thread open
