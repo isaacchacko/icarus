@@ -29,30 +29,49 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_links")
 
--- Where an address ends: before white space, a closing bracket or quote, or trailing punctuation.
-local PATTERN = "()(iso:%a+/[^%s%)%]>\"'`]+)"
 local NBSP = "\194\160"
 M.NBSP = NBSP
 
-local URL = "()(https?://[^%s%)%]>\"'`]+)"
+-- Where an address ends: before white space, a closing bracket or quote, or trailing punctuation.
+local WORD = "[^%s%)%]>\"'`]"
+local STARTS = { "iso:%a+/" .. WORD, "https?://" .. WORD }
 
--- The addresses written in a line, iso: ones and web pages (not one inside `code`): {from, to,
--- address} (byte columns, to exclusive), in order.
-function M.find(line)
-  local found = {}
-  for _, pattern in ipairs({ PATTERN, URL }) do
-    for from, raw in line:gmatch(pattern) do
-      raw = raw:gsub("[%.,;:!?]+$", "")
-      local _, ticks = line:sub(1, from - 1):gsub("`", "")
-      if ticks % 2 == 0 then
-        found[#found + 1] = { from - 1, from - 1 + #raw, raw }
+-- Every address written in text, iso: ones and web pages: {from, to, address} (byte columns, to
+-- exclusive), in order. One holding a placeholder (https://host/<entity>?a=1, /{id}/) is a template,
+-- nothing you can open, so it isn't one: it stays as written, all of it up to the next white space.
+function M.scan(text)
+  local found, at = {}, 1
+  while true do
+    local from
+    for _, start in ipairs(STARTS) do
+      local here = text:find(start, at)
+      from = here and math.min(from or here, here) or from
+    end
+    if not from then
+      return found
+    end
+    local raw = text:match("^" .. WORD .. "+", from)
+    local angle = raw:find("<", 1, true)
+    local brace = raw:find("{", 1, true)
+    if (angle and text:match("^<[%w_][^<>\n]*>", from + angle - 1)) or (brace and text:match("^{+[%w_][^{}\n]*}", from + brace - 1)) then
+      at = text:find("%s", from) or #text + 1
+    else
+      -- An angle bracket that opens no placeholder (a tag after it) ends it.
+      local address = (angle and raw:sub(1, angle - 1) or raw):gsub("[%.,;:!?]+$", "")
+      if address:match("^iso:%a+/.") or address:match("^https?://.") then
+        found[#found + 1] = { from - 1, from - 1 + #address, address }
       end
+      at = from + #raw
     end
   end
-  table.sort(found, function(a, b)
-    return a[1] < b[1]
-  end)
-  return found
+end
+
+-- The addresses in a line, as M.scan finds them, but for one inside `code`.
+function M.find(line)
+  return vim.tbl_filter(function(link)
+    local _, ticks = line:sub(1, link[1]):gsub("`", "")
+    return ticks % 2 == 0
+  end, M.scan(line))
 end
 
 -- An address's parts: kind and the rest, as {kind, repo?, id?, path?, fragment?}; nil if it isn't one.

@@ -383,6 +383,10 @@ words point at what they mention and you go there with a key (isovim.links):
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
 | `http(s)://...` (`localhost`, `127.0.0.1:<port>` too) | the web page in isovim's Chrome (`iso browser open`: a background window, your focus kept), or the system's browser when that isn't running; a GitHub PR's URL is the PR |
 
+An address holding a placeholder (`https://host/<entity>?a=1`, `/{id}/`) is a template, not something
+you can open, so it isn't a link: it stays as written, all of it. `<https://foo.com>` is still one,
+ending at its `>`.
+
 A bare `<repo>` in place of `<owner>/<repo>` means the one repo on this host of that name. With two
 of that name it's refused rather than guessed: the chip is broken, and opening it names both. An
 address that leads nowhere is drawn as `broken` and the address, on a colored ground
