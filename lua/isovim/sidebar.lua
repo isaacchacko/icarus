@@ -284,7 +284,7 @@ local KINDS = {
   agent = {
     format = function(item)
       local icon, hl = status.icon(item.status)
-      local kind_icon, kind_hl = icons.get(item.glyph or item.agent_kind)
+      local kind_icon, kind_hl = icons.get(item.glyph or (item.role == "router" and "router") or item.agent_kind)
       local name_hl = item.hidden and "Comment" or (not item.running and "Comment" or nil)
       local label = item.label
       if not label and (item.role == "router" or item.role == "repo-root") then
@@ -1183,6 +1183,15 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         ws_name = g.name,
         running_mark = running_mark(g.agents),
       })
+      -- Its router, under the project's row whatever's folded, hidden or not; only a jump, which lists
+      -- hidden agents when asked, leaves a hidden one out.
+      for _, entry in ipairs(g.agents) do
+        if entry.role == "router" and (not all_open or listed(entry)) then
+          entry.group_key = g.key
+          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 0, group_key = g.key })
+          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
+        end
+      end
       if not collapsed then
         local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
           return entry.role == "repo-root"
@@ -1192,7 +1201,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         end
         local listed_roots, listed_others = {}, {}
         for _, entry in ipairs(listed_agents(agents)) do
-          table.insert(is_repo_root(entry) and listed_roots or listed_others, entry)
+          if entry.role ~= "router" then
+            table.insert(is_repo_root(entry) and listed_roots or listed_others, entry)
+          end
         end
         group_sections(items, base_host, host, g.key, {
           list = surfaces_by_key and list or {},
@@ -1202,7 +1213,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
           roots = listed_roots,
           running_roots = running_mark(vim.tbl_filter(is_repo_root, g.agents)),
           running_mark = running_mark(vim.tbl_filter(function(entry)
-            return not is_repo_root(entry)
+            return not is_repo_root(entry) and entry.role ~= "router"
           end, g.agents)),
           add_tasks = function(entry)
             add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
@@ -1427,10 +1438,12 @@ local function collect()
         live = live + 1
       end
       ws.active = math.max(ws.active, running[agent.id] or 0)
-      if not listed(agent) and not is_terminal(agent) then
+      -- A hidden router still shows, under the project's row.
+      local is_router = store.role(agent) == "router"
+      if not listed(agent) and not is_terminal(agent) and not is_router then
         hidden = hidden + 1
       end
-      if listed(agent) then
+      if listed(agent) or is_router then
         if is_terminal(agent) then
           ws.terminals[#ws.terminals + 1] = agent
         else

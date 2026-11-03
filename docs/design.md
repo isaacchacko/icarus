@@ -587,6 +587,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
   ▸ Surfaces 2
 ▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
                                have something that needs you, how many of its agents run
+  ⏺ 󰑩 router                ← its router, whatever's folded, hidden or not; none, no row
   ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
   ├─ ? merge the fix?          holds what needs you (questions only ever here)
   └─ ✎ review notes
@@ -599,8 +600,8 @@ Inbox 2                     ← the shown host's: every surface that needs you
   ├─  repo-root
   └─ 󰊛 Decisions 12
   ▾ Agents 2           1    ← how many run at the right (folded at first)
-  ├─  router · rework vocab
-  └─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
+  ├─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
+  └─  a5 · image paste
 ─────────────────────────
 cpu 12%  ram 18/24G         ← the footer, the column's only other window; u to measure
 Settings
@@ -636,7 +637,9 @@ and a surface moves to its section once it's dealt with. Threads holds the repo'
 says when one has a reply you haven't read; Surfaces the Task Board first, then the PRs, pages and
 write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
 explorer's, `E`); Root the repo-root and its decision log (see Surfaces), with how many decisions
-it holds and whether the root runs; Agents the rest of the agents, with how many run at the right. The Inbox and Threads start
+it holds and whether the root runs; Agents the rest of the agents but the router, with how many run
+at the right. The router has a row of its own right under the project's, with a glyph of its own
+(`md-router_wireless`, in the tab bar, the statusline and pickers too). The Inbox and Threads start
 open and the rest folded, and each section's fold is kept per project in the session. Root and
 General get the same sections where they have something; threads are a repo's only. The fold on the
 project's row still folds it whole. Each surface

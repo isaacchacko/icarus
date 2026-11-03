@@ -1360,7 +1360,7 @@ function M.find()
     end,
     format = function(item)
       local row = item.row
-      local icon, hl = icons.get(row.kind)
+      local icon, hl = icons.agent(row)
       local line = { { icon, hl }, { " " } }
       if row.host ~= self then
         line[#line + 1] = { row.host .. ": ", "Comment" }

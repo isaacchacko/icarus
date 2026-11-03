@@ -58,8 +58,10 @@ function M.icon(path)
   if buf <= 0 then
     return nil
   end
-  if M.agent_of(buf) then
-    return require("isovim.icons").get(vim.b[buf].isovim_agent_kind or "claude")
+  local ws, agent = M.agent_of(buf)
+  if ws then
+    local spec = store.agent(ws, agent)
+    return require("isovim.icons").agent({ kind = vim.b[buf].isovim_agent_kind or "claude", role = spec and spec.role })
   end
   local tab = vim.b[buf].isovim_tab
   if tab then
@@ -84,6 +86,11 @@ function M.status(buf)
       return component.id == buf
     end)
     text = shown and shown.name or (path ~= "" and vim.fn.fnamemodify(path, ":t")) or "[No Name]"
+  end
+  local ws, agent = M.agent_of(buf)
+  local spec = ws and store.agent(ws, agent)
+  if spec and spec.role == "router" then
+    text = require("isovim.icons").get("router") .. " " .. text
   end
   return scope .. "/" .. text
 end

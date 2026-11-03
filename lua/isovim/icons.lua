@@ -16,6 +16,7 @@ M.map = {
   shell = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal
   command = { "\u{f018d}", "MiniIconsGrey" }, -- md-console
   script = { "\u{f06a9}", "Comment" }, -- md-robot: a pane a repo script started
+  router = { "\u{f0469}", "Special" }, -- md-router_wireless: a repo's router, by role rather than kind
   root = { "\u{f01a5}", "Special" }, -- md-crown: Root, the host root's pseudo-repo
   general = { "\u{f0ac}", "Directory" }, -- fa-globe: General, agents in no repo and files outside every repo
   terminals = { "\u{f018d}", "Directory" }, -- md-console: Terminals, terminals and repo script panes
@@ -49,9 +50,9 @@ function M.get(name)
   return icon[1], icon[2]
 end
 
----@param agent {kind: string}
+---@param agent {kind: string, role?: string}
 function M.agent(agent)
-  return M.get(agent.kind)
+  return M.get(agent.role == "router" and "router" or agent.kind)
 end
 
 return M

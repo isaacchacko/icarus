@@ -107,7 +107,7 @@ local function pick_agents(title, list)
     end, list),
     format = function(item)
       local icon, hl = status.icon(status.get(item.ws, item.agent))
-      local kind_icon, kind_hl = icons.get(item.kind)
+      local kind_icon, kind_hl = icons.agent(item)
       local line = { { icon, hl }, { " " }, { kind_icon, kind_hl }, { " " }, { item.ws_name .. " · " .. item.name } }
       if item.role ~= "worker" then
         line[#line + 1] = { " " .. item.role, "Special" }
