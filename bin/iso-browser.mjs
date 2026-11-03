@@ -451,7 +451,7 @@ const tab = option(args, "--tab");
 const command = args.shift();
 if (!commands[command]) {
   console.log(USAGE);
-  process.exit(command === "help" || command === "--help" || !command ? 0 : 1);
+  process.exit(command === "help" || command === "--help" || command === "-h" || !command ? 0 : 1);
 }
 const anywhere = ["start", "close-agent", "sweep"].includes(command);
 if (!anywhere && !ws) fail("no workspace: pass --ws <id> or run inside an isovim agent ($ISOVIM_WS)");

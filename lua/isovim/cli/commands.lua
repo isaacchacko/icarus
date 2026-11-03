@@ -1004,6 +1004,21 @@ local function help_line(command, said)
   return head .. (" "):rep(math.max(2, 37 - #head)) .. said
 end
 
+-- A command's own usage, as iso <command> --help prints it; with role, as that role runs it.
+function M.entry_usage(entry, role)
+  local parts = {}
+  for line in vim.gsplit(entry.help or help_line(entry.name .. " ...", M.summary(entry) or ""), "\n", { plain = true }) do
+    parts[#parts + 1] = role and under_role(line, role) or line
+  end
+  return table.concat(parts, "\n")
+end
+
+-- Whether a command's arguments ask only for its usage: --help or -h alone. Anywhere else they're
+-- the command's own words.
+function M.asks_help(args)
+  return #args == 1 and (args[1] == "--help" or args[1] == "-h")
+end
+
 function M.role_usage(role)
   local parts = {
     ("usage: iso %s <action> ..."):format(role),
@@ -1011,10 +1026,7 @@ function M.role_usage(role)
     "       now, only warns when it doesn't",
   }
   for _, name in ipairs(M.actions(role)) do
-    local entry = M.action(role, name)
-    for line in vim.gsplit(entry.help or help_line(name .. " ...", M.summary(entry) or ""), "\n", { plain = true }) do
-      parts[#parts + 1] = under_role(line, role)
-    end
+    parts[#parts + 1] = M.entry_usage(M.action(role, name), role)
   end
   parts[#parts + 1] = help_line(role .. " help", "this list")
   return table.concat(parts, "\n")

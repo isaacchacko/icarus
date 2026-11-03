@@ -105,6 +105,9 @@ function M.run(role, args)
     fail(("%s isn't a %s action; iso %s help lists them"):format(name, role, role))
   elseif commands.retired(entry) then
     fail(("iso %s %s was retired at the cutover: %s"):format(role, name, entry.retired))
+  elseif commands.asks_help(args) then
+    out(commands.entry_usage(entry, role))
+    os.exit(0)
   end
   check_role(role, name)
   if not entry.module then

@@ -53,6 +53,13 @@ local function file(args, id)
   if text == "" then
     fail("usage: iso bug [--image <file>]... <what happened...|->")
   end
+  -- Nothing but flags it doesn't take isn't a report, and a report costs a worker.
+  local words = vim.split(text, "%s+")
+  if vim.iter(words):all(function(word)
+    return word:match("^%-%-?%w") ~= nil
+  end) then
+    fail(("usage: iso bug [--image <file>]... <what happened...|->: %s isn't a flag it takes, and isn't a report"):format(words[1]))
+  end
   local ws, agent = require("isovim.root").caller()
   local cwd = vim.uv.cwd()
   local sha = vim.system({ "git", "-C", isovim_dir(), "rev-parse", "--short", "HEAD" }, { text = true }):wait(2000)
@@ -78,6 +85,8 @@ function M.bug(args)
   local ok, err = c.try(file, args, id)
   if not ok then
     if tostring(err):match("^usage:") then
+      -- An image copied before the text was refused has no report to go with.
+      vim.fn.delete(bugs.dir .. "/" .. id, "rf")
       fail(err)
     end
     note("could not file it: " .. tostring(err))
