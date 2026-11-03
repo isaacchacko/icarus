@@ -1144,7 +1144,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
     if g.kind == "root" then
       local folded = is_collapsed(host, "host_root")
-      items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "root_head", repo_key = ROOT_KEY, collapsed = folded, idle = #agents == 0, running_mark = running_mark(g.agents) })
+      items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "root_head", repo_key = ROOT_KEY, collapsed = folded, idle = #g.agents == 0, running_mark = running_mark(g.agents) })
       if not folded then
         for i, entry in ipairs(agents) do
           items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = 0, group_key = ROOT_KEY, glyph = "root" })
@@ -1259,7 +1259,7 @@ local function local_entries(workspaces)
       local is_root = scope.is_root(ws.id, agent)
       holds_root = holds_root or is_root
       local address = ws.id .. "/" .. agent.id
-      local legacy_main = not v2 and (agent.id == "main" or #ws.agents == 1)
+      local legacy_main = not v2 and (agent.id == "main" or #vim.tbl_filter(listed, ws.agents) == 1)
       entries[#entries + 1] = {
         ws = ws.id,
         ws_name = ws.name,
@@ -1439,15 +1439,18 @@ local function collect()
       end
       ws.active = math.max(ws.active, running[agent.id] or 0)
       -- A hidden router still shows, under the project's row.
-      local is_router = store.role(agent) == "router"
-      if not listed(agent) and not is_terminal(agent) and not is_router then
+      if not listed(agent) and not is_terminal(agent) and store.role(agent) ~= "router" then
         hidden = hidden + 1
       end
-      if listed(agent) or is_router then
+      -- Every agent goes on, as another host's do: host_rows leaves hidden ones out of the rows, not
+      -- out of the running counts.
+      if not is_terminal(agent) then
+        ws.agents[#ws.agents + 1] = agent
+      end
+      if listed(agent) then
         if is_terminal(agent) then
           ws.terminals[#ws.terminals + 1] = agent
         else
-          ws.agents[#ws.agents + 1] = agent
           ws.running = ws.running or agent.running
         end
         working = working or (not shown and agent.status == "working")

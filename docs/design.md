@@ -599,7 +599,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
   ▾ Root 12            1    ← the repo-root and what roots decided here, how many on the left
   ├─  repo-root
   └─ 󰊛 Decisions 12
-  ▾ Agents 2           1    ← how many run at the right (folded at first)
+  ▾ Agents 2           1    ← how many run at the right, hidden ones too (folded at first)
   ├─  a3 · tab line fix    (workers; teams behind them are counted, not listed)
   └─  a5 · image paste
 ─────────────────────────
