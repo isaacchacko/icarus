@@ -914,12 +914,16 @@ local function bind(view)
       end)
     end,
   })
-  -- Its tab closed (Snacks.bufdelete, :bd): the view goes, its box and its buffers with it.
+  -- Its tab closed (Snacks.bufdelete, :bd): the view goes, its box and its buffers with it. This also
+  -- fires when its project stops being current and isovim.scope unlists it, which leaves it loaded.
   vim.api.nvim_create_autocmd("BufDelete", {
     group = group,
     buffer = view.buf,
     callback = function()
       require("isovim.safe").schedule("closing a surface's view", function()
+        if vim.api.nvim_buf_is_loaded(view.buf) then
+          return
+        end
         close_input(view)
         M.views[key(view.repo, view.name)] = nil
         pcall(vim.api.nvim_buf_delete, view.input, { force = true })

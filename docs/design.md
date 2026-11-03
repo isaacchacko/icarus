@@ -821,9 +821,11 @@ and agents, and everything isovim-specific lives under `<leader>i`.
   nothing waiting on the network or an agent, opening it as `<CR>` on its row would and moving the sidebar's
   cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a project; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
   included.
-- `<leader>,` shows the project's open views, what the tab bar holds (agents, surfaces, threads, PRs,
-  pages, terminals, files), each drawn as the jump draws its row, the one you looked at last first and
-  the one on screen last, so Enter flips back. `<leader>fr` shows recent agents (`<leader>fR` recent files).
+- `<leader>,` shows the open views of every project on this host, Root, General and Terminals too:
+  what their tab bars hold (agents, surfaces, threads, PRs, pages, terminals, files), each drawn as
+  the jump draws its row after its project's glyph and name in its color, the one you looked at last
+  first and the one on screen last, so Enter flips back. Enter makes its project current, as the
+  switcher would, and shows it in the main window. One whose agent or surface has gone is left out. `<leader>fr` shows recent agents (`<leader>fR` recent files).
 - `<leader>e` opens or closes the sidebar.
 
 **`<leader>i`**

@@ -186,6 +186,16 @@ end
 
 local PSEUDO_ICONS = { root = "root", general = "general", terminals = "terminals" }
 
+-- A project's glyph and color (Root's among them), as the switcher draws it.
+---@return string glyph, string? hl
+local function project_mark(name)
+  if PSEUDO_ICONS[name] then
+    return icons.get(PSEUDO_ICONS[name])
+  end
+  local style = repos.style(name)
+  return style.glyph, repos.highlight(style.color)
+end
+
 function M.pick_repo()
   local counts = {}
   for _, entry in ipairs(M.agents()) do
@@ -199,11 +209,7 @@ function M.pick_repo()
       return { name = name, text = scope.label(name), count = counts[name] }
     end, M.scopes()),
     format = function(item)
-      local icon, hl = icons.get(PSEUDO_ICONS[item.name])
-      if not PSEUDO_ICONS[item.name] then
-        local style = repos.style(item.name)
-        icon, hl = style.glyph, repos.highlight(style.color)
-      end
+      local icon, hl = project_mark(item.name)
       local line = { { icon, hl }, { " " }, { item.text, item.name == current_scope() and "Title" or nil } }
       if item.count then
         line[#line + 1] = { ("  %d agent%s"):format(item.count, item.count == 1 and "" or "s"), "Comment" }
@@ -321,8 +327,8 @@ local function jumpable(row)
 end
 
 -- A row's chunks for the picker: its indent and tree guide dropped, a right-aligned mark after it,
--- and the repo of a row whose repo its header gave.
-local function jump_chunks(row)
+-- and the repo of a row whose repo its header gave, unless no_project.
+local function jump_chunks(row, no_project)
   local chunks = {}
   for _, chunk in ipairs(require("isovim.sidebar").row_chunks(row)) do
     if #chunks > 0 or not chunk[1]:match("^[%s├└─│▾▸]*$") then
@@ -330,7 +336,9 @@ local function jump_chunks(row)
     end
   end
   local key = row.kind ~= "waiting" and row.kind ~= "repo" and (row.group_key or row.repo_key)
-  if key then
+  if no_project then
+    return chunks
+  elseif key then
     chunks[#chunks + 1] = { "  " .. scope.label(key), "Comment" }
   elseif row.kind == "terminal" then
     chunks[#chunks + 1] = { "  Terminals", "Comment" }
@@ -411,45 +419,92 @@ local function jump_items(hidden)
   return items, rows
 end
 
--- <leader>,: the current project's open views, what the tab bar holds, each drawn as the jump draws
--- its row, the one you looked at last first and the one on screen last, so Enter flips back. Enter
--- shows it as picking its tab does.
+-- Whether a loaded view with no row in the list still stands for something: an agent that's still
+-- there, a thread, surface or file that is. A PRs surface or decision log shows even with nothing in
+-- it, and a PR's view and another host's chat are their own.
+local function view_stands(buf, path)
+  local tabs = require("isovim.tabs")
+  local ws, agent = tabs.agent_of(buf)
+  if ws then
+    return vim.b[buf].isovim_agent_kind == "host" or store.agent(ws, agent) ~= nil
+  end
+  local surface = vim.b[buf].isovim_surface
+  if not surface then
+    return vim.uv.fs_stat(path) ~= nil
+  elseif vim.b[buf].isovim_pr then
+    return true
+  end
+  local repo, name = surface:match("^(.*)/([^/]+)$")
+  if not repo or name == "PRs" or name == "Decisions" then
+    return true
+  elseif vim.b[buf].isovim_agent_kind == "thread" then
+    return require("isovim.threads").read(repo, name) ~= nil
+  end
+  return require("isovim.surfaces").get(repo, name) ~= nil
+end
+
+-- A view's own row: what the list draws for it, without its indent or guide.
+local function view_chunks(row, info)
+  local sidebar_mod, tabs = require("isovim.sidebar"), require("isovim.tabs")
+  if row and row.surface then
+    return sidebar_mod.surface_chunks(row.surface)
+  elseif row then
+    return jump_chunks(row, true)
+  end
+  local icon, hl = tabs.icon(info.name)
+  if not icon and pcall(require, "mini.icons") then
+    icon, hl = require("mini.icons").get("file", info.name)
+  end
+  return { { icon or " ", hl }, { " " }, { tabs.name(info.bufnr) or vim.fn.fnamemodify(info.name, ":t") } }
+end
+
+-- <leader>,: the open views of every project on this host (Root, General and Terminals too), each
+-- drawn as its row after its project's glyph and name in its color, the one you looked at last first
+-- and the one on screen last, so Enter flips back. A project's tabs are unlisted while it isn't
+-- current, so what's open is what's loaded and tagged with a scope (closing a tab unloads it and
+-- clears that); one whose agent or surface has gone is left out. Enter makes its project current, as
+-- the switcher would, and shows it in the main window.
 function M.buffers()
   local tabs = require("isovim.tabs")
   local win = vim.api.nvim_get_current_win()
   local on_screen = tabs.owner(vim.api.nvim_win_get_buf(isovim().is_sidebar(win) and isovim().main_win() or win))
   local by_view = {}
-  for _, row in ipairs(require("isovim.sidebar").all_rows(true)) do
+  for _, row in ipairs(require("isovim.sidebar").all_rows(true, true)) do
     local view = jumpable(row) and row_view(row)
     if view then
       by_view[view] = row
     end
   end
-  local rank, items = view_ranks(), {}
-  for _, info in ipairs(vim.fn.getbufinfo({ buflisted = 1 })) do
-    local view = tabs.view_key(info.bufnr)
-    if view then
-      local row = by_view[view]
-      local chunks = row and jump_chunks(row)
-      if not chunks then
-        local icon, hl = tabs.icon(info.name)
-        if not icon and pcall(require, "mini.icons") then
-          icon, hl = require("mini.icons").get("file", info.name)
-        end
-        chunks = { { icon or " ", hl }, { " " }, { tabs.name(info.bufnr) or vim.fn.fnamemodify(info.name, ":t") } }
-      end
+  local rank, items, widest = view_ranks(), {}, 0
+  for _, info in ipairs(vim.fn.getbufinfo()) do
+    local buf = info.bufnr
+    local view = info.loaded == 1 and vim.b[buf].isovim_scope and tabs.owner(buf) == buf and tabs.view_key(buf)
+    local row = view and by_view[view]
+    if view and (row or view_stands(buf, info.name)) then
+      local label = vim.b[buf].isovim_scope
+      label = scope.label(label):match("[^/]+$")
+      widest = math.max(widest, vim.api.nvim_strwidth(label))
       items[#items + 1] = {
-        buf = info.bufnr,
-        chunks = chunks,
-        order = { info.bufnr == on_screen and 1 or 0, rank[view] or math.huge, -info.lastused },
-        text = table.concat(vim.tbl_map(function(chunk)
-          return chunk[1]
-        end, chunks)),
+        buf = buf,
+        scope = vim.b[buf].isovim_scope,
+        label = label,
+        chunks = view_chunks(row, info),
+        name = row and row.name or "",
+        order = { buf == on_screen and 1 or 0, rank[view] or math.huge, -info.lastused },
       }
     end
   end
   if #items == 0 then
-    return toast("Nothing open in " .. scope.label(current_scope()))
+    return toast("No views open")
+  end
+  for _, item in ipairs(items) do
+    local icon, hl = project_mark(item.scope)
+    local padding = (" "):rep(widest - vim.api.nvim_strwidth(item.label) + 2)
+    item.chunks = vim.list_extend({ { icon, hl }, { " " }, { item.label, hl }, { padding } }, item.chunks)
+    -- Its agent's name too, where its row says only "router".
+    item.text = table.concat(vim.tbl_map(function(chunk)
+      return chunk[1]
+    end, item.chunks)) .. " " .. item.name
   end
   table.sort(items, function(a, b)
     for i = 1, 3 do
@@ -461,7 +516,7 @@ function M.buffers()
   end)
   Snacks.picker.pick({
     source = "isovim_views",
-    title = "Open · " .. scope.label(current_scope()),
+    title = "Open views",
     layout = { preset = "select" },
     items = items,
     format = function(item)
@@ -470,7 +525,10 @@ function M.buffers()
     confirm = function(picker, item)
       picker:close()
       if item then
+        vim.g.isovim_sidebar_host = nil
+        isovim().set_scope(item.scope)
         isovim().show(item.buf)
+        sidebar().refresh()
       end
     end,
   })
@@ -846,7 +904,7 @@ M.GLOBAL = {
   { "<leader><leader>", M.jump, "jump to anything the sidebar shows (H: hidden agents too)" },
   { "<leader>ff", M.find_files, "find a file in the project" },
   { "<leader>/", M.grep, "grep the project and its agents' transcripts" },
-  { "<leader>,", M.buffers, "the project's open views, the last you looked at first" },
+  { "<leader>,", M.buffers, "the open views of every project, the last you looked at first" },
   { "<leader>fr", M.recent_agents, "recent agents" },
   { "<leader>fR", function()
     Snacks.picker.recent()

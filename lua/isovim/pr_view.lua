@@ -581,7 +581,12 @@ function M.open(repo, url)
     vim.api.nvim_create_autocmd("BufDelete", {
       buffer = view.buf,
       callback = function()
-        M.views[url] = nil
+        -- Not when its project stops being current and isovim.scope unlists it, which leaves it loaded.
+        require("isovim.safe").schedule("closing a PR's view", function()
+          if not vim.api.nvim_buf_is_loaded(view.buf) then
+            M.views[url] = nil
+          end
+        end)
       end,
     })
     M.views[url] = view

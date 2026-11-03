@@ -2129,14 +2129,19 @@ local function land(want)
   return false
 end
 
--- Every row the shown host's list can have, each group open, hidden agents only with hidden: what
--- <leader><leader> jumps to (isovim.keys.jump).
+-- Every row the shown host's list can have (or, with here, this host's, whichever is shown), each
+-- group open, hidden agents only with hidden: what <leader><leader> jumps to (isovim.keys.jump).
 ---@param hidden boolean
-function M.all_rows(hidden)
-  local collapsed, show_hidden = isovim.collapsed, isovim.show_hidden
+---@param here? boolean
+function M.all_rows(hidden, here)
+  local collapsed, show_hidden, shown = isovim.collapsed, isovim.show_hidden, vim.g.isovim_sidebar_host
   isovim.collapsed, isovim.show_hidden, all_open = {}, hidden, true
+  if here then
+    vim.g.isovim_sidebar_host = nil
+  end
   local ok, list = pcall(collect)
   isovim.collapsed, isovim.show_hidden, all_open = collapsed, show_hidden, false
+  vim.g.isovim_sidebar_host = shown
   return ok and list or error(list)
 end
 
