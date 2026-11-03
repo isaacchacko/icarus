@@ -443,6 +443,7 @@ local function draw_surface(view, entry)
     require("isovim.pages").draw(view)
     -- Its iso: addresses as chips in their place (isovim.links); the comments go by the lines above.
     require("isovim.links").substitute(view.buf)
+    require("isovim.pages").draw_dives(view)
   end
 end
 
@@ -1038,7 +1039,7 @@ function M.dress(view, win)
   local question = view.kind == "question"
   view_window(win, question, DRAWN[view.kind] or false)
   if view.kind == "page" then
-    require("isovim.pages").dress(win)
+    require("isovim.pages").dress(win, view)
   end
   local boxed = view.kind == "markdown" or view.kind == "page" or (question and view.entry.other and pending(view))
   local input_win = vim.fn.bufwinid(view.input)

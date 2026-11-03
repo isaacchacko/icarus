@@ -21,7 +21,8 @@
 --                             (isovim.links), opened by <CR>: in the Inbox until you open it
 --                             (consumed, as consumable markdown is), then with the files
 --   pages/<name>.md a page (isovim.pages): markdown the user reads and comments on, its comments in
---                   pages/<name>.comments.jsonl beside it; frontmatter as a markdown surface's
+--                   pages/<name>.comments.jsonl beside it, what it's asked to dive into in
+--                   pages/<name>.dives.jsonl; frontmatter as a markdown surface's, and parent
 --   threads/<id>.jsonl a thread (isovim.threads): one idea's conversation with the router; an open
 --                   one lists, waiting on you while a router post is unread, then those an agent
 --                   resolved that you haven't read, and the last few resolved
@@ -222,6 +223,9 @@ end
 
 -- The frontmatter fields a markdown surface takes, onto the entry; nil, or what's wrong.
 local function apply_fields(entry, fields)
+  if entry.type == "page" and type(fields.parent) == "string" and fields.parent ~= "" then
+    entry.parent = fields.parent
+  end
   if fields.name ~= nil then
     if type(fields.name) ~= "string" or fields.name == "" then
       return "name is the row's title, a string"
@@ -521,6 +525,41 @@ function M.name_of(base)
   return base:match("^(.*)%.md$") or base:match("^(.*)%.surface$") or base
 end
 
+-- How the repo's pages stand to each other: a parent that's gone, or a cycle, makes a page top-level,
+-- and each knows how many are beneath it.
+function M.relate_pages(list)
+  local pages = {}
+  for _, entry in ipairs(list) do
+    if entry.type == "page" then
+      pages[entry.name] = entry
+    end
+  end
+  local cut = {}
+  for name, entry in pairs(pages) do
+    local at, seen = entry.parent, { [name] = true }
+    while at and pages[at] and not seen[at] do
+      seen[at] = true
+      at = pages[at].parent
+    end
+    if at then
+      cut[#cut + 1] = entry
+    end
+  end
+  for _, entry in ipairs(cut) do
+    entry.parent = nil
+  end
+  for _, entry in pairs(pages) do
+    local at = entry.parent
+    while at do
+      pages[at].beneath = (pages[at].beneath or 0) + 1
+      at = pages[at].parent
+    end
+  end
+  for _, entry in pairs(pages) do
+    entry.sig = vim.fn.sha256(("%s|%s|%d"):format(entry.sig, tostring(entry.parent), entry.beneath or 0))
+  end
+end
+
 -- A repo's surfaces, parsed, by name; nothing is written.
 ---@return isovim.Surface[]
 function M.read(repo, state)
@@ -556,6 +595,7 @@ function M.read(repo, state)
   local list = vim.tbl_map(function(base)
     return parse(repo, base, state, taken)
   end, bases)
+  M.relate_pages(list)
   vim.list_extend(list, M.threads(repo))
   local unread = read_unread(repo)
   for _, entry in ipairs(next(unread) and list or {}) do
@@ -1321,6 +1361,7 @@ function M.remove(entry)
   end
   if entry.type == "page" then
     os.remove(require("isovim.pages").comments_file(entry.repo, entry.name))
+    os.remove(require("isovim.pages").dives_file(entry.repo, entry.name))
   end
   M.scan(entry.repo)
   changed(entry.repo)
@@ -1538,6 +1579,7 @@ function M.watch(on_change)
   local function rescan(repo)
     local before = signature(M.cache[repo] or {})
     M.cache[repo] = M.scan(repo)
+    require("isovim.safe").wrap("a page's dives", require("isovim.pages").sync)(repo, M.cache[repo])
     if signature(M.cache[repo]) ~= before then
       if on_change then
         on_change(repo, M.cache[repo])

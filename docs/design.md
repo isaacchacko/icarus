@@ -504,6 +504,27 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
   "..." [--ask]` and `iso <role> page resolve <page> <id> ["what changed"]`: the router changes the
   page wherever a comment asks, then resolves it with a note, and the comment leaves the page. A
   reply with `--ask` asks you something: the page waits on you, in the Inbox, until you reply.
+- **Dives:** a page leads to pages beneath it, as deep as you ask. `[? question]` anywhere in a page's
+  file, but not in a code fence or span (so a page can talk about the syntax), is drawn highlighted
+  as a pending dive. `i` opens the box as `c` does and appends it to the end of the line under the
+  cursor; `V`/`v` then `i` goes after the last line selected, quoting them in the prompt. On a line
+  in a fence or a table it goes on a line of its own past that. An edit by hand counts the same: the
+  page is scanned when its file changes, and each blurb is sent once, `pages/<name>.dives.jsonl`
+  beside the page keeping what's been sent so a rescan or a restart doesn't resend it. The router
+  gets `[page dive <repo>/<page>#<id>]`, with the question, heading, surrounding lines and how to
+  answer: the answer is a new page, not a chat reply. It writes `pages/<child>.md` and runs `iso
+  <role> page dive <page> <id> <child>`, which records `parent: <page>` in the child's frontmatter
+  (its `name:` too, the question, if it has none, as that's what its chip says) and replaces the blurb
+  with `iso:page/<owner>/<repo>/<child>`. A cycle is refused. A chip on it goes down.
+- **Surfacing:** `[[` goes to the parent (a count for further up), `]]` back down to the child you
+  came up from, else the first child linked on the page, else any child, with a toast at either end.
+  A page with a parent has a breadcrumb over it, `root › … › this`, in virtual lines so a page's lines
+  stay the file's lines. Virtual lines can't hold the cursor, so its entries are drawn as links but
+  gone to with `[[`.
+- **In the sidebar** only top-level pages are rows, each with how many are beneath it (`↳ 3`). The rest
+  are reached through links and the jump picker, and what needs you beneath still reaches the Inbox
+  as its own row. Removing a page leaves its children, top-level now as their parent is gone; so does
+  a `parent:` naming no page, or a cycle written by hand.
 
 **Marking read or unread.** You shouldn't have to be the last to act on something for it to leave your
 attention. `U` on any surface's, thread's or agent's row in the sidebar, `u` in a surface's view

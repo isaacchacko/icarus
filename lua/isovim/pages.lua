@@ -19,6 +19,15 @@
 -- line, or on the lines selected (v, V; <CR> too), in the input box under the page; a replies to
 -- the comment under the cursor; ]c [c go to the next and previous comment; r shows the resolved
 -- ones too, dimmed, or hides them again.
+--
+-- Dives: a page leads to pages beneath it. [? question] anywhere in a page's file (not in a code
+-- fence or span, so a page can talk about the syntax) asks for one: i writes it, or you edit it in, and
+-- each is sent to the router once as a prompt ([page dive ...]); pages/<name>.dives.jsonl beside the
+-- page keeps what's been sent: {id (d1, d2...), question, quote?, status (unsent, sent or answered),
+-- child?, line, heading, by, at}. The router writes the child and runs iso <role> page dive, which
+-- sets parent: in its frontmatter and puts a link to it in place of the blurb. [[ goes up to the
+-- parent, ]] back down, and a breadcrumb sits over a page with a parent. isovim.surfaces works out
+-- parents (one whose parent is gone is top-level) and how many are beneath each.
 local surfaces = require("isovim.surfaces")
 
 local M = {}
@@ -35,6 +44,10 @@ end
 
 function M.comments_file(repo, name)
   return M.dir(repo) .. "/" .. name .. ".comments.jsonl"
+end
+
+function M.dives_file(repo, name)
+  return M.dir(repo) .. "/" .. name .. ".dives.jsonl"
 end
 
 ---@class isovim.PageComment
@@ -89,8 +102,22 @@ function M.summary(comments)
   return open, waiting
 end
 
--- Changes the page's comments with fn(comments) under the repo's surface lock, written whole (to a
--- temp file renamed over); returns what fn returns.
+-- Writes text to path whole (a temp file renamed over).
+local function write_whole(path, text)
+  local tmp = ("%s/.%s.%d.tmp"):format(vim.fs.dirname(path), vim.fs.basename(path), vim.uv.os_getpid())
+  local file = assert(io.open(tmp, "wb"))
+  file:write(text)
+  file:close()
+  assert(vim.uv.fs_rename(tmp, path))
+end
+
+local function write_lines(path, list)
+  local lines = vim.tbl_map(vim.json.encode, list)
+  write_whole(path, #lines > 0 and table.concat(lines, "\n") .. "\n" or "")
+end
+
+-- Changes the page's comments with fn(comments) under the repo's surface lock, written whole; returns
+-- what fn returns.
 local function update(repo, name, fn)
   return surfaces.locked(repo, function()
     local list = M.comments(repo, name)
@@ -98,13 +125,7 @@ local function update(repo, name, fn)
     if result == nil then
       return nil, err
     end
-    local lines = vim.tbl_map(vim.json.encode, list)
-    local path = M.comments_file(repo, name)
-    local tmp = ("%s/.%s.%d.tmp"):format(vim.fs.dirname(path), vim.fs.basename(path), vim.uv.os_getpid())
-    local file = assert(io.open(tmp, "wb"))
-    file:write(#lines > 0 and table.concat(lines, "\n") .. "\n" or "")
-    file:close()
-    assert(vim.uv.fs_rename(tmp, path))
+    write_lines(M.comments_file(repo, name), list)
     return result
   end)
 end
@@ -159,6 +180,255 @@ function M.resolve(repo, name, id, by, note)
     comment.status, comment.resolved_by, comment.resolved_at, comment.note = "resolved", by, os.time(), note
     return comment
   end)
+end
+
+-- Dives.
+
+-- The page's dives, oldest first.
+function M.dives(repo, name)
+  local file = io.open(M.dives_file(repo, name), "rb")
+  local text = file and file:read("*a") or ""
+  if file then
+    file:close()
+  end
+  local list = {}
+  for line in text:gmatch("[^\n]+") do
+    local ok, dive = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
+    if ok and type(dive) == "table" and type(dive.id) == "string" then
+      list[#list + 1] = dive
+    end
+  end
+  return list
+end
+
+-- Changes the page's dives with fn(dives), written only if it returns true.
+local function update_dives(repo, name, fn)
+  return surfaces.locked(repo, function()
+    local list = M.dives(repo, name)
+    if fn(list) then
+      write_lines(M.dives_file(repo, name), list)
+    end
+  end)
+end
+
+local function next_dive(list)
+  local n = 0
+  for _, dive in ipairs(list) do
+    n = math.max(n, tonumber(dive.id:match("^d(%d+)$")) or 0)
+  end
+  return "d" .. (n + 1)
+end
+
+-- The [? question]s in lines, outside code fences and spans and not a markdown link's text: {row
+-- (1-based), from, to (byte columns, to exclusive), question}, in order.
+function M.blurbs(lines)
+  local found, fenced = {}, false
+  for row, line in ipairs(lines) do
+    if line:match("^%s*```") or line:match("^%s*~~~") then
+      fenced = not fenced
+    elseif not fenced then
+      local at = 1
+      while true do
+        local from = line:find("[?", at, true)
+        if not from then
+          break
+        end
+        local whole = line:match("^%b[]", from)
+        local question = whole and whole:match("^%[%?%s+(.-)%s*%]$")
+        local _, ticks = line:sub(1, from - 1):gsub("`", "")
+        if question and question ~= "" and ticks % 2 == 0 and line:sub(from + #whole, from + #whole) ~= "(" then
+          found[#found + 1] = { row = row, from = from - 1, to = from - 1 + #whole, question = question }
+          at = from + #whole
+        else
+          at = from + 2
+        end
+      end
+    end
+  end
+  return found
+end
+
+-- What the router is sent for a blurb, worded as a comment's is: the answer is a page.
+function M.dive_prompt(repo, name, dive, lines, row)
+  local around = {}
+  for i = math.max(1, row - 2), math.min(#lines, row + 2) do
+    around[#around + 1] = "> " .. lines[i]
+  end
+  local quote = dive.quote and ("\n\nAbout these lines:\n%s"):format(table.concat(vim.tbl_map(function(line)
+    return "> " .. line
+  end, vim.split(dive.quote, "\n", { plain = true })), "\n")) or ""
+  return ("[page dive %s/%s#%s] on %sline %d of %s:\n%s%s\n\n%s\n\n(The user asks this inside the page, and the answer is a new "
+    .. "page, not a chat reply: write it to %s/<child>.md, as deep as the question needs, then run iso <role> page dive %s %s "
+    .. "<child>, which makes it this page's child and puts a link to it in place of their question. Nothing else need be said.)")
+    :format(repo, name, dive.id, dive.heading ~= "" and ('"' .. dive.heading .. '" ') or "", dive.line, M.file(repo, name),
+      table.concat(around, "\n"), quote, dive.question, M.dir(repo), name, dive.id)
+end
+
+-- Sends text to the repo's router with iso send; on failure, done(false, why).
+local function send(repo, text, done)
+  local reader = require("isovim.surface_view").reader(repo)
+  if not reader then
+    return done(false, repo .. " has no router to send to")
+  end
+  vim.system({ require("isovim.panes").bin, "send", reader, text }, { text = true }, vim.schedule_wrap(function(result)
+    done(result.code == 0, vim.trim(result.stderr or ""))
+  end))
+end
+
+-- Sends each blurb on the repo's pages not sent yet, the key's and a hand edit's alike. A rescan or a
+-- restart finds it in the page's dives and leaves it. One written twice is two; one answered and
+-- written again is new.
+function M.sync(repo, entries)
+  if not require("isovim.surface_view").reader(repo) then
+    return
+  end
+  for _, entry in ipairs(entries) do
+    if entry.type == "page" and entry.body and entry.body:find("[?", 1, true) then
+      local lines = vim.split(entry.body, "\n", { plain = true })
+      local blurbs = M.blurbs(lines)
+      local sends = {}
+      update_dives(repo, entry.name, function(list)
+        local taken = {}
+        for _, blurb in ipairs(blurbs) do
+          local dive = vim.iter(list):find(function(each)
+            return not taken[each.id] and each.status ~= "answered" and each.question == blurb.question
+          end)
+          if not dive then
+            dive = { id = next_dive(list), question = blurb.question, status = "unsent", by = "user", at = os.time() }
+            list[#list + 1] = dive
+          end
+          taken[dive.id] = true
+          if dive.status == "unsent" then
+            dive.status, dive.line = "sent", blurb.row + (entry.body_line or 1) - 1
+            dive.heading = M.heading_at(lines, blurb.row)
+            sends[#sends + 1] = { dive = dive, row = blurb.row }
+          end
+        end
+        return #sends > 0
+      end)
+      for _, each in ipairs(sends) do
+        send(repo, M.dive_prompt(repo, entry.name, each.dive, lines, each.row), function(ok, why)
+          if not ok then
+            update_dives(repo, entry.name, function(list)
+              for _, dive in ipairs(list) do
+                if dive.id == each.dive.id then
+                  dive.status = "unsent"
+                  return true
+                end
+              end
+            end)
+            vim.notify(("isovim: %s's question is kept, but its router wasn't told: %s"):format(entry.name, why), vim.log.levels.WARN)
+          end
+        end)
+      end
+    end
+  end
+end
+
+-- A page's parent, as its file says.
+local function parent_of(repo, name)
+  local file = io.open(M.file(repo, name), "rb")
+  local text = file and file:read("*a") or ""
+  if file then
+    file:close()
+  end
+  if not text:match("^%-%-%-%s*\r?\n") then
+    return nil
+  end
+  local block = text:match("^%-%-%-%s*\r?\n(.-)\n%-%-%-") or ""
+  local parent = ("\n" .. block .. "\n"):match("\nparent:%s*([^\r\n]-)%s*\r?\n")
+  return parent and parent ~= "" and parent:gsub('^"(.*)"$', "%1") or nil
+end
+
+-- A file's text with its frontmatter's parent set, and its name if it has none.
+local function with_parent(text, parent, name)
+  local lines = vim.split(text, "\n", { plain = true })
+  local fields = { "parent: " .. parent }
+  local close
+  if lines[1] and lines[1]:match("^%-%-%-%s*\r?$") then
+    for i = 2, #lines do
+      if lines[i]:match("^%-%-%-%s*\r?$") then
+        close = i
+        break
+      end
+    end
+  end
+  if not close then
+    fields[#fields + 1] = "name: " .. vim.json.encode(name)
+    return "---\n" .. table.concat(fields, "\n") .. "\n---\n" .. text
+  end
+  local named = false
+  for i = close - 1, 2, -1 do
+    if lines[i]:match("^parent:") then
+      table.remove(lines, i)
+      close = close - 1
+    elseif lines[i]:match("^name:") then
+      named = true
+    end
+  end
+  if not named then
+    fields[#fields + 1] = "name: " .. vim.json.encode(name)
+  end
+  for i, field in ipairs(fields) do
+    table.insert(lines, close + i - 1, field)
+  end
+  return table.concat(lines, "\n")
+end
+
+-- iso <role> page dive: child answers dive id of the page. It records the parent in the child and swaps
+-- the blurb for a link. A note says if the blurb has gone from the page.
+---@return string? address, string? err_or_note
+function M.dive(repo, name, id, child)
+  local dive = vim.iter(M.dives(repo, name)):find(function(each)
+    return each.id == id
+  end)
+  if not dive then
+    return nil, ("%s has no dive %s"):format(name, id)
+  elseif dive.status == "answered" then
+    return nil, ("%s's %s is answered already, by %s"):format(name, id, dive.child or "?")
+  elseif child == name then
+    return nil, "a page can't be its own child"
+  elseif not vim.uv.fs_stat(M.file(repo, child)) then
+    return nil, ("%s has no page %s: write %s first"):format(repo, child, M.file(repo, child))
+  end
+  local at, seen = name, {}
+  while at and not seen[at] do
+    if at == child then
+      return nil, ("%s is above %s already: that would be a cycle"):format(child, name)
+    end
+    seen[at] = true
+    at = parent_of(repo, at)
+  end
+  local address = ("iso:page/%s/%s"):format(repo, child)
+  local note
+  surfaces.locked(repo, function()
+    local file = assert(io.open(M.file(repo, child), "rb"))
+    local text = file:read("*a")
+    file:close()
+    write_whole(M.file(repo, child), with_parent(text, name, dive.question))
+    file = assert(io.open(M.file(repo, name), "rb"))
+    local lines = vim.split(file:read("*a"), "\n", { plain = true })
+    file:close()
+    local blurb = vim.iter(M.blurbs(lines)):find(function(each)
+      return each.question == dive.question
+    end)
+    if blurb then
+      local line = lines[blurb.row]
+      lines[blurb.row] = line:sub(1, blurb.from) .. address .. line:sub(blurb.to + 1)
+      write_whole(M.file(repo, name), table.concat(lines, "\n"))
+    else
+      note = ("its question isn't on %s any more, so nothing was replaced: link %s there yourself"):format(name, address)
+    end
+  end)
+  update_dives(repo, name, function(list)
+    for _, each in ipairs(list) do
+      if each.id == id then
+        each.status, each.child = "answered", child
+        return true
+      end
+    end
+  end)
+  return address, note
 end
 
 -- Anchoring: where a comment is on the page as it is now.
@@ -255,18 +525,10 @@ end
 -- The view (the TUI's): comments drawn on a page's buffer, their keys, the input box's modes.
 
 local NS = vim.api.nvim_create_namespace("isovim_page_comments")
+local DIVES = vim.api.nvim_create_namespace("isovim_page_dives")
+local CRUMBS = vim.api.nvim_create_namespace("isovim_page_crumbs")
 local ICON = "\u{f075}" -- fa-comment
-
--- Sends text to the repo's router with iso send; on failure, done(false, why).
-local function send(view, text, done)
-  local reader = require("isovim.surface_view").reader(view.repo)
-  if not reader then
-    return done(false, view.repo .. " has no router to send to")
-  end
-  vim.system({ require("isovim.panes").bin, "send", reader, text }, { text = true }, vim.schedule_wrap(function(result)
-    done(result.code == 0, vim.trim(result.stderr or ""))
-  end))
-end
+vim.api.nvim_set_hl(0, "IsovimPageDive", { default = true, link = "DiagnosticVirtualTextInfo" })
 
 local function short(time)
   return os.date("%b %d %H:%M", time)
@@ -330,6 +592,67 @@ function M.draw(view, entry)
   table.sort(view.placed, function(a, b)
     return a.first < b.first
   end)
+  M.draw_crumbs(view)
+  M.draw_dives(view)
+end
+
+-- The page's blurbs, highlighted as pending dives, on the buffer's lines as they are (chips in them).
+function M.draw_dives(view)
+  local buf = view.buf
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, DIVES, 0, -1)
+  for _, blurb in ipairs(M.blurbs(vim.api.nvim_buf_get_lines(buf, 0, -1, false))) do
+    vim.api.nvim_buf_set_extmark(buf, DIVES, blurb.row - 1, blurb.from, { end_col = blurb.to, hl_group = "IsovimPageDive",
+      priority = 300 })
+  end
+end
+
+-- The page entry named name in view's repo.
+local function page_entry(view, name)
+  return vim.iter(surfaces.list(view.repo)):find(function(each)
+    return each.type == "page" and each.name == name
+  end)
+end
+
+-- The breadcrumb over a page with a parent, root > ... > this: virtual lines, so its lines stay the
+-- file's lines and comments still map. Each is drawn as a link; virtual lines can't hold the cursor, so
+-- it's [[ (with a count for further up) that goes there.
+function M.draw_crumbs(view)
+  local buf = view.buf
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, CRUMBS, 0, -1)
+  local here = page_entry(view, view.name)
+  if not (here and here.parent) then
+    return
+  end
+  local chain, at = {}, page_entry(view, here.parent)
+  while at do
+    table.insert(chain, 1, at)
+    at = at.parent and page_entry(view, at.parent)
+  end
+  local chunks = {}
+  for _, each in ipairs(chain) do
+    vim.list_extend(chunks, require("isovim.links").parts(("iso:page/%s/%s"):format(view.repo, each.name)))
+    chunks[#chunks + 1] = { " › ", "Comment" }
+  end
+  chunks[#chunks + 1] = { here.title or here.name, "Title" }
+  vim.api.nvim_buf_set_extmark(buf, CRUMBS, 0, 0, { virt_lines = { chunks, { { "", "Comment" } } }, virt_lines_above = true })
+  M.show_crumbs(view)
+end
+
+-- Virtual lines over a buffer's first line show only once the window is told to fill them.
+function M.show_crumbs(view)
+  for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
+    vim.api.nvim_win_call(win, function()
+      if vim.fn.line("w0") == 1 then
+        vim.fn.winrestview({ topfill = 2 })
+      end
+    end)
+  end
 end
 
 -- The comment under the cursor (on one of its lines), if any.
@@ -362,6 +685,8 @@ function M.winbar(view)
   end
   if mode.reply then
     return (" ↳ reply to %s · <CR> sends · <C-c> cancels"):format(mode.reply)
+  elseif mode.dive then
+    return (" [?] a question to dive into, after line %d · <CR> keeps · <C-c> cancels"):format(mode.last + (view.page_offset or 0))
   end
   local where = mode.from == mode.to and ("line %d"):format(mode.from) or ("lines %d-%d"):format(mode.from, mode.to)
   return (" " .. ICON .. " comment on %s%s · <CR> sends · <C-c> cancels"):format(where,
@@ -376,12 +701,83 @@ local function comment_on(view, first, last)
     to = last + offset, heading = M.heading_at(lines, first) })
 end
 
+-- i: a question to dive into, after the lines first..last.
+local function dive_on(view, first, last)
+  local lines = view.source_lines or vim.api.nvim_buf_get_lines(view.buf, 0, -1, false)
+  to_input(view, { dive = true, last = last, quote = first ~= last and table.concat(vim.list_slice(lines, first, last), "\n") or nil })
+end
+
+-- Writes [? question] into the page's file, after view row last: at the end of its line, or on a line
+-- of its own past the fence or table it's in, where it would count as code or break the table. The
+-- scan sends it, as it does a hand edit; what a selection quoted goes with it.
+local function write_dive(view, mode, text)
+  local question = vim.trim(text:gsub("%s+", " "))
+  if not ("[? " .. question .. "]"):match("^%b[]$") then
+    question = question:gsub("%[", "("):gsub("%]", ")")
+  end
+  if question == "" then
+    return nil, "a question needs words"
+  end
+  local path = M.file(view.repo, view.name)
+  local file = io.open(path, "rb")
+  if not file then
+    return nil, path .. " is gone"
+  end
+  local lines = vim.split(file:read("*a"), "\n", { plain = true })
+  file:close()
+  local at = math.min(mode.last + (view.page_offset or 0), #lines)
+  local fenced = false
+  for i = 1, at do
+    if lines[i]:match("^%s*```") or lines[i]:match("^%s*~~~") then
+      fenced = not fenced
+    end
+  end
+  local blurb = "[? " .. question .. "]"
+  if fenced or lines[at]:match("^%s*|") or lines[at]:match("^%s*```") then
+    while fenced and lines[at + 1] do
+      at = at + 1
+      fenced = not (lines[at]:match("^%s*```") or lines[at]:match("^%s*~~~"))
+    end
+    while lines[at + 1] and lines[at + 1]:match("^%s*|") do
+      at = at + 1
+    end
+    table.insert(lines, at + 1, blurb)
+  else
+    lines[at] = lines[at] .. (lines[at]:match("%S") and " " or "") .. blurb
+  end
+  update_dives(view.repo, view.name, function(list)
+    list[#list + 1] = { id = next_dive(list), question = question, quote = mode.quote, status = "unsent", by = "user", at = os.time() }
+    return true
+  end)
+  write_whole(path, table.concat(lines, "\n"))
+  return true
+end
+
 -- <CR> in the input box while it's in a mode: the comment (or reply) is kept and sent to the
--- router. True when it took the text.
+-- router, or the question written in. True when it took the text.
 function M.submit(view, text)
   local mode = view.page_mode
   if not mode then
     return false
+  end
+  if mode.dive then
+    local ok, why = write_dive(view, mode, text)
+    if not ok then
+      vim.notify("isovim: " .. tostring(why), vim.log.levels.WARN)
+      return true
+    end
+    view.page_mode = nil
+    vim.api.nvim_buf_set_lines(view.input, 0, -1, false, { "" })
+    vim.cmd.stopinsert()
+    local win = vim.fn.bufwinid(view.input)
+    if win ~= -1 then
+      vim.wo[win][0].winbar = require("isovim.surface_view").winbar(view)
+    end
+    local page = vim.fn.bufwinid(view.buf)
+    if page ~= -1 then
+      vim.api.nvim_set_current_win(page)
+    end
+    return true
   end
   local comment, err
   if mode.reply then
@@ -400,7 +796,7 @@ function M.submit(view, text)
   if win ~= -1 then
     vim.wo[win][0].winbar = require("isovim.surface_view").winbar(view)
   end
-  send(view, M.prompt(view.repo, view.name, comment, mode.reply and text or nil), function(ok, why)
+  send(view.repo, M.prompt(view.repo, view.name, comment, mode.reply and text or nil), function(ok, why)
     if not ok then
       vim.notify(("isovim: %s %s is kept, but its router wasn't told: %s"):format(view.name, comment.id, why), vim.log.levels.WARN)
     end
@@ -442,11 +838,34 @@ function M.bind(view)
     end
     to_input(view, nil)
   end, "reply to the comment here (else type to the router)")
-  for _, lhs in ipairs({ "i", "o" }) do
-    on("n", lhs, function()
-      to_input(view, nil)
-    end, "type to the repo's router")
+  on("n", "o", function()
+    to_input(view, nil)
+  end, "type to the repo's router")
+  on("n", "i", function()
+    local row = vim.api.nvim_win_get_cursor(0)[1]
+    dive_on(view, row, row)
+  end, "ask a question to dive into, after this line")
+  on("x", "i", function()
+    local a, b = vim.fn.line("v"), vim.fn.line(".")
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
+    dive_on(view, math.min(a, b), math.max(a, b))
+  end, "ask a question to dive into about the lines selected")
+  -- The markdown ftplugin maps these to jump by heading, each time the filetype is set, as opening a
+  -- rendered view does again.
+  local function surfacing()
+    on("n", "[[", function()
+      M.surface(view, vim.v.count1)
+    end, "up to this page's parent (a count for further up)")
+    on("n", "]]", function()
+      M.descend(view)
+    end, "back down to the child you came up from, else the first child linked here")
   end
+  surfacing()
+  vim.api.nvim_create_autocmd("FileType", {
+    group = vim.api.nvim_create_augroup("isovim_page_keys_" .. view.buf, { clear = true }),
+    buffer = view.buf,
+    callback = surfacing,
+  })
   for lhs, dir in pairs({ ["]c"] = 1, ["[c"] = -1 }) do
     on("n", lhs, function()
       local row = vim.api.nvim_win_get_cursor(0)[1]
@@ -482,6 +901,74 @@ function M.bind(view)
   end, { buffer = view.input, nowait = true, desc = "isovim: cancel the comment or reply" })
 end
 
+_G.isovim_page_came_from = _G.isovim_page_came_from or {}
+local came_from = _G.isovim_page_came_from
+
+local function toast(text)
+  vim.notify("isovim: " .. text, vim.log.levels.INFO)
+end
+
+-- Opens a page of the view's repo; on the line linking to child, if given.
+local function go(view, entry, child)
+  surfaces.open(entry)
+  if child then
+    vim.schedule(function()
+      local there = require("isovim.surface_view").views[view.repo .. "/" .. entry.name]
+      for row, line in ipairs(there and there.source_lines or {}) do
+        for _, link in ipairs(require("isovim.links").find(line)) do
+          local p = require("isovim.links").parse(link[3])
+          if p and p.kind == "page" and p.name == child then
+            return pcall(vim.api.nvim_win_set_cursor, 0, { row, 0 })
+          end
+        end
+      end
+    end)
+  end
+end
+
+-- [[: up count pages, remembering the way back down.
+function M.surface(view, count)
+  local at = page_entry(view, view.name)
+  local child
+  for _ = 1, count do
+    local up = at and at.parent and page_entry(view, at.parent)
+    if not up then
+      break
+    end
+    came_from[view.repo .. "/" .. up.name] = at.name
+    child, at = at.name, up
+  end
+  if not child then
+    return toast("this page is at the top: it has no parent")
+  end
+  go(view, at, child)
+end
+
+-- ]]: to the child you came up from, else the first child linked on the page, else any child.
+function M.descend(view)
+  local key = view.repo .. "/" .. view.name
+  local function child_named(name)
+    local entry = name and page_entry(view, name)
+    return entry and entry.parent == view.name and entry or nil
+  end
+  local entry = child_named(came_from[key])
+  for _, line in ipairs(not entry and view.source_lines or {}) do
+    for _, link in ipairs(require("isovim.links").find(line)) do
+      local p = require("isovim.links").parse(link[3])
+      entry = entry or (p and p.kind == "page" and child_named(p.name)) or nil
+    end
+  end
+  if not entry then
+    entry = vim.iter(surfaces.list(view.repo)):find(function(each)
+      return each.type == "page" and each.parent == view.name
+    end)
+  end
+  if not entry then
+    return toast("nothing is beneath this page")
+  end
+  go(view, entry)
+end
+
 -- The page's keys, for the help (`?` in the sidebar).
 M.help_keys = {
   { "c (or V/v then c, <CR>)", "comment on the line, or the lines selected, in the box under the page" },
@@ -490,13 +977,18 @@ M.help_keys = {
   { "]c / [c", "the next / previous comment" },
   { "r", "show or hide the resolved comments" },
   { "u", "mark the page unread: back in the Inbox until you open it again" },
-  { "i o", "type to the repo's router" },
+  { "i (or V/v then i)", "ask a question to dive into: [? it] goes at the end of the line, or after the lines selected, and the router answers with a page in its place" },
+  { "[[ / ]]", "up to this page's parent (a count for further up) / back down to the child you came up from, else the first child linked here" },
+  { "o", "type to the repo's router" },
   { "<C-c>", "in the box: cancel the comment or reply" },
 }
 
--- A page's window: room for the comments' signs.
-function M.dress(win)
+-- A page's window: room for the comments' signs, its breadcrumb showing.
+function M.dress(win, view)
   vim.wo[win][0].signcolumn = "yes:1"
+  if view then
+    M.show_crumbs(view)
+  end
 end
 
 return M

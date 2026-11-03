@@ -763,8 +763,9 @@ M.role_actions = {
       comments = { args = { "<text>" }, flags = { ["--all"] = false } },
       reply = { args = { "<text>", "<text>", "<text>..." }, flags = { ["--ask"] = false } },
       resolve = { args = { "<text>", "<text>", "<text>..." } },
+      dive = { args = { "<text>", "<text>", "<text>" } },
     },
-    summary = "read, answer and resolve the user's comments on a page",
+    summary = "read, answer and resolve the user's comments on a page; answer a dive with a child page",
     help = [=[
        iso page comments <page> [--all]
                                      a page's open comments (--all: resolved ones too),
@@ -779,7 +780,12 @@ M.role_actions = {
                                      Inbox, until they reply
        iso page resolve <page> <id> [<note...>]
                                      resolve a comment once the page does what it asks,
-                                     with a note of what changed; it leaves the page]=],
+                                     with a note of what changed; it leaves the page
+       iso page dive <page> <id> <child>
+                                     answer a [page dive] prompt: <child> is the new page
+                                     you've written, iso/pages/<child>.md. It becomes
+                                     <page>'s child (parent: in its frontmatter), and a
+                                     link to it takes the place of the question]=],
   },
   link = { name = "link", module = "surfaces", shared = true,
     args = { "<text>" },

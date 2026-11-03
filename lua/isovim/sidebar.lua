@@ -541,6 +541,10 @@ function M.surface_chunks(entry)
     elseif (entry.comments_open or 0) > 0 then
       row[#row + 1] = { ("  \u{f075} %d"):format(entry.comments_open), "Comment" }
     end
+    -- How many pages are beneath it, as only a top-level one has a row.
+    if (entry.beneath or 0) > 0 then
+      row[#row + 1] = { ("  ↳ %d"):format(entry.beneath), "Comment" }
+    end
   elseif (kind == "file" or kind == "folder") and entry.exists == false then
     row[#row + 1] = { "  missing", "DiagnosticWarn" }
   elseif kind == "broken" and entry.error then
@@ -953,7 +957,10 @@ local function group_sections(items, base, host, key, opts)
     elseif kind == "tasks" or kind == "prs" then
       boards[#boards + 1] = entry
     elseif kind ~= "question" and kind ~= "chat" then
-      others[#others + 1] = entry
+      -- A page beneath another isn't a row but through its Inbox, its links and the jump picker.
+      if not (kind == "page" and entry.parent and not all_open) then
+        others[#others + 1] = entry
+      end
     end
   end
   -- The Task Board, then the PRs.

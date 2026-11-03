@@ -341,7 +341,7 @@ end
 function M.page(args)
   local pages = require("isovim.pages")
   local sub = table.remove(args, 1)
-  local usage = "usage: iso <role> page comments <page> [--all] | reply <page> <id> <text...> [--ask] | resolve <page> <id> [<note...>]"
+  local usage = "usage: iso <role> page comments <page> [--all] | dive <page> <id> <child> | reply <page> <id> <text...> [--ask] | resolve <page> <id> [<note...>]"
   if sub == "comments" then
     local all = flag(args, "--all")
     local repo, name = page_ref(args[1] or fail(usage))
@@ -356,6 +356,18 @@ function M.page(args)
       out(("%s/%s has no %scomments"):format(repo, name, all and "" or "open "))
     end
     return
+  elseif sub == "dive" then
+    local repo, name = page_ref(args[1] or fail(usage))
+    local id, child = args[2] or fail(usage), (args[3] or fail(usage)):gsub("%.md$", "")
+    local address, said = pages.dive(repo, name, id, child)
+    if not address then
+      fail(said)
+    end
+    if said then
+      note(said)
+    end
+    surfaces.scan(repo)
+    return out(address)
   elseif sub ~= "reply" and sub ~= "resolve" then
     fail(usage)
   end
