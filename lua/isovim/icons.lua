@@ -16,6 +16,7 @@ M.map = {
   shell = { "\u{f489}", "MiniIconsGrey" }, -- oct-terminal
   command = { "\u{f018d}", "MiniIconsGrey" }, -- md-console
   script = { "\u{f06a9}", "Comment" }, -- md-robot: a pane a repo script started
+  user = { "\u{f0004}", "Directory" }, -- md-account: you, who posted last in a thread
   router = { "\u{f0469}", "Special" }, -- md-router_wireless: a repo's router, by role rather than kind
   root = { "\u{f01a5}", "Special" }, -- md-crown: Root, the host root's pseudo-repo
   general = { "\u{f0ac}", "Directory" }, -- fa-globe: General, agents in no repo and files outside every repo

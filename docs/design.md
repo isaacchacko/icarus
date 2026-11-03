@@ -645,7 +645,11 @@ write-ups; Files the file and folder surfaces and pinned paths (the repo's tree 
 explorer's, `E`); Root its decision log (see Surfaces), with how many decisions it holds, gone when
 there are none; Agents the rest of the agents, with how many run at the right. The router has a row
 of its own right under the project's, with a glyph of its own (`md-router_wireless`, in the tab bar,
-the statusline and pickers too), and the repo-root one under that; both show whatever's folded. The Inbox and Threads start
+the statusline and pickers too), and the repo-root one under that; both show whatever's folded. An
+agent's row ends in a trace of its last 10 minutes, 8 buckets of its journal's lines (`▁▃▆▂`, in its
+status's color, blank with nothing to show), so stuck reads differently from busy; another host's has
+none. A thread's row has who posted last right after its icon: `md-account` for you, the poster's
+glyph for an agent (a router's for its router). The Inbox and Threads start
 open and the rest folded, and each section's fold is kept per project in the session. Root and
 General get the same sections where they have something; threads are a repo's only. The fold on the
 project's row still folds it whole. Each surface

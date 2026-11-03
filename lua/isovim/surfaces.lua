@@ -576,6 +576,20 @@ local function worker_name(address)
   return record and record.name or id or address
 end
 
+-- The glyph of who posted last in a thread: yours, or the agent's by its role and kind ({glyph, hl}).
+-- Read as the row is made, not as it's drawn, as the sidebar draws it on every spinner frame.
+local function poster_glyph(by)
+  if not by then
+    return nil
+  end
+  local icons = require("isovim.icons")
+  if by == "user" then
+    return { icons.get("user") }
+  end
+  local ws, id = by:match("^(.*)/([^/]+)$")
+  return { icons.agent(ws and store.agent(ws, id) or { kind = "claude" }) }
+end
+
 -- The repo's threads as surfaces (isovim.threads): named by id, titled, the open ones newest first,
 -- waiting on you while a router post is past what you've read or it's your turn, then those an agent
 -- resolved that you haven't read, unread until you open them, then the last few other resolved, the
@@ -640,6 +654,7 @@ function M.threads(repo)
       error_file = "",
       created = info.at or 0,
       posts = info.posts,
+      last_glyph = poster_glyph(info.last_by),
       working = info.working,
       needs_you = needs_you,
       new_reply = new_reply,
@@ -671,6 +686,7 @@ function M.threads(repo)
       error_file = "",
       created = info.at or 0,
       posts = info.posts,
+      last_glyph = poster_glyph(info.last_by),
       needs_you = unread(info),
       resolved = true,
       outcome = info.outcome,

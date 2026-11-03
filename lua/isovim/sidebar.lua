@@ -188,7 +188,8 @@ local KINDS = {
       local mark = item.mark or { glyph = " ", hl = "Comment" }
       local row = { { item.guide or " ", "NonText" }, { mark.glyph, mark.hl }, { " " }, { item.label, mark.hl }, { " - ", "Comment" } }
       local chunks = M.surface_chunks(item.surface)
-      vim.list_extend(row, vim.list_slice(chunks, 1, 3))
+      -- Its mark and title; a thread has who posted last between them.
+      vim.list_extend(row, vim.list_slice(chunks, 1, item.surface.type == "thread" and item.surface.last_glyph and 5 or 3))
       for _, chunk in ipairs(chunks) do
         if vim.startswith(chunk[1], "  ↑ ") then
           row[#row + 1] = { chunk[1], "Comment" }
@@ -299,6 +300,9 @@ local KINDS = {
       end
       if item.added and item.added + item.removed > 0 then
         vim.list_extend(row, { { " +" .. item.added, "Added" }, { " −" .. item.removed, "Removed" } })
+      end
+      if item.trace then
+        row[#row + 1] = { item.trace, hl or "Comment", right = true }
       end
       if item.hidden then
         row[#row + 1] = { "\u{f0209}", "Comment", right = true } -- md-eye_off
@@ -462,6 +466,10 @@ function M.surface_chunks(entry)
     hl = repos.highlight(entry.color) or hl
   end
   local row = { { glyph, hl }, { " " }, { title, title_hl } }
+  if kind == "thread" and entry.last_glyph then
+    table.insert(row, 3, entry.last_glyph)
+    table.insert(row, 4, { " " })
+  end
   if kind == "question" then
     -- Asked in a thread: which one.
     if entry.thread then
@@ -913,6 +921,11 @@ local function set_section_folded(host, key, name, folded)
 end
 M.set_section_folded = set_section_folded
 
+-- A row's activity trace: this host's agents only, and only those on screen, as a jump needs none.
+local function trace_of(host, entry)
+  return not host and not all_open and require("isovim.activity").trace(entry.ws, entry.agent) or nil
+end
+
 -- A group's sections under its header, each child on a tree guide. threads: whether it has a
 -- Threads section (a repo; Root's and General's threads, if any, are surfaces). pins: its pinned
 -- paths' rows. agents: its listed agents, add_tasks: puts an agent's tasks under it.
@@ -1001,7 +1014,7 @@ local function group_sections(items, base, host, key, opts)
   local function agent_rows(list, name, n)
     for i, entry in ipairs(list) do
       entry.group_key = key
-      items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = key, guide = guide(i, n), section = name })
+      items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 1, group_key = key, guide = guide(i, n), section = name, trace = trace_of(host, entry) })
       opts.add_tasks(entry)
     end
   end
@@ -1150,7 +1163,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
       items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "root_head", repo_key = ROOT_KEY, collapsed = folded, idle = #g.agents == 0, running_mark = running_mark(g.agents) })
       if not folded then
         for i, entry in ipairs(agents) do
-          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = 0, group_key = ROOT_KEY, glyph = "root" })
+          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = 0, group_key = ROOT_KEY, glyph = "root", trace = trace_of(host, entry) })
           add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
         end
         -- Its decision log, then its sections as a repo's (no Threads).
@@ -1192,7 +1205,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         for _, entry in ipairs(g.agents) do
           if entry.role == role and (not all_open or listed(entry)) then
             entry.group_key = g.key
-            items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 0, group_key = g.key })
+            items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", depth = 0, group_key = g.key, trace = trace_of(host, entry) })
             add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
           end
         end
@@ -1510,8 +1523,9 @@ end
 
 local ns = vim.api.nvim_create_namespace("isovim_sidebar")
 
--- Each line is a list of {text, highlight} chunks; a chunk with right = true is drawn at the
--- window's right edge (virtual text, so it stays there as the width changes), not in the line.
+-- Each line is a list of {text, highlight} chunks; those with right = true are drawn at the window's
+-- right edge, a space between them (virtual text, so it stays there as the width changes), not in
+-- the line.
 -- Cursors stay on their line numbers.
 local function draw(win, chunk_lines)
   local buf = vim.api.nvim_win_get_buf(win)
@@ -1524,7 +1538,12 @@ local function draw(win, chunk_lines)
       local right = chunk.right
       chunk = { (tostring(chunk[1] or "")):gsub("[\r\n]+", " "), chunk[2] }
       if right then
-        rights[#rights + 1] = { i - 1, chunk }
+        local line = rights[i] or { row = i - 1, chunks = {} }
+        rights[i] = line
+        if #line.chunks > 0 then
+          line.chunks[#line.chunks + 1] = { " " }
+        end
+        line.chunks[#line.chunks + 1] = chunk
       else
         text[#text + 1] = chunk[1]
         if chunk[2] then
@@ -1543,8 +1562,8 @@ local function draw(win, chunk_lines)
   for _, mark in ipairs(marks) do
     vim.api.nvim_buf_set_extmark(buf, ns, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
   end
-  for _, right in ipairs(rights) do
-    vim.api.nvim_buf_set_extmark(buf, ns, right[1], 0, { virt_text = { right[2] }, virt_text_pos = "right_align" })
+  for _, right in pairs(rights) do
+    vim.api.nvim_buf_set_extmark(buf, ns, right.row, 0, { virt_text = right.chunks, virt_text_pos = "right_align" })
   end
   vim.api.nvim_win_set_cursor(win, { math.max(1, math.min(cursor[1], #lines)), 0 })
 end

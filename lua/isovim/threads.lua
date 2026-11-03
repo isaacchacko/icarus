@@ -94,6 +94,7 @@ function M.summary(entries)
   for _, entry in ipairs(entries) do
     if entry.kind == "post" then
       info.posts = info.posts + 1
+      info.last_by = entry.by
       if entry.by ~= "user" then
         info.last_reply = entry.seq
         if turn then
