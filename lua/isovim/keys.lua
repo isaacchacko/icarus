@@ -615,6 +615,8 @@ local function surface_preview(entry)
       vim.list_extend(lines, { "", "answered: " .. vim.inspect(entry.answer) })
     end
     return lines, "markdown"
+  elseif entry.type == "task" then
+    return require("isovim.board_find").task_lines(entry.repo, entry.name)
   elseif entry.type == "file" or entry.type == "folder" then
     local path = entry.path or ""
     if vim.fn.isdirectory(path) == 1 then
@@ -956,6 +958,9 @@ M.GROUP = {
     end
     require("isovim.surfaces").open(board)
   end, "the project's board" },
+  { "/", function()
+    require("isovim.board_find").open()
+  end, "fuzzy search tasks and threads, in every project" },
   { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)

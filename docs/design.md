@@ -409,8 +409,21 @@ host; General, Root and Terminals have none, and starting one there says why.
   `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` a new task, asking its title, with no thread on it, wherever the focus is, `A` attach, `d` delete
   the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `z` folds a task's
   threads, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the
-  view's keys above. In the sidebar, Threads are grouped under a dim row per task that has any listed,
+  view's keys above. `[` and `]`, on the board or a task in it, go to the previous or next project as the
+  sidebar's do, landing on its board, a project with none passed over; they don't wait for a second key, so
+  vim's `]l` isn't there in this buffer, and `<Tab>` opens a task's links. `<C-d> <C-u> <C-f> <C-b>` move the focus
+  with the window, half a window or a whole one, and scrolling any other way (the wheel, `<C-e>`) moves a focus
+  gone out of sight to the nearest row of its column in sight, so the next `j` or `k` doesn't jump back. In the sidebar, Threads are grouped under a dim row per task that has any listed,
   `<CR>` on it opening the task, and those on no task come after.
+- **Finding one** (isovim.board_find): `<leader>i/`, or `F` on the board, is a fuzzy picker in the style of
+  `<leader><leader>` over tasks and threads only, in every project on this host. Each row shows what it is, its id,
+  project, title and state, a task's column or a thread's marks, and when the words were only in its text, a
+  snippet. An id, title, labels and assignee match fuzzily; a description or a thread's posts must hold each
+  word as typed, as a long text holds almost any letters in order, and those rank below. On a tie, open
+  above resolved or Done, then the current project's, then the most recent. The preview is the task's view,
+  or the posts holding the words then the thread's recent ones, the words lit and scrolled to. `<CR>` opens a
+  task in the board's buffer and a thread in its tab. It reads everything once as it opens and each key only
+  searches that in memory; a thread's posts are decoded again only if its file changed.
 - **Tracking work:** threads and the board are how work is tracked. They replaced the old Task Board: a
   repo's old `iso/tasks.md` moved once to `iso/archive/tasks-<date>.md`, out of what's scanned, kept.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many

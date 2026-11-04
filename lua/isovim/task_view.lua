@@ -291,7 +291,9 @@ function M.help_keys()
     { "i", "edit the description in place (<Esc> in normal mode saves and leaves the edit, :w saves)" },
     { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser)" },
     { "o", "a PR's own view here" },
-    { "<Tab> ]l [l", "open the link under the cursor, walk the links" },
+    { "<Tab>", "open the link under the cursor" },
+    { "[ / ]", "the previous / next project's board" },
+    { "<C-d> <C-u>", "scroll, as anywhere" },
     { "?", "these keys" },
   })
   return list
@@ -691,6 +693,12 @@ local function bind_keys(view)
   on("<Esc>", function()
     M.back(view)
   end, "back to the board")
+  on("[", function()
+    require("isovim.thread_board").step_project(view, -1)
+  end, "the previous project's board")
+  on("]", function()
+    require("isovim.thread_board").step_project(view, 1)
+  end, "the next project's board")
   on("i", function()
     edit_description(view)
   end, "edit the description")

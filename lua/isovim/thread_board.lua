@@ -328,7 +328,7 @@ local function hints(view, width)
   if view.board_searching or (view.board_query or "") ~= "" then
     line = boxes.cat(line, boxes.seg("/", "IsovimBoardKey"), boxes.seg(" " .. (view.board_query or "") .. (view.board_searching and "▏" or "") .. "  "))
   end
-  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "new task" }, { "n", "thread" }, { "A", "attach" }, { "⏎", "open" }, { "/", "search" }, { "?", "keys" } }) do
+  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "new task" }, { "n", "thread" }, { "A", "attach" }, { "⏎", "open" }, { "/", "search" }, { "F", "find" }, { "[ ]", "project" }, { "?", "keys" } }) do
     local piece = boxes.cat(boxes.seg(" " .. hint[1] .. " ", "IsovimBoardKey"), boxes.seg(" " .. hint[2] .. "  ", "Comment"))
     if boxes.cells(line) + boxes.cells(piece) > width then
       break
@@ -419,6 +419,17 @@ function M.layout(view, width)
     cells[c] = out
   end
   local lines, marks = { hints(view, width), boxes.seg("") }, {}
+  -- Where each column's rows are drawn, for what goes by screen lines.
+  view.board_positions = {}
+  for c = first, first + count - 1 do
+    view.board_positions[c] = {}
+    for _, row in ipairs(columns[c]) do
+      local where = row.key and firsts[c][row.key]
+      if where then
+        table.insert(view.board_positions[c], { key = row.key, first = #lines + where.from, last = #lines + where.to })
+      end
+    end
+  end
   local height = 0
   for c = first, first + count - 1 do
     height = math.max(height, #cells[c])
@@ -587,6 +598,102 @@ local function jump(view, last)
   end
 end
 
+-- <C-d> <C-u> <C-f> <C-b>: the focus and the window down or up by half a window or a whole one, so a j or k
+-- after goes from where you're looking.
+local function page(view, direction, whole)
+  local win = vim.fn.bufwinid(view.buf)
+  local list = (view.board_positions or {})[view.board_col or 0]
+  if win == -1 or not list then
+    return
+  end
+  local height = vim.api.nvim_win_get_height(win)
+  local step = whole and height or math.max(1, math.floor(height / 2))
+  local from = vim.iter(ipairs(list)):find(function(_, row)
+    return row.key == view.board_focus
+  end)
+  if not from then
+    return
+  end
+  local to, target = from, list[from].first + direction * step
+  for j = from + direction, direction > 0 and #list or 1, direction do
+    to = j
+    if (direction > 0 and list[j].first >= target) or (direction < 0 and list[j].first <= target) then
+      break
+    end
+  end
+  view.board_index, view.board_focus = to, list[to].key
+  local saved = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+  local last = math.max(1, vim.api.nvim_buf_line_count(view.buf) - height + 1)
+  saved.topline = math.max(1, math.min(last, saved.topline + direction * step))
+  saved.lnum = list[to].first
+  vim.api.nvim_win_call(win, function()
+    vim.fn.winrestview(saved)
+  end)
+  M.draw(view)
+end
+
+-- The window scrolled some other way (the mouse wheel, <C-e>): a focus out of sight moves to the nearest row
+-- of its column in sight, so the next j or k doesn't jump back.
+function M.scrolled(view)
+  local win = vim.fn.bufwinid(view.buf)
+  local list = (view.board_positions or {})[view.board_col or 0]
+  if win == -1 or view.task_open or view.editing or not list then
+    return
+  end
+  -- The cursor stays on the focus till the window pushes it off to stay in sight.
+  local cursor = vim.api.nvim_win_get_cursor(win)[1]
+  local from = vim.iter(ipairs(list)):find(function(_, row)
+    return row.key == view.board_focus
+  end)
+  if not from or (cursor >= list[from].first and cursor <= list[from].last) then
+    return
+  end
+  local top, bottom = vim.fn.line("w0", win), vim.fn.line("w$", win)
+  local best, best_distance
+  for i, row in ipairs(list) do
+    if row.first >= top and row.last <= bottom then
+      local distance = math.abs(row.first - cursor)
+      if not best or distance < best_distance then
+        best, best_distance = i, distance
+      end
+    end
+  end
+  if best then
+    view.board_index, view.board_focus = best, list[best].key
+    M.draw(view)
+  end
+end
+
+vim.api.nvim_create_autocmd("WinScrolled", {
+  group = vim.api.nvim_create_augroup("isovim_board_scrolled", { clear = true }),
+  callback = function()
+    require("isovim.safe").schedule("the board's scroll", function()
+      local views = package.loaded["isovim.surface_view"] and require("isovim.surface_view").views or {}
+      for _, view in pairs(views) do
+        if view.kind == "threads" and vim.api.nvim_buf_is_valid(view.buf) then
+          require("isovim.thread_board").scrolled(view)
+        end
+      end
+    end)
+  end,
+})
+
+-- [ ]: the previous or next project, as the sidebar's are, landing on its board; one with none is passed over.
+function M.step_project(view, by)
+  local sidebar = require("isovim.sidebar")
+  for _ = 1, #sidebar.projects do
+    sidebar.step_project(by)
+    if sidebar.project == view.repo then
+      break
+    end
+    local entry = surfaces.threads_entry(sidebar.project, true)
+    if entry then
+      return surfaces.open(entry)
+    end
+  end
+  toast("no other project has a board")
+end
+
 -- /: the cards filtered as it's typed. <CR> keeps it, <Esc> clears it.
 local function search(view)
   view.board_searching = true
@@ -675,6 +782,9 @@ M.help_keys = {
   { "d", "delete the task, its threads kept, on no task" },
   { "<CR>", "open the task's own view, or the thread" },
   { "z", "fold the task's threads" },
+  { "F", "fuzzy search tasks and threads in every project, as <leader>i/ does" },
+  { "[ / ]", "the previous / next project's board, a project with none passed over; in a task too" },
+  { "<C-d> <C-u> <C-f> <C-b>", "half a window or a whole one down or up, the focus with it" },
   { "/ / <Esc>", "search ids, titles, labels and assignees, filtering as you type (<CR> keeps it) / clear it" },
   { "gg / G", "the top / bottom of the column" },
   { "?", "these keys" },
@@ -755,6 +865,13 @@ function M.bind(view)
     end
   end, "delete the task")
   on("/", function() search(view) end, "search")
+  on("[", function() M.step_project(view, -1) end, "the previous project's board")
+  on("]", function() M.step_project(view, 1) end, "the next project's board")
+  on("<C-d>", function() page(view, 1, false) end, "half a window down, the focus with it")
+  on("<C-u>", function() page(view, -1, false) end, "half a window up, the focus with it")
+  on("<C-f>", function() page(view, 1, true) end, "a window down, the focus with it")
+  on("<C-b>", function() page(view, -1, true) end, "a window up, the focus with it")
+  on("F", function() require("isovim.board_find").open() end, "fuzzy search tasks and threads")
   on("<Esc>", function()
     if (view.board_query or "") ~= "" then
       view.board_query = ""
