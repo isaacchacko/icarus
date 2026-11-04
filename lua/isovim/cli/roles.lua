@@ -159,7 +159,7 @@ local function holders(role, key, except)
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       local address = ws.id .. "/" .. agent.id
-      if store.role(agent) == role and address ~= except and ws_key(ws) == key then
+      if store.role(agent) == role and not agent.dedicated and address ~= except and ws_key(ws) == key then
         found[#found + 1] = address
       end
     end
@@ -168,7 +168,7 @@ local function holders(role, key, except)
 end
 M.holders = holders
 
--- One router per repo on a host, one repo-root per repo. Each belongs to a repo, so it needs one.
+-- One main router per repo on a host, one repo-root per repo. Each belongs to a repo, so it needs one.
 ---@param address? string the agent being promoted, which doesn't count; nil for a spawn
 local function check_unique(role, key, address)
   if (role == "router" or role == "repo-root") and not key then
@@ -249,6 +249,41 @@ local function inherited_checkout(agent, key)
   return dir and vim.fn.isdirectory(dir) == 1 and require("isovim.repos").of(dir) == key and dir or nil
 end
 
+-- What --dedicated asks for, from the repo's main router: {task} when it names a task on key's board,
+-- else {component}. A task has one, or its threads would have two owners.
+local function dedicated_spec(what, key, mine, record, role)
+  if mine ~= "router" or record.dedicated then
+    fail("a repo's main router starts dedicated routers")
+  elseif role ~= "router" then
+    fail("a dedicated router is a router: leave --role out")
+  elseif not key or store.is_pseudo(key) or key ~= store.canon(record.repo or "") then
+    fail("a dedicated router works in its main router's repo: leave --repo out")
+  end
+  if not require("isovim.board_tasks").read(key)[what] then
+    return { component = what }
+  end
+  local taken = require("isovim.threads").routers(key).tasks[what]
+  if taken then
+    fail(("task %s has its dedicated router already: %s"):format(what, taken))
+  end
+  return { task = what }
+end
+
+-- A dedicated router's first message: what it has, and whatever the main router said beside.
+local function dedicated_prompt(key, dedicated, prompt)
+  local threads = require("isovim.threads")
+  local has = "No thread comes to you until a router bypasses one to you."
+  if dedicated.task then
+    local ids = vim.tbl_map(function(info)
+      return info.id
+    end, vim.tbl_filter(function(info)
+      return info.task == dedicated.task
+    end, threads.list(key)))
+    has = #ids > 0 and ("Its threads, which come to you from now: " .. table.concat(ids, ", ") .. ".") or "It has no open threads yet."
+  end
+  return vim.trim(("You're dedicated to %s. %s\n\n%s"):format(dedicated.task and ("task " .. dedicated.task) or dedicated.component, has, prompt))
+end
+
 -- iso spawn (the user's: no parent) and iso <role> spawn (an agent's: its child, of a role no
 -- higher than its own). Each spawn is a new-layout agent over ACP, <repo key>/aN, in the repo
 -- --repo names, else the spawner's (for the user, the clone the shell is in; for an agent, the clone
@@ -262,7 +297,8 @@ function M.spawn(args)
   if to_general then
     repo = nil
   end
-  local role = option(args, "--role", "worker")
+  local dedicated_to = option(args, "--dedicated")
+  local role = option(args, "--role", dedicated_to and "router" or "worker")
   local read_only = flag(args, "--read-only")
   local legacy = flag(args, "--legacy")
   flag(args, "--acp")
@@ -303,19 +339,35 @@ function M.spawn(args)
     dir = inherited_checkout(store.agent(caller_ws, caller_id), caller_key)
   end
   local key = not legacy and (dir and require("isovim.repos").of(dir) or (not to_general and caller_key) or store.GENERAL) or nil
-  check_unique(role, dir and repo_key(dir) or (key and not store.is_pseudo(key) and key or nil))
+  local record = address and store.agent(caller_ws, caller_id) or {}
+  local dedicated
+  if dedicated_to then
+    dedicated = dedicated_spec(dedicated_to, key, mine, record, role)
+    prompt = dedicated_prompt(key, dedicated, prompt)
+  elseif record.dedicated and role ~= "worker" then
+    fail("a dedicated router spawns workers; its main router starts anything else")
+  else
+    check_unique(role, dir and repo_key(dir) or (key and not store.is_pseudo(key) and key or nil))
+  end
   if read_only and key and store.is_pseudo(key) then
     fail("a read-only agent works in its repo's base clone: spawn it with --repo and a git repo")
   end
   -- A router's workers start hidden (H in the sidebar shows them), unless it passes --shown; the
   -- user's spawns, and workers' and roots', show.
-  local hidden = (address and mine == "router" and not shown) or nil
-  if not name then
+  local hidden = (address and mine == "router" and not shown and not dedicated) or nil
+  if dedicated then
+    name = name or (dedicated.task and ("task " .. dedicated.task) or dedicated.component:sub(1, 30))
+  elseif not name then
     name = prompt ~= "" and table.concat(vim.list_slice(vim.split(prompt, "%s+"), 1, 4), " "):sub(1, 30) or role
   end
   if key then
     spawn_acp(key, dir, { kind = kind, name = name, prompt = prompt ~= "" and prompt or nil, role = role,
-      parent = not ROOTS[role] and address or nil, read_only = read_only or nil, hidden = hidden })
+      parent = not ROOTS[role] and address or nil, read_only = read_only or nil, hidden = hidden, dedicated = dedicated })
+    if dedicated then
+      io.stderr:write(("iso: it's dedicated to %s. %s\n"):format(dedicated.task and ("task " .. dedicated.task) or dedicated.component,
+        dedicated.task and "The user's posts on that task's threads, old and new, go straight to it now, unless one's bypassed to a worker; removing it brings them back to you."
+          or "A thread goes to it when you bypass it there (iso router thread bypass <id> <it>)."))
+    end
     c.tui("require('isovim').refresh()")
     return
   end
@@ -423,7 +475,10 @@ function M.promote(args)
   local ws, agent = c.resolve_agent(target or promoter, true)
   local address = ws.id .. "/" .. agent.id
   local from = store.role(agent)
-  if role == from then
+  local by_record = store.agent(promoter:match("^(.*)/([^/]+)$"))
+  if agent.dedicated or (by_record and by_record.dedicated) then
+    fail("a dedicated router neither is promoted nor promotes: it stays what its main router started it as")
+  elseif role == from then
     fail(("%s is already a %s"):format(address, role))
   elseif RANK[role] < RANK[from] then
     fail(("%s is a %s, and there is no demotion"):format(address, from))
@@ -488,10 +543,11 @@ end
 -- Fails unless the agent by (a role, in by_ws) may restart or remove the agent at address in ws:
 -- itself and the agents below it; for a router or repo-root, any agent in its repo.
 local function check_manages(by, role, by_ws, ws, address, verb)
-  local in_repo = (role == "router" or role == "repo-root") and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
+  local whole_repo = (role == "router" or role == "repo-root") and not (store.agent(by:match("^(.*)/([^/]+)$")) or {}).dedicated
+  local in_repo = whole_repo and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
   if not (descends(address, by) or in_repo) then
     fail(("a %s %s itself and the agents below it%s, and %s is neither"):format(role, verb,
-      (role == "router" or role == "repo-root") and ", or any in its repo" or "", address))
+      whole_repo and ", or any in its repo" or "", address))
   end
 end
 

@@ -1583,7 +1583,7 @@ end
 -- A router keeps its repo's threads moving (isovim.threads.listen): what it's told about them comes
 -- as messages.
 local function subscribe_threads()
-  if S.thread_sweep or store.role(S.spec) ~= "router" then
+  if S.thread_sweep or store.role(S.spec) ~= "router" or S.spec.dedicated then
     return
   end
   S.thread_sweep = true

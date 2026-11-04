@@ -386,7 +386,8 @@ end
 
 -- iso <role> thread new|post|waiting|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
 -- repo's. Any role may make, post and resolve them, workers posting what they found as they do; only
--- the bypass rules are enforced: a router alone moves one, and a worker can't resolve a bypassed thread.
+-- the bypass rules are enforced: a router alone moves one, a dedicated router on its own threads, and a
+-- worker can't resolve a bypassed thread.
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
@@ -394,13 +395,17 @@ function M.thread(args)
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
+  local dedicated
   if sub ~= "ls" and sub ~= "show" then
     local ws, id = (me or ""):match("^(.*)/([^/]+)$")
     local record = ws and store.agent(ws, id)
     local role = record and store.role(record)
+    dedicated = record and record.dedicated
     local holds = role == "worker" and threads.holder(repo, me)
     if sub == "bypass" and role ~= "router" then
       fail("only a router makes, moves or ends a bypass" .. (role == "worker" and "; iso worker thread release <reason> asks it to" or ""))
+    elseif sub == "bypass" and dedicated and args[1] and threads.router_of(repo, threads.summary(threads.read(repo, args[1]) or {})) ~= me then
+      fail(args[1] .. " isn't yours: a dedicated router moves its own threads")
     elseif sub == "release" and not holds then
       fail(role == "worker" and "you hold no thread's bypass, so there's nothing to release"
         or "iso worker thread release is a bypassed worker's, to ask its router to end it")
@@ -425,14 +430,18 @@ function M.thread(args)
     -- A turn on a thread with a task: what it makes lands on the same task. An agent can't make one, so
     -- a thread on none stays on none.
     local turn = me ~= "user" and threads.turn_thread(repo, me)
-    local task = turn and threads.related(repo, turn)
+    local task = dedicated and dedicated.task or (turn and threads.related(repo, turn))
     local on = task and require("isovim.board_tasks").read(repo)[task]
     if on then
-      note(("it's on task %s %q, as %s, the thread of this turn, is"):format(on.id, on.title, turn))
+      note(dedicated and dedicated.task and ("it's on task %s %q, as you're dedicated to it"):format(on.id, on.title)
+        or ("it's on task %s %q, as %s, the thread of this turn, is"):format(on.id, on.title, turn))
     end
     local id, err = threads.new(repo, args[1] or fail(usage), me, on and on.id or nil)
     if not id then
       fail(err)
+    end
+    if dedicated and not on then
+      threads.set_bypass(repo, id, me, me)
     end
     local first = vim.trim(table.concat(vim.list_slice(args, 2), " "))
     if first ~= "" then
@@ -500,7 +509,8 @@ function M.thread(args)
     if not on then
       local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
       local info = threads.summary(entries)
-      return out(info.bypass and ("%s goes to %s"):format(id, info.bypass) or ("%s has no bypass: it goes to the router"):format(id))
+      local goes = threads.goes_to(repo, info)
+      return out(goes and ("%s goes to %s"):format(id, goes) or ("%s has no bypass: it goes to the router"):format(id))
     end
     if on ~= "none" then
       local ws, agent = c.resolve_agent(on:find("/", 1, true) and on or (repo .. "/" .. on))
@@ -512,10 +522,12 @@ function M.thread(args)
     end
     if on ~= "none" then
       local info = threads.summary(threads.read(repo, id))
-      require("isovim.cli.messaging").send({ on, threads.bypass_prompt(repo, id, info.title, me) })
+      local ws, agent = c.resolve_agent(on)
+      require("isovim.cli.messaging").send({ on, agent.dedicated and threads.owner_prompt(repo, id, info.title, me)
+        or threads.bypass_prompt(repo, id, info.title, me) })
     end
     threads.set_bypass(repo, id, on, me)
-    out(on == "none" and ("%s goes to the router again"):format(id) or ("%s goes to %s"):format(id, on))
+    out(("%s goes to %s%s"):format(id, threads.recipient(repo, id) or "no router here", on == "none" and " again" or ""))
   elseif sub == "release" then
     local reason = vim.trim(table.concat(args, " "))
     if reason == "" then
@@ -523,7 +535,7 @@ function M.thread(args)
     end
     local id = threads.holder(repo, me)
     local info = threads.summary(threads.read(repo, id))
-    require("isovim.cli.messaging").send({ store.router(repo) or fail(repo .. " has no router here"),
+    require("isovim.cli.messaging").send({ threads.router_of(repo, info) or fail(repo .. " has no router here"),
       ("[bypass release] %s asks to be let off thread %s %q: %s\n\n(Nothing has changed. iso router thread bypass %s none ends it, "
         .. "and the user's next post comes to you; if it carries an outcome you agree with, iso router thread resolve %s \"...\" ends it too.)")
         :format(me, id, info.title, reason, id, id) })
@@ -577,7 +589,7 @@ function M.thread(args)
     end
     for _, info in ipairs(list) do
       out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
-        (info.task and ("  on task " .. info.task) or "") .. (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
+        (info.task and ("  on task " .. info.task) or "") .. (threads.goes_to(repo, info) and ("  goes to " .. threads.goes_to(repo, info)) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
     end
   elseif sub == "show" then
     local id = args[1] or fail(usage)

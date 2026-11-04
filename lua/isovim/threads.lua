@@ -1,7 +1,7 @@
 -- Threads: one idea's conversation between the user and a repo's router, read on its own. The router
 -- stays one agent with one session, its context warm; a thread is a view of the exchanges about one
 -- thing, so its chat doesn't drown in every small idea, and no new agent pays a cold start for each.
--- They live only in a repo with a router on this host: General, Root and Terminals have none.
+-- They live only in a repo with a router on this host: General and Terminals have none.
 --
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
@@ -50,6 +50,13 @@
 -- ends on its own when the thread is resolved or the worker is removed or stays down; a restart keeps it.
 -- Who has to hear of an end is worked out from the file, so they're told once, by the router's
 -- supervisor (M.sweep), whoever ended it and whatever restarted since.
+--
+-- A dedicated router (iso router spawn --dedicated) takes threads in the main router's place, any
+-- number of them, which a worker's one bypass doesn't describe: it's who the thread is with (M.router_of),
+-- beneath any bypass. It has its task's threads, old and new, as nothing but its record says so, and those
+-- bypassed to it, an {kind = "owner", on, by} entry. A worker's bypass from it ends back at it. Once it's
+-- removed they're the main router's again, with nothing to undo. The main router's supervisor still does the
+-- sweep for all of them, telling each what's about its own threads.
 local store = require("isovim.store")
 
 local M = {}
@@ -62,10 +69,10 @@ function M.file(repo, id)
   return M.dir(repo) .. "/" .. id .. ".jsonl"
 end
 
--- Why repo can't have threads, or nil when it can: a repo (not General or Root) with a router here.
+-- Why repo can't have threads, or nil when it can: a repo (not General) with a router here.
 function M.refusal(repo)
   if not repo or store.is_pseudo(repo) or not store.valid_key(repo) then
-    return "threads live in a repo with a router; General, Root and Terminals have none"
+    return "threads live in a repo with a router; General and Terminals have none"
   elseif not store.router(repo) then
     return repo .. " has no router on this host to talk to (iso spawn --role router, or promote one)"
   end
@@ -156,6 +163,8 @@ function M.summary(entries)
         bypass_ended(entry, entry.why or (on and "replaced" or "deleted"))
       end
       info.bypass = on
+    elseif entry.kind == "owner" then
+      info.owner = entry.on ~= "none" and entry.on or nil
     elseif entry.kind == "handed" then
       info.handed = entry.seq
     elseif entry.kind == "bypass_told" then
@@ -485,16 +494,18 @@ function M.bypass_refusal(repo, id, on)
   if info.status ~= "open" then
     return id .. " is resolved"
   elseif on == "none" then
-    return not info.bypass and (id .. " has no bypass: it goes to the router") or nil
-  elseif info.bypass == on then
+    return not (info.bypass or info.owner) and (id .. " has no bypass: it goes to its router") or nil
+  elseif info.bypass == on or info.owner == on then
     return ("%s goes to %s already"):format(id, on)
   end
   local ws, agent = on:match("^(.*)/([^/]+)$")
   local record = ws and store.agent(ws, agent)
   if not record or ws ~= repo then
     return ("%s isn't an agent of %s on this host"):format(on, repo)
+  elseif record.dedicated then
+    return nil
   elseif store.role(record) ~= "worker" then
-    return ("%s is a %s: a bypass goes to a worker"):format(on, store.role(record))
+    return ("%s is a %s: a bypass goes to a worker or a dedicated router"):format(on, store.role(record))
   elseif record.of or not require("isovim.panes").reports(record.kind) then
     return ("%s is a terminal or a script's pane: a bypass goes to a worker"):format(on)
   end
@@ -504,27 +515,69 @@ function M.bypass_refusal(repo, id, on)
   end
 end
 
--- The thread goes to on from now, or back to the router with "none" (why: isovim's reason). A wait
--- on that worker it replaces, as it's now who the thread goes to. Any open thread can have one,
--- whatever it holds already: nothing here needs more than its entries.
+-- The thread goes to on from now, or back with "none": from a worker to its router, else from a
+-- dedicated router to the main one (why: isovim's reason). A wait on that worker it replaces, as it's
+-- now who the thread goes to. Any open thread can have one, whatever it holds already: nothing here
+-- needs more than its entries.
 function M.set_bypass(repo, id, on, by, why)
-  if M.summary(M.read(repo, id) or {}).waiting_on == on then
+  local info = M.summary(M.read(repo, id) or {})
+  local ws, agent = on:match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, agent)
+  if (record and record.dedicated) or (on == "none" and not info.bypass) then
+    append(repo, id, { kind = "owner", on = on, by = by })
+    return
+  end
+  if info.waiting_on == on then
     append(repo, id, { kind = "waiting", on = "none", by = "isovim", why = "bypass" })
   end
   append(repo, id, { kind = "bypass", on = on, by = by, why = why })
 end
 
--- Who the user's posts on the thread go to: its bypass, while that worker exists, else the router.
+-- The repo's main router, and each task's dedicated one, for one look over its threads.
+---@return {main?: string, tasks: table<string, string>}
+function M.routers(repo)
+  local routers = { main = store.router(repo), tasks = {} }
+  for _, agent in ipairs(store.agents(repo)) do
+    local task = agent.dedicated and agent.dedicated.task
+    if task then
+      routers.tasks[task] = repo .. "/" .. agent.id
+    end
+  end
+  return routers
+end
+
+local function exists_agent(address)
+  local ws, agent = address:match("^(.*)/([^/]+)$")
+  return ws ~= nil and store.agent(ws, agent) ~= nil
+end
+
+-- The router a thread is with: the dedicated router it was bypassed to, else its task's, else the main one.
+---@param routers? table M.routers, for a caller going through many threads
+function M.router_of(repo, info, routers)
+  if info.owner and exists_agent(info.owner) then
+    return info.owner
+  end
+  routers = routers or M.routers(repo)
+  return routers.tasks[info.task or ""] or routers.main
+end
+
+-- Who the user's posts on the thread go to: its bypass, while that worker exists, else its router.
 ---@return string? address, boolean? bypassed
 function M.recipient(repo, id)
   local info = M.summary(M.read(repo, id) or {})
-  if info.bypass then
-    local ws, agent = info.bypass:match("^(.*)/([^/]+)$")
-    if ws and store.agent(ws, agent) then
-      return info.bypass, true
-    end
+  if info.bypass and exists_agent(info.bypass) then
+    return info.bypass, true
   end
-  return store.router(repo), false
+  return M.router_of(repo, info), false
+end
+
+-- Who has the thread in the main router's place, if anyone does.
+---@param routers? table M.routers
+---@return string? address
+function M.goes_to(repo, info, routers)
+  routers = routers or M.routers(repo)
+  local router = info.bypass or M.router_of(repo, info, routers)
+  return router ~= routers.main and router or nil
 end
 
 -- What a bypassed worker is told with each post, as a role's prompt doesn't say it.
@@ -546,6 +599,12 @@ function M.bypass_prompt(repo, id, title, router)
     .. "You can't move the bypass or resolve the thread; the router stays its owner, and can still post there. `iso worker thread "
     .. "release <reason>` asks it to end this, and can carry the outcome you'd propose. Your other work and your parent stay as "
     .. "they were."):format(id, title, repo, router or "the router", id, id, id, id)
+end
+
+-- What a dedicated router is told as a thread is bypassed to it.
+function M.owner_prompt(repo, id, title, by)
+  return ("Thread %s %q of %s is yours now, from %s: the user's posts there come straight to you as prompts tagged with the "
+    .. "thread. Read it so far with `iso router thread show %s`."):format(id, title, repo, by, id)
 end
 
 -- Sends an agent a prompt, from a process that stays up (the TUI or a supervisor).
@@ -756,8 +815,7 @@ end
 
 -- Tells those who have to hear that a bypass ended, once: the worker if it's still there, the router
 -- unless it did it.
-local function tell_ended_bypasses(repo, say)
-  local router = store.router(repo)
+local function tell_ended_bypasses(repo, tell)
   for _, info in ipairs(M.list(repo, true)) do
     local upto = 0
     for _, ended in ipairs(info.ended_bypasses) do
@@ -768,8 +826,8 @@ local function tell_ended_bypasses(repo, say)
           ended.why == "resolved" and "the thread was resolved" or ended.why == "replaced" and "it went to another worker"
             or "the router ended it"))
       end
-      if ended.by ~= router then
-        say(("[isovim] The bypass of %s to %s has ended: %s. The user's next post comes to you."):format(where, ended.worker,
+      if ended.by ~= M.router_of(repo, info) then
+        tell(info, ("[isovim] The bypass of %s to %s has ended: %s. The user's next post comes to you."):format(where, ended.worker,
           ended.why == "resolved" and ("the thread was resolved by " .. tostring(ended.by)) or ended.why == "removed"
             and "that worker was removed" or ended.why == "exited" and "that worker stopped" or tostring(ended.why)))
       end
@@ -780,20 +838,56 @@ local function tell_ended_bypasses(repo, say)
   end
 end
 
--- One look over the repo's open threads: say(text) sends the router a message. Telling it of a worker
+-- Says which dedicated routers are gone since the last look, once each, as their threads come back
+-- to the main router however they went. Forgets across a restart of its supervisor, which only
+-- loses that one line: the threads have already gone back.
+local known_dedicated = {}
+local function tell_gone_dedicated(repo, say)
+  local now = {}
+  for _, agent in ipairs(store.agents(repo)) do
+    if agent.dedicated then
+      now[repo .. "/" .. agent.id] = agent.dedicated
+    end
+  end
+  for address, dedicated in pairs(known_dedicated[repo] or {}) do
+    if not now[address] then
+      local back = vim.tbl_map(function(info)
+        return info.id
+      end, vim.tbl_filter(function(info)
+        return info.owner == address or (dedicated.task and info.task == dedicated.task)
+      end, M.list(repo)))
+      say(("[isovim] Dedicated router %s (%s) is gone. %s"):format(address, dedicated.task and ("task " .. dedicated.task) or dedicated.component,
+        #back > 0 and ("Its threads come to you again: " .. table.concat(back, ", ") .. ".") or "It had no open threads."))
+    end
+  end
+  known_dedicated[repo] = now
+end
+
+-- One look over the repo's open threads: say(text) sends the main router a message, and what's about
+-- a thread goes to the router it's with. Telling it of a worker
 -- waits till busy() says it's free, as queued it could arrive after the router has settled the thread
 -- anyway; what's still so then is looked at afresh.
 function M.sweep(repo, say, busy)
   M.end_dead_turns(repo)
   end_gone_bypasses(repo)
-  tell_ended_bypasses(repo, say)
+  local main = store.router(repo)
+  local function tell(info, text)
+    local to = M.router_of(repo, info)
+    if to == main then
+      say(text)
+    else
+      send_to(to, text)
+    end
+  end
+  tell_ended_bypasses(repo, tell)
+  tell_gone_dedicated(repo, say)
   require("isovim.pages").sweep(repo, say, busy, finished)
   for _, info in ipairs(M.list(repo)) do
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     local how = worker and not busy() and finished(worker, info.waiting_at, info.told_of == worker and info.told_at or nil)
     if how then
       append(repo, info.id, { kind = "waiting", on = "none", by = "isovim", why = how == "is gone" and "gone" or "idle" })
-      say(("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
+      tell(info, ("[isovim] Thread %s %q was waiting on %s, which %s. Post where it stands with `iso router thread "
         .. "post %s \"...\"`, mark who it waits on now, or resolve it if it's settled. Marking the same worker "
         .. "again waits quietly until it does more."):format(info.id, info.title,
         worker, how, info.id))
@@ -802,10 +896,10 @@ function M.sweep(repo, say, busy)
       append(repo, info.id, { kind = "post", by = "user", text = info.title })
       M.drafting(repo, info.id, false)
       local to, bypassed = M.recipient(repo, info.id)
-      if bypassed then
-        send_to(to, M.prompt(repo, info.id, info.title, info.title) .. M.BYPASS_NOTE)
-      else
+      if to == main then
         say(M.prompt(repo, info.id, info.title, info.title))
+      else
+        send_to(to, M.prompt(repo, info.id, info.title, info.title) .. (bypassed and M.BYPASS_NOTE or ""))
       end
     end
   end

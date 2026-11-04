@@ -9,9 +9,10 @@
 --              seeds ~/.isovim/prompts/<role>.md (from prompts/ in this tree) when one is missing,
 --              never writing over one, and names it here for a role that has no entry; null for a
 --              role gives it no prompt file
---   prompt_plugins  role -> a file of your own (relative to ~), told after the role's prompt: what
---              you add to a role while isovim's prompt keeps updating beneath it. isovim never seeds
---              or writes one, and changing one tells that role's agents on their next restart
+--   prompt_plugins  role, or dedicated-router for a router dedicated to a task or component -> a file of
+--              your own (relative to ~), told after the role's prompt: what you add to it while isovim's
+--              prompt keeps updating beneath it. isovim never seeds or writes one, and changing one
+--              tells those agents on their next restart
 --   repo_defaults  {glyph, palette}: the glyph and the list of colors (names or "#rrggbb") written into a
 --              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
 --              red to pink. Repos take the colors in the order they're first seen, wrapping round.
@@ -112,10 +113,16 @@ function M.prompt_file(role)
   return role_file(M.get().prompts, role)
 end
 
--- The file of your own added to a role's prompt, as an absolute path, or nil.
+-- The file of your own added to a role's prompt, as an absolute path, or nil. A dedicated router's
+-- comes by its own key, not the router's.
+---@param key string a role, or dedicated-router
 ---@return string?
-function M.prompt_plugin(role)
-  return role_file(M.get().prompt_plugins, role)
+function M.prompt_plugin(key)
+  return role_file(M.get().prompt_plugins, key)
+end
+
+function M.plugin_keys()
+  return vim.list_extend({ "dedicated-router" }, store.roles)
 end
 
 -- The role prompts isovim ships, prompts/<role>.md in this tree (this file is lua/isovim/config.lua).

@@ -295,7 +295,7 @@ local KINDS = {
   agent = {
     format = function(item)
       local icon, hl = status.icon(item.status)
-      local kind_icon, kind_hl = icons.get(item.glyph or (item.role == "router" and "router") or item.agent_kind)
+      local kind_icon, kind_hl = icons.get(item.glyph or ((item.role == "router" or item.role == "dedicated") and "router") or item.agent_kind)
       local name_hl = item.hidden and "Comment" or (not item.running and "Comment" or nil)
       local label = item.label
       if not label and (item.role == "router" or item.role == "repo-root") then
@@ -1309,7 +1309,7 @@ local function local_entries(workspaces)
         legacy_main = legacy_main or nil,
         agent_kind = agent.kind,
         acp = agent.acp,
-        role = store.role(agent),
+        role = store.shown_role(agent),
         parent = agent.parent,
         status = agent.status,
         running = agent.running,

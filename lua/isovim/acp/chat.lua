@@ -1262,8 +1262,9 @@ local function update_related(chat)
   local function thread_address(id)
     return ("iso:thread/%s#%s"):format(chat.ws, id)
   end
-  local task, siblings, bypass, first_title = threads.related(chat.ws, chat.thread)
-  chat.bypass = bypass
+  local task, siblings, _, first_title = threads.related(chat.ws, chat.thread)
+  local now = threads.summary(threads.read(chat.ws, chat.thread) or {})
+  chat.bypass, chat.router = threads.goes_to(chat.ws, now), threads.router_of(chat.ws, now)
   local rows = {}
   if first_title then
     local text = "✎ first titled  " .. first_title
@@ -1354,6 +1355,7 @@ end
 function RENDER.bypass(chat)
   update_related(chat)
 end
+RENDER.owner = RENDER.bypass
 
 function RENDER.post(chat, entry)
   local boxes = require("isovim.boxes")

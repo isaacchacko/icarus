@@ -589,15 +589,30 @@ connect in the background, at most every 30s, the chips drawn again when that ch
   workers' and roots', show.
 - **Promotion** is done by agents (themselves or another), one way only:
   - worker → router: in a repo with no router on this host.
-  - worker or router → repo-root, and any of those → root: only if that level is empty.
-  - Router → root and repo-root → root fork the agent, so the repo keeps its router or root with the
-    same context.
+  - worker or router → repo-root: only if there's none.
   - A promoted agent reloads its session with the new role's prompt. If another agent promoted it, it
     receives a message saying who and why.
+- **Dedicated routers:** a main router starts one with `iso router spawn --dedicated <task id|"a component">`,
+  its child, as many as it needs. It's a router (`role`, with `dedicated {task}` or `{component}` in its record),
+  so it has a router's actions and compaction, within these limits: it spawns and removes its own workers
+  and no others, starts no routers, isn't promoted and doesn't promote, and moves only its own threads.
+  It's told the router's prompt, then what it's dedicated to, then the `dedicated-router` entry of
+  `prompt_plugins`. It reports to its parent. The sidebar and `ls` show it as `dedicated`, among the agents; it
+  isn't the repo's router anywhere that says so (`store.router`, `<leader>ir`, the one-per-repo rule, what's typed under a
+  surface). The main router lists, steers and removes it. Its word is a router's: a plain stamp, a peer's.
+  - One on a task owns its threads, old and new, with nothing written: `threads.router_of` is the explicit
+    `owner` entry if that agent exists, else the thread's task's dedicated router, else the main router. A task
+    has one at most. Removed, its threads are the main router's again, and the main router's
+    supervisor says so once.
+  - One on a component has none until `iso router thread bypass <id> <it>`, an `owner {on, by}` entry, not a
+    `bypass`: a worker holds one bypass, and this holds any number. A thread it opens is its own, and
+    on its task if it has one. `bypass <id> none` ends a worker's bypass first, then the owner.
+  - A worker's bypass sits above that. It goes on as before, except that it ends back at the thread's
+    router, and the router told is that one. The main router's supervisor alone runs the sweep.
 - **Roots have no parent.** When an agent is removed, its children go to its parent; at the top, to the
   repo's router.
 - **Role prompts** are files set in `config.json` (`prompts`). The repo-root's prompt lists the actions
-  that are permanently off; agents are trusted to follow it. `prompt_plugins` adds a file of your own
+  that are permanently off; agents are trusted to follow it. `prompt_plugins` adds a file of your own, by role or for `dedicated-router`,
   after a role's prompt: what's personal stays out of isovim and the prompt beneath it can keep updating.
 - **Root mode:** a repo's root decides its Inbox's questions before they reach you, and is on top of its
   threads (see Threads). `iso rootmode on|off <repo> [--task "<description>"]` turns it on for a repo,

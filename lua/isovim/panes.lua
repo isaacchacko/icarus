@@ -234,7 +234,8 @@ local V0 = {
     router = "As the router you are your repo's one interface to the user on this host: they see what you "
       .. "put in front of them, and little else. Run the work through workers, whose whole life is yours. "
       .. "Create: `iso router spawn` (they start hidden from the user's sidebar until they press H, so "
-      .. "`--shown` one they should see). Read: `ls`, `status`, `peek`, `wait`, `transcript`. Update: `msg` "
+      .. "`--shown` one they should see; `--dedicated <task id|\"a component, in words\">` starts a router of its own for one "
+      .. "task or component, as many as you need, which takes that task's threads from you and reports to you). Read: `ls`, `status`, `peek`, `wait`, `transcript`. Update: `msg` "
       .. "to steer one, `restart` to restart it. Delete: once a worker's work has landed and nothing more is "
       .. "expected of it, remove it with `iso router rm <agent>`; you clean up finished workers, nothing else "
       .. "does. When priorities change, `iso router msg --first <agent> <text>` puts your message ahead of its "
@@ -344,6 +345,23 @@ local function v0_text(role, before)
   return (table.concat(parts, "\n\n"):gsub("{role}", role))
 end
 
+-- What makes a router dedicated. It goes after the router's prompt, which it narrows, and among the
+-- hashed files, as a router's prompt that says it's the repo's one interface must not stand alone.
+local function dedicated_text(dedicated)
+  local what = dedicated.task and ("task " .. dedicated.task .. " on the repo's board") or dedicated.component
+  return ("# Dedicated router\n\nYou are a router dedicated to %s, started by your repo's main router. What's said above of "
+    .. "the router holds within that, and these differ:\n\n"
+    .. "- You aren't the repo's one interface; the main router stays that for everything outside what you're dedicated to, and "
+    .. "can list, steer and remove you. Report to your parent (`iso router msg parent`), not to the repo as a whole.\n"
+    .. "- %s Keep each with `iso router thread`: post, ask, resolve, and bypass one to a worker of yours, which comes back to you when it ends.\n"
+    .. "- You spawn and remove your own workers, and no others; you don't start routers or promote anyone.\n"
+    .. "- Register PRs, post to the user and ask through question surfaces as any router does.\n"
+    .. "- Your word is a router's: a peer's to other agents. It never carries the user's authority."):format(what,
+    dedicated.task and ("The user's posts on this task's threads, old and new, come straight to you. `iso router task show "
+      .. dedicated.task .. "` reads it, and a thread you open lands on it.")
+      or "A thread comes to you when a router bypasses it to you (`iso router thread bypass <id> <you>`), and a thread you open is yours.")
+end
+
 -- ~/.isovim/instructions.md, if there is one, is added to what every agent is told, and then the
 -- prompt file config.json names for its role. A file that can't be read is left out. isovim seeds
 -- the role prompt files on the way (config.seed_prompts). A workspace agent is told the legacy
@@ -368,7 +386,10 @@ local function instruction_parts(agent, ws, before)
   if prompt and (v0 or not config.is_shipped(role, prompt)) then
     files[#files + 1] = read(prompt)
   end
-  local plugin = config.prompt_plugin(role)
+  if agent.dedicated then
+    files[#files + 1] = dedicated_text(agent.dedicated)
+  end
+  local plugin = config.prompt_plugin(agent.dedicated and "dedicated-router" or role)
   if plugin then
     files[#files + 1] = read(plugin)
   end
@@ -391,7 +412,7 @@ M.v0_text = v0_text
 M.text_revision = 2
 
 -- What says whether a resumed ACP session's role prompt changed (isovim.acp.host): the role, the
--- user's files (instructions.md, the role's prompt file and plugin) and text_revision, but not isovim's own
+-- user's files (instructions.md, the role's prompt file and plugin, what a router's dedicated to) and text_revision, but not isovim's own
 -- words, so rewording those doesn't send every agent a role message on its next restart.
 ---@param agent isovim.Agent
 function M.role_hash(agent, ws)

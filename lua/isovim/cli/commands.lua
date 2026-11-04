@@ -83,7 +83,7 @@ M.list = {
   { name = "spawn", module = "roles",
     args = { "<text>..." },
     flags = { ["--repo"] = "<dir>", ["--role"] = "<role>", ["--read-only"] = false, ["--name"] = "<text>",
-      ["--kind"] = "claude|codex", ["--shown"] = false },
+      ["--kind"] = "claude|codex", ["--shown"] = false, ["--dedicated"] = "<text>" },
     audience = "user",
     summary = "start an agent over ACP (claude, or codex), the repo's next aN",
     help = [=[
@@ -96,8 +96,11 @@ M.list = {
                                      worktree, aN/<repo>-aN (aN/w links to it), on its first
                                      edit (or iso <role> wt).
                                      An agent's spawn is its child, of a role no higher than
-                                     its own; one router per repo here, one repo-root per repo,
-                                     one repo-root per repo. --read-only runs it in the repo's base
+                                     its own; one main router per repo here, one repo-root per
+                                     repo. --dedicated <task id|"a component"> is a main router's:
+                                     a router of its own for that one task or component, as many
+                                     as it needs, reporting to it, which takes a task's threads
+                                     until it's removed. --read-only runs it in the repo's base
                                      clone, fetched first, and refuses its edits. A router's
                                      spawn starts hidden (H in the sidebar shows it) unless
                                      --shown]=],

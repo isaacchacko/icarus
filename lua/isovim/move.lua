@@ -559,6 +559,8 @@ function M.refusal(key, agent)
     return address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
   elseif role == "repo-root" then
     return ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
+  elseif agent.dedicated then
+    return address .. " is a dedicated router, and works with its host's main router and threads"
   elseif store.canon(key) == store.OLD then
     return address .. " is in the old _/, whose move to general/ waits (~/.isovim/migrate.log): move it once that's done"
   end

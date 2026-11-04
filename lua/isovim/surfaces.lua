@@ -637,10 +637,12 @@ function M.threads(repo, all)
   local resolved = vim.tbl_filter(function(info)
     return info.status == "resolved"
   end, every)
+  local routers = threads.routers(repo)
   for _, info in ipairs(vim.tbl_filter(function(info)
     return info.status == "open"
   end, every)) do
     local file = threads.file(repo, info.id)
+    local goes_to = threads.goes_to(repo, info, routers)
     -- A reply you haven't read, or your turn, which outlasts your reading it; a question waiting is in
     -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
     -- isn't yours.
@@ -696,7 +698,7 @@ function M.threads(repo, all)
       new_reply = new_reply,
       waiting_on = on_you and "user" or worker,
       waiting_name = worker and worker_name(worker),
-      bypass_name = info.bypass and worker_name(info.bypass),
+      bypass_name = goes_to and worker_name(goes_to),
       pending = info.pending,
       task = task_of(info) and info.task or nil,
       task_title = task_of(info) and task_of(info).title or nil,
@@ -705,7 +707,7 @@ function M.threads(repo, all)
       parked_unread = parked and info.last_reply > (seen[info.id] or 0) or nil,
       sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
         tostring(needs_you), info.pending, tostring(info.waiting_on))
-        .. tostring(info.bypass) .. task_sig(info)),
+        .. tostring(goes_to) .. task_sig(info)),
     }
   end
   table.sort(resolved, function(a, b)

@@ -662,6 +662,7 @@ end
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
 ---@field role? "repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+---@field dedicated? {task?: string, component?: string} a router a main router started for one task or component
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 ---@field read_only? boolean a new-layout agent that works in its repo's base clone; on a workspace's
 --- agent, iso spawn --read-only records it and nothing enforces it yet
@@ -682,6 +683,11 @@ M.roles = { "repo-root", "router", "worker" }
 ---@param agent isovim.Agent
 function M.role(agent)
   return agent.role or "worker"
+end
+
+-- The role as lists show it: a dedicated router has a router's powers, but isn't the repo's router.
+function M.shown_role(agent)
+  return agent.dedicated and "dedicated" or M.role(agent)
 end
 
 -- A workspace without an agent list has just its main agent.
@@ -785,7 +791,7 @@ local function add_record(key, spec)
   local record = { id = id, name = spec.name or id, kind = spec.kind, role = spec.role or "worker", parent = spec.parent,
     read_only = spec.read_only or false, repo = not M.is_pseudo(key) and key or nil, created = os.time(), cmd = spec.cmd,
     hidden = spec.hidden or nil, prompt = spec.prompt, checkout = spec.checkout, script = spec.script, of = spec.of,
-    acp = spec.acp or nil }
+    acp = spec.acp or nil, dedicated = spec.dedicated }
   write_json(M.record_file(key, id), record)
   return record
 end
@@ -938,7 +944,7 @@ function M.children(ws, agent)
   return found
 end
 
--- A repo's router on this host (<key>/aN), other than any of except; nil outside a repo key or
+-- A repo's main router on this host (<key>/aN), other than any of except; nil outside a repo key or
 -- when it has none.
 ---@param except? table<string, boolean> agent ids that don't count
 ---@return string?
@@ -947,7 +953,7 @@ function M.router(key, except)
     return nil
   end
   for _, agent in ipairs(M.agents(key)) do
-    if M.role(agent) == "router" and not (except or {})[agent.id] then
+    if M.role(agent) == "router" and not agent.dedicated and not (except or {})[agent.id] then
       return key .. "/" .. agent.id
     end
   end

@@ -36,7 +36,8 @@ function commands.ls(args)
         script = require("isovim.scripts").of(agent),
         -- A new-layout script pane's agent (aN), whose work dir it runs in.
         of = agent.of,
-        role = store.role(agent),
+        role = store.shown_role(agent),
+        dedicated = agent.dedicated and (agent.dedicated.task and ("task " .. agent.dedicated.task) or agent.dedicated.component) or nil,
         hidden = agent.hidden or false,
         status = running and (status.get(ws.id, agent.id) or "idle") or "stopped",
         doing = running and panes.subtitle(agent.kind, titles[ws.id .. "/" .. agent.id]) or nil,
@@ -58,7 +59,8 @@ function commands.ls(args)
     return
   end
   for _, row in ipairs(rows) do
-    local label = ("%s · %s%s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
+    local label = ("%s · %s%s%s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
+      row.dedicated and (" (dedicated to " .. row.dedicated .. ")") or "",
       row.parent and (" (parent " .. row.parent .. ")") or "", row.of and (" (script for " .. row.of .. ")") or "")
     out(("%-18s %-9s %-6s %s%s"):format(row.id, row.status, row.role, label, row.doing and ("  — " .. row.doing) or ""))
   end
@@ -124,16 +126,19 @@ function commands.checkhealth()
     if path then
       check(vim.fn.filereadable(path) == 1, ("%s prompt %s"):format(role, path), "create it, or fix prompts." .. role .. " in " .. config.path)
     end
-    local plugin = config.prompt_plugin(role)
+  end
+  for _, key in ipairs(config.plugin_keys()) do
+    local plugin = config.prompt_plugin(key)
     if plugin then
-      check(vim.fn.filereadable(plugin) == 1, ("%s prompt plugin %s"):format(role, plugin), "create it, or fix prompt_plugins." .. role .. " in " .. config.path)
+      check(vim.fn.filereadable(plugin) == 1, ("%s prompt plugin %s"):format(key, plugin), "create it, or fix prompt_plugins." .. key .. " in " .. config.path)
     end
   end
-  for _, key in ipairs({ "prompts", "prompt_plugins" }) do
+  local allowed = { prompts = store.roles, prompt_plugins = config.plugin_keys() }
+  for key, keys in pairs(allowed) do
     local files = config.get()[key]
-    for role in pairs(type(files) == "table" and files or {}) do
-      if not vim.tbl_contains(store.roles, role) then
-        check(false, key .. "." .. role .. " is a role", "roles are " .. table.concat(store.roles, ", "))
+    for name in pairs(type(files) == "table" and files or {}) do
+      if not vim.tbl_contains(keys, name) then
+        check(false, key .. "." .. name .. " is a role", "they are " .. table.concat(keys, ", "))
       end
     end
   end

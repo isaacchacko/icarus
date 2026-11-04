@@ -46,7 +46,7 @@ function M.agents()
           agent = agent.id,
           name = agent.name,
           kind = agent.kind,
-          role = store.role(agent),
+          role = store.shown_role(agent),
           scope = scope.of_agent(ws.id, agent.id),
         }
       end
