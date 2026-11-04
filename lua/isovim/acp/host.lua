@@ -111,6 +111,7 @@ local S = {
   legacy_hash = nil, ---@type string? the same prompt's hash as journals recorded it before role_hash (prompt_hash)
   restart = nil, ---@type {text?: string, why: string, now?: boolean}? a restart that waits for the running turn and its background work to end
   running = false, -- Claude says the session is running, which it does for a turn it starts itself
+  thread_jobs = {}, ---@type table<string, {repo: string, id: string}> tool calls made in a turn on a thread
   work_since = nil, ---@type integer? when a restart first found background work in its way
   shells = false, -- that restart's last look found background shells (work_waits)
   code = {}, ---@type table<string, string> each isovim file it runs, as it was when it started on it (code_stat)
@@ -575,10 +576,144 @@ release = function(why)
   next_prompt()
 end
 
+-- A turn Claude starts itself, with no prompt of ours, most often as a background job ends. A job
+-- started in a turn on a thread belongs to that thread, so the turn its end starts is a turn on it
+-- too: S.thread_jobs keeps which thread each tool call of such a turn was on, and the end's frame names
+-- the call. Anything else stays out of the thread, and if it wrote to nobody, the agent hears so.
+local AUTO_FRAME_AGE = 30
+
+local function me()
+  return S.ws .. "/" .. S.agent
+end
+
+-- The thread of the job frames this turn has seen, if there's one and no other job: repo, id.
+local function auto_thread(auto)
+  local found, other = nil, false
+  for _, id in ipairs(auto.jobs) do
+    local thread = S.thread_jobs[id]
+    if not thread then
+      other = true
+    elseif found and (found.repo ~= thread.repo or found.id ~= thread.id) then
+      other = true
+    else
+      found = thread
+    end
+  end
+  return not other and found or nil
+end
+
+-- Whether a turn may post to the thread now: it's open, and if a worker's, still its bypass.
+local function may_post(thread)
+  local info = threads.summary(threads.read(thread.repo, thread.id) or {})
+  if info.status ~= "open" then
+    return false, "has been resolved"
+  elseif store.role(S.spec) ~= "router" and info.bypass ~= me() then
+    return false, "isn't bypassed to you any more"
+  end
+  return true
+end
+
+-- The frames from the job ends a turn of Claude's own can be about: a frame can come just ahead of it.
+local function take_job_frames(auto)
+  local now = os.time()
+  for _, frame in ipairs(S.job_frames or {}) do
+    if now - frame.at <= AUTO_FRAME_AGE then
+      auto.jobs[#auto.jobs + 1] = frame.id
+    end
+  end
+  S.job_frames = {}
+end
+
+-- Marks the turn on its thread, once it knows of one it may post to.
+local function attribute_auto(auto)
+  local thread = auto_thread(auto)
+  if thread and not S.thread_turn and may_post(thread) then
+    S.thread_turn = { repo = thread.repo, id = thread.id, text = auto.text, auto = true }
+    pcall(threads.working, thread.repo, thread.id, "start", nil, me())
+  end
+end
+
+-- A turn of Claude's own has begun, if none is on.
+local function auto_started()
+  if S.busy or S.auto_turn or S.compacting or S.loading or S.replaying then
+    return
+  end
+  S.auto_turn = { text = "", jobs = {} }
+  take_job_frames(S.auto_turn)
+  attribute_auto(S.auto_turn)
+end
+
+-- A job's end named by its frame.
+local function job_ended(id)
+  S.job_frames = S.job_frames or {}
+  if S.auto_turn then
+    S.auto_turn.jobs[#S.auto_turn.jobs + 1] = id
+    attribute_auto(S.auto_turn)
+  else
+    S.job_frames[#S.job_frames + 1] = { id = id, at = os.time() }
+  end
+end
+
+-- That turn is over. Its last message goes to the job's thread if it has one and may; else, if anything
+-- would have been lost, the agent is told, in a prompt of its own as this turn had none.
+local function auto_ended()
+  local auto = S.auto_turn
+  S.auto_turn = nil
+  if not auto then
+    return
+  end
+  local thread = S.thread_turn and S.thread_turn.auto and S.thread_turn or nil
+  local whose = auto_thread(auto)
+  local text = vim.trim(thread and thread.text or auto.text)
+  local note
+  if thread then
+    S.thread_turn = nil
+    -- A second job's frame can arrive after it began, on another thread: then it's nobody's.
+    local same = whose and whose.repo == thread.repo and whose.id == thread.id
+    local ok, why = may_post(thread)
+    if same and ok then
+      if text ~= "" then
+        pcall(threads.post, thread.repo, thread.id, me(), text)
+      end
+    elseif text ~= "" then
+      note = same and ("[isovim] The background job you started in a turn on thread %s has ended, but that thread %s, so what you "
+        .. "just wrote wasn't posted there."):format(thread.id, why)
+        or ("[isovim] That turn came from background jobs that weren't all from one thread, so what you just wrote wasn't "
+          .. "posted to thread %s. Post it where it belongs, with `iso <role> thread post <id> \"...\"`."):format(thread.id)
+    end
+    pcall(threads.working, thread.repo, thread.id, "end")
+  elseif text ~= "" and whose then
+    local _, why = may_post(whose)
+    note = ("[isovim] The background job you started in a turn on thread %s has ended, but that thread %s, so what you just wrote "
+      .. "wasn't posted there."):format(whose.id, why or "couldn't take it")
+  elseif text ~= "" and vim.iter(auto.jobs):any(function(id)
+    return S.thread_jobs[id] ~= nil
+  end) then
+    note = "[isovim] That turn came from background jobs that weren't all from one thread, so what you just wrote wasn't posted "
+      .. "anywhere. Post it where it belongs, with `iso <role> thread post <id> \"...\"`."
+  elseif text ~= "" then
+    local holds = store.role(S.spec) == "worker" and threads.holder(store.canon(S.ws), me())
+    S.told_unposted = S.told_unposted or {}
+    if holds and not S.told_unposted[holds] then
+      S.told_unposted[holds] = true
+      note = ("[isovim] That turn wasn't started by a post on thread %s or a job started in a turn on it, so nothing you wrote in "
+        .. "it was posted, and the same goes for any turn like it. If the user should see it, post it with `iso worker thread post "
+        .. "%s \"...\"`."):format(holds, holds)
+    end
+  end
+  if note then
+    M.tell_self(note)
+  end
+end
+
 -- The turn ended: say so, and send the next queued prompt. One that failed on something that
 -- passes goes back to the front of the queue, which is held.
 local function turn_ended(prompt, result, err)
   S.busy, S.turn_prompt = false, nil
+  -- A job's end this turn read isn't the cause of a turn to come, but one just now, as the turn ended, is.
+  S.job_frames = vim.tbl_filter(function(frame)
+    return os.time() - frame.at <= 2
+  end, S.job_frames or {})
   local reason = result and result.stopReason or nil
   append("turn", { state = "end", id = prompt.id, stopReason = reason, error = err and err.message or nil })
   -- A turn on a thread's post: its last message is the thread's reply (isovim.threads).
@@ -700,6 +835,9 @@ deliver = function(prompt)
   end
   append("turn", { state = "start", id = prompt.id, snapshot = snapshot and snapshot.commit,
     snapshot_dir = snapshot and snapshot.dir })
+  -- A turn of Claude's own still on as this goes in is over, as far as anyone can tell them apart.
+  auto_ended()
+  S.job_frames = {}
   -- A thread's post (isovim.threads): the turn shows working there, and its last message goes there.
   local thread_repo, thread_id = threads.tagged(prompt.text)
   S.thread_turn = nil
@@ -1247,8 +1385,18 @@ local handlers = {
       return
     end
     if method == "_claude/sdkMessage" and type(params.message) == "table"
+      and params.message.subtype == "task_notification" and params.sessionId == S.session then
+      if type(params.message.tool_use_id) == "string" then
+        job_ended(params.message.tool_use_id)
+      end
+    elseif method == "_claude/sdkMessage" and type(params.message) == "table"
       and params.message.subtype == "session_state_changed" and params.sessionId == S.session then
       S.running = params.message.state ~= "idle"
+      if S.running then
+        auto_started()
+      else
+        auto_ended()
+      end
       if restart_due() then
         restart_now()
       elseif compact_due() then
@@ -1284,13 +1432,23 @@ local handlers = {
       end
       append("update", { update = params.update })
       show_update(params.update)
-      -- A thread's reply is the turn's last message: what it says after its last tool call.
       local thread, kind = S.thread_turn, params.update.sessionUpdate
-      if thread and kind == "agent_message_chunk" and type(params.update.content) == "table"
+      -- Something said with no prompt of ours on: Claude's own turn, even if its start went unseen.
+      if not S.busy and (kind == "agent_message_chunk" or kind == "tool_call") then
+        auto_started()
+        thread = S.thread_turn
+      end
+      -- A thread's reply is the turn's last message: what it says after its last tool call.
+      local said = thread or S.auto_turn
+      if said and kind == "agent_message_chunk" and type(params.update.content) == "table"
         and params.update.content.type == "text" then
-        thread.text = thread.text .. (params.update.content.text or "")
-      elseif thread and kind == "tool_call" then
-        thread.text = ""
+        said.text = said.text .. (params.update.content.text or "")
+      elseif said and kind == "tool_call" then
+        said.text = ""
+      end
+      -- A tool it calls on a thread may be a background job: whose it is, for when that ends.
+      if thread and kind == "tool_call" and type(params.update.toolCallId) == "string" then
+        S.thread_jobs[params.update.toolCallId] = { repo = thread.repo, id = thread.id }
       end
       -- What a page's turn is doing, shown on its line: as a tool starts, never per chunk.
       local page = S.page_turn
@@ -1400,6 +1558,11 @@ local function role_changed(resumed, how, last)
     return not same_prompt(last)
   end
   return how == "fork" or resumed == "restart"
+end
+
+-- Says something to the agent itself, as isovim, in a prompt of its own.
+function M.tell_self(text)
+  submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
 end
 
 -- A root (or repo-root, from its first session as one) subscribes to the Inbox: while root mode

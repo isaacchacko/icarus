@@ -391,6 +391,17 @@ host; General, Root and Terminals have none, and starting one there says why.
   if it's still there, the router unless it did it (`bypass_told {upto}`). After an end the next post
   goes to the router. The view says `→ goes to <worker>` under the banner as a link, by the parent
   and children; the row is as it was, and there are no new keys.
+- **A background job's turn:** a job started in a turn on a thread belongs to that thread. Claude's own
+  turn when it ends has no prompt and no tag, so the supervisor keeps which thread each tool call of
+  such a turn was on, and the SDK's `task_notification` frame names the call that started the job
+  (`tool_use_id`, which is the tool call's id). That turn is then a turn on the thread, a router's or
+  a bypass holder's alike: marked working, its last message posted, whose-turn marks as ever. Only an
+  exact match counts: jobs from more than one thread, or from a thread and elsewhere, post nowhere.
+  No other untagged turn posts, so a parent's message or other work stays out. What can't be posted
+  isn't lost silently: such a turn has no prompt to carry a note, so the agent gets one as its own
+  prompt right after, when a job's thread has been resolved or its bypass has ended, when jobs were
+  mixed, and once per thread for a holder's turn from anything else (a Monitor's event has no frame
+  to match, so it's among these). Each only if the turn wrote something.
 - **Parents and children:** a thread can have a parent in the same repo: `parent` on its header, or
   `parent {on: <id>|none, by}` to change it, refusing a cycle. Children aren't stored; they're found
   by scanning the repo's threads, resolved ones included. Under the banner, only when they exist,

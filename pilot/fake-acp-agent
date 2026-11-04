@@ -126,6 +126,22 @@ def transcript(sid, row):
         f.write(json.dumps(row) + "\n")
 
 
+held_jobs = []
+
+
+def job_ends(session, ids, seconds):
+    time.sleep(seconds)
+    for tool_use_id in ids:
+        send({"jsonrpc": "2.0", "method": "_claude/sdkMessage", "params": {"sessionId": session,
+              "message": {"type": "system", "subtype": "task_notification", "task_id": "task-" + tool_use_id,
+                          "status": "completed", "tool_use_id": tool_use_id, "summary": "done"}}})
+    state_changed(session, "running")
+    update(session, {"sessionUpdate": "agent_message_chunk", "messageId": "msg_" + uuid.uuid4().hex[:12],
+                     "content": {"type": "text", "text": "results of " + (",".join(ids) or "nothing of mine")}})
+    time.sleep(0.3)
+    state_changed(session, "idle")
+
+
 def state_changed(sid, state):
     send({"jsonrpc": "2.0", "method": "_claude/sdkMessage", "params": {"sessionId": sid,
           "message": {"type": "system", "subtype": "session_state_changed", "state": state}}})
@@ -248,6 +264,9 @@ def absolute(path):
 def prompt(rid, params):
     session = params["sessionId"]
     text = text_of(params.get("prompt", []))
+    # A post on a thread is the command it holds: its tag and a bypass's note aren't.
+    if text.startswith("[thread "):
+        text = text[text.index("] ") + 2:].split("\n\n(This thread's bypass")[0]
     with state_lock:
         if running["prompt"] is not None:
             log({"overlap": True, "text": text, "running": running["prompt"]})
@@ -306,6 +325,25 @@ def prompt(rid, params):
             state_changed(session, "idle")
         threading.Thread(target=own_turn, args=(float(text[5:]),), daemon=True).start()
         chunk(session, "auto")
+    elif text.startswith("bgjob "):
+        # A background job that ends as claude-agent-acp reports one: the SDK's task_notification frame
+        # naming the tool call that started it, then a turn of Claude's own. bgjob 0 waits for bgfire.
+        seconds = float(text.split()[1])
+        tool(session, call_id, "run in background", "execute", "pending", name="Bash", raw={"run_in_background": True})
+        tool(session, call_id, None, None, "completed", "running in background")
+        chunk(session, "started the job")
+        if seconds:
+            threading.Thread(target=job_ends, args=(session, [call_id], seconds), daemon=True).start()
+        else:
+            held_jobs.append(call_id)
+    elif text == "bgfire":
+        threading.Thread(target=job_ends, args=(session, list(held_jobs), 1), daemon=True).start()
+        held_jobs.clear()
+        chunk(session, "firing")
+    elif text.startswith("selfturn "):
+        # A turn of Claude's own that no job's end started, as a Monitor's event's is.
+        threading.Thread(target=job_ends, args=(session, [], float(text.split()[1])), daemon=True).start()
+        chunk(session, "selfturn coming")
     elif text.startswith("bg "):
         # As Claude runs a run_in_background Bash: its own child, in a process group (session) of
         # its own, left running when the turn ends.

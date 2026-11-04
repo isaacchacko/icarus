@@ -524,20 +524,24 @@ function M.recipient(repo, id)
 end
 
 -- What a bypassed worker is told with each post, as a role's prompt doesn't say it.
-M.BYPASS_NOTE = "\n\n(This thread's bypass is yours: your turn's last message is posted to it for you and is that turn's only "
-  .. "output. iso worker thread release <reason> asks the router to end it.)"
+M.BYPASS_NOTE = "\n\n(This thread's bypass is yours: this turn's last message is posted to it for you and is its only output, as "
+  .. "is that of the turn a background job started here wakes when it ends. No other turn of yours posts: use iso worker thread "
+  .. "post. iso worker thread release <reason> asks the router to end the bypass.)"
 
 -- What a worker is told as a thread is bypassed to it.
 function M.bypass_prompt(repo, id, title, router)
   return ("You now hold a bypass to thread %s %q of %s, from %s: the user's posts there come straight to you as prompts "
     .. "tagged with the thread, and the router doesn't see them. Read it so far with `iso worker thread show %s`.\n\n"
-    .. "Answer within its topic. Your turn's last message, only what you say after your last tool call, is posted to the thread "
-    .. "for you and is that turn's only output: don't post it again, and make it whole, as nobody reads your chat for it. After "
+    .. "Answer within its topic. On a turn from one of those prompts, your last message, only what you say after your last tool "
+    .. "call, is posted to the thread for you and is that turn's only output: don't post it again, and make it whole, as nobody reads "
+    .. "your chat for it. The same goes for the turn a background job you started in such a turn wakes when it ends. No other turn "
+    .. "posts, so a parent's message, other work or a Monitor's event stays in your chat: for those use `iso worker thread post %s "
+    .. "\"...\"` if the user should see it. After "
     .. "any post of yours it's the user's turn, in their Inbox until they post, so when one needs nothing from them, run `iso "
     .. "worker thread waiting %s none` before you end the turn, or use `iso worker thread post %s --no-reply \"...\"`.\n\n"
     .. "You can't move the bypass or resolve the thread; the router stays its owner, and can still post there. `iso worker thread "
     .. "release <reason>` asks it to end this, and can carry the outcome you'd propose. Your other work and your parent stay as "
-    .. "they were."):format(id, title, repo, router or "the router", id, id, id)
+    .. "they were."):format(id, title, repo, router or "the router", id, id, id, id)
 end
 
 -- Sends an agent a prompt, from a process that stays up (the TUI or a supervisor).

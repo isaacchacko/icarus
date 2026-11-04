@@ -137,8 +137,10 @@ function M.session_params(kind, params, append_text)
   else
     params._meta.systemPrompt = { append = append_text }
     params._meta.claudeCode = { options = { settings = require("isovim.panes").hook_settings() },
-      -- So the supervisor sees a turn Claude starts itself, between the prompts it sends.
-      emitRawSDKMessages = { { type = "system", subtype = "session_state_changed" } } }
+      -- So the supervisor sees a turn Claude starts itself, between the prompts it sends, and which
+      -- background job's end started it.
+      emitRawSDKMessages = { { type = "system", subtype = "session_state_changed" },
+        { type = "system", subtype = "task_notification" } } }
   end
   return params
 end
