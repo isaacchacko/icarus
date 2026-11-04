@@ -226,7 +226,7 @@ end
 
 -- The clone of a repo isovim knows (its key has a dir under ~/.isovim/repos) that path is in, other
 -- than repo: the nearest enclosing dir holding a .git whose origin is such a repo, its key, and path
--- relative to it; nil when none is. Repos isovim doesn't know (~/.clu/discs, dotfiles) are never one.
+-- relative to it; nil when none is. Repos isovim doesn't know (your notes, dotfiles) are never one.
 ---@return string? top, string? key, string? rel
 local function known_clone(path, repo)
   local repos = require("isovim.repos")
@@ -340,7 +340,7 @@ end
 -- outside its own worktree is always refused, worktree or not and whatever its record says, and so
 -- is a mutating git command there. So is any agent's (general/ ones too) in a clone of another repo isovim
 -- knows, with word to spawn an agent into that repo; anything else goes through, as edits in repos
--- isovim doesn't know (~/.clu/discs, dotfiles) and outside any repo always do.
+-- isovim doesn't know (your notes, dotfiles) and outside any repo always do.
 M.__pretool = function(args)
   local which = args[1]
   local ws, id = require("isovim.root").caller()

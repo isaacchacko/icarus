@@ -124,11 +124,17 @@ function commands.checkhealth()
     if path then
       check(vim.fn.filereadable(path) == 1, ("%s prompt %s"):format(role, path), "create it, or fix prompts." .. role .. " in " .. config.path)
     end
+    local plugin = config.prompt_plugin(role)
+    if plugin then
+      check(vim.fn.filereadable(plugin) == 1, ("%s prompt plugin %s"):format(role, plugin), "create it, or fix prompt_plugins." .. role .. " in " .. config.path)
+    end
   end
-  local prompts = config.get().prompts
-  for role in pairs(type(prompts) == "table" and prompts or {}) do
-    if not vim.tbl_contains(store.roles, role) then
-      check(false, "prompts." .. role .. " is a role", "roles are " .. table.concat(store.roles, ", "))
+  for _, key in ipairs({ "prompts", "prompt_plugins" }) do
+    local files = config.get()[key]
+    for role in pairs(type(files) == "table" and files or {}) do
+      if not vim.tbl_contains(store.roles, role) then
+        check(false, key .. "." .. role .. " is a role", "roles are " .. table.concat(store.roles, ", "))
+      end
     end
   end
   check(vim.fn.executable("fzf") == 1, "fzf", "install fzf (iso jump runs in it)")

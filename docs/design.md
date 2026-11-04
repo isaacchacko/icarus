@@ -3,8 +3,8 @@
 isovim is an agent mux built on nvim. You work at the speed of thought: the system brings you what
 needs you, with its context loaded, and keeps everything else moving without you.
 
-isovim provides the mechanisms; clu (or anyone) plugs in the policy, such as which prompt each role
-gets. It's a personal tool, not built for teams.
+isovim provides the mechanisms; you plug in the policy, such as which prompt each role gets and what
+you add to it. It's a personal tool, not built for teams.
 
 ## Vocabulary
 
@@ -595,7 +595,8 @@ connect in the background, at most every 30s, the chips drawn again when that ch
 - **Roots have no parent.** When an agent is removed, its children go to its parent; at the top, to the
   repo's router.
 - **Role prompts** are files set in `config.json` (`prompts`). The repo-root's prompt lists the actions
-  that are permanently off; agents are trusted to follow it.
+  that are permanently off; agents are trusted to follow it. `prompt_plugins` adds a file of your own
+  after a role's prompt: what's personal stays out of isovim and the prompt beneath it can keep updating.
 - **Root mode:** a repo's root decides its Inbox's questions before they reach you, and is on top of its
   threads (see Threads). `iso rootmode on|off <repo> [--task "<description>"]` turns it on for a repo,
   spawning a worker and promoting it if the role is empty. There's no root above a repo: with root mode
@@ -970,7 +971,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   another stack has the same compose project or a port the repo's compose file publishes.
 - **The edit guard:** every agent's edit in a clone of a repo isovim knows (one under
   `~/.isovim/repos/`), outside its own worktree, is refused, with word to spawn an agent into that repo;
-  repos isovim doesn't know, like `~/.clu/discs` and dotfiles, stay editable. For v0 it reads Bash
+  repos isovim doesn't know, like your notes and dotfiles, stay editable. For v0 it reads Bash
   only for git commands, so a shell write (`sed -i`, `cp`, `>>`) or git behind a variable gets
   through: agents aren't dumb, and the guard is there for mistakes, not for an agent working round it.
 - **A router owns its workers' life, as CRUD.** Create: `iso router spawn` (hidden until `H`). Read:

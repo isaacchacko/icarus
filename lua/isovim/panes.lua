@@ -368,6 +368,10 @@ local function instruction_parts(agent, ws, before)
   if prompt and (v0 or not config.is_shipped(role, prompt)) then
     files[#files + 1] = read(prompt)
   end
+  local plugin = config.prompt_plugin(role)
+  if plugin then
+    files[#files + 1] = read(plugin)
+  end
   return own, vim.tbl_filter(function(part)
     return part ~= ""
   end, files)
@@ -387,7 +391,7 @@ M.v0_text = v0_text
 M.text_revision = 2
 
 -- What says whether a resumed ACP session's role prompt changed (isovim.acp.host): the role, the
--- user's files (instructions.md, the role's prompt file) and text_revision, but not isovim's own
+-- user's files (instructions.md, the role's prompt file and plugin) and text_revision, but not isovim's own
 -- words, so rewording those doesn't send every agent a role message on its next restart.
 ---@param agent isovim.Agent
 function M.role_hash(agent, ws)

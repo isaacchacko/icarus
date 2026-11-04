@@ -63,7 +63,7 @@ local function workspaces(root, archived)
     local meta = kind == "directory" and read_json(root .. "/" .. id .. "/.isovim.json")
     if meta then
       local pins = {}
-      -- pinned is isovim's; pins and surfaced are what clu wrote before it.
+      -- pinned is isovim's; pins and surfaced are older keys for the same thing.
       for _, key in ipairs({ "pinned", "pins", "surfaced" }) do
         for _, pin in ipairs(vim.islist(meta[key]) and meta[key] or {}) do
           if type(pin) == "table" and type(pin.path) == "string" then
@@ -475,9 +475,6 @@ function M.plan()
     end)
   end
 
-  plan.clu = require("isovim.cluscan").scan()
-  plan.clu_dir = require("isovim.cluscan").dir()
-
   -- What stays, for the record.
   local claude = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude") .. "/projects"
   plan.claude_projects = claude
@@ -545,32 +542,6 @@ function M.render(plan)
     add("BLOCKED: iso cutover --yes refuses until these are fixed:")
     for _, why in ipairs(plan.blocked) do
       add("  - %s", why)
-    end
-  end
-
-  add("")
-  if not plan.clu then
-    add("clu-system: none at %s", short(plan.clu_dir))
-  else
-    add("clu-system: %s (its bin, skills and hooks; discs aren't read)", short(plan.clu.dir))
-    local function list(hits)
-      for _, hit in ipairs(hits) do
-        add("    %s:%d: %s: %s", hit.file, hit.line, hit.shown, hit.why)
-      end
-    end
-    if #plan.clu.refused > 0 then
-      add("  WARNING, refused once enforcement is on, so these fail after the cutover (they don't block it):")
-      list(plan.clu.refused)
-    else
-      add("  nothing in them is refused once enforcement is on")
-    end
-    if #plan.clu.guarded > 0 then
-      add("  legacy-only, guarded by clu's enforce check (they don't run once enforcement is on):")
-      list(plan.clu.guarded)
-    end
-    if #plan.clu.named > 0 then
-      add("  named, not run:")
-      list(plan.clu.named)
     end
   end
 

@@ -9,6 +9,9 @@
 --              seeds ~/.isovim/prompts/<role>.md (from prompts/ in this tree) when one is missing,
 --              never writing over one, and names it here for a role that has no entry; null for a
 --              role gives it no prompt file
+--   prompt_plugins  role -> a file of your own (relative to ~), told after the role's prompt: what
+--              you add to a role while isovim's prompt keeps updating beneath it. isovim never seeds
+--              or writes one, and changing one tells that role's agents on their next restart
 --   repo_defaults  {glyph, palette}: the glyph and the list of colors (names or "#rrggbb") written into a
 --              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
 --              red to pink. Repos take the colors in the order they're first seen, wrapping round.
@@ -25,7 +28,7 @@ local M = {}
 
 M.path = store.root .. "/config.json"
 
----@return {self?: string, hosts?: table<string, string>, aliases?: table<string, string>, repo_dirs?: string[], prompts?: table<string, string>, repo_defaults?: {glyph?: string, palette?: string[]}}
+---@return {self?: string, hosts?: table<string, string>, aliases?: table<string, string>, repo_dirs?: string[], prompts?: table<string, string>, prompt_plugins?: table<string, string>, repo_defaults?: {glyph?: string, palette?: string[]}}
 function M.get()
   local ok, lines = pcall(vim.fn.readfile, M.path)
   local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
@@ -94,16 +97,25 @@ function M.enforce()
   return vim.uv.fs_rename(tmp, M.path)
 end
 
--- The prompt file configured for a role, as an absolute path, or nil.
----@return string?
-function M.prompt_file(role)
-  local prompts = M.get().prompts
-  local path = type(prompts) == "table" and prompts[role]
+local function role_file(files, role)
+  local path = type(files) == "table" and files[role]
   if type(path) ~= "string" or path == "" then
     return nil
   end
   path = vim.fs.normalize(path)
   return vim.startswith(path, "/") and path or vim.fs.joinpath(vim.uv.os_homedir(), path)
+end
+
+-- The prompt file configured for a role, as an absolute path, or nil.
+---@return string?
+function M.prompt_file(role)
+  return role_file(M.get().prompts, role)
+end
+
+-- The file of your own added to a role's prompt, as an absolute path, or nil.
+---@return string?
+function M.prompt_plugin(role)
+  return role_file(M.get().prompt_plugins, role)
 end
 
 -- The role prompts isovim ships, prompts/<role>.md in this tree (this file is lua/isovim/config.lua).
