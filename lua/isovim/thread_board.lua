@@ -11,8 +11,9 @@
 -- unread, the user's turn, a question, an agent working, resolved; a card rolls its threads' up.
 --
 -- A thread on no task, as all are at first, as one a router opens by itself or an issue's: open, a slim row
--- under a No task group at the top of Working, which H and L don't move. C on one makes a task of its title
--- and A attaches it to a task. Resolved, it isn't on the board.
+-- under a No task group at the top of Working, which H and L don't move. A on one attaches it to a task, or
+-- makes one of its title. Resolved, it isn't on the board. C always asks for a title and makes a task with
+-- no thread on it, wherever the focus is, as Linear's C does.
 --
 -- Narrow, the columns shrink to MIN_WIDTH, then the board shows as many as fit, moving as the focus
 -- does, so its layout never wraps. Column heads are the window's winbar, so they stay as it scrolls.
@@ -327,7 +328,7 @@ local function hints(view, width)
   if view.board_searching or (view.board_query or "") ~= "" then
     line = boxes.cat(line, boxes.seg("/", "IsovimBoardKey"), boxes.seg(" " .. (view.board_query or "") .. (view.board_searching and "▏" or "") .. "  "))
   end
-  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "task" }, { "n", "thread" }, { "⏎", "open" }, { "/", "search" }, { "?", "keys" } }) do
+  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "new task" }, { "n", "thread" }, { "⏎", "open" }, { "/", "search" }, { "?", "keys" } }) do
     local piece = boxes.cat(boxes.seg(" " .. hint[1] .. " ", "IsovimBoardKey"), boxes.seg(" " .. hint[2] .. "  ", "Comment"))
     if boxes.cells(line) + boxes.cells(piece) > width then
       break
@@ -529,7 +530,7 @@ end
 local function move_status(view, direction)
   local task = focused_task(view)
   if not task then
-    return toast("a thread on no task isn't moved: C makes it a task, a attaches it to one")
+    return toast("a thread on no task isn't moved: A attaches it to a task, or makes one of it")
   end
   local to = M.COLUMNS[INDEX[task.column] + direction]
   if not to then
@@ -606,18 +607,8 @@ local function search(view)
   redraw()
 end
 
--- C: a new task; on a thread with none, a task made of its title, with it attached.
+-- C: a new task, its title asked for, with no thread on it.
 local function create(view)
-  local row = focused(view)
-  if row and row.entry and not row.on then
-    local id = tasks.new(view.repo, row.entry.title)
-    if id then
-      threads.set_task(view.repo, row.entry.name, id, "user")
-      view.board_focus = id
-      changed(view)
-    end
-    return
-  end
   vim.ui.input({ prompt = "New task: " }, function(title)
     local id = title and tasks.new(view.repo, title)
     if id then
@@ -627,7 +618,7 @@ local function create(view)
   end)
 end
 
--- A: the thread on a task, picked.
+-- A: the thread on a task, picked; on a thread with none, first a new task of its title.
 local function attach(view)
   local row = focused(view)
   if not (row and row.entry) then
@@ -639,17 +630,22 @@ local function attach(view)
   table.sort(choices, function(x, y)
     return number_of(x.id) > number_of(y.id)
   end)
+  if not row.on then
+    table.insert(choices, 1, { new = true })
+  end
   if #choices == 0 then
-    return toast("there's no task to attach it to: C makes one of it")
+    return toast("there's no other task to attach it to: C makes one")
   end
   vim.ui.select(choices, {
     prompt = ("Attach %s to:"):format(row.entry.name),
     format_item = function(task)
-      return ("%s  %s"):format(task.id, task.title)
+      return task.new and ("New task: " .. row.entry.title) or ("%s  %s"):format(task.id, task.title)
     end,
   }, function(task)
-    if task then
-      threads.set_task(view.repo, row.entry.name, task.id, "user")
+    local id = task and (task.new and tasks.new(view.repo, row.entry.title) or task.id)
+    if id then
+      threads.set_task(view.repo, row.entry.name, id, "user")
+      view.board_focus = task.new and id or view.board_focus
       changed(view)
     end
   end)
@@ -660,13 +656,13 @@ M.help_keys = {
   { "h j k l", "the column to the left or right, the row below or above" },
   { "H / L", "move the task a column left / right, the only thing that moves one. L into Done resolves its open threads, H out opens those again, prompting nobody; on the Backburner they leave the Inbox and stop nagging" },
   { "0-4", "the task's priority: none, urgent, high, medium, low" },
-  { "C", "a new task; on a thread with none, a task of its title" },
+  { "C", "a new task: its title, with no thread on it" },
   { "n", "a new thread on the task: its title, then your first post" },
   { "s p a t", "the task's status, priority, assignee (a label, it tells nobody), labels (l is the column to the right)" },
   { "D e", "the task's due date, estimate" },
   { "r", "rename the task" },
   { "R K", "add or remove a relation to another task; link or unlink a PR or Linear ticket" },
-  { "A", "attach the thread to a task, picked" },
+  { "A", "attach the thread to a task, picked; on a thread with none, first a new task of its title" },
   { "d", "delete the task, its threads kept, on no task" },
   { "<CR>", "open the task's own view, or the thread" },
   { "z", "fold the task's threads" },
@@ -697,7 +693,7 @@ function M.bind(view)
     on(key[1], function()
       local task = focused_task(view)
       if not task then
-        return toast("that's a task's: this thread is on none (C makes it one, A attaches it)")
+        return toast("that's a task's: this thread is on none (A attaches it to one, or makes one of it)")
       end
       actions[key[2]](view.repo, task)
     end, key[3])

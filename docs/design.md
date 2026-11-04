@@ -397,9 +397,9 @@ host; General, Root and Terminals have none, and starting one there says why.
   nothing of state, marks do, in any column: unread `●`, your turn, a question `?`, an agent working,
   resolved `✓`, a card that needs you bordered in the warning color.
   Open threads on no task are slim rows under a **No task** group at the top of Working, which `H` and
-  `L` don't move; `C` on one makes a task of its title and puts it there, and `A` picks a task for it
-  (or moves a thread between tasks). Resolved, they aren't on the board, but stay in the sidebar and
-  `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` new task, `A` attach, `d` delete
+  `L` don't move; `A` on one picks a task for it, its first entry a new task of its title (`A` also
+  moves a thread between tasks). Resolved, they aren't on the board, but stay in the sidebar and
+  `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` a new task, asking its title, with no thread on it, wherever the focus is, `A` attach, `d` delete
   the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `z` folds a task's
   threads, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the
   view's keys above. In the sidebar, Threads are grouped under a dim row per task that has any listed,
