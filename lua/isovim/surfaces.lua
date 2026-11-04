@@ -1,10 +1,7 @@
 -- Surfaces: the files in a repo's iso/ (~/.iso/<owner>/<repo>/iso/, or a pseudo-repo's: root/iso/ for
 -- the host root, general/iso/ for no repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
 -- agents/, journal/ and transcripts/ never do:
---   tasks.md        the Task Board: headings todo, doing, waiting, blocked, done (any level, any
---                   case; the first word names it, so "Doing (2)" is doing), one task a line under
---                   them ("- ", "* " and "[ ] " are dropped)
---   <name>.md       a markdown surface, every other *.md. Optional YAML frontmatter, plain
+--   <name>.md       a markdown surface, every *.md. Optional YAML frontmatter, plain
 --                   key: value lines between --- lines: name (the row's title; else the file's),
 --                   icon (up to two cells), color (a palette name or #rrggbb), consumable (true:
 --                   gone from the Inbox once opened, until the router rewrites it)
@@ -49,16 +46,10 @@ local events = require("isovim.events")
 
 local M = {}
 
-M.statuses = { "todo", "doing", "waiting", "blocked", "done" }
-local STATUS = {}
-for _, status in ipairs(M.statuses) do
-  STATUS[status] = true
-end
-
 ---@class isovim.Surface
 ---@field repo string the repo key it's in
 ---@field name string its file's stem: the topic part, and what iso answer takes
----@field type "markdown"|"tasks"|"prs"|"decisions"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
+---@field type "markdown"|"prs"|"decisions"|"page"|"thread"|"question"|"file"|"folder"|"chat"|"link"|"broken"
 ---@field address? string link: what it points at, an iso: address or a web page's URL
 ---@field note? string link: the router's one line about it
 ---@field marked_unread? boolean you marked it unread (M.toggle_read): it waits on you until you open it
@@ -85,7 +76,6 @@ end
 ---@field outcome? string thread: what it was resolved with
 ---@field waiting? integer page: how many of them wait on the user (an agent's reply asked them); prs: PRs
 ---@field tasks? {status: string, text: string, line: integer}[] tasks
----@field counts? table<string, integer> tasks: how many under each heading
 ---@field question? string question
 ---@field options? {label: string, description?: string}[]
 ---@field multi? boolean
@@ -259,36 +249,6 @@ local function apply_fields(entry, fields)
   end
 end
 
--- tasks.md's tasks, one a line under its status heading; nil and why.
-local function task_board(body, start)
-  local tasks, counts = {}, {}
-  for _, status in ipairs(M.statuses) do
-    counts[status] = 0
-  end
-  local section, heading
-  local lines = vim.split(body, "\n", { plain = true })
-  for i, raw in ipairs(lines) do
-    local line = raw:gsub("\r$", "")
-    local n = start + i - 1
-    local title = line:match("^#+%s+(.-)%s*#*%s*$")
-    if title then
-      heading = title
-      local word = title:lower():match("%a+")
-      section = STATUS[word] and word or false
-    elseif not line:match("^%s*$") then
-      if section == nil then
-        return nil, ("line %d comes before any heading; tasks go under %s"):format(n, table.concat(M.statuses, ", "))
-      elseif section == false then
-        return nil, ("line %d is under %q, which isn't one of %s"):format(n, heading, table.concat(M.statuses, ", "))
-      end
-      local text = vim.trim(line):gsub("^[-*+]%s+", ""):gsub("^%[[ xX]%]%s*", "")
-      tasks[#tasks + 1] = { status = section, text = text, line = n }
-      counts[section] = counts[section] + 1
-    end
-  end
-  return tasks, counts
-end
-
 -- questions
 
 local QUESTION_KEYS = { question = true, options = true, multi = true, other = true, name = true }
@@ -440,13 +400,6 @@ local function parse_markdown(entry, text)
   if err then
     return err
   end
-  if entry.type == "tasks" then
-    local tasks, counts = task_board(body, start)
-    if not tasks then
-      return counts
-    end
-    entry.tasks, entry.counts = tasks, counts
-  end
 end
 
 local function state_file(repo)
@@ -470,11 +423,11 @@ local function parse(repo, base, state, taken)
     name = M.name_of(base),
     file = file,
     base = base,
-    type = page and "page" or base == "tasks.md" and "tasks" or "markdown",
+    type = page and "page" or "markdown",
     needs_you = false,
     error_file = M.error_file(file),
   }
-  entry.title = entry.type == "tasks" and "Task Board" or entry.name
+  entry.title = entry.name
   local err
   if page and taken[entry.name] ~= base then
     err = ("%s already has the name %s"):format(taken[entry.name], entry.name)
@@ -879,11 +832,40 @@ end
 -- published what happened).
 ---@param quiet? table<string, true> base file names
 ---@return isovim.Surface[]
+-- The Task Board is gone, as threads and the thread board track work: a repo's old iso/tasks.md moves
+-- to iso/archive/tasks-<date>.md, out of what's scanned, once. Nothing is lost, and a tasks.md written
+-- after that is a markdown surface like any other.
+local function archive_task_board(repo)
+  local mark = store.run_dir(repo) .. "/task-board-archived"
+  if vim.uv.fs_stat(mark) then
+    return
+  end
+  local from = M.dir(repo) .. "/tasks.md"
+  if vim.uv.fs_stat(from) then
+    local dir = M.dir(repo) .. "/archive"
+    vim.fn.mkdir(dir, "p")
+    local to, n = ("%s/tasks-%s.md"):format(dir, os.date("%Y-%m-%d")), 1
+    while vim.uv.fs_stat(to) do
+      n = n + 1
+      to = ("%s/tasks-%s-%d.md"):format(dir, os.date("%Y-%m-%d"), n)
+    end
+    if not vim.uv.fs_rename(from, to) then
+      return
+    end
+  end
+  vim.fn.mkdir(store.run_dir(repo), "p")
+  local file = io.open(mark, "w")
+  if file then
+    file:close()
+  end
+end
+
 function M.scan(repo, quiet)
   repo = canon(repo)
   if vim.fn.isdirectory(M.dir(repo)) == 0 then
     return {}
   end
+  archive_task_board(repo)
   return locked(repo, function()
     local state = read_state(repo)
     local entries = M.read(repo, state)
@@ -1331,8 +1313,8 @@ M.cache = {} ---@type table<string, isovim.Surface[]> per repo, while watching
 -- The user's d in the sidebar, his own action, so the rule that only the router writes iso/ isn't
 -- his to keep.
 
--- isovim's own views of a repo (the Task Board, the PRs surface) the user hid, by base, each with
--- the sig it had then: hidden until it changes (a new task, a PR).
+-- isovim's own view of a repo's PRs, if the user hid it: by base, with the sig it had then, hidden
+-- until it changes (a new PR).
 local function hidden_file(repo)
   return store.run_dir(canon(repo)) .. "/hidden.json"
 end
@@ -1441,7 +1423,7 @@ function M.remove(entry)
   changed(entry.repo)
 end
 
--- Hides the Task Board or the PRs surface until it changes. Publishes surface.<repo>.<name>.removed.
+-- Hides the PRs surface until it changes. Publishes surface.<repo>.<name>.removed.
 function M.hide(entry)
   locked(entry.repo, function()
     local hidden = read_hidden(entry.repo)
@@ -1557,7 +1539,7 @@ function M.list(repo)
   return list
 end
 
--- Opens a surface in the TUI: a markdown surface or the Task Board rendered with an input box
+-- Opens a surface in the TUI: a markdown surface rendered with an input box
 -- under it, a question as a buffer that answers it (both isovim.surface_view), a broken one's
 -- file, a file as a tab in the main window, a folder as the explorer's root; a chat in the chat
 -- window. Opening consumes what's
@@ -1576,7 +1558,7 @@ function M.open(entry)
   if entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" then
     -- Drawn by isovim: its PRs, its decisions, or its threads as a tree.
     require("isovim.surface_view").open(entry)
-  elseif entry.type == "markdown" or entry.type == "tasks" then
+  elseif entry.type == "markdown" then
     -- Rendered, with an input box to the repo's router under it.
     require("isovim.surface_view").open(entry)
     M.consume(entry)

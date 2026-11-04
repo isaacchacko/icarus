@@ -16,7 +16,7 @@ gets. It's a personal tool, not built for teams.
 | **pseudo-repo** | `root` (the host root, pinned first), `general` (agents with no repo, and files outside every repo), `terminals` |
 | **agent** | one ACP session run by a supervisor, addressed `<owner>/<repo>/aN` |
 | **role** | `worker` < `router` < `repo-root` < `root` |
-| **surface** | an agent's structured output, a file in a repo's `iso/` that isovim draws in a TUI buffer (a question, markdown, the Task Board, a file or folder, a chat); some take an answer |
+| **surface** | an agent's structured output, a file in a repo's `iso/` that isovim draws in a TUI buffer (a question, markdown, a file or folder, a chat); some take an answer |
 | **thread** | one idea's conversation between you and a repo's router, a view of it apart from the router's own chat (`iso/threads/<id>.jsonl`); only in a repo with a router |
 | **page** | markdown a router writes for you to read and comment on line by line (`iso/pages/<name>.md`) |
 | **Inbox** | the surfaces that need you (`needs_you`): an unanswered question, a raised one, unread markdown, a chat not yet opened. Every other surface lists as a plain row under its repo |
@@ -36,7 +36,7 @@ gets. It's a personal tool, not built for teams.
       agents/aN.json             agent records (role, parent, session id, read-only, state)
       journal/aN.jsonl           each agent's conversation as isovim events
       transcripts/               plain-text transcripts, for grep
-      *.surface, *.md            surfaces; tasks.md is the Task Board
+      *.surface, *.md            surfaces
       images/                    images pasted or dropped into an input box
     aN/<repo>-aN/                an agent's worktree (app-a7), made the first time it needs one
     aN/w -> <repo>-aN            a symlink to it, for paths and habits that say w
@@ -176,7 +176,7 @@ goes back first in the queue, which holds. It reaches the session once:
   input + output + cache read + cache write) with nothing queued, no question or permission waiting
   and no restart or session switch pending, the supervisor sends it `/compact <what to keep>` right
   then, while the cache is warm. It keeps the open threads and where they stand, the running workers
-  and standing owners, what's waiting on the user and today's decisions; thread files, the Task Board
+  and standing owners, what's waiting on the user and today's decisions; thread files
   and transcripts stay on disk. A compact turn isn't the user's: no prompt or turn in the journal, no
   state change (so no "finished" and no unread mark), no thread post, the adapter's updates for it
   dropped, and the chat shows one dim line (`compacted 212k → 18k`, a `compact` journal entry).
@@ -364,6 +364,8 @@ host; General, Root and Terminals have none, and starting one there says why.
   `C` new thread, `/` search as you type, `<CR>` open, `<Esc>` clear, `gg G`, `T` the tree below, `?`.
   `iso <role> thread board` and `thread priority <id> <0-4>` are for agents. In the sidebar each
   subthread sits indented and dim under its parent, if that's listed with it.
+- **Tracking work:** threads and the board are how work is tracked. They replaced the Task Board: a
+  repo's old `iso/tasks.md` moved once to `iso/archive/tasks-<date>.md`, out of what's scanned, kept.
 - **The tree:** `T` on the board flips to a tree of the project's threads, what spawned what.
   Each row is drawn as the sidebar's, with its id and who it goes to, under its parent on a tree
   guide: newest root first, children oldest first, so a conversation's splits read in order. `<CR>`
@@ -466,7 +468,7 @@ words point at what they mention and you go there with a key (isovim.links):
 | `iso:agent/<owner>/<repo>/aN` (`root/aN`, `general/aN`) | the agent's chat |
 | `iso:thread/<owner>/<repo>#t3` | the thread |
 | `iso:pr/<owner>/<repo>#12` and a GitHub PR's URL | the PR's page in isovim's Chrome, as a web page; `o` on it, the PR's view here |
-| `iso:surface/<owner>/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
+| `iso:surface/<owner>/<repo>/<name>` | the surface (the PRs surface is `PRs`) |
 | `iso:page/<owner>/<repo>/<name>[#c4]` | the page, at the comment |
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
 | `http(s)://...` (`localhost`, `127.0.0.1:<port>` too) | the web page in isovim's Chrome (`iso browser open`: a background window, your focus kept), or the system's browser when that isn't running; a GitHub PR's URL is the PR |
@@ -494,7 +496,7 @@ cursor on one opens its target as a tab, `gf` too (`<Tab>` on an `[Image #n]`, t
 else `<Tab>` is vim's own (`<C-i>`, the jump forward). `o` on a link to a PR opens the PR's view here,
 the only link with a second way to open, whether or not the PR is registered; on anything else `o`
 keeps what it means in that view (to the draft in a chat, to the router in a page). A markdown
-surface, the Task Board and a question draw no chips, but a link written in them opens the same way. `]l` and `[l` walk them, wrapping at the ends, and in a
+surface and a question draw no chips, but a link written in them opens the same way. `]l` and `[l` walk them, wrapping at the ends, and in a
 chat or thread stop at its images and its waiting questions (on the first option, where `<CR>`
 answers) too; they don't enter the composer. `iso <role> link <thing>` prints the address of an agent
 (`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or
@@ -559,8 +561,8 @@ connect in the background, at most every 30s, the chips drawn again when that ch
 
 Surfaces are files in a repo's `iso/`, written only by its router. isovim watches them, hot-reloads
 them, and writes a `*.surface.error` beside any that's broken or whose target is gone. A markdown
-surface, the Task Board or a question opens as a tab of its own in its repo's scope, named as its
-Inbox row is (Task Board, the surface's title, the question's name) after the row's glyph; closing
+surface or a question opens as a tab of its own in its repo's scope, named as its
+Inbox row is (the surface's title, the question's name) after the row's glyph; closing
 the tab closes it and its input box, which has no tab. The landing is
 one tab, isovim, in every scope.
 
@@ -572,8 +574,7 @@ one tab, isovim, in every scope.
 | file / folder | `iso router surface file\|folder <path>` | the file as a tab in the main window; the folder as the explorer's root |
 | chat | `iso router surface chat <agent>` | a green dot; consumed when you press Enter on it |
 | link | `iso router surface link <url\|iso:...> [label] [--note "one line"]` | its label and note dim; in the Inbox until you open it (`<CR>`: a web page in isovim's Chrome, anything else where isovim keeps it), then under Files (see Links) |
-| Task Board | the router edits `tasks.md`: headings todo / doing / waiting / blocked / done (a heading's first word names it), one line per task | the sections that hold tasks, each task after its status's glyph, an owner like `(a1)` dimmed, alone in its window with no input box; one that doesn't parse shown as it is and marked broken |
-| PRs | isovim, for a repo (or the root) with PRs registered by `iso <role> pr` (which keeps who registered each and when) | drawn by isovim (`isovim_prs`) from the PRs' cache, never waiting on gh: grouped Open, Draft, Merged today, Closed, a merged or closed one gone a day after; a line each with its CI glyph, `#n` and title, its review (approved, changes requested, review required), the agent that registered it and its age. `<CR>` opens the PR in the browser, `y` copies its URL, `c` opens its Files changed, `a` the agent's chat. A plain row after the Task Board with how many it lists; in the Inbox, with how many, while a PR waits on you (open, not a draft, CI green, no changes requested) |
+| PRs | isovim, for a repo (or the root) with PRs registered by `iso <role> pr` (which keeps who registered each and when) | drawn by isovim (`isovim_prs`) from the PRs' cache, never waiting on gh: grouped Open, Draft, Merged today, Closed, a merged or closed one gone a day after; a line each with its CI glyph, `#n` and title, its review (approved, changes requested, review required), the agent that registered it and its age. `<CR>` opens the PR in the browser, `y` copies its URL, `c` opens its Files changed, `a` the agent's chat. A plain row with how many it lists; in the Inbox, with how many, while a PR waits on you (open, not a draft, CI green, no changes requested) |
 
 **Pages** are for reading and discussing what a router writes, design docs first. A page holds no
 state: comments live beside it, one JSON object a line (`id` c1, c2…, the `quote` of the lines it's
@@ -629,7 +630,7 @@ open or resolved, `replies`, and once resolved `resolved_by`, `note`). In the pa
 
 **Marking read or unread.** You shouldn't have to be the last to act on something for it to leave your
 attention. `U` on any surface's, thread's or agent's row in the sidebar, `u` in a surface's view
-(markdown, a page, the Task Board, the PRs) or on a thread's conversation, and `U` on any chat's
+(markdown, a page, the PRs) or on a thread's conversation, and `U` on any chat's
 conversation are one toggle: if it's holding your attention it goes read, else it goes unread.
 Read clears everything that holds it, unread and your turn alike, so a thread leaves the Inbox till
 the agent's next post (`D` does the same on a thread, not as a toggle); a surface you hadn't opened
@@ -699,8 +700,8 @@ folder or a link, which have no view of their own.
   names stays (a pinned path likewise unpins); a chat pointer goes at once too. Markdown, a page with
   its comments and an answered question hold content, so they go after a one-key `y` in the command
   line (`Remove page "X" and its 3 comments? y/n`); a question still waiting goes only on a `y` to
-  "its asker waits on it", else it stays with that hint. The Task Board and the PRs surface are
-  isovim's views: `d` hides them for the repo until they change (a new task, a PR), kept in
+  "its asker waits on it", else it stays with that hint. The PRs surface is
+  isovim's view: `d` hides it for the repo until it changes (a new PR), kept in
   `run/<repo>/hidden.json`. Each publishes `surface.<repo>.<name>.removed`, and its open tab closes.
 
 ## The sidebar
@@ -727,7 +728,7 @@ Inbox 2                     ← the shown host's: every surface that needs you
   ▾ Threads 2  ● new reply  ← its open threads, marked while a reply waits unread
   ├─  project structure
   └─  hot reload
-  ▸ Surfaces 3              ← the Task Board, the PRs, pages, write-ups (folded at first)
+  ▸ Surfaces 3              ← the PRs, pages, write-ups (folded at first)
   ▸ Files 1                 ← file and folder surfaces, pinned paths (folded at first)
   ▾ Root 12                 ← what its roots decided, how many on the left; gone with none
   └─ 󰊛 Decisions 12
@@ -772,7 +773,7 @@ A project's rows sit in sections, in this order: Inbox, Threads, Surfaces, Files
 with its count that Enter or Tab folds, its rows on dim tree guides (`├─`, `└─` for the last); an
 empty one isn't shown. The Inbox holds only the surfaces that need you (questions live only there),
 and a surface moves to its section once it's dealt with. Threads holds the repo's open threads and
-says when one has a reply you haven't read; Surfaces the Task Board first, then the PRs, pages and
+says when one has a reply you haven't read; Surfaces the PRs first, then pages and
 write-ups; Files the file and folder surfaces and pinned paths (the repo's tree stays the
 explorer's, `E`); Root its decision log (see Surfaces), with how many decisions it holds, gone when
 there are none; Agents the rest of the agents, with how many run at the right. The router has a row
@@ -911,7 +912,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 - **A router owns its workers' life, as CRUD.** Create: `iso router spawn` (hidden until `H`). Read:
   `ls`, `status`, `peek`, `wait`, `transcript`. Update: `msg`, `restart`. Delete: `iso router rm
   <agent>` once a worker's work has landed and nothing more is expected of it, unless the router keeps
-  it as the standing owner of an area it keeps sending follow-ups to, which its Task Board line says.
+  it as the standing owner of an area it keeps sending follow-ups to, which a thread about that area says.
   Cleaning up finished workers is the router's job, not the reaper's.
 - **`iso <role> rm <agent>... [--keep-branch] [--force]`** is a router's, repo-root's or root's, on the
   agents it may restart: its own descendants; for a router or repo-root any agent in its repo; for the
@@ -1147,4 +1148,3 @@ clu's root on cleopatra, starts cold. New-layout agents keep running, a host's `
 
 - isovim's own plugin list in place of LazyVim.
 - Events and attach across hosts (`host.*`, `<host>:` topics).
-- A kanban view of `tasks.md`.

@@ -3,7 +3,7 @@
 --   iso:agent/<owner>/<repo>/aN          an agent's chat (root/aN, general/aN too)
 --   iso:thread/<owner>/<repo>#t3          a thread
 --   iso:pr/<owner>/<repo>#12              a PR, on GitHub; o instead opens its view here
---   iso:surface/<owner>/<repo>/<name>     a surface (the Task Board is tasks, the PRs PRs)
+--   iso:surface/<owner>/<repo>/<name>     a surface (the PRs surface is PRs)
 --   iso:page/<owner>/<repo>/<name>[#c4]   a page, at a comment
 --   iso:file/<path>                       a file or folder (absolute; ~ is home)
 --   http(s)://...                         a web page: a dev server on localhost or 127.0.0.1:<port>,

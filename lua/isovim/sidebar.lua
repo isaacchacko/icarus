@@ -246,7 +246,7 @@ local KINDS = {
     end,
     id = { "host", "repo_key", "section" },
   },
-  -- A surface: one format per type (markdown, question, file, folder, chat, the Task Board).
+  -- A surface: one format per type (markdown, question, file, folder, chat).
   surface = {
     format = function(item, width)
       -- In an Inbox, under a tree guide; else indented as its group's agents are.
@@ -373,7 +373,7 @@ local function confirmed(question)
 end
 
 -- d on a surface: a file or folder surface only points, so it goes at once (what it names stays),
--- as does a chat's; the Task Board and the PRs surface, isovim's own views, hide until they change;
+-- as does a chat's; the PRs surface, isovim's own view, hides until it changes;
 -- anything holding content (markdown, a page and its comments, an answered question) goes after a
 -- y; a question still waiting goes only if you say so, its asker waiting on it otherwise.
 function M.delete_surface(item)
@@ -385,7 +385,7 @@ function M.delete_surface(item)
   local kind = entry.type
   if kind == "decisions" then
     return Snacks.notify.info("The decision log is kept: it's what your roots decided", { title = "isovim" })
-  elseif kind == "tasks" or kind == "prs" then
+  elseif kind == "prs" then
     surfaces.hide(entry)
   elseif kind == "thread" then
     -- Resolved by you, kept with its posts (iso <role> thread ls --all, show): it leaves the list.
@@ -493,16 +493,6 @@ function M.surface_chunks(entry)
     elseif entry.raised and not entry.answer and entry.raised_by ~= "isovim" then
       row[#row + 1] = { "  ↑ " .. (entry.why or ("raised by " .. (entry.raised_by or "a root"))), "DiagnosticWarn" }
     end
-  elseif kind == "tasks" then
-    for _, name in ipairs({ "doing", "blocked", "waiting", "todo" }) do
-      local n = entry.counts and entry.counts[name] or 0
-      if n > 0 then
-        local task_glyph, task_hl = unpack(TASK_GLYPHS[name])
-        -- A space after the glyph: ◐ and ⊘ are ambiguous-width, and fonts that draw them wide
-        -- would cover the count.
-        vim.list_extend(row, { { "  " .. task_glyph .. " ", task_hl }, { tostring(n), "Comment" } })
-      end
-    end
   elseif kind == "decisions" then
     row[#row + 1] = { "  " .. tostring(entry.count or 0), "Comment" }
   elseif kind == "prs" then
@@ -566,7 +556,7 @@ function M.surface_chunks(entry)
   if entry.marked_unread then
     row[#row + 1] = { "  unread", "DiagnosticWarn" }
   end
-  -- A markdown surface or the Task Board that doesn't parse still opens, saying why.
+  -- A markdown surface that doesn't parse still opens, saying why.
   if entry.error and kind ~= "broken" then
     row[#row + 1] = { "  broken", "DiagnosticError" }
   end
@@ -909,7 +899,7 @@ end
 -- The sections a group's rows sit in, in this order: the Inbox (what needs you; questions only
 -- ever here; a thread whose turn is yours too), Threads (a repo's open ones, marked while one
 -- waits on you or has a reply you haven't read, then its last 5 resolved, dimmed), Surfaces
--- (the Task Board, the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
+-- (the PRs, pages, write-ups), Files (file and folder surfaces, pinned paths), Root
 -- (what its roots decided) and Agents. An empty one isn't shown, but for a repo's
 -- Threads. The Inbox and Threads start open, the rest folded; each one's state is kept per repo and
 -- host (isovim.collapsed, in the session). M.all_rows opens them all.
@@ -967,7 +957,7 @@ local function group_sections(items, base, host, key, opts)
       inbox[#inbox + 1] = entry
     elseif kind == "file" or kind == "folder" or kind == "link" then
       files[#files + 1] = entry
-    elseif kind == "tasks" or kind == "prs" then
+    elseif kind == "prs" then
       boards[#boards + 1] = entry
     elseif kind ~= "question" and kind ~= "chat" then
       -- A page beneath another isn't a row but through its Inbox, its links and the jump picker.
@@ -976,10 +966,6 @@ local function group_sections(items, base, host, key, opts)
       end
     end
   end
-  -- The Task Board, then the PRs.
-  table.sort(boards, function(a, b)
-    return a.type == "tasks" and b.type ~= "tasks"
-  end)
   local function guide(i, n)
     return i == n and "└─ " or "├─ "
   end
@@ -1996,7 +1982,7 @@ local LIST_KEYS = {
   { "t", "isovim_new_thread", "a new thread with the project's router (isovim.threads): its title, then your first post; a post of only qqq asks for the agent's last post shorter, www for it as if you had no context" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
-  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
+  { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the project (in Root, on the Inbox's title or in General: the host; on a surface in the Inbox, its project)" },
@@ -2017,7 +2003,7 @@ local RETIRED_KEYS = {
   { "a", "isovim_add", "s spawns", legacy = true },
   { "A", "isovim_add_agent", "s spawns", legacy = true },
   { "b", "isovim_last_workspace", "<leader>ip" },
-  { "T", "isovim_toggle_tasks", "tasks move to the Task Board (iso/tasks.md)" },
+  { "T", "isovim_toggle_tasks", "agents' tasks are retired: threads and the thread board track work" },
 }
 local FOOTER_KEYS = {
   { "<cr>", "isovim_open_footer", "on Settings, open ~/.isovim/config.json as a tab; on cpu, ram, measure them; on not updating, check again" },
@@ -2074,7 +2060,7 @@ function M.help()
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
   section("The thread board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
-  section("A surface's view (markdown, a page, the Task Board, the PRs, a question)", {
+  section("A surface's view (markdown, a page, the PRs, a question)", {
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })
   section("Links (iso: addresses, drawn as chips in chats, threads, pages and PRs)", {

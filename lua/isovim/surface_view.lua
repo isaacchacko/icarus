@@ -2,12 +2,8 @@
 -- main window (isovim.show).
 --
 -- A markdown surface: a read-only markdown buffer (render-markdown draws it, as LazyVim's markdown
--- extra sets it up), its body without its frontmatter, with an input box under it. The Task Board,
--- alone in its window with no input box: drawn here instead, as markdown would draw the router's
--- words as markup (<C-j> as an HTML tag) and every task as a bullet and an empty checkbox whatever
--- its status: the sections that hold tasks, each task after its status's glyph (the sidebar's),
--- wrapped lines hung under its text, `code` drawn as code and an owner at the end like (a1)
--- dimmed. The input box is a buffer of its own, shown under the view and closed with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
+-- extra sets it up), its body without its frontmatter, with an input box under it.
+-- The input box is a buffer of its own, shown under the view and closed with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
 -- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
 -- does, and starts the router if it isn't running. It takes images as the chat's composer does
 -- (isovim.acp.images), sent with iso send --image.
@@ -64,7 +60,7 @@ M.prs_keys = {
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"tasks"|"prs"|"decisions"|"threads"|"page"|"question"
+---@field kind "markdown"|"prs"|"decisions"|"threads"|"page"|"question"
 ---@field hide_resolved? boolean threads: r hides the resolved ones
 ---@field line_items? table<integer, table> prs and decisions: the PR or decision each line is, for its keys
 ---@field buf integer the rendered view
@@ -140,57 +136,6 @@ local function task_marks(marks, row, col, text, done)
   end
 end
 
--- The Task Board's lines and their highlights ({row, col, end_col, hl} or with conceal): its title,
--- then each status that holds tasks, in the file's order of statuses. A board that doesn't parse
--- says why over the file as it is.
-local function board(entry)
-  local lines, marks = {}, {}
-  local function add(text, hl)
-    lines[#lines + 1] = text
-    if hl then
-      marks[#marks + 1] = { #lines - 1, 0, #text, hl }
-    end
-  end
-  add("Task Board", "Title")
-  if entry.repo ~= "general" then
-    local repo = "  " .. entry.repo
-    marks[#marks + 1] = { 0, #lines[1], #lines[1] + #repo, "Comment" }
-    lines[1] = lines[1] .. repo
-  end
-  if entry.error then
-    add("")
-    add(("\u{f071} tasks.md doesn't parse: %s"):format(entry.error), "DiagnosticWarn")
-    add("")
-    vim.list_extend(lines, vim.split(vim.trim(entry.body or ""), "\n", { plain = true }))
-    return lines, marks
-  end
-  local glyphs = require("isovim.sidebar").task_glyphs
-  for _, status in ipairs(surfaces.statuses) do
-    local under = vim.tbl_filter(function(task)
-      return task.status == status
-    end, entry.tasks or {})
-    if #under > 0 then
-      add("")
-      local name = status:sub(1, 1):upper() .. status:sub(2)
-      add(("%s  %d"):format(name, #under))
-      marks[#marks + 1] = { #lines - 1, 0, #name, "Bold" }
-      marks[#marks + 1] = { #lines - 1, #name, #lines[#lines], "Comment" }
-      local glyph, hl = unpack(glyphs[status])
-      for _, task in ipairs(under) do
-        local prefix = "  " .. glyph .. " "
-        add(prefix .. task.text)
-        marks[#marks + 1] = { #lines - 1, 2, 2 + #glyph, hl }
-        task_marks(marks, #lines - 1, #prefix, task.text, status == "done")
-      end
-    end
-  end
-  if #lines == 1 then
-    add("")
-    add("Nothing on the board.", "Comment")
-  end
-  return lines, marks
-end
-
 local PR_GROUPS = { { "open", "Open" }, { "draft", "Draft" }, { "merged", "Merged today" }, { "closed", "Closed" } }
 local CI = { pass = { "✓", "DiagnosticOk" }, fail = { "✗", "DiagnosticError" }, pending = { "●", "DiagnosticWarn" } }
 local REVIEW = {
@@ -214,7 +159,7 @@ end
 -- PRs, a PR a line: its CI (or merged/closed glyph), #n and title, then dim: its review, the agent
 -- that registered it and its age.
 -- The views isovim draws itself, with no input box under them.
-local DRAWN = { tasks = true, prs = true, decisions = true, threads = true }
+local DRAWN = { prs = true, decisions = true, threads = true }
 
 -- A view of what isovim makes rather than a file's: its entry, made afresh; nil for any other view.
 local function own_entry(view)
@@ -418,15 +363,13 @@ local function threads_board(entry)
 end
 
 -- The lines the view shows for a surface, and their highlights: a markdown surface's body (drawn
--- by render-markdown, so no highlights), the Task Board as board draws it, the PRs surface as
+-- by render-markdown, so no highlights), the PRs surface as
 -- prs_board does (with the PR on each line).
 ---@param entry isovim.Surface
 ---@param width? integer the window's, for what's drawn in boxes
 ---@return string[] lines, table[] marks, table<integer, isovim.Pr>? rows
 function M.render(entry, width)
-  if entry.type == "tasks" then
-    return board(entry)
-  elseif entry.type == "prs" then
+  if entry.type == "prs" then
     return prs_board(entry, width)
   elseif entry.type == "decisions" then
     return decisions_board(entry, width)
@@ -470,7 +413,7 @@ function M.lines(entry)
   return (M.render(entry))
 end
 
--- Its tab: the Task Board, a markdown surface's title, a question's name, after its Inbox row's glyph
+-- Its tab: a markdown surface's title, a question's name, after its Inbox row's glyph
 -- (the starter's bufferline reads b:isovim_tab).
 local function tab(view, entry)
   local mark = require("isovim.sidebar").surface_chunks(entry)[1]
@@ -1006,7 +949,7 @@ local function bind(view)
     end
   end
   -- Its links open with <Tab> and o, in a view that draws them as they're written.
-  if view.kind == "markdown" or view.kind == "tasks" or view.kind == "question" then
+  if view.kind == "markdown" or view.kind == "question" then
     require("isovim.links").attach(view.buf)
   end
   -- u: marked read if it's holding your attention, else unread until it's opened again; what someone's
@@ -1090,7 +1033,7 @@ local function make(entry)
     view.buf = scratch(("isovim-question://%s"):format(id), "isovim_question")
     vim.b[view.buf].completion = false
   else
-    local filetype = ({ tasks = "isovim_tasks", prs = "isovim_prs", decisions = "isovim_decisions", threads = "isovim_threads" })[entry.type] or "markdown"
+    local filetype = ({ prs = "isovim_prs", decisions = "isovim_decisions", threads = "isovim_threads" })[entry.type] or "markdown"
     view.buf = scratch(("isovim-surface://%s"):format(id), filetype)
   end
   vim.b[view.buf].isovim_surface = id
@@ -1141,13 +1084,13 @@ function M.submit(view)
   end))
 end
 
--- The Task Board's wrapped lines hang under its task's text, two cells in from the line's indent.
-local function view_window(win, question, tasks)
+-- What isovim draws hangs its wrapped lines two cells in from the line's indent.
+local function view_window(win, question, drawn)
   local wo = vim.wo[win][0]
   wo.wrap, wo.linebreak, wo.conceallevel = true, true, 2
   wo.number, wo.relativenumber, wo.signcolumn, wo.spell = false, false, "no", false
   wo.cursorline = question or false
-  wo.breakindent, wo.breakindentopt = tasks, tasks and "shift:2" or ""
+  wo.breakindent, wo.breakindentopt = drawn, drawn and "shift:2" or ""
 end
 
 local function input_window(win, view)
@@ -1183,7 +1126,7 @@ function M.dress(view, win)
 end
 
 -- Opens the surface rendered, as a tab in the main window, with its input box under it: a markdown surface's
--- always, a question's while it waits and takes your own words, the Task Board's never.
+-- always, a question's while it waits and takes your own words.
 ---@param entry isovim.Surface
 function M.open(entry)
   local view = make(entry)
@@ -1242,14 +1185,6 @@ function M.rebind()
               vim.api.nvim_buf_del_keymap(buf, mode, map.lhs)
             end
           end
-        end
-      end
-      -- A Task Board opened before it had a kind of its own was a markdown one, with a box.
-      if view.kind == "markdown" and view.name == "tasks" then
-        view.kind = "tasks"
-        local input_win = vim.fn.bufwinid(view.input)
-        if input_win ~= -1 then
-          pcall(vim.api.nvim_win_close, input_win, true)
         end
       end
       bind(view)

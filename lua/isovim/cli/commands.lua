@@ -573,7 +573,7 @@ M.list = {
                                      (the TUI also looks every minute)]=],
   },
   { name = "task", module = "agents",
-    retired = "the repo's Task Board, ~/.iso/<owner>/<repo>/iso/tasks.md",
+    retired = "the repo's threads and thread board: iso <role> thread",
     subs = {
       set = {
         args = { "<text>", "<text>..." },
@@ -592,7 +592,7 @@ M.list = {
        iso task set <id> [<title>] [--status todo|doing|waiting|blocked|done] [--parent <id>]
                                      [--detail text] [--pr N] [--linear PRO-x]
                                      add or update one of your tasks; the sidebar shows them with T
-                                     (workspace agents; retired at cutover: the router's tasks.md)
+                                     (workspace agents; retired: threads and the thread board)
        iso task rm <id>              remove one of your tasks and its subtasks
        iso task ls                   your tasks]=],
   },
@@ -753,10 +753,8 @@ M.role_actions = {
                                      also write <name>.md surfaces yourself (optional
                                      frontmatter: name, icon (a glyph, or a word:
                                      mail, chart, doc, bug, rocket, idea, plan, ...),
-                                     color, consumable) and
-                                     tasks.md, the Task Board (headings todo, doing,
-                                     waiting, blocked, done; one task a line). From a
-                                     shell, --repo owner/repo says whose]=],
+                                     color, consumable). From a shell, --repo
+                                     owner/repo says whose]=],
   },
   page = { name = "page", module = "surfaces",
     subs = {

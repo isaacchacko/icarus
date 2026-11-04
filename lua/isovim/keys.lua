@@ -598,7 +598,7 @@ local function chat_tail(ws, agent)
   return journal_tail(ws, agent)
 end
 
--- A surface as its view shows it: a question with its options, the Task Board, the PRs surface or
+-- A surface as its view shows it: a question with its options, the PRs surface or
 -- markdown rendered; a file or folder is previewed as one (file set).
 ---@return string[] lines, string? ft, string? file
 local function surface_preview(entry)
@@ -617,7 +617,7 @@ local function surface_preview(entry)
       return vim.fn.readdir(path), nil
     end
     return { path }, nil, vim.uv.fs_stat(path) and path or nil
-  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" or entry.type == "page" then
+  elseif entry.type == "markdown" or entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" or entry.type == "page" then
     return (require("isovim.surface_view").render(entry)), "markdown"
   end
   return { (entry.title or entry.name or "?") .. " (" .. tostring(entry.type) .. ")" }
