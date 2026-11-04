@@ -1206,12 +1206,17 @@ pull is the TUI's own, or `iso update`'s, one isovim command, not an agent's git
 - **The restart:** it waits until you've pressed no key for 20s, are in normal mode, and no picker
   or float has focus, and no file buffer has unsaved changes (it says once that it waits on one).
   Then `isovim updated: restarting in 5s · any key to wait`; any key postpones it until you're idle
-  again. It writes `~/.isovim/restart.json` (every open chat, most recent first, the current
-  workspace, the scope, each composer's draft; the current workspace's splits are already in its
-  `layout.json`) and exits with code 75. `bin/iso` runs nvim in a loop: on 75 it runs itself
+  again. It writes `~/.isovim/restart.json` (every open view, the one on screen and where it was
+  scrolled, the current workspace and scope, each chat's draft; the current workspace's splits are
+  already in its `layout.json`) and exits with code 75. `bin/iso` runs nvim in a loop: on 75 it runs itself
   again, the updated `bin/iso`, with no arguments, which restores the plugins first if
-  `starter/lazy-lock.json` changed. The new TUI reopens the chats of agents still running, the current
-  workspace's layout, the scope and the drafts, and deletes the file. Agents live in tmux and their
+  `starter/lazy-lock.json` changed. The new TUI brings back every view whose thing is still there, a chat,
+  thread, surface, board, PR's view, page or file, as a tab in its project, in the same order, and
+  deletes the file. Each is a stub that builds nothing until it's first shown, when it opens by its
+  kind (isovim.restore), so the cost doesn't grow with the tabs (journals run to tens of MB), a chat
+  you haven't looked at stays unread and nothing takes focus; only the view on screen opens at once,
+  scrolled as it was, or with splits the current workspace's layout. A board showing a task comes back
+  on that task. What you looked at last stays in its order, which the jump ranks by. Agents live in tmux and their
   supervisors, so they never notice. The TUI names itself in `isovim.lock` (`bin/iso` names itself
   until then), so `iso --takeover` still stops the TUI, and the loop with it.
 - A TUI started by a `bin/iso` from before the loop (no `ISOVIM_LOOP`) still pulls and hot reloads,

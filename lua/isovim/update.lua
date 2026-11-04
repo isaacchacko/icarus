@@ -5,10 +5,10 @@
 -- says why, once. It never stashes, resets or rebases. What the pull brings to lua/isovim/ hot
 -- reloads (isovim.reload's watcher sees it); what's read only at startup (starter/, bin/iso) needs a
 -- restart, which waits until you've been idle IDLE ms, in normal mode and no picker, then gives
--- NOTICE ms of notice that any key postpones. A restart saves what's open, the scope and the
--- composers' drafts to restart.json and exits with RESTART; bin/iso starts the TUI again (restoring
--- the plugins first when lazy-lock.json changed) and M.take_saved brings it back. The agents run in
--- tmux and their supervisors, so a restart never touches them.
+-- NOTICE ms of notice that any key postpones. A restart saves every open view (isovim.restore), the
+-- scope and the chats' drafts to restart.json and exits with RESTART; bin/iso starts the TUI again
+-- (restoring the plugins first when lazy-lock.json changed) and M.take_saved brings it back. The
+-- agents run in tmux and their supervisors, so a restart never touches them.
 local store = require("isovim.store")
 
 local M = {}
@@ -329,41 +329,14 @@ function M.start()
   end
 end
 
--- What's open, for the TUI bin/iso starts next: every chat (ws/agent), the current workspace and
--- scope, and what's typed in each composer. The current workspace's splits are its layout.json.
+-- What's open, for the TUI bin/iso starts next (isovim.restore): every view, the one on screen, the
+-- current workspace and scope. The current workspace's splits are its layout.json.
 local function save()
   local isovim = require("isovim")
-  local agents, seen, drafts = {}, {}, {}
-  local function add(ws, agent)
-    local key = ws .. "/" .. agent
-    if not seen[key] then
-      seen[key] = true
-      table.insert(agents, key)
-    end
-  end
-  -- Most recently opened first; a chat's buffer may be unlisted, as another scope's are.
-  for _, key in ipairs(isovim.recent_agents) do
-    local ws, agent = key:match("^(.*)/([^/]+)$")
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.b[buf].isovim_id == ws and (vim.b[buf].isovim_agent or "main") == agent and vim.api.nvim_buf_is_loaded(buf) then
-        add(ws, agent)
-      end
-    end
-  end
-  for _, chat in pairs(_G.isovim_acp_chats or {}) do
-    if vim.api.nvim_buf_is_valid(chat.buf) then
-      add(chat.ws, chat.agent)
-    end
-    if vim.api.nvim_buf_is_valid(chat.buf) and chat.lines then
-      local lines = require("isovim.acp.chat").draft(chat)
-      if vim.trim(table.concat(lines, "\n")) ~= "" then
-        drafts[chat.ws .. "/" .. chat.agent] = lines
-      end
-    end
-  end
   require("isovim.layout").save(isovim.current, isovim.is_sidebar)
-  vim.fn.writefile({ vim.json.encode({ current = isovim.current, scope = isovim.current_scope, agents = agents, drafts = drafts }) },
-    M.saved_file)
+  local saved = require("isovim.restore").snapshot()
+  saved.current, saved.scope = isovim.current, isovim.current_scope
+  vim.fn.writefile({ vim.json.encode(saved) }, M.saved_file)
 end
 
 -- Restarts the TUI onto the code on disk now (bin/iso relaunches it). Refused while a file has
@@ -380,7 +353,7 @@ function M.restart()
 end
 
 -- What the TUI before a restart saved, once: the next start reads it and it's gone.
----@return {current?: string, scope?: string, agents: string[], drafts: table<string, string[]>}?
+---@return {current?: string, scope?: string, views: table[], view?: string, pos?: table, windows: integer, sidebar: boolean}?
 function M.take_saved()
   local ok, lines = pcall(vim.fn.readfile, M.saved_file)
   if not ok then

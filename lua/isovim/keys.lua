@@ -416,6 +416,10 @@ end
 -- it, and a PR's view and another host's chat are their own.
 local function view_stands(buf, path)
   local tabs = require("isovim.tabs")
+  -- A restart's tab, checked as it was made (isovim.restore).
+  if vim.b[buf].isovim_restored then
+    return true
+  end
   local ws, agent = tabs.agent_of(buf)
   if ws then
     return vim.b[buf].isovim_agent_kind == "host" or store.agent(ws, agent) ~= nil

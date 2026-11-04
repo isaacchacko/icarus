@@ -1514,42 +1514,44 @@ end
 
 -- A fresh start picks up where the last one left off: the selected workspace's splits, chats and
 -- files, or at least its chat if its agent is still running. After a restart onto an update
--- (isovim.update), also every chat that was open, the scope and what was typed in each composer.
+-- (isovim.update), also every view that was open, each a tab built when it's first shown
+-- (isovim.restore), the one on screen, the scope, and what you last looked at in the same order.
 function M.resume()
   local saved = require("isovim.update").take_saved()
-  if saved then
-    -- Oldest first, so the most recent ends up first in recent_agents again.
-    for _, key in ipairs(vim.fn.reverse(saved.agents or {})) do
-      local ws, agent = key:match("^(.*)/([^/]+)$")
-      if ws and store.agent(ws, agent) and panes.running(ws, agent) then
-        pcall(M.open, ws, agent)
-      end
-    end
-    if saved.current and vim.uv.fs_stat(store.path(saved.current)) then
-      M.remember("current", saved.current)
-    end
+  local restore = saved and require("isovim.restore")
+  local back, recency = saved and restore.stubs(saved), {}
+  for _, name in ipairs(saved and { "recent", "recent_agents", "recent_views", "recent_scopes" } or {}) do
+    recency[name] = M[name]
+  end
+  if saved and saved.current and vim.uv.fs_stat(store.path(saved.current)) then
+    M.remember("current", saved.current)
   end
   local ws = M.current
-  if ws then
+  -- One window showing one view needs no layout, and one left from before it could open a chat
+  -- that isn't a tab any more.
+  if ws and not (saved and back[saved.view] and (saved.windows or 1) <= 1) then
     local resumed = layout.resume(ws, is_sidebar, M.open_leaf(ws))
-    if not resumed and panes.running(ws, default_agent(ws)) then
+    if not resumed and panes.running(ws, default_agent(ws)) and not (saved and back[saved.view]) then
       M.open(ws)
     end
   end
   if not saved then
     return
   end
-  local chat = require("isovim.acp.chat")
-  for key, lines in pairs(saved.drafts or {}) do
-    local open = chat.get(key:match("^(.*)/([^/]+)$"))
-    if open then
-      chat.set_draft(open, lines)
-    end
+  if ws then
+    enter_dir(ws)
   end
+  restore.finish(saved, back)
   if saved.scope then
     M.set_scope(saved.scope)
   end
+  for name, value in pairs(recency) do
+    M.remember(name, value)
+  end
   vim.cmd.stopinsert()
+  if saved.sidebar then
+    require("isovim.sidebar").focus_window("list")
+  end
 end
 
 return M

@@ -27,6 +27,10 @@ local GROUP = vim.api.nvim_create_augroup("isovim_tabs", { clear = true })
 ---@return string?
 function M.view_key(buf)
   buf = M.owner(buf)
+  local restored = vim.b[buf].isovim_restored
+  if restored then
+    return restored.key
+  end
   local ws, agent = M.agent_of(buf)
   if ws then
     return ws .. "/" .. agent
@@ -49,10 +53,19 @@ function M.agent_of(buf)
   end
 end
 
+-- The agent a tab is of: its chat's, or the one a restart left to open (isovim.restore).
+local function agent_tab(buf)
+  local restored = vim.b[buf].isovim_restored
+  if restored and restored.kind == "agent" then
+    return restored.ws, restored.agent
+  end
+  return M.agent_of(buf)
+end
+
 -- A tab's name: an agent's with its status mark as the sidebar shows it (working, finished unread,
 -- waiting on you), a surface's or the landing's own (b:isovim_tab); nil leaves bufferline's.
 function M.name(buf)
-  local ws, agent = M.agent_of(buf)
+  local ws, agent = agent_tab(buf)
   if ws then
     local status = require("isovim.status").get(ws, agent)
     local mark = ({ working = " …", unread = " ●", attention = " ●!" })[status or ""]
@@ -116,7 +129,7 @@ end
 
 -- Where a tab sorts: its group, then within it.
 local function rank(buf)
-  local ws, agent = M.agent_of(buf)
+  local ws, agent = agent_tab(buf)
   if ws then
     local spec = store.agent(ws, agent)
     local router = spec and store.role(spec) == "router"
@@ -152,7 +165,7 @@ local function blank(buf)
 end
 
 -- The windows you edit in: not the sidebar, a float, a queue or an input box.
-local function editing_windows()
+function M.editing_windows()
   local isovim = require("isovim")
   return vim.tbl_filter(function(win)
     return not isovim.is_sidebar(win) and not slot_buffer(vim.api.nvim_win_get_buf(win))
@@ -176,7 +189,7 @@ end
 
 -- A window a close or delete left blank shows your last tab instead, or the landing.
 local function fill_blank()
-  for _, win in ipairs(editing_windows()) do
+  for _, win in ipairs(M.editing_windows()) do
     if blank(vim.api.nvim_win_get_buf(win)) then
       return show_last(win)
     end
@@ -205,7 +218,7 @@ local function close_strays()
     local buf = vim.api.nvim_win_get_buf(win)
     if vim.b[buf].isovim_queue then
       local owner = M.owner(buf)
-      if (owner == buf or vim.fn.bufwinid(owner) == -1) and #editing_windows() == 0 then
+      if (owner == buf or vim.fn.bufwinid(owner) == -1) and #M.editing_windows() == 0 then
         -- The last window beside the sidebar (:bd or :q on its chat closed the chat's): it shows your
         -- last tab, rather than close and leave isovim an empty one.
         vim.w[win].isovim_slot = nil
@@ -340,7 +353,7 @@ function M.bufdelete(buf, opts)
     local mine = vim.fn.win_findbuf(buf)
     local others = vim.tbl_filter(function(win)
       return not vim.tbl_contains(mine, win)
-    end, editing_windows())
+    end, M.editing_windows())
     if #others > 0 then
       vim.cmd.stopinsert()
       for _, win in ipairs(mine) do
@@ -369,7 +382,7 @@ function M.close_window(win)
   end
   if #vim.tbl_filter(function(each)
     return each ~= win
-  end, editing_windows()) == 0 then
+  end, M.editing_windows()) == 0 then
     return vim.api.nvim_echo({ { "E444: Cannot close last window", "ErrorMsg" } }, true, {})
   end
   vim.cmd.stopinsert()
