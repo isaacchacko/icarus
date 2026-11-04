@@ -2463,10 +2463,12 @@ local function map_keys(chat)
   local taken = global_maps("n")
   local rename = "<Cmd>lua require('isovim.acp.chat').rename_thread()<CR>"
   local make_task = "<Cmd>lua require('isovim.acp.chat').task_from_thread()<CR>"
+  local attach_task = "<Cmd>lua require('isovim.acp.chat').attach_thread_task()<CR>"
   for _, lhs in ipairs(TYPING) do
-    -- A thread's R on the conversation renames it, and its C makes a task of it.
+    -- A thread's R on the conversation renames it, its C makes a task of it and its A picks one.
     local thread_rename = lhs == "R" and (chat.thread or chat.pending_title)
     local thread_task = lhs == "C" and (chat.thread or chat.pending_title)
+    local thread_attach = lhs == "A" and (chat.thread or chat.pending_title)
     if not taken[lhs] then
       map("n", lhs, function()
         if mine() then
@@ -2474,9 +2476,10 @@ local function map_keys(chat)
         elseif lhs == "o" and require("isovim.links").has_secondary() then
           return "<Cmd>lua require('isovim.links').secondary()<CR>"
         end
-        return thread_rename and rename or thread_task and make_task or to_composer
+        return thread_rename and rename or thread_task and make_task or thread_attach and attach_task or to_composer
       end, thread_rename and "rename the thread (in the composer: replace mode)"
         or thread_task and "make a task of the thread, attached to it (in the composer: vim's C)"
+        or thread_attach and "attach the thread to a task, picked (in the composer: vim's A)"
         or "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
     end
   end
@@ -2680,6 +2683,7 @@ M.help_keys = {
     { "gr", "on the thread, in root mode: hand it to the root now, past its wait; a post of yours takes it back" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
+    { "A", "on the thread: attach it to a task, picked, as on the board: first a new task of its title if it's on none, or No task, taking it off, if it's on one (in the composer, vim's A)" },
     { "C", "on the thread: make a task and attach this thread, its title filled in to accept or edit, moving it from any task it's on (in the composer, vim's C)" },
     { "t", "on the thread: a new thread beside it, on the same task if it has one (in the composer, vim's t). Its task and the threads beside it show under its banner, the threads as links" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
@@ -3664,6 +3668,16 @@ function M.task_from_thread()
       vim.notify(("isovim: task %s made: <Tab> on its chip above opens it"):format(id), vim.log.levels.INFO)
     end
   end)
+end
+
+-- A on a thread's conversation: a task for it, picked, as on the board's rows. You stay in the thread.
+function M.attach_thread_task()
+  local chat = by_buf(vim.api.nvim_get_current_buf())
+  local entry = chat and chat.thread and require("isovim.surfaces").thread_rows(chat.ws)[chat.thread]
+  if not entry then
+    return say("give this thread its title first")
+  end
+  require("isovim.task_view").actions.thread_task(chat.ws, entry)
 end
 
 -- <CR> in a thread's composer: its title (a new thread), else a post, sent to the router as a

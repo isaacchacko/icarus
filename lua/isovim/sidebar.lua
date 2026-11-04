@@ -1936,6 +1936,7 @@ local LIST_KEYS = {
   { "t", "isovim_new_thread", "a new thread with the project's router (isovim.threads): its title, then your first post; a post of only qqq asks for the agent's last post shorter, www for it as if you had no context" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
+  { "A", "isovim_attach_task", "on a thread's row, attach it to a task, picked: first a new task of its title if it's on none, or No task, taking it off, if it's on one" },
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
@@ -1955,7 +1956,7 @@ local LIST_KEYS = {
 -- says so, in place of the hint).
 local RETIRED_KEYS = {
   { "a", "isovim_add", "s spawns", legacy = true },
-  { "A", "isovim_add_agent", "s spawns", legacy = true },
+  { "A", "isovim_add_agent", "s spawns", legacy = true, on_thread = "isovim_attach_task" },
   { "b", "isovim_last_workspace", "<leader>ip" },
   { "T", "isovim_toggle_tasks", "agents' tasks are retired: threads and the thread board track work" },
 }
@@ -1984,6 +1985,11 @@ local function map_keys(buf, role)
   for _, key in ipairs(role == "list" and RETIRED_KEYS or {}) do
     local action = on_row(key[2])
     vim.keymap.set("n", key[1], function()
+      -- On a thread's row it has a meaning of its own.
+      local row = (rows[role] or {})[vim.api.nvim_win_get_cursor(0)[1]]
+      if key.on_thread and row and row.kind == "surface" and row.surface and row.surface.type == "thread" then
+        return M.actions[key.on_thread](row)
+      end
       if not (key.legacy and require("isovim.config").enforced()) then
         require("isovim.keys").hint(key[1] .. " in the sidebar", key[3])
       end
@@ -2556,6 +2562,12 @@ M.actions = {
     local ws = item and item.ws or isovim.current
     if ws then
       add_agent(ws, { kind = "terminal" })
+    end
+  end,
+  isovim_attach_task = function(item)
+    local thread = item and item.kind == "surface" and item.surface and item.surface.type == "thread" and item.surface
+    if thread and not item.host then
+      require("isovim.task_view").actions.thread_task(thread.repo, thread)
     end
   end,
   isovim_rename = function(item)

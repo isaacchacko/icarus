@@ -381,6 +381,8 @@ host; General and Terminals have none, and starting one there says why.
 - **A task from a thread:** `C` on a thread's conversation asks for a title, the thread's filled in to
   accept or edit, makes the task and attaches this thread, moving it from any task it's on, whose log says so.
   You stay in the thread, a toast names the task and the chip under the banner reaches it. It's the key's alone.
+  `A` there, or on a thread's row in the sidebar, picks a task for it, as on the board: first a new task of its
+  title if it's on none, or No task, taking it off, if it's on one, then the tasks. In the composer `A` and `C` are vim's.
 - **PRs and tickets on a task:** the one thing agents may change, as they make most of them: `iso <role>
   task link <id> <ref> [title]` and `task unlink`, for any role, in the log with who did it. `K` in a task's
   view or on its card does the same. A PR is a URL, `owner/repo#n` or `#n`, registered in the repo too so its
