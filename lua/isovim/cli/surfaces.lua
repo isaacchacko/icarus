@@ -410,7 +410,7 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all|--tree] | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
@@ -559,6 +559,18 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s is %q now"):format(repo, id, title))
+  elseif sub == "ls" and flag(args, "--tree") then
+    local tree = threads.tree(repo)
+    if #tree == 0 then
+      out(repo .. " has no threads")
+    end
+    for _, row in ipairs(tree) do
+      local info = row.info
+      out(("%s%s  %s  %d posts%s%s%s"):format(row.guide, info.id, info.title, info.posts,
+        info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome:match("^[^\n]*")) or "")) or "",
+        (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or ""),
+        info.waiting_on and ("  waiting on " .. info.waiting_on) or ""))
+    end
   elseif sub == "ls" then
     local list = threads.list(repo, flag(args, "--all"))
     if #list == 0 then

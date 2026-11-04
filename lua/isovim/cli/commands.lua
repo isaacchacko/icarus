@@ -815,7 +815,7 @@ M.role_actions = {
       resolve = { args = { "<text>", "<text>..." } },
       rename = { args = { "<text>", "<text>..." } },
       ask = { args = { "<text>", "<path>" } },
-      ls = { flags = { ["--all"] = false } },
+      ls = { flags = { ["--all"] = false, ["--tree"] = false } },
       show = { args = { "<text>" } },
       bypass = { args = { "<text>", "<text>" } },
       release = { args = { "<text>..." } },
@@ -891,7 +891,8 @@ M.role_actions = {
                                      it reattaches
        iso thread rename <id> <title...>
                                      a new title (posts already sent keep their tags)
-       iso thread ls [--all]         the repo's open threads (--all: resolved too)
+       iso thread ls [--all|--tree]  the repo's open threads (--all: resolved too; --tree: all
+                                     of them, each child indented under its parent)
        iso thread show <id>          a thread's posts
                                      Any role can make, post on, rename and resolve threads
                                      and read them (ls, show); routers own them. Only a router

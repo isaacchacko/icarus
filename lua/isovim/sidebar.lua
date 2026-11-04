@@ -235,6 +235,12 @@ local KINDS = {
       return row
     end,
     open = function(item)
+      -- Threads opens its tree of who spawned what, <Tab> folding it as any section.
+      local tree = item.section == "Threads" and not item.host and M.surfaces().threads_entry(item.repo_key, true)
+      if tree then
+        M.surfaces().open(tree)
+        return M.refresh()
+      end
       M.set_section_folded(item.host, item.repo_key, item.section, not item.collapsed)
       M.refresh()
     end,
@@ -435,6 +441,7 @@ local SURFACE_GLYPHS = {
   markdown = { "\u{f48a}", "Special" }, -- oct-markdown
   page = { "\u{f15c}", "Special" }, -- fa-file-text
   thread = { "\u{f086}", "Special" }, -- fa-comments
+  threads = { "\u{f0e8}", "Special" }, -- fa-sitemap
   link = { "\u{f0c1}", "Special" }, -- fa-link
   question = { "?", "DiagnosticWarn" },
   chat = { "●", "DiagnosticOk" },
@@ -1924,7 +1931,7 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Inbox, Root or a section (Threads, Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Threads header, its tree of what spawned what; on the Inbox, Root or another section (Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the project, its Inbox or a section, or Root (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its project (its worktree comes on its first edit), or in General" },
   { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },

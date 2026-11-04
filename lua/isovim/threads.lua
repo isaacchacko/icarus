@@ -446,6 +446,64 @@ function M.related(repo, id)
   return parent, children, bypass
 end
 
+-- The repo's threads as a tree, in the order they're shown: {info, depth, guide (its tree guide), shape
+-- (kept only as a child beneath it is)}. Newest root first and children oldest first, so a
+-- conversation's splits read in order. A thread whose parent is gone is a root, and so is one of a
+-- cycle written by hand. keep(info), if given, says which to show; a parent of one it keeps stays.
+function M.tree(repo, keep)
+  local all = M.list(repo, true)
+  local by_id, children, roots = {}, {}, {}
+  for _, info in ipairs(all) do
+    by_id[info.id] = info
+  end
+  for _, info in ipairs(all) do
+    if info.parent and info.parent ~= info.id and by_id[info.parent] then
+      children[info.parent] = children[info.parent] or {}
+      table.insert(children[info.parent], 1, info)
+    else
+      roots[#roots + 1] = info
+    end
+  end
+  local shown = {}
+  local function shows(info, seen)
+    if shown[info.id] == nil then
+      if seen[info.id] then
+        return false
+      end
+      seen[info.id] = true
+      local yes = not keep or keep(info)
+      for _, child in ipairs(children[info.id] or {}) do
+        yes = shows(child, seen) or yes
+      end
+      shown[info.id] = yes
+    end
+    return shown[info.id]
+  end
+  local rows, placed = {}, {}
+  local function walk(info, depth, guide, lead)
+    placed[info.id] = true
+    rows[#rows + 1] = { info = info, depth = depth, guide = guide, shape = keep ~= nil and not keep(info) }
+    local kids = vim.tbl_filter(function(child)
+      return not placed[child.id] and shows(child, {})
+    end, children[info.id] or {})
+    for i, child in ipairs(kids) do
+      local last = i == #kids
+      walk(child, depth + 1, lead .. (last and "└─ " or "├─ "), lead .. (last and "   " or "│  "))
+    end
+  end
+  for _, info in ipairs(roots) do
+    if shows(info, {}) then
+      walk(info, 0, "", "")
+    end
+  end
+  for _, info in ipairs(all) do
+    if not placed[info.id] and shows(info, {}) then
+      walk(info, 0, "", "")
+    end
+  end
+  return rows
+end
+
 -- The thread by's running turn is on, if there's just the one: a thread a router makes during it goes
 -- under it by default. No command needs telling, as a turn is marked in its thread.
 function M.turn_thread(repo, by)

@@ -661,18 +661,19 @@ end
 -- waiting on you while a router post is past what you've read or it's your turn, then those an agent
 -- resolved that you haven't read, unread until you open them, then the last few other resolved, the
 -- latest first.
+---@param all? boolean every resolved one, not only the last few
 ---@return isovim.Surface[]
-function M.threads(repo)
+function M.threads(repo, all)
   local threads = require("isovim.threads")
   local seen = threads.seen(repo)
   local list = {}
-  local all = threads.list(repo, true)
+  local every = threads.list(repo, true)
   local resolved = vim.tbl_filter(function(info)
     return info.status == "resolved"
-  end, all)
+  end, every)
   for _, info in ipairs(vim.tbl_filter(function(info)
     return info.status == "open"
-  end, all)) do
+  end, every)) do
     local file = threads.file(repo, info.id)
     -- A reply you haven't read, or your turn, which outlasts your reading it; a question waiting is in
     -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
@@ -727,9 +728,11 @@ function M.threads(repo)
       new_reply = new_reply,
       waiting_on = on_you and "user" or worker,
       waiting_name = worker and worker_name(worker),
+      bypass_name = info.bypass and worker_name(info.bypass),
       pending = info.pending,
       sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
-        tostring(needs_you), info.pending, tostring(info.waiting_on))),
+        tostring(needs_you), info.pending, tostring(info.waiting_on))
+        .. tostring(info.parent) .. tostring(info.bypass)),
     }
   end
   table.sort(resolved, function(a, b)
@@ -741,7 +744,7 @@ function M.threads(repo)
   local listed = vim.tbl_filter(unread, resolved)
   vim.list_extend(listed, vim.list_slice(vim.tbl_filter(function(info)
     return not unread(info)
-  end, resolved), 1, RESOLVED_LISTED))
+  end, resolved), 1, all and #resolved or RESOLVED_LISTED))
   for _, info in ipairs(listed) do
     list[#list + 1] = {
       repo = repo,
@@ -758,10 +761,37 @@ function M.threads(repo)
       resolved = true,
       outcome = info.outcome,
       pending = 0,
-      sig = vim.fn.sha256(("%s|%d|resolved|%s"):format(info.title, info.posts, tostring(info.outcome))),
+      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), tostring(info.parent))),
     }
   end
   return list
+end
+
+-- The Threads overview, a view of isovim's own: nil for a repo with no threads, unless empty.
+function M.threads_entry(key, empty)
+  local repo = canon(key)
+  local threads = require("isovim.threads")
+  if threads.refusal(repo) or not (empty or #threads.list(repo, true) > 0) then
+    return nil
+  end
+  return { repo = repo, name = "Threads", base = "Threads", type = "threads", title = "Threads", needs_you = false,
+    sig = "", error_file = "", file = threads.dir(repo) }
+end
+
+-- Every thread of the repo as a row, marked unread as the sidebar's rows are, by id.
+function M.thread_rows(repo)
+  repo = canon(repo)
+  local unread = read_unread(repo)
+  local rows = {}
+  for _, entry in ipairs(M.threads(repo, true)) do
+    if entry.type == "thread" then
+      if unread[entry.base] and not entry.resolved then
+        entry.needs_you, entry.marked_unread = true, true
+      end
+      rows[entry.name] = entry
+    end
+  end
+  return rows
 end
 
 -- One surface by name; nil when it has none.
@@ -1527,8 +1557,8 @@ function M.open(entry)
   if entry.error then
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
-  if entry.type == "prs" or entry.type == "decisions" then
-    -- Drawn by isovim: its PRs, or its decisions.
+  if entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" then
+    -- Drawn by isovim: its PRs, its decisions, or its threads as a tree.
     require("isovim.surface_view").open(entry)
   elseif entry.type == "markdown" or entry.type == "tasks" then
     -- Rendered, with an input box to the repo's router under it.
@@ -1608,6 +1638,9 @@ function M.watch(on_change)
     local before = signature(M.cache[repo] or {})
     M.cache[repo] = M.scan(repo)
     require("isovim.safe").wrap("a page's dives", require("isovim.pages").sync)(repo, M.cache[repo])
+    if package.loaded["isovim.surface_view"] then
+      require("isovim.surface_view").threads_changed(repo)
+    end
     if signature(M.cache[repo]) ~= before then
       if on_change then
         on_change(repo, M.cache[repo])

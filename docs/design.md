@@ -334,6 +334,14 @@ host; General, Root and Terminals have none, and starting one there says why.
   and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
+- **The overview:** a tree of the project's threads, what spawned what, as a tab of isovim's own: `<CR>`
+  on the Threads header in the sidebar (`<Tab>` still folds it), `<leader>iO`, or `<leader><leader>`.
+  Each row is drawn as the sidebar's, with its id and who it goes to, under its parent on a tree
+  guide: newest root first, children oldest first, so a conversation's splits read in order. `<CR>`
+  opens the thread. The resolved show, dimmed with their outcome's first line, as the point is seeing
+  what spawned what; `r` hides them, but for a parent of one still shown, kept for the shape, and any
+  still unread. A thread whose parent is gone is a root. It's redrawn as the repo's iso/ changes, if
+  it reads differently. `iso <role> thread ls --tree` prints the same, for agents.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
   posts (`working…` while the router's turn on it runs). One with a router post you haven't read
   waits on you: it's in the host's Inbox (`new reply`) until you open it. Threads always shows for

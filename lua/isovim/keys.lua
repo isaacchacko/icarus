@@ -385,6 +385,10 @@ local function jump_items(hidden)
         rows[#rows + 1] = { kind = "pr", repo_key = key, group_key = key, pr = pr, url = pr.url }
       end
     end
+    local tree = surfaces.threads_entry(key)
+    if tree then
+      rows[#rows + 1] = { kind = "surface", surface = tree, repo_key = key, group_key = key, name = tree.name, depth = 0 }
+    end
   end
   for i, row in ipairs(rows) do
     if jumpable(row) then
@@ -613,7 +617,7 @@ local function surface_preview(entry)
       return vim.fn.readdir(path), nil
     end
     return { path }, nil, vim.uv.fs_stat(path) and path or nil
-  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" or entry.type == "decisions" or entry.type == "page" then
+  elseif entry.type == "markdown" or entry.type == "tasks" or entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" or entry.type == "page" then
     return (require("isovim.surface_view").render(entry)), "markdown"
   end
   return { (entry.title or entry.name or "?") .. " (" .. tostring(entry.type) .. ")" }
@@ -941,6 +945,13 @@ M.GROUP = {
     local current = isovim().current_scope
     require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
   end, "a new thread with the project's router" },
+  { "O", function()
+    local tree = require("isovim.surfaces").threads_entry(isovim().current_scope or "", true)
+    if not tree then
+      return vim.notify("isovim: threads live in a project with a router", vim.log.levels.INFO)
+    end
+    require("isovim.surfaces").open(tree)
+  end, "the project's threads as a tree: what spawned what" },
   { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)
