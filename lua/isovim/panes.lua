@@ -411,7 +411,7 @@ M.instructions = instructions
 M.v0_text = v0_text
 
 -- Raise it when isovim's built-in text changes in a way agents already running must be told.
-M.text_revision = 2
+M.text_revision = 3
 
 -- What says whether a resumed ACP session's role prompt changed (isovim.acp.host): the role, the
 -- user's files (instructions.md, the role's prompt file and plugin, what a router's dedicated to) and text_revision, but not isovim's own

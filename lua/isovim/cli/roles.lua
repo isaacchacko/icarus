@@ -233,6 +233,14 @@ local function spawn_acp(key, dir, spec)
     fail(err or "could not add the agent")
   end
   c.ensure_running(c.resolve(key), agent)
+  -- The address is the last line, whatever reads it and however stderr is joined in.
+  if spec.dedicated then
+    local on_task = spec.dedicated.task
+    io.stderr:write(("iso: it's dedicated to %s. %s\n"):format(on_task and ("task " .. on_task) or spec.dedicated.component,
+      on_task and "The user's posts on that task's threads, old and new, go straight to it now, unless one's bypassed to a worker; removing it brings them back to you."
+        or "A thread goes to it when you bypass it there (iso router thread bypass <id> <it>)."))
+    io.stderr:flush()
+  end
   out(key .. "/" .. agent.id)
 end
 
@@ -363,11 +371,6 @@ function M.spawn(args)
   if key then
     spawn_acp(key, dir, { kind = kind, name = name, prompt = prompt ~= "" and prompt or nil, role = role,
       parent = not ROOTS[role] and address or nil, read_only = read_only or nil, hidden = hidden, dedicated = dedicated })
-    if dedicated then
-      io.stderr:write(("iso: it's dedicated to %s. %s\n"):format(dedicated.task and ("task " .. dedicated.task) or dedicated.component,
-        dedicated.task and "The user's posts on that task's threads, old and new, go straight to it now, unless one's bypassed to a worker; removing it brings them back to you."
-          or "A thread goes to it when you bypass it there (iso router thread bypass <id> <it>)."))
-    end
     c.tui("require('isovim').refresh()")
     return
   end
