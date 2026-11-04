@@ -5,7 +5,8 @@
 -- starter/ is LazyVim's config, which lazy.nvim reads once at startup: config/keymaps.lua runs
 -- again, and any other change there says to restart. A save or a git pull fires many events: they
 -- are taken together, once git is done with its index. The watchers live in _G, so a reload of
--- this file closes the old ones.
+-- this file closes the old ones. A reload that fails while running setup goes in errors.log and to
+-- isovim's router, and tries again by itself, the files it was for still counted.
 local M = {}
 
 local lua_dir = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
@@ -83,6 +84,28 @@ local function describe(files)
   return #files <= 4 and table.concat(files, ", ") or (#files .. " files")
 end
 
+-- Says it to isovim's router on this host, if it has one, as isovim's own message.
+local function tell_router(text)
+  local key = require("isovim.repos").of(repo)
+  local router = key and require("isovim.store").router(key)
+  local ws, id = (router or ""):match("^(.*)/([^/]+)$")
+  if ws then
+    require("isovim.acp").call(ws, id, "prompt", { text = text, kind = "from", message = text, publish = true })
+  end
+end
+
+-- After a reload that failed: waits while you're typing, as a reload redraws what you're in.
+local RETRY_MS = { 3000, 15000, 60000 }
+
+local function retry(flush, wait)
+  state.timer:start(wait, 0, require("isovim.safe").schedule_wrap("hot reload", function()
+    if vim.fn.mode():match("^[icR]") then
+      return retry(flush, 2000)
+    end
+    flush()
+  end))
+end
+
 local function flush()
   if vim.uv.fs_stat(git_dir() .. "/index.lock") then
     return state.timer:start(200, 0, require("isovim.safe").schedule_wrap("hot reload", flush))
@@ -107,9 +130,30 @@ local function flush()
     end
     if ok then
       table.insert(lines, "isovim reloaded: " .. describe(lua_files))
+      if (state.tries or 0) > 0 then
+        pcall(tell_router, ("[isovim: the TUI's hot reload worked on try %d, after failing.]"):format(state.tries + 1))
+      end
+      state.tries = 0
     else
       level = "error"
       table.insert(lines, "isovim reload failed, kept the old code:\n" .. err)
+      require("isovim.safe").log_error("hot reload", ("%s\nfor %s"):format(err, table.concat(lua_files, ", ")))
+      -- The next try is for these too, so what they changed gets redrawn. One that doesn't compile
+      -- waits for its fix, and that change brings the rest along.
+      for _, rel in ipairs(lua_files) do
+        state.changed.lua[rel] = true
+      end
+      if #errors == 0 then
+        state.tries = (state.tries or 0) + 1
+        local wait = RETRY_MS[state.tries]
+        if state.tries == 1 or not wait then
+          pcall(tell_router, ("[isovim: the TUI's hot reload failed and kept the old code (%s): %s %s]")
+            :format(describe(lua_files), err, wait and "It tries again by itself." or "It has stopped trying; the next change to isovim's files tries again."))
+        end
+        if wait then
+          retry(flush, wait)
+        end
+      end
     end
     local supervisor = vim.tbl_filter(function(rel)
       return SUPERVISOR[rel]

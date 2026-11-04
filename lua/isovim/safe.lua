@@ -7,6 +7,20 @@ local M = {}
 
 M.log = require("isovim.store").root .. "/errors.log"
 
+-- A callback in a fast event (fs_event, a uv timer, a process's exit) can't run a module's top level,
+-- whose nvim API calls fail there. Lua marks a module as loading before running it and leaves the mark
+-- when that fails, so the next require anywhere says "loop or previous error loading module", which
+-- fails a hot reload that has unloaded everything. A searcher runs before that mark: refusing here
+-- gives the callback a clear error and leaves the module loadable.
+if not _G.isovim_fast_require_guard then
+  _G.isovim_fast_require_guard = true
+  table.insert(package.loaders, 1, function(name)
+    if (name == "isovim" or name:match("^isovim%.")) and vim.in_fast_event() then
+      error(("%s isn't loaded, and a fast event can't load it: take what the callback needs before it starts"):format(name), 0)
+    end
+  end)
+end
+
 -- When each place last told, and how many it has kept quiet since; across hot reloads.
 _G.isovim_safe = _G.isovim_safe or {}
 local told = _G.isovim_safe
@@ -27,6 +41,11 @@ local function append(name, err)
   end
 end
 
+-- Into errors.log and nowhere else, for what told its own way.
+function M.log_error(name, err)
+  pcall(append, name, err)
+end
+
 function M.report(name, err)
   pcall(append, name, err)
   local now = vim.uv.now()
@@ -43,6 +62,58 @@ function M.report(name, err)
     local message = ("isovim: %s failed%s (see %s)"):format(name, more, vim.fn.fnamemodify(M.log, ":~"))
     pcall(vim.notify, message, vim.log.levels.WARN)
   end)
+end
+
+-- What only reaches :messages or the notifier goes in errors.log too: a callback's error (E5108, a
+-- raw luv callback's) that nothing caught, or a toast at error level. Each once, across hot reloads.
+_G.isovim_logged = _G.isovim_logged or { lines = {}, toast = 0 }
+
+local function log_messages()
+  local seen = _G.isovim_logged.lines
+  local lines = vim.split(vim.fn.execute("messages"), "\n", { plain = true })
+  local i = 1
+  while i <= #lines do
+    local line = lines[i]
+    if (line:match("%f[%w]E%d%d%d+:") or line:match("^Error ")) and not seen[line] then
+      seen[line] = true
+      local block = { line }
+      while lines[i + 1] and #block < 30 and (lines[i + 1]:match("^%s") or lines[i + 1]:match("^stack traceback")) do
+        i = i + 1
+        block[#block + 1] = lines[i]
+      end
+      append(":messages", table.concat(block, "\n"))
+    end
+    i = i + 1
+  end
+end
+
+local function log_toasts()
+  local logged = _G.isovim_logged
+  for _, toast in ipairs(Snacks.notifier.get_history()) do
+    if toast.id > logged.toast then
+      logged.toast = toast.id
+      -- isovim.reload logs its own, with what it was for.
+      if toast.level == "error" and not tostring(toast.msg):match("^isovim reload failed") then
+        append("the notifier", tostring(toast.msg))
+      end
+    end
+  end
+end
+
+-- Looks every 30s, once a TUI's up; it outlives hot reloads.
+function M.watch_errors()
+  if _G.isovim_log_timer then
+    return
+  end
+  _G.isovim_log_timer = assert(vim.uv.new_timer())
+  _G.isovim_log_timer:start(5000, 30000, M.ticker("logging what reached :messages", function()
+    require("isovim.safe").log_scan()
+  end))
+end
+
+function M.log_scan()
+  log_messages()
+  pcall(log_toasts)
 end
 
 -- fn, made safe: an error is reported (M.report) and nothing returned.

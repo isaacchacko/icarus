@@ -1652,6 +1652,11 @@ function M.watch(on_change)
       end
     end
   end
+  -- Taken now: an fs_event's callback runs in a fast event, where a require can't load anything,
+  -- and in a hot reload it can land with every module unloaded. A reload's new watch rescans what
+  -- a skipped scan would have.
+  local safe = require("isovim.safe")
+  local activity_name = require("isovim.pages").ACTIVITY_NAME
   local discover
   -- True when it starts watching dir.
   local function watch_dir(dir, on_event)
@@ -1675,7 +1680,7 @@ function M.watch(on_change)
     timers[key] = timer
     handles["timer:" .. key] = timer
     timer:stop()
-    timer:start(100, 0, require("isovim.safe").schedule_wrap("the surfaces' scan", fn))
+    timer:start(100, 0, safe.ticker("the surfaces' scan", fn))
   end
   discover = function()
     -- Never an old work root again, once isovim.migrate has moved it from under this process.
@@ -1717,7 +1722,7 @@ function M.watch(on_change)
       if not handles[key] and vim.fn.isdirectory(run) == 1 then
         local handle = assert(vim.uv.new_fs_event())
         if handle:start(run, {}, function(err, name)
-          if not err and name == require("isovim.pages").ACTIVITY_NAME then
+          if not err and name == activity_name then
             soon(key, function()
               if M.cache[repo] then
                 M.relate_activity(M.cache[repo])
@@ -1757,7 +1762,7 @@ function M.watch(on_change)
   local mode = rootmode_stamp()
   local tick = assert(vim.uv.new_timer())
   handles["timer:tick"] = tick
-  tick:start(5000, 5000, require("isovim.safe").schedule_wrap("the surfaces' check", function()
+  tick:start(5000, 5000, safe.ticker("the surfaces' check", function()
     discover()
     if rootmode_stamp() ~= mode then
       mode = rootmode_stamp()

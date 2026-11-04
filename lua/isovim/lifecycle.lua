@@ -378,11 +378,9 @@ function M.start_timer()
   end
   _G.isovim_reap_timer = vim.uv.new_timer()
   local first = math.min(60, M.interval) * 1000
-  _G.isovim_reap_timer:start(first, M.interval * 1000, vim.schedule_wrap(function()
-    pcall(function()
-      local lifecycle = require("isovim.lifecycle")
-      lifecycle.reap({ live = lifecycle.live() })
-    end)
+  _G.isovim_reap_timer:start(first, M.interval * 1000, require("isovim.safe").ticker("the reaper", function()
+    local lifecycle = require("isovim.lifecycle")
+    lifecycle.reap({ live = lifecycle.live() })
   end))
 end
 

@@ -213,12 +213,14 @@ function M.start(on_change, on_tick)
   vim.fn.mkdir(store.run, "p")
   handles.debounce = assert(vim.uv.new_timer())
   handles.spinner = assert(vim.uv.new_timer())
+  -- Taken now: an fs_event's callback runs in a fast event, where a require can't load anything.
+  local safe = require("isovim.safe")
   local function on_event(err)
     if err then
       return
     end
     handles.debounce:stop()
-    handles.debounce:start(50, 0, require("isovim.safe").ticker("the agents' states", function()
+    handles.debounce:start(50, 0, safe.ticker("the agents' states", function()
       watch_all(on_event)
       on_change()
     end))

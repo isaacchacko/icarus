@@ -980,6 +980,7 @@ function M.setup(opts)
       require("isovim.hooks").check_idle()
     end))
   end
+  safe.watch_errors()
   -- Agent dirs with no record, every 10 minutes: logged only, until v0 is cut over.
   require("isovim.lifecycle").start_timer()
   -- isovim fetches its own origin and pulls and restarts onto what it finds (isovim.update).
