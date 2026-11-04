@@ -5,9 +5,9 @@
 --
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
---   {kind = "thread", id, title, created_by, at, status = "open", parent?}    its header, first
---   {kind = "parent", on = <id>|"none", by, at}     its parent thread from then on (children aren't
---                                                   stored: M.related finds them by scanning)
+--   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
+--   {kind = "task", on = <task id>|"none", by, at}  the task it's on (isovim.board_tasks), one at most;
+--                                                   a thread made in a turn on it takes it (M.new's callers)
 --   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?, keeps_wait?}
 --                                                   no_reply: it needs nothing from the user (below);
 --                                                   keeps_wait: the turn that made it also marked a worker
@@ -21,8 +21,6 @@
 -- waiting as a question surface (named <id>-<qid>, its file the thread's), so the Inbox, root mode
 -- and iso answer take it as any question; its answer is appended here, where the asker's thread
 -- ask waits for it.
---   {kind = "column", on = "backburner"|"working"|"checking"|"done", by, at}   its column on the board
---                                                   (isovim.thread_board); {kind = "priority", value (0-4), by, at}
 --   {kind = "bypass", on = <worker address>|"none", by, why?, at}   who the user's posts go to, in the
 --                                                   router's place (below); {kind = "bypass_told", upto, at}
 --   {kind = "working", state = "start"|"end", by?, died?, at}   the router's turn on one of its posts;
@@ -99,7 +97,7 @@ end
 function M.summary(entries)
   local head = entries[1] or {}
   local info = { id = head.id, title = head.title or head.id or "?", first_title = head.title, created_by = head.created_by, at = head.at,
-    status = head.status or "open", posts = 0, last_reply = 0, working = false, parent = head.parent }
+    status = head.status or "open", posts = 0, last_reply = 0, working = false }
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
   end
@@ -143,8 +141,8 @@ function M.summary(entries)
       info.status, info.outcome, info.resolved_seq = "open", nil, nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
       info.title = entry.title
-    elseif entry.kind == "parent" then
-      info.parent = entry.on ~= "none" and entry.on or nil
+    elseif entry.kind == "task" then
+      info.task = entry.on ~= "none" and entry.on or nil
     elseif entry.kind == "bypass" then
       local on = entry.on ~= "none" and entry.on or nil
       if info.bypass and info.bypass ~= on then
@@ -155,10 +153,6 @@ function M.summary(entries)
       info.ended_bypasses = vim.tbl_filter(function(each)
         return each.seq > (entry.upto or 0)
       end, info.ended_bypasses)
-    elseif entry.kind == "column" then
-      info.column = entry.on
-    elseif entry.kind == "priority" then
-      info.priority = tonumber(entry.value) or 0
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
       info.working_at = entry.at
@@ -254,20 +248,11 @@ local function append(repo, id, entry)
   return entry
 end
 
--- Why parent can't be a thread's parent here, or nil: it's a thread of the same repo, named by id.
-local function parent_refusal(repo, parent)
-  if not parent:match("^t%d+$") then
-    return ("the parent is a thread of this repo, by its id (t3), not %s"):format(parent)
-  elseif not M.read(repo, parent) then
-    return ("%s has no thread %s"):format(repo, parent)
-  end
-end
-
--- A new thread in repo, titled title, by (user or an agent's address), under parent if given; its
--- id, or nil and why.
+-- A new thread in repo, titled title, by (user or an agent's address), on task if given; its id, or
+-- nil and why.
 ---@return string? id, string? err
-function M.new(repo, title, by, parent)
-  local why = M.refusal(repo) or (parent and parent_refusal(repo, parent))
+function M.new(repo, title, by, task)
+  local why = M.refusal(repo)
   if why then
     return nil, why
   end
@@ -288,12 +273,10 @@ function M.new(repo, title, by, parent)
     fd = vim.uv.fs_open(M.file(repo, id), "wx", 420)
   until fd
   vim.uv.fs_close(fd)
-  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open", parent = parent })
-  -- On the board: in Working, or a subthread in its parent's column.
-  local above = parent and M.read(repo, parent)
-  local info = above and M.summary(above)
-  append(repo, id, { kind = "column", by = "isovim",
-    on = info and (info.column or (info.status == "resolved" and "done")) or "working" })
+  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open" })
+  if task then
+    append(repo, id, { kind = "task", on = task, by = by })
+  end
   return id
 end
 
@@ -419,110 +402,40 @@ function M.rename(repo, id, by, title)
   return title
 end
 
--- Puts the thread under parent, or under nothing ("none"), refusing a cycle.
+-- Puts the thread on a task, or on none ("none"): the board's, so the user's.
 ---@return boolean? set, string? err
-function M.set_parent(repo, id, parent, by)
+function M.set_task(repo, id, task, by)
   local entries, err = exists(repo, id)
   if not entries then
     return nil, err
   end
-  if parent ~= "none" then
-    local why = parent_refusal(repo, parent)
-    if why then
-      return nil, why
-    end
-    -- Up from the new parent: reaching this thread would make a cycle.
-    local at, seen = parent, {}
-    while at and not seen[at] do
-      if at == id then
-        return nil, parent == id and (id .. " can't be its own parent")
-          or ("%s is under %s already: that would be a cycle"):format(parent, id)
-      end
-      seen[at] = true
-      local above = M.read(repo, at)
-      at = above and M.summary(above).parent
-    end
-  end
-  append(repo, id, { kind = "parent", on = parent, by = by })
+  append(repo, id, { kind = "task", on = task, by = by })
   return true
 end
 
--- The thread's parent, if any, its children, oldest first, resolved ones too, who it's bypassed to, and
--- the title it started with if it has been renamed since, as the user's question is often all of it.
----@return string? parent, string[] children, string? bypass, string? first_title
+-- The thread's task, if any, and the other threads on it, oldest first, resolved ones too, who it's
+-- bypassed to, and the title it started with if it has been renamed since, as the user's question is
+-- often all of it.
+---@return string? task, string[] siblings, string? bypass, string? first_title
 function M.related(repo, id)
-  local parent, children, bypass, first_title = nil, {}, nil, nil
-  for _, info in ipairs(M.list(repo, true)) do
-    if info.id == id then
-      parent, bypass = info.parent, info.bypass
-      first_title = info.first_title ~= info.title and info.first_title or nil
-    elseif info.parent == id then
-      table.insert(children, 1, info.id)
-    end
-  end
-  return parent, children, bypass, first_title
-end
-
--- The repo's threads as a tree, in the order they're shown: {info, depth, guide (its tree guide), shape
--- (kept only as a child beneath it is)}. Newest root first and children oldest first, so a
--- conversation's splits read in order. A thread whose parent is gone is a root, and so is one of a
--- cycle written by hand. keep(info), if given, says which to show; a parent of one it keeps stays.
-function M.tree(repo, keep)
   local all = M.list(repo, true)
-  local by_id, children, roots = {}, {}, {}
+  local task, siblings, bypass, first_title = nil, {}, nil, nil
   for _, info in ipairs(all) do
-    by_id[info.id] = info
-  end
-  for _, info in ipairs(all) do
-    if info.parent and info.parent ~= info.id and by_id[info.parent] then
-      children[info.parent] = children[info.parent] or {}
-      table.insert(children[info.parent], 1, info)
-    else
-      roots[#roots + 1] = info
-    end
-  end
-  local shown = {}
-  local function shows(info, seen)
-    if shown[info.id] == nil then
-      if seen[info.id] then
-        return false
-      end
-      seen[info.id] = true
-      local yes = not keep or keep(info)
-      for _, child in ipairs(children[info.id] or {}) do
-        yes = shows(child, seen) or yes
-      end
-      shown[info.id] = yes
-    end
-    return shown[info.id]
-  end
-  local rows, placed = {}, {}
-  local function walk(info, depth, guide, lead)
-    placed[info.id] = true
-    rows[#rows + 1] = { info = info, depth = depth, guide = guide, shape = keep ~= nil and not keep(info) }
-    local kids = vim.tbl_filter(function(child)
-      return not placed[child.id] and shows(child, {})
-    end, children[info.id] or {})
-    for i, child in ipairs(kids) do
-      local last = i == #kids
-      walk(child, depth + 1, lead .. (last and "└─ " or "├─ "), lead .. (last and "   " or "│  "))
-    end
-  end
-  for _, info in ipairs(roots) do
-    if shows(info, {}) then
-      walk(info, 0, "", "")
+    if info.id == id then
+      task, bypass = info.task, info.bypass
+      first_title = info.first_title ~= info.title and info.first_title or nil
     end
   end
   for _, info in ipairs(all) do
-    if not placed[info.id] and shows(info, {}) then
-      walk(info, 0, "", "")
+    if task and info.task == task and info.id ~= id then
+      table.insert(siblings, 1, info.id)
     end
   end
-  return rows
+  return task, siblings, bypass, first_title
 end
 
--- The thread by's running turn is on, if there's just the one: a thread a router makes during it goes
--- under it by default. No command needs telling, as a turn is marked in its thread.
+-- The thread by's running turn is on, if there's just the one: a thread by makes during it lands on
+-- that one's task. No command needs telling, as a turn is marked in its thread.
 function M.turn_thread(repo, by)
   local working = vim.tbl_filter(function(info)
     return info.working and (info.working_by == by or (not info.working_by and not info.bypass))
@@ -583,36 +496,6 @@ function M.set_bypass(repo, id, on, by, why)
     append(repo, id, { kind = "waiting", on = "none", by = "isovim", why = "bypass" })
   end
   append(repo, id, { kind = "bypass", on = on, by = by, why = why })
-end
-
--- A card's column on the board: only the user's H and L, past where it was first placed.
-function M.set_column(repo, id, on, by)
-  local entries, err = exists(repo, id)
-  if not entries then
-    return nil, err
-  end
-  append(repo, id, { kind = "column", on = on, by = by })
-  return true
-end
-
--- Where a thread goes the first time the board has to say: resolved in Done, the rest in Working.
--- Stored once, and then the user's.
-function M.place_all(repo)
-  for _, info in ipairs(M.list(repo, true)) do
-    if not info.column then
-      append(repo, info.id, { kind = "column", on = info.status == "resolved" and "done" or "working", by = "isovim" })
-    end
-  end
-end
-
--- Its priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
-function M.set_priority(repo, id, value, by)
-  local entries, err = exists(repo, id)
-  if not entries then
-    return nil, err
-  end
-  append(repo, id, { kind = "priority", value = value, by = by })
-  return true
 end
 
 -- Who the user's posts on the thread go to: its bypass, while that worker exists, else the router.
@@ -681,9 +564,13 @@ local function shortcut(repo, id, text)
     :format(vim.trim(text), how, last.by, (last.text or ""):gsub("%s+", " "):sub(1, 60), id) or nil
 end
 
--- What the router is sent for a post of the user's.
+-- What the router is sent for a post of the user's. The tag names its task, if it's on one; the
+-- supervisor's batching needs it to end in `"]`.
 function M.prompt(repo, id, title, text)
-  return ("[thread %s#%s %q] %s"):format(repo, id, title, shortcut(repo, id, text) or text)
+  local task = M.summary(M.read(repo, id) or {}).task
+  local on = task and require("isovim.board_tasks").read(repo)[task]
+  return ("[thread %s#%s %q%s] %s"):format(repo, id, title, on and (" · task %s %q"):format(on.id, on.title) or "",
+    shortcut(repo, id, text) or text)
 end
 
 -- The thread a prompt is for, from its tag (anywhere on its first line, after a stamp): repo, id.

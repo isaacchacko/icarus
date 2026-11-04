@@ -236,15 +236,34 @@ local KINDS = {
     end,
     open = function(item)
       -- Threads opens its board (isovim.thread_board), <Tab> folding it as any section.
-      local tree = item.section == "Threads" and not item.host and M.surfaces().threads_entry(item.repo_key, true)
-      if tree then
-        M.surfaces().open(tree)
+      local board = item.section == "Threads" and not item.host and M.surfaces().threads_entry(item.repo_key, true)
+      if board then
+        M.surfaces().open(board)
         return M.refresh()
       end
       M.set_section_folded(item.host, item.repo_key, item.section, not item.collapsed)
       M.refresh()
     end,
     id = { "host", "repo_key", "section" },
+  },
+  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter opens the board on it.
+  thread_task = {
+    format = function(item, width)
+      local row = { { "  " }, { item.guide, "NonText" }, { item.task_title, "Comment" } }
+      return width and M.fit(row, width) or row
+    end,
+    open = function(item)
+      if item.host then
+        return Snacks.notify.info(("That's on %s; switch there with > (or <)"):format(item.host), { title = "isovim" })
+      end
+      local board = M.surfaces().threads_entry(item.repo_key, true)
+      if board then
+        M.surfaces().open(board)
+        require("isovim.thread_board").focus(board.repo, item.task_id)
+      end
+      M.refresh()
+    end,
+    id = { "host", "repo_key", "task_id" },
   },
   -- A surface: one format per type (markdown, question, file, folder, chat).
   surface = {
@@ -456,7 +475,7 @@ local SURFACE_GLYPHS = {
 function M.surface_chunks(entry)
   local kind = entry.type
   local title = entry.title or entry.name or "?"
-  local dim = entry.nested or (not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
+  local dim = (not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
   local title_hl = dim and "Comment" or nil
   local glyph, hl
   if kind == "file" or kind == "folder" then
@@ -990,65 +1009,34 @@ local function group_sections(items, base, host, key, opts)
       children()
     end
   end
-  -- Each subthread under its parent, dim, if that's listed with it: open under open, resolved under
-  -- resolved. Otherwise it's a row of its own.
-  local function nested(list)
-    local here, under, out = {}, {}, {}
-    for _, entry in ipairs(list) do
-      here[entry.name] = true
-    end
-    for _, entry in ipairs(list) do
-      if entry.parent and entry.parent ~= entry.name and here[entry.parent] then
-        under[entry.parent] = under[entry.parent] or {}
-        table.insert(under[entry.parent], 1, entry)
+  -- Threads under a dim row per task, in the order they come; those on none after.
+  local listed = vim.list_extend(vim.list_extend({}, threads), resolved)
+  local groups, by_task, loose = {}, {}, {}
+  for _, entry in ipairs(listed) do
+    if entry.task then
+      if not by_task[entry.task] then
+        by_task[entry.task] = { id = entry.task, title = entry.task_title, repo = entry.repo, list = {} }
+        groups[#groups + 1] = by_task[entry.task]
       end
+      table.insert(by_task[entry.task].list, entry)
+    else
+      loose[#loose + 1] = entry
     end
-    local placed = {}
-    local function place(entry, depth)
-      placed[entry.name] = true
-      out[#out + 1] = { entry = entry, depth = depth }
-      for _, child in ipairs(under[entry.name] or {}) do
-        if not placed[child.name] then
-          place(child, depth + 1)
-        end
-      end
-    end
-    for _, entry in ipairs(list) do
-      if not (entry.parent and entry.parent ~= entry.name and here[entry.parent]) then
-        place(entry, 0)
-      end
-    end
-    for _, entry in ipairs(list) do
-      if not placed[entry.name] then
-        place(entry, 0)
-      end
-    end
-    return out
   end
-  local listed = vim.list_extend(nested(threads), nested(resolved))
   section("Threads", #listed, function()
-    local tops = #vim.tbl_filter(function(row)
-      return row.depth == 0
-    end, listed)
-    local top = 0
-    for i, row in ipairs(listed) do
-      local extra
-      if row.depth == 0 then
-        top = top + 1
-        extra = { guide = guide(top, tops) }
-      else
-        -- A sibling still to come, before this branch ends.
-        local more = false
-        for j = i + 1, #listed do
-          if listed[j].depth <= row.depth then
-            more = listed[j].depth == row.depth
-            break
-          end
-        end
-        extra = { guide = (top == tops and "   " or "│  ") .. ("   "):rep(row.depth - 1) .. (more and "├─ " or "└─ ") }
+    local tops, top = #groups + #loose, 0
+    for _, group in ipairs(groups) do
+      top = top + 1
+      items[#items + 1] = vim.tbl_extend("force", base, { kind = "thread_task", task_id = group.id, task_title = group.title,
+        repo_key = group_key(group.repo), name = group.id, depth = 2, guide = guide(top, tops), section = "Threads", group_key = key })
+      local lead = top == tops and "   " or "│  "
+      for i, entry in ipairs(group.list) do
+        items[#items + 1] = surface(entry, "Threads", i, #group.list, { guide = lead .. guide(i, #group.list) })
       end
-      local entry = row.depth > 0 and vim.tbl_extend("force", row.entry, { nested = true }) or row.entry
-      items[#items + 1] = surface(entry, "Threads", i, #listed, extra)
+    end
+    for _, entry in ipairs(loose) do
+      top = top + 1
+      items[#items + 1] = surface(entry, "Threads", top, tops)
     end
   end, { count = #threads, always = opts.threads, unread = vim.iter(threads):any(function(entry)
     return entry.new_reply and not entry.marked_unread
@@ -2059,7 +2047,7 @@ function M.help()
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
-  section("The thread board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
+  section("The board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
   section("A surface's view (markdown, a page, the PRs, a question)", {
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })

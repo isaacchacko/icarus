@@ -301,7 +301,7 @@ host; General, Root and Terminals have none, and starting one there says why.
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
   address>, text, at, images?, no_reply?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working
   {state: start|end}` around the router's turn on one of its posts, `renamed {by, title}`, its
-  title from then on (posts already sent keep their tags), `waiting` (below) and `parent` (below).
+  title from then on (posts already sent keep their tags), `waiting` (below) and `task {on: <id>|none, by}` (below).
   What you've read is
   `run/<repo>/threads.json` (the last line seen, per thread).
 - **The view** is the chat's (isovim.acp.chat on the thread's file instead of a journal), a tab of
@@ -343,36 +343,43 @@ host; General, Root and Terminals have none, and starting one there says why.
   and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
-- **The board:** threads read as equal weight when some are subthreads of others, so a project's are a
-  kanban board (isovim.thread_board): one view, one buffer drawn in four columns, opened by `<CR>` on
-  the Threads header (`<Tab>` still folds it), `<leader>iO` or `<leader><leader>`, redrawn as threads
-  change. Column heads are the winbar, so they stay as it scrolls. A top-level thread is a full
-  card: icon, id, last poster, priority, wrapped title, who it waits on or goes to, unread, and its
-  children's progress (`2/3 done`). A subthread is a slim dim row, under its parent's card in the
-  same column, else `↳ t19` in its own. Within a column, priority first, then most recent. Narrow, the
-  columns shrink to 28 cells, then as many as fit show, moving as the focus does, so the layout never
-  wraps. Motion is yours: a card's column changes only when you move it with `H` or `L`, as a `column
-  {on, by}` entry in its thread. No post, state change or agent moves one, and no agent can. A new
-  thread lands in Working, a new subthread in its parent's column, and a thread older than the board
-  is placed once, resolved in Done and the rest in Working. `L` into Done resolves it and `H` out of
-  Done opens it again, prompting nobody; a thread an agent resolves stays where it is, marked, unread
-  in the Inbox as ever. Backburner leaves the Inbox and stops nagging, a new post only marking its
-  card (a question waiting stays, as its asker is blocked). As columns say nothing of state, marks
-  do, in any column: unread `●`, your turn, a question `?`, an agent working, resolved `✓`, in words
-  under the title too, a card that needs you bordered in the warning color and a slim row undimmed.
-  `priority {value}` entries hold 0-4, as Linear's. Keys: `hjkl` move, `H L` status, `0-4` priority,
-  `C` new thread, `/` search as you type, `<CR>` open, `<Esc>` clear, `gg G`, `T` the tree below, `?`.
-  `iso <role> thread board` and `thread priority <id> <0-4>` are for agents. In the sidebar each
-  subthread sits indented and dim under its parent, if that's listed with it.
-- **Tracking work:** threads and the board are how work is tracked. They replaced the Task Board: a
+- **Tasks:** a task is its own thing, and only you make one ("i am the only person who can create
+  tasks"). `iso/threads/tasks.jsonl`, appended to (isovim.board_tasks): `task {id: k1, title, by, at}`,
+  then `renamed`, `column {on, moved?}`, `priority {value}` and `deleted` entries. No agent can make,
+  rename, move or delete one: there's no command for it at any role, only the board's keys. Agents
+  read them, in `iso <role> thread board`, `thread ls`, `thread show` and the tag of a thread's prompt,
+  `[thread <repo>#t3 "<title>" · task k1 "<title>"]`. A thread is on one task at most, by a `task`
+  entry in its own file. There are no subthreads ("there are no such things as subthreads"): a thread
+  made from a thread on a task, by `thread new` in any role's turn on it or `t` in its conversation,
+  lands on the same task, beside it, without being asked. A thread on no task stays on none, as it
+  can't invent one, so one a router opens by itself or an issue's has none. Old `parent`, `column` and
+  `priority` entries in a thread's file are ignored, and nothing migrated: every thread starts on no task.
+- **The board:** a project's tasks as a kanban board (isovim.thread_board): one view, one buffer drawn
+  in four columns, Backburner, Working, Checking and Done, opened by `<CR>` on the Threads header
+  (`<Tab>` still folds it), `<leader>iO` or `<leader><leader>`, redrawn as threads and tasks change.
+  Column heads are the winbar, so they stay as it scrolls. A card is a task: icon, id, what its threads
+  are up to rolled up, priority, wrapped title and how far along it is (`2/3 done`, `✓ all 3 resolved`).
+  Under it its threads are rows you can focus, open ones first, each with its marks. Within a column,
+  priority first, then most recent. Narrow, the columns shrink to 28 cells, then as many as fit show,
+  moving as the focus does, so the layout never wraps. Motion is yours: a task's column changes only
+  when you move it with `H` or `L`, on the card or any of its rows; columns belong to tasks alone. No
+  post, state change or agent moves one, so a task whose threads all resolved stays put, and the card
+  says so. A new task lands in Working. `L` into Done resolves its open threads, prompting nobody, and
+  records which on the column entry; `H` out opens those again, not any others. Backburner keeps its
+  threads out of the Inbox, a new post only marking them, but for a question waiting, as its asker is
+  blocked. As columns say nothing of state, marks do, in any column: unread `●`, your turn, a question
+  `?`, an agent working, resolved `✓`, a card that needs you bordered in the warning color.
+  Open threads on no task are slim rows under a **No task** group at the top of Working, which `H` and
+  `L` don't move; `C` on one makes a task of its title and puts it there, and `a` picks a task for it
+  (or moves a thread between tasks). Resolved, they aren't on the board, but stay in the sidebar and
+  `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` the task's priority as Linear's, `C` new
+  task, `n` a new thread on the task (the usual path, so a title alone reaches the router), `a` attach,
+  `r` rename the task, `d` delete it after asking, its threads kept on no task, `<CR>` on a task folds
+  its threads and on a thread opens it, `/` search as you type, `<Esc>` clear, `gg G`, `?`. In the
+  sidebar, Threads are grouped under a dim row per task that has any listed, `<CR>` on it opening the
+  board there, and those on no task come after.
+- **Tracking work:** threads and the board are how work is tracked. They replaced the old Task Board: a
   repo's old `iso/tasks.md` moved once to `iso/archive/tasks-<date>.md`, out of what's scanned, kept.
-- **The tree:** `T` on the board flips to a tree of the project's threads, what spawned what.
-  Each row is drawn as the sidebar's, with its id and who it goes to, under its parent on a tree
-  guide: newest root first, children oldest first, so a conversation's splits read in order. `<CR>`
-  opens the thread. The resolved show, dimmed with their outcome's first line, as the point is seeing
-  what spawned what; `r` hides them, but for a parent of one still shown, kept for the shape, and any
-  still unread. A thread whose parent is gone is a root. It's redrawn as the repo's iso/ changes, if
-  it reads differently. `iso <role> thread ls --tree` prints the same, for agents.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
   posts (`working…` while the router's turn on it runs). One with a router post you haven't read
   waits on you: it's in the host's Inbox (`new reply`) until you open it. Threads always shows for
@@ -441,15 +448,11 @@ host; General, Root and Terminals have none, and starting one there says why.
   prompt right after, when a job's thread has been resolved or its bypass has ended, when jobs were
   mixed, and once per thread for a holder's turn from anything else (a Monitor's event has no frame
   to match, so it's among these). Each only if the turn wrote something.
-- **Parents and children:** a thread can have a parent in the same repo: `parent` on its header, or
-  `parent {on: <id>|none, by}` to change it, refusing a cycle. Children aren't stored; they're found
-  by scanning the repo's threads, resolved ones included. Under the banner, only when they exist,
-  a line for the parent and one for the children show each as a link chip with its state, so `]l`
-  and `<Tab>` work on them, updating as those threads change. `iso router thread new --parent <id>`
-  and `iso router thread parent <id> <parent>|none` set it. A router's `thread new` during its turn
-  on a thread goes under that thread by default (`--parent none` opts out): the turn is already
-  marked in its thread's file, so the command only has to look. `t` on a thread's conversation
-  starts a child of it; `<leader>it` and `t` in the sidebar start one with no parent.
+- **Under the banner:** only when they exist, a line for its task (plain text, as a task isn't a
+  link) and one for the threads beside it on that task, each a link chip with its state, so `]l` and
+  `<Tab>` work on them, updating as those threads change. A `thread new` during a turn on a thread takes
+  that thread's task: the turn is already marked in its file, so the command only has to look. `t` on a
+  thread's conversation starts one beside it; `<leader>it` and `t` in the sidebar start one on no task.
 - **The title alone:** the UI asks for the title, then your first post, and only a post prompts
   the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
   post 30s on, and goes to the router as one. A first post within that time means one prompt, not

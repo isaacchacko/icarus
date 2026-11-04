@@ -1,20 +1,24 @@
--- A project's threads as a kanban board, as all threads otherwise read as equal weight when some are
--- subthreads of others: one view (one buffer drawn in four columns, no splits), as Linear's board is.
+-- A project's board, as Linear's: one view, one buffer drawn in four columns, no splits. Cards are tasks
+-- (isovim.board_tasks), which only the user makes, renames or moves, each with its threads under it as
+-- rows. A thread is on one task at most, and there are no subthreads: a thread made from a thread on a
+-- task lands on the same task, as a sibling.
 --
--- Motion is the user's: a card's column changes only when they move it with H or L, as a column entry
--- in the thread. No post, state change or agent moves one, and no agent can. A new thread lands in
--- Working, a new subthread in its parent's column, and a thread older than the board is placed once,
--- resolved in Done and the rest in Working. L into Done resolves it, H out of Done opens it again,
--- prompting nobody; a thread an agent resolves stays where it is. Backburner leaves the Inbox and stops
--- nagging, a new post only marking its card (isovim.surfaces). So columns say nothing of state: a card's
--- marks do, in any column: unread, the user's turn, an agent working, resolved. A top-level thread is a
--- full card; a subthread is a slim dim row, under its parent's card in the same column, else with its
--- parent's id. Within a column: priority first, then most recent.
+-- Motion is the user's: a card's column changes only when they move it with H or L. No post, state
+-- change or agent moves one, so a task whose threads have all resolved stays put, and says so. L into Done
+-- resolves its open threads, prompting nobody; H out opens again the ones that move resolved, and no
+-- others. On the Backburner its threads leave the Inbox and stop nagging, but for a question waiting,
+-- as its asker is blocked (isovim.surfaces). As columns say nothing of state, marks do, in any column:
+-- unread, the user's turn, a question, an agent working, resolved; a card rolls its threads' up.
+--
+-- A thread on no task, as all are at first, as one a router opens by itself or an issue's: open, a slim row
+-- under a No task group at the top of Working, which H and L don't move. C on one makes a task of its title
+-- and a attaches it to a task. Resolved, it isn't on the board.
 --
 -- Narrow, the columns shrink to MIN_WIDTH, then the board shows as many as fit, moving as the focus
 -- does, so its layout never wraps. Column heads are the window's winbar, so they stay as it scrolls.
 local surfaces = require("isovim.surfaces")
 local threads = require("isovim.threads")
+local tasks = require("isovim.board_tasks")
 local boxes = require("isovim.boxes")
 
 local M = {}
@@ -54,87 +58,12 @@ local function highlights()
   vim.api.nvim_set_hl(0, "IsovimBoardKey", { default = true, bg = bg("CursorLine"), bold = true })
 end
 
--- The column a thread's in: where it was put.
-function M.column_of(entry)
-  return entry.column or (entry.resolved and "done" or "working")
+local function rank(task)
+  return (task.priority or 0) > 0 and task.priority or 5
 end
 
-local function rank(entry)
-  return (entry.priority or 0) > 0 and entry.priority or 5
-end
-
-local function before(a, b)
-  if rank(a) ~= rank(b) then
-    return rank(a) < rank(b)
-  elseif (a.last_at or 0) ~= (b.last_at or 0) then
-    return (a.last_at or 0) > (b.last_at or 0)
-  end
-  return (tonumber(a.name:sub(2)) or 0) > (tonumber(b.name:sub(2)) or 0)
-end
-
--- The repo's threads by column, each column's rows in order: {entry, depth, card (a top-level thread),
--- under (a parent shown elsewhere, for a subthread), done, total (its children's progress)}. query
--- keeps those whose id or title has it.
-function M.columns(repo, query)
-  threads.place_all(repo)
-  local rows = surfaces.thread_rows(repo)
-  local children = {}
-  for _, entry in pairs(rows) do
-    if entry.parent and rows[entry.parent] and entry.parent ~= entry.name then
-      children[entry.parent] = children[entry.parent] or {}
-      table.insert(children[entry.parent], entry)
-    end
-  end
-  query = query and query ~= "" and query:lower() or nil
-  local function matches(entry)
-    return not query or entry.name:lower():find(query, 1, true) ~= nil or (entry.title or ""):lower():find(query, 1, true) ~= nil
-  end
-  local columns = {}
-  for i, column in ipairs(M.COLUMNS) do
-    local shown, placed = {}, {}
-    for _, entry in pairs(rows) do
-      if M.column_of(entry) == column.key and matches(entry) then
-        shown[entry.name] = entry
-      end
-    end
-    local list = {}
-    local function place(entry, depth, under)
-      placed[entry.name] = true
-      local kids = children[entry.name] or {}
-      local done = 0
-      for _, kid in ipairs(kids) do
-        done = done + (kid.resolved and 1 or 0)
-      end
-      local has_parent = entry.parent and rows[entry.parent] and entry.parent ~= entry.name
-      list[#list + 1] = { entry = entry, depth = depth, card = not has_parent, under = under, done = done, total = #kids }
-      local here = vim.tbl_filter(function(kid)
-        return shown[kid.name] and not placed[kid.name]
-      end, kids)
-      table.sort(here, before)
-      for _, kid in ipairs(here) do
-        place(kid, depth + 1)
-      end
-    end
-    local roots = vim.tbl_filter(function(entry)
-      return not (entry.parent and shown[entry.parent] and entry.parent ~= entry.name)
-    end, vim.tbl_values(shown))
-    table.sort(roots, before)
-    for _, entry in ipairs(roots) do
-      place(entry, 0, entry.parent and rows[entry.parent] and entry.parent ~= entry.name and entry.parent or nil)
-    end
-    -- A cycle written by hand has no root in it.
-    local rest = vim.tbl_filter(function(entry)
-      return not placed[entry.name]
-    end, vim.tbl_values(shown))
-    table.sort(rest, before)
-    for _, entry in ipairs(rest) do
-      if not placed[entry.name] then
-        place(entry, 0, entry.parent)
-      end
-    end
-    columns[i] = list
-  end
-  return columns
+local function number_of(id)
+  return tonumber(id:sub(2)) or 0
 end
 
 -- What needs the user, whatever column it's in.
@@ -146,7 +75,90 @@ local function unread_of(entry)
   return entry.new_reply or entry.parked_unread or entry.marked_unread or (entry.resolved and entry.needs_you)
 end
 
--- A card's marks, at a glance: unread, the user's turn, an agent working, resolved.
+-- The board's rows by column, in order: a task {task, threads, done, folded}, a thread {entry, task?}, or
+-- the No task group {group, count}. query keeps what has it in its id or title, a task's threads with it.
+function M.columns(repo, query, folded)
+  local all_tasks = tasks.read(repo)
+  local rows = surfaces.thread_rows(repo)
+  local on_task, taskless = {}, {}
+  for _, entry in pairs(rows) do
+    if entry.task then
+      on_task[entry.task] = on_task[entry.task] or {}
+      table.insert(on_task[entry.task], entry)
+    elseif not entry.resolved then
+      taskless[#taskless + 1] = entry
+    end
+  end
+  query = query and query ~= "" and query:lower() or nil
+  local function has(id, title)
+    return not query or id:lower():find(query, 1, true) ~= nil or (title or ""):lower():find(query, 1, true) ~= nil
+  end
+  local columns = {}
+  for i in ipairs(M.COLUMNS) do
+    columns[i] = {}
+  end
+  -- Priority first, then most recent.
+  local ordered = vim.tbl_values(all_tasks)
+  for _, task in ipairs(ordered) do
+    for _, entry in ipairs(on_task[task.id] or {}) do
+      task.last_at = math.max(task.last_at or 0, entry.last_at or 0)
+    end
+  end
+  table.sort(ordered, function(a, b)
+    if rank(a) ~= rank(b) then
+      return rank(a) < rank(b)
+    elseif (a.last_at or 0) ~= (b.last_at or 0) then
+      return (a.last_at or 0) > (b.last_at or 0)
+    end
+    return number_of(a.id) > number_of(b.id)
+  end)
+  local function by_recent(a, b)
+    if (a.last_at or 0) ~= (b.last_at or 0) then
+      return (a.last_at or 0) > (b.last_at or 0)
+    end
+    return number_of(a.name) > number_of(b.name)
+  end
+  table.sort(taskless, by_recent)
+  local shown_taskless = vim.tbl_filter(function(entry)
+    return has(entry.name, entry.title)
+  end, taskless)
+  if #shown_taskless > 0 then
+    local list = columns[INDEX.working]
+    list[#list + 1] = { group = true, count = #shown_taskless }
+    for _, entry in ipairs(shown_taskless) do
+      list[#list + 1] = { entry = entry, key = entry.name }
+    end
+  end
+  for _, task in ipairs(ordered) do
+    local own = on_task[task.id] or {}
+    -- Open first, each in the order it was made, so a task's threads read as they went.
+    table.sort(own, function(a, b)
+      if (a.resolved or false) ~= (b.resolved or false) then
+        return not a.resolved
+      end
+      return number_of(a.name) < number_of(b.name)
+    end)
+    local whole = has(task.id, task.title)
+    local kept = vim.tbl_filter(function(entry)
+      return whole or has(entry.name, entry.title)
+    end, own)
+    if whole or #kept > 0 then
+      local done = 0
+      for _, entry in ipairs(own) do
+        done = done + (entry.resolved and 1 or 0)
+      end
+      local list = columns[INDEX[task.column] or INDEX.working]
+      local is_folded = folded and folded[task.id] and not query
+      list[#list + 1] = { task = task, threads = own, done = done, folded = is_folded, key = task.id }
+      for _, entry in ipairs(is_folded and {} or kept) do
+        list[#list + 1] = { entry = entry, on = task, key = entry.name }
+      end
+    end
+  end
+  return columns
+end
+
+-- A thread's marks, at a glance: unread, the user's turn, a question, an agent working, resolved.
 local function marks_of(entry)
   local parts = {}
   if unread_of(entry) then
@@ -163,6 +175,10 @@ local function marks_of(entry)
   if entry.resolved then
     parts[#parts + 1] = boxes.seg("✓", "DiagnosticOk")
   end
+  return parts
+end
+
+local function joined(parts)
   local out = boxes.seg("")
   for _, part in ipairs(parts) do
     out = boxes.cat(out, boxes.seg(" "), part)
@@ -170,94 +186,77 @@ local function marks_of(entry)
   return out
 end
 
--- What's under a card's title: the same in words, who it waits on or goes to, and how its children
--- are getting on.
-local function meta(row)
-  local entry = row.entry
-  local parts = {}
-  local function add(text, hl)
-    parts[#parts + 1] = boxes.seg(text, hl)
+-- A card's marks: its threads', once each.
+local function rolled_up(row)
+  local parts, seen = {}, {}
+  for _, entry in ipairs(row.threads) do
+    for _, part in ipairs(marks_of(entry)) do
+      -- Resolved is said under the title, in numbers.
+      if part.text ~= "✓" and not seen[part.text] then
+        seen[part.text] = true
+        parts[#parts + 1] = part
+      end
+    end
   end
-  if entry.resolved then
-    add("resolved" .. (entry.outcome and (": " .. entry.outcome:match("^[^\n]*")) or ""), "DiagnosticOk")
-  elseif (entry.pending or 0) > 0 then
-    add("? waiting on you", "DiagnosticWarn")
-  elseif entry.working then
-    add("working…", "DiagnosticInfo")
-  elseif entry.waiting_on == "user" then
-    add("your turn", "DiagnosticWarn")
-  elseif entry.new_reply or entry.parked_unread then
-    add("new reply", "DiagnosticWarn")
-  elseif entry.waiting_on then
-    add("waiting on " .. (entry.waiting_name or entry.waiting_on), "Comment")
-  end
-  if entry.bypass_name then
-    add("→ " .. entry.bypass_name, "Comment")
-  end
-  if row.total > 0 then
-    add(("%d/%d done"):format(row.done, row.total), "Comment")
-  end
-  local out = boxes.seg("")
-  for i, part in ipairs(parts) do
-    out = boxes.cat(out, i > 1 and boxes.seg(" · ", "Comment") or boxes.seg(""), part)
-  end
-  return out
+  return parts
 end
 
-local function badge(entry)
-  local b = BADGES[entry.priority or 0]
+local function badge(task)
+  local b = BADGES[task.priority or 0]
   return b and boxes.seg(b[1], b[2]) or nil
 end
 
--- A top-level thread's card: lines width cells wide.
+-- A task's card: lines width cells wide.
 local function card(row, column, width, focused)
-  local entry = row.entry
-  local border = focused and "IsovimBoardFocus" or needs_them(entry) and "DiagnosticWarn" or "IsovimPrBorder"
+  local task = row.task
+  local any_need = vim.iter(row.threads):any(needs_them)
+  local border = focused and "IsovimBoardFocus" or any_need and "DiagnosticWarn" or "IsovimPrBorder"
   local inner = width - 4
-  local head = boxes.cat(boxes.seg(column.glyph, column.hl), boxes.seg(" "), boxes.seg(entry.name, "IsovimPrDim"))
-  if entry.last_glyph then
-    head = boxes.cat(head, boxes.seg(" "), boxes.seg(entry.last_glyph[1], entry.last_glyph[2]))
-  end
-  head = boxes.cat(head, marks_of(entry))
-  local tag = badge(entry)
+  local head = boxes.cat(boxes.seg(column.glyph, column.hl), boxes.seg(" "), boxes.seg(task.id, "IsovimPrDim"), joined(rolled_up(row)))
+  local tag = badge(task)
   if tag then
     head = boxes.cat(boxes.fit(head, inner - 3), tag)
   end
   local lines = { boxes.seg("╭" .. ("─"):rep(width - 2) .. "╮", border), boxes.side(width, head, border) }
-  local title = entry.title or entry.name
-  local pieces = require("isovim.acp.look").wrap(title, inner)
+  local pieces = require("isovim.acp.look").wrap(task.title, inner)
   for i, piece in ipairs(pieces) do
     if i > 3 then
       break
     end
-    local text = title:sub(piece[1] + 1, piece[2])
+    local text = task.title:sub(piece[1] + 1, piece[2])
     if i == 3 and #pieces > 3 then
       text = vim.fn.strcharpart(text, 0, math.max(0, vim.fn.strchars(text) - 1)) .. "…"
     end
-    lines[#lines + 1] = boxes.side(width, boxes.seg(text, entry.resolved and "Comment" or (focused and "Bold" or nil)), border)
+    lines[#lines + 1] = boxes.side(width, boxes.seg(text, focused and "Bold" or nil), border)
   end
-  local under = meta(row)
-  if under.text ~= "" then
-    lines[#lines + 1] = boxes.side(width, under, border)
+  local total = #row.threads
+  local under
+  if total == 0 then
+    under = boxes.seg("no threads: n makes one", "Comment")
+  elseif row.done == total then
+    under = boxes.seg(("✓ all %d resolved"):format(total), "DiagnosticOk")
+  else
+    under = boxes.seg(("%d/%d done"):format(row.done, total), "Comment")
   end
+  if row.folded and total > 0 then
+    under = boxes.cat(under, boxes.seg("  ▸ folded", "Comment"))
+  end
+  lines[#lines + 1] = boxes.side(width, under, border)
   lines[#lines + 1] = boxes.seg("╰" .. ("─"):rep(width - 2) .. "╯", border)
   return lines
 end
 
--- A subthread's slim dim row.
+-- A thread's slim row: dim unless it needs the user, which reads in any column.
 local function slim(row, width, focused)
   local entry = row.entry
-  local lead = row.under and ("↳ " .. row.under .. " ") or ((" "):rep(math.max(0, row.depth - 1) * 2 + 1) .. "└ ")
-  -- Dim unless it needs the user: that reads in any column, slim or not.
-  local line = boxes.cat(boxes.seg(lead, "NonText"), boxes.seg(entry.name .. " ", "Comment"),
+  local glyph = entry.last_glyph and boxes.cat(boxes.seg(entry.last_glyph[1], entry.last_glyph[2]), boxes.seg(" ")) or boxes.seg("")
+  local line = boxes.cat(boxes.seg(row.on and "  " or " ", "NonText"), boxes.seg(entry.name .. " ", "Comment"), glyph,
     boxes.seg(entry.title or "", needs_them(entry) and "Normal" or "Comment"))
-  local tail = marks_of(entry)
-  if row.total > 0 then
-    tail = boxes.cat(tail, boxes.seg((" %d/%d"):format(row.done, row.total), "Comment"))
-  end
-  local tag = badge(entry)
-  if tag then
-    tail = boxes.cat(tail, boxes.seg(" "), tag)
+  local tail = joined(marks_of(entry))
+  if entry.bypass_name then
+    tail = boxes.cat(tail, boxes.seg(" → " .. entry.bypass_name, "Comment"))
+  elseif entry.waiting_on and entry.waiting_on ~= "user" then
+    tail = boxes.cat(tail, boxes.seg(" ⧗ " .. (entry.waiting_name or entry.waiting_on), "Comment"))
   end
   local out = boxes.cat(boxes.fit(line, width - boxes.cells(tail)), tail)
   if focused then
@@ -271,7 +270,7 @@ local function hints(view, width)
   if view.board_searching or (view.board_query or "") ~= "" then
     line = boxes.cat(line, boxes.seg("/", "IsovimBoardKey"), boxes.seg(" " .. (view.board_query or "") .. (view.board_searching and "▏" or "") .. "  "))
   end
-  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "/", "search" }, { "C", "new" }, { "T", "tree" }, { "?", "keys" } }) do
+  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "task" }, { "n", "thread" }, { "/", "search" }, { "?", "keys" } }) do
     local piece = boxes.cat(boxes.seg(" " .. hint[1] .. " ", "IsovimBoardKey"), boxes.seg(" " .. hint[2] .. "  ", "Comment"))
     if boxes.cells(line) + boxes.cells(piece) > width then
       break
@@ -297,35 +296,42 @@ local function fit_columns(view, width)
   return first, count, each
 end
 
--- Where the focus is, in what's listed: its card if that's still there, else what's nearest it.
+-- The rows the focus can be on, in a column: all but a group's heading.
+local function focusable(list)
+  return vim.tbl_filter(function(row)
+    return not row.group
+  end, list or {})
+end
+
+-- Where the focus is, in what's listed: its row if that's still there, else what's nearest it.
 local function settle_focus(view, columns)
   for i, list in ipairs(columns) do
-    for j, row in ipairs(list) do
-      if row.entry.name == view.board_focus then
+    for j, row in ipairs(focusable(list)) do
+      if row.key == view.board_focus then
         view.board_col, view.board_index = i, j
         return
       end
     end
   end
   local col = view.board_col or 2
-  local list = columns[col] or {}
+  local list = focusable(columns[col])
   if #list == 0 and not view.board_focus then
     for i, each in ipairs(columns) do
-      if #each > 0 then
-        col, list = i, each
+      if #focusable(each) > 0 then
+        col, list = i, focusable(each)
         break
       end
     end
   end
   local index = math.max(1, math.min(view.board_index or 1, #list))
   view.board_col, view.board_index = col, index
-  view.board_focus = list[index] and list[index].entry.name or nil
+  view.board_focus = list[index] and list[index].key or nil
 end
 
 -- The board's lines and highlights for width, and where its focus is. Pure but for the view's focus.
 function M.layout(view, width)
   highlights()
-  view.board_columns = view.board_columns or M.columns(view.repo, view.board_query)
+  view.board_columns = view.board_columns or M.columns(view.repo, view.board_query, view.board_folded)
   local columns = view.board_columns
   settle_focus(view, columns)
   local first, count, each = fit_columns(view, width)
@@ -334,12 +340,22 @@ function M.layout(view, width)
     local out = {}
     firsts[c] = {}
     for _, row in ipairs(columns[c]) do
-      local focused = row.entry.name == view.board_focus
-      firsts[c][row.entry.name] = { from = #out + 1 }
-      for _, line in ipairs(row.card and card(row, M.COLUMNS[c], each, focused) or slim(row, each, focused)) do
+      local focused = row.key ~= nil and row.key == view.board_focus
+      local from = #out + 1
+      local lines
+      if row.group then
+        lines = { boxes.fit(boxes.cat(boxes.seg("No task", "Comment"), boxes.seg("  " .. row.count, "Comment")), each) }
+      elseif row.task then
+        lines = card(row, M.COLUMNS[c], each, focused)
+      else
+        lines = slim(row, each, focused)
+      end
+      for _, line in ipairs(lines) do
         out[#out + 1] = line
       end
-      firsts[c][row.entry.name].to = #out
+      if row.key then
+        firsts[c][row.key] = { from = from, to = #out }
+      end
     end
     cells[c] = out
   end
@@ -376,19 +392,21 @@ function M.layout(view, width)
   return texts, marks, focus_at, { first = first, count = count, each = each }
 end
 
--- The column heads, as a winbar: they stay as the board scrolls, lined up with the columns.
+-- The column heads, as a winbar: they stay as the board scrolls, lined up with the columns. A column
+-- counts its tasks.
 local function winbar(view, fit, columns)
   local parts = {}
   for c = fit.first, fit.first + fit.count - 1 do
     local column = M.COLUMNS[c]
+    local n = #vim.tbl_filter(function(row)
+      return row.task ~= nil
+    end, columns[c])
     local left = c == fit.first and fit.first > 1 and "‹ " or ""
     local right = c == fit.first + fit.count - 1 and c < #M.COLUMNS and " ›" or ""
-    local name = ("%s %s %d"):format(column.glyph, column.name, #columns[c])
-    local shown = left .. name .. right
+    local shown = left .. column.glyph .. (" %s %d"):format(column.name, n) .. right
     local pad = math.max(0, fit.each - vim.fn.strdisplaywidth(shown))
     local on = c == view.board_col and "Title" or "Comment"
-    parts[#parts + 1] = ("%%#%s#%s%%#%s#%s%s"):format(column.hl, (left .. column.glyph):gsub("%%", "%%%%"), on,
-      (" %s %d%s"):format(column.name, #columns[c], right):gsub("%%", "%%%%"), (" "):rep(pad))
+    parts[#parts + 1] = ("%%#%s#%s%%#%s#%s%s"):format(column.hl, left .. column.glyph, on, (" %s %d%s"):format(column.name, n, right), (" "):rep(pad))
   end
   return table.concat(parts, (" "):rep(GAP)) .. "%#Normal#"
 end
@@ -412,7 +430,7 @@ function M.draw(view)
   end
 end
 
--- Threads changed under it: read them again, and draw if it reads differently.
+-- Threads or tasks changed under it: read them again, and draw if it reads differently.
 function M.refresh(view)
   view.board_columns = nil
   local win = vim.fn.bufwinid(view.buf)
@@ -424,12 +442,17 @@ function M.refresh(view)
 end
 
 local function focused(view)
-  local list = (view.board_columns or {})[view.board_col or 0] or {}
-  for _, row in ipairs(list) do
-    if row.entry.name == view.board_focus then
-      return row.entry
+  for _, row in ipairs(focusable((view.board_columns or {})[view.board_col or 0])) do
+    if row.key == view.board_focus then
+      return row
     end
   end
+end
+
+-- The task the focus is on or under.
+local function focused_task(view)
+  local row = focused(view)
+  return row and (row.task or row.on), row
 end
 
 local function changed(view)
@@ -443,39 +466,52 @@ local function toast(text)
   vim.notify("isovim: " .. text, vim.log.levels.INFO)
 end
 
--- H and L: the focused card a column left or right, the only thing that moves one. L into Done resolves
--- it, marked read; H out of Done opens it again, prompting nobody.
+-- H and L: the task a column left or right, the only thing that moves one. L into Done resolves its open
+-- threads, prompting nobody; H out opens again the ones that move resolved, and no others.
 local function move_status(view, direction)
-  local entry = focused(view)
-  if not entry then
-    return
+  local task = focused_task(view)
+  if not task then
+    return toast("a thread on no task isn't moved: C makes it a task, a attaches it to one")
   end
-  local repo, id = view.repo, entry.name
-  local from = M.column_of(entry)
-  local to = M.COLUMNS[INDEX[from] + direction]
+  local to = M.COLUMNS[INDEX[task.column] + direction]
   if not to then
     return toast(direction > 0 and "it's done: H opens it again" or "it's on the backburner already")
   end
+  local repo = view.repo
+  local own = vim.tbl_filter(function(entry)
+    return entry.task == task.id
+  end, vim.tbl_values(surfaces.thread_rows(repo)))
   if to.key == "done" then
-    if not entry.resolved then
-      threads.resolve(repo, id, "user")
+    local moved = {}
+    for _, entry in ipairs(own) do
+      if not entry.resolved then
+        threads.resolve(repo, entry.name, "user")
+        moved[#moved + 1] = entry.name
+      end
+      threads.dismiss(repo, entry.name)
+      surfaces.opened(repo, entry.base)
     end
-    threads.dismiss(repo, id)
-    surfaces.opened(repo, entry.base)
-  elseif from == "done" and entry.resolved then
-    threads.resolve(repo, id, "user", nil, true)
+    tasks.set_column(repo, task.id, "done", moved)
+  else
+    if task.column == "done" then
+      for _, id in ipairs(task.moved or {}) do
+        if threads.summary(threads.read(repo, id) or {}).status == "resolved" then
+          threads.resolve(repo, id, "user", nil, true)
+        end
+      end
+    end
+    tasks.set_column(repo, task.id, to.key)
   end
-  threads.set_column(repo, id, to.key, "user")
-  view.board_focus = id
   changed(view)
 end
 
 local function set_priority(view, value)
-  local entry = focused(view)
-  if entry then
-    threads.set_priority(view.repo, entry.name, value, "user")
-    changed(view)
+  local task = focused_task(view)
+  if not task then
+    return toast("priority is a task's: this thread is on none")
   end
+  tasks.set_priority(view.repo, task.id, value)
+  changed(view)
 end
 
 local function move_focus(view, column_step, row_step)
@@ -485,26 +521,25 @@ local function move_focus(view, column_step, row_step)
     if not columns[to] then
       return
     end
-    local list = columns[to]
-    -- The row nearest in its order.
+    local list = focusable(columns[to])
     local index = math.max(1, math.min(view.board_index or 1, #list))
     view.board_col, view.board_index = to, index
-    view.board_focus = list[index] and list[index].entry.name or nil
+    view.board_focus = list[index] and list[index].key or nil
   else
-    local list = columns[view.board_col or 0] or {}
+    local list = focusable(columns[view.board_col or 0])
     local index = (view.board_index or 1) + row_step
     if list[index] then
-      view.board_index, view.board_focus = index, list[index].entry.name
+      view.board_index, view.board_focus = index, list[index].key
     end
   end
   M.draw(view)
 end
 
 local function jump(view, last)
-  local list = (view.board_columns or {})[view.board_col or 0] or {}
+  local list = focusable((view.board_columns or {})[view.board_col or 0])
   local index = last and #list or 1
   if list[index] then
-    view.board_index, view.board_focus = index, list[index].entry.name
+    view.board_index, view.board_focus = index, list[index].key
     M.draw(view)
   end
 end
@@ -537,44 +572,122 @@ local function search(view)
   redraw()
 end
 
+-- C: a new task; on a thread with none, a task made of its title, with it attached.
+local function create(view)
+  local row = focused(view)
+  if row and row.entry and not row.on then
+    local id = tasks.new(view.repo, row.entry.title)
+    if id then
+      threads.set_task(view.repo, row.entry.name, id, "user")
+      view.board_focus = id
+      changed(view)
+    end
+    return
+  end
+  vim.ui.input({ prompt = "New task: " }, function(title)
+    local id = title and tasks.new(view.repo, title)
+    if id then
+      view.board_focus = id
+      changed(view)
+    end
+  end)
+end
+
+-- a: the thread on a task, picked.
+local function attach(view)
+  local row = focused(view)
+  if not (row and row.entry) then
+    return toast("a attaches a thread to a task: go to a thread's row")
+  end
+  local choices = vim.tbl_filter(function(task)
+    return not (row.on and row.on.id == task.id)
+  end, vim.tbl_values(tasks.read(view.repo)))
+  table.sort(choices, function(x, y)
+    return number_of(x.id) > number_of(y.id)
+  end)
+  if #choices == 0 then
+    return toast("there's no task to attach it to: C makes one of it")
+  end
+  vim.ui.select(choices, {
+    prompt = ("Attach %s to:"):format(row.entry.name),
+    format_item = function(task)
+      return ("%s  %s"):format(task.id, task.title)
+    end,
+  }, function(task)
+    if task then
+      threads.set_task(view.repo, row.entry.name, task.id, "user")
+      changed(view)
+    end
+  end)
+end
+
 -- The board's keys, for the help (`?` in the sidebar, and here).
 M.help_keys = {
-  { "h j k l", "the card to the left, below, above, to the right" },
-  { "H / L", "move the card a column left / right, the only thing that moves one. L into Done resolves it, H out of Done opens it again, prompting nobody; on the Backburner it's out of the Inbox and stops nagging" },
-  { "0-4", "its priority: none, urgent, high, medium, low" },
-  { "<CR>", "open the thread" },
-  { "C", "a new thread: its title, then your first post" },
-  { "/ / <Esc>", "search, filtering the cards as you type (<CR> keeps it) / clear it" },
+  { "h j k l", "the column to the left or right, the row below or above" },
+  { "H / L", "move the task a column left / right, the only thing that moves one. L into Done resolves its open threads, H out opens those again, prompting nobody; on the Backburner they leave the Inbox and stop nagging" },
+  { "0-4", "the task's priority: none, urgent, high, medium, low" },
+  { "C", "a new task; on a thread with none, a task of its title" },
+  { "n", "a new thread on the task: its title, then your first post" },
+  { "a", "attach the thread to a task, picked" },
+  { "r / d", "rename the task / delete it, its threads kept, on no task" },
+  { "<CR>", "on a task, fold its threads; on a thread, open it" },
+  { "/ / <Esc>", "search, filtering as you type (<CR> keeps it) / clear it" },
   { "gg / G", "the top / bottom of the column" },
-  { "T", "the tree of what spawned what, and back" },
   { "?", "these keys" },
 }
-
-local BOARD_KEYS = { "h", "j", "k", "l", "H", "L", "0", "1", "2", "3", "4", "C", "/", "<Esc>", "gg", "G", "?", "<CR>", "T" }
-
-function M.unbind(view)
-  for _, lhs in ipairs(BOARD_KEYS) do
-    pcall(vim.keymap.del, "n", lhs, { buffer = view.buf })
-  end
-end
 
 function M.bind(view)
   local function on(lhs, fn, desc)
     vim.keymap.set("n", lhs, function()
-      require("isovim.safe").wrap("the thread board", fn)()
+      require("isovim.safe").wrap("the board", fn)()
     end, { buffer = view.buf, nowait = true, desc = "isovim: " .. desc })
   end
-  on("h", function() move_focus(view, -1, 0) end, "the card to the left")
-  on("l", function() move_focus(view, 1, 0) end, "the card to the right")
-  on("j", function() move_focus(view, 0, 1) end, "the card below")
-  on("k", function() move_focus(view, 0, -1) end, "the card above")
-  on("H", function() move_status(view, -1) end, "its status a column left")
-  on("L", function() move_status(view, 1) end, "its status a column right")
+  on("h", function() move_focus(view, -1, 0) end, "the column to the left")
+  on("l", function() move_focus(view, 1, 0) end, "the column to the right")
+  on("j", function() move_focus(view, 0, 1) end, "the row below")
+  on("k", function() move_focus(view, 0, -1) end, "the row above")
+  on("H", function() move_status(view, -1) end, "the task a column left")
+  on("L", function() move_status(view, 1) end, "the task a column right")
   for value = 0, 4 do
-    on(tostring(value), function() set_priority(view, value) end, "its priority")
+    on(tostring(value), function() set_priority(view, value) end, "the task's priority")
   end
-  on("C", function() require("isovim.acp.chat").new_thread(view.repo) end, "a new thread")
-  on("/", function() search(view) end, "search the cards")
+  on("C", function() create(view) end, "a new task")
+  on("n", function()
+    local task = focused_task(view)
+    if not task then
+      return toast("a thread goes on a task: go to one, or C makes one")
+    end
+    require("isovim.acp.chat").new_thread(view.repo, task.id)
+  end, "a new thread on the task")
+  on("a", function() attach(view) end, "attach the thread to a task")
+  on("r", function()
+    local task = focused_task(view)
+    if task then
+      vim.ui.input({ prompt = "Rename task: ", default = task.title }, function(title)
+        if title then
+          tasks.rename(view.repo, task.id, title)
+          changed(view)
+        end
+      end)
+    end
+  end, "rename the task")
+  on("d", function()
+    local task = focused_task(view)
+    if task then
+      vim.ui.select({ "Delete it, keeping its threads", "Keep it" }, { prompt = ("Delete task %s, %q?"):format(task.id, task.title) }, function(_, index)
+        if index == 1 then
+          for _, entry in pairs(surfaces.thread_rows(view.repo)) do
+            if entry.task == task.id then
+              threads.set_task(view.repo, entry.name, "none", "user")
+            end
+          end
+          tasks.delete(view.repo, task.id)
+          changed(view)
+        end
+      end)
+    end
+  end, "delete the task")
+  on("/", function() search(view) end, "search")
   on("<Esc>", function()
     if (view.board_query or "") ~= "" then
       view.board_query = ""
@@ -588,15 +701,30 @@ function M.bind(view)
     local text = vim.tbl_map(function(key)
       return ("%-12s %s"):format(key[1], key[2])
     end, M.help_keys)
-    vim.notify(table.concat(text, "\n"), vim.log.levels.INFO, { title = "Thread board" })
+    vim.notify(table.concat(text, "\n"), vim.log.levels.INFO, { title = "The board" })
   end, "the board's keys")
   on("<CR>", function()
-    local entry = focused(view)
-    if entry then
-      surfaces.open(entry)
+    local row = focused(view)
+    if row and row.task then
+      view.board_folded = view.board_folded or {}
+      view.board_folded[row.task.id] = not view.board_folded[row.task.id] or nil
+      view.board_columns = nil
+      M.draw(view)
+    elseif row and row.entry then
+      surfaces.open(row.entry)
     end
-  end, "open this thread")
-  on("T", function() require("isovim.surface_view").flip_threads(view) end, "the tree of what spawned what")
+  end, "fold the task, or open the thread")
+end
+
+-- Puts the repo's open board's focus on a task or thread.
+function M.focus(repo, id)
+  for _, view in pairs(require("isovim.surface_view").views) do
+    if view.kind == "threads" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
+      view.board_focus = id
+      view.board_columns = nil
+      M.draw(view)
+    end
+  end
 end
 
 -- A window showing the board: its lines cut, not wrapped.
@@ -611,37 +739,39 @@ function M.text(repo)
   local out = {}
   for i, list in ipairs(M.columns(repo)) do
     local column = M.COLUMNS[i]
-    out[#out + 1] = ("%s (%d)"):format(column.name, #list)
+    local n = #vim.tbl_filter(function(row)
+      return row.task ~= nil
+    end, list)
+    out[#out + 1] = ("%s (%d)"):format(column.name, n)
     for _, row in ipairs(list) do
-      local entry = row.entry
-      local b = BADGES[entry.priority or 0]
-      local tail = {}
-      if b then
-        tail[#tail + 1] = b[3]
+      if row.group then
+        out[#out + 1] = ("  No task (%d)"):format(row.count)
+      elseif row.task then
+        local b = BADGES[row.task.priority or 0]
+        out[#out + 1] = ("  %s  %s  [%s%d/%d done]"):format(row.task.id, row.task.title, b and (b[3] .. ", ") or "", row.done, #row.threads)
+      else
+        local entry = row.entry
+        local tail = {}
+        if unread_of(entry) then
+          tail[#tail + 1] = "unread"
+        end
+        if entry.resolved then
+          tail[#tail + 1] = "resolved"
+        end
+        if (entry.pending or 0) > 0 then
+          tail[#tail + 1] = "question waiting"
+        end
+        if entry.working then
+          tail[#tail + 1] = "working"
+        end
+        if entry.waiting_on then
+          tail[#tail + 1] = "waiting on " .. (entry.waiting_on == "user" and "user" or (entry.waiting_name or entry.waiting_on))
+        end
+        if entry.bypass_name then
+          tail[#tail + 1] = "goes to " .. entry.bypass_name
+        end
+        out[#out + 1] = ("    %s  %s%s"):format(entry.name, entry.title or "", #tail > 0 and ("  [" .. table.concat(tail, ", ") .. "]") or "")
       end
-      if unread_of(entry) then
-        tail[#tail + 1] = "unread"
-      end
-      if entry.resolved then
-        tail[#tail + 1] = "resolved"
-      end
-      if (entry.pending or 0) > 0 then
-        tail[#tail + 1] = "question waiting"
-      end
-      if entry.working then
-        tail[#tail + 1] = "working"
-      end
-      if entry.waiting_on then
-        tail[#tail + 1] = "waiting on " .. (entry.waiting_on == "user" and "user" or (entry.waiting_name or entry.waiting_on))
-      end
-      if entry.bypass_name then
-        tail[#tail + 1] = "goes to " .. entry.bypass_name
-      end
-      if row.total > 0 then
-        tail[#tail + 1] = ("%d/%d done"):format(row.done, row.total)
-      end
-      local lead = row.under and ("  ↳ " .. row.under .. " ") or row.card and "  " or ((" "):rep(row.depth * 2 + 2) .. "└ ")
-      out[#out + 1] = ("%s%s  %s%s"):format(lead, entry.name, entry.title or "", #tail > 0 and ("  [" .. table.concat(tail, ", ") .. "]") or "")
     end
   end
   return out

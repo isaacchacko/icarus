@@ -404,17 +404,16 @@ function M.page(args)
   out(("%s/%s %s %s"):format(repo, name, id, sub == "reply" and (ask and "asks the user now" or "has your reply") or "is resolved"))
 end
 
--- iso <role> thread new|post|waiting|parent|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
+-- iso <role> thread new|post|waiting|resolve|ls|show ...: a repo's threads (isovim.threads), the caller's
 -- repo's. Any role may make, post and resolve them, workers posting what they found as they do; only
 -- the bypass rules are enforced: a router alone moves one, and a worker can't resolve a bypassed thread.
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all|--tree] | board | priority <id> <0-4> | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all] | board | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
-  local parent = option(args, "--parent")
   if sub ~= "ls" and sub ~= "show" then
     local ws, id = (me or ""):match("^(.*)/([^/]+)$")
     local record = ws and store.agent(ws, id)
@@ -440,15 +439,18 @@ function M.thread(args)
     images[#images + 1] = { path = path, mimeType = require("isovim.acp.images").mime(path) or fail(path .. " isn't a png, jpeg, gif or webp") }
   end
   if sub == "new" then
-    -- A router's turn on a thread: what it splits off goes under that thread, unless it says not.
-    local under = parent ~= "none" and parent or nil
-    if not parent and me ~= "user" then
-      under = threads.turn_thread(repo, me)
-      if under then
-        note(("it goes under %s, the thread of this turn (--parent none opts out)"):format(under))
-      end
+    if vim.tbl_contains(args, "--parent") then
+      fail("there are no subthreads, so no --parent: during your turn on a thread with a task, a new thread lands on that task")
     end
-    local id, err = threads.new(repo, args[1] or fail(usage), me, under)
+    -- A turn on a thread with a task: what it makes lands on the same task. An agent can't make one, so
+    -- a thread on none stays on none.
+    local turn = me ~= "user" and threads.turn_thread(repo, me)
+    local task = turn and threads.related(repo, turn)
+    local on = task and require("isovim.board_tasks").read(repo)[task]
+    if on then
+      note(("it's on task %s %q, as %s, the thread of this turn, is"):format(on.id, on.title, turn))
+    end
+    local id, err = threads.new(repo, args[1] or fail(usage), me, on and on.id or nil)
     if not id then
       fail(err)
     end
@@ -513,14 +515,6 @@ function M.thread(args)
         .. "and the user's next post comes to you; if it carries an outcome you agree with, iso router thread resolve %s \"...\" ends it too.)")
         :format(me, id, info.title, reason, id, id) })
     out(("asked the router to end %s's bypass; nothing changes until it does"):format(id))
-  elseif sub == "parent" then
-    local id = args[1] or fail(usage)
-    local above = args[2] or fail(usage)
-    local set, err = threads.set_parent(repo, id, above, me)
-    if not set then
-      fail(err)
-    end
-    out(("%s#%s %s"):format(repo, id, above == "none" and "has no parent" or ("is under " .. above)))
   elseif sub == "resolve" then
     local id = args[1] or fail(usage)
     local status, err = threads.resolve(repo, id, me, table.concat(vim.list_slice(args, 2), " "))
@@ -563,28 +557,6 @@ function M.thread(args)
     for _, line in ipairs(require("isovim.thread_board").text(repo)) do
       out(line)
     end
-  elseif sub == "priority" then
-    local id, value = args[1] or fail(usage), tonumber(args[2] or "")
-    if not value or value < 0 or value > 4 or value % 1 ~= 0 then
-      fail("a priority is 0 (none), 1 (urgent), 2 (high), 3 (medium) or 4 (low)")
-    end
-    local set, err = threads.set_priority(repo, id, value, me)
-    if not set then
-      fail(err)
-    end
-    out(("%s#%s has priority %d"):format(repo, id, value))
-  elseif sub == "ls" and flag(args, "--tree") then
-    local tree = threads.tree(repo)
-    if #tree == 0 then
-      out(repo .. " has no threads")
-    end
-    for _, row in ipairs(tree) do
-      local info = row.info
-      out(("%s%s  %s  %d posts%s%s%s"):format(row.guide, info.id, info.title, info.posts,
-        info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome:match("^[^\n]*")) or "")) or "",
-        (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or ""),
-        info.waiting_on and ("  waiting on " .. info.waiting_on) or ""))
-    end
   elseif sub == "ls" then
     local list = threads.list(repo, flag(args, "--all"))
     if #list == 0 then
@@ -592,7 +564,7 @@ function M.thread(args)
     end
     for _, info in ipairs(list) do
       out(("%s  %s  %d posts%s%s"):format(info.id, info.title, info.posts, info.status == "resolved" and ("  resolved" .. (info.outcome and (": " .. info.outcome) or "")) or "",
-        (info.parent and ("  under " .. info.parent) or "") .. (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
+        (info.task and ("  on task " .. info.task) or "") .. (info.bypass and ("  goes to " .. info.bypass) or "") .. (info.working and "  (working)" or "") .. (info.waiting_on and ("  waiting on " .. info.waiting_on) or "")))
     end
   elseif sub == "show" then
     local id = args[1] or fail(usage)
@@ -601,13 +573,14 @@ function M.thread(args)
     for _, entry in ipairs(entries) do
       if entry.kind == "thread" then
         titled = entry.title
-        out(("%s: %s (started by %s, %s%s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0),
-          entry.parent and (", under " .. entry.parent) or ""))
+        out(("%s: %s (started by %s, %s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0)))
       elseif entry.kind == "bypass" then
         out(("\n[%s by %s%s]"):format(entry.on == "none" and "bypass ended" or ("bypass to " .. tostring(entry.on)), entry.by or "?",
           entry.why and (": " .. entry.why) or ""))
-      elseif entry.kind == "parent" then
-        out(("\n[%s by %s]"):format(entry.on == "none" and "no parent" or ("under " .. tostring(entry.on)), entry.by or "?"))
+      elseif entry.kind == "task" then
+        local task = require("isovim.board_tasks").read(repo)[entry.on]
+        out(("\n[%s by %s]"):format(entry.on == "none" and "on no task" or ("on task %s%s"):format(entry.on, task and (" " .. vim.inspect(task.title)) or ""),
+          entry.by or "?"))
       elseif entry.kind == "post" then
         out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
         out(entry.text)

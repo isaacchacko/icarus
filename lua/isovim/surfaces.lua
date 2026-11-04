@@ -621,6 +621,19 @@ function M.threads(repo, all)
   local seen = threads.seen(repo)
   local list = {}
   local every = threads.list(repo, true)
+  -- A thread's task, as the board has it (isovim.board_tasks): its column decides if it's parked.
+  local tasks = require("isovim.board_tasks").read(repo)
+  local function task_of(info)
+    return info.task and tasks[info.task] or nil
+  end
+  local function is_parked(info)
+    local task = task_of(info)
+    return task ~= nil and task.column == "backburner"
+  end
+  local function task_sig(info)
+    local task = task_of(info)
+    return task and (task.id .. task.title .. task.column) or ""
+  end
   local resolved = vim.tbl_filter(function(info)
     return info.status == "resolved"
   end, every)
@@ -632,7 +645,7 @@ function M.threads(repo, all)
     -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
     -- isn't yours.
     -- On the backburner it stops nagging: out of the Inbox, a new post only marking its card.
-    local parked = info.column == "backburner"
+    local parked = is_parked(info)
     local new_reply = not parked and not info.working and info.last_reply > (seen[info.id] or 0)
     local on_you = not parked and info.waiting_on == "user" and not info.working
     local needs_you = new_reply or on_you
@@ -685,15 +698,14 @@ function M.threads(repo, all)
       waiting_name = worker and worker_name(worker),
       bypass_name = info.bypass and worker_name(info.bypass),
       pending = info.pending,
-      parent = info.parent,
-      priority = info.priority,
-      column = info.column,
+      task = task_of(info) and info.task or nil,
+      task_title = task_of(info) and task_of(info).title or nil,
       last_at = info.last_at,
       parked = parked or nil,
       parked_unread = parked and info.last_reply > (seen[info.id] or 0) or nil,
       sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
         tostring(needs_you), info.pending, tostring(info.waiting_on))
-        .. tostring(info.parent) .. tostring(info.bypass) .. tostring(info.column) .. tostring(info.priority)),
+        .. tostring(info.bypass) .. task_sig(info)),
     }
   end
   table.sort(resolved, function(a, b)
@@ -719,31 +731,29 @@ function M.threads(repo, all)
       posts = info.posts,
       last_glyph = poster_glyph(info.last_by),
       -- Unread till opened, unless it's on the backburner: that's left the Inbox for good.
-      needs_you = unread(info) and info.column ~= "backburner",
-      parked = info.column == "backburner" or nil,
-      parked_unread = info.column == "backburner" and unread(info) or nil,
+      needs_you = unread(info) and not is_parked(info),
+      parked = is_parked(info) or nil,
+      parked_unread = is_parked(info) and unread(info) or nil,
       resolved = true,
       outcome = info.outcome,
       pending = 0,
-      parent = info.parent,
-      priority = info.priority,
-      column = info.column,
+      task = task_of(info) and info.task or nil,
+      task_title = task_of(info) and task_of(info).title or nil,
       last_at = info.last_at,
-      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), tostring(info.parent) .. tostring(info.priority) .. tostring(info.column))),
+      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), task_sig(info))),
     }
   end
   return list
 end
 
--- The thread board (isovim.thread_board), flipping to their tree, a view of isovim's own: nil for a
--- repo with no threads, unless empty.
+-- The board (isovim.thread_board), a view of isovim's own: nil for a repo with no threads, unless empty.
 function M.threads_entry(key, empty)
   local repo = canon(key)
   local threads = require("isovim.threads")
-  if threads.refusal(repo) or not (empty or #threads.list(repo, true) > 0) then
+  if threads.refusal(repo) or not (empty or #threads.list(repo, true) > 0 or next(require("isovim.board_tasks").read(repo))) then
     return nil
   end
-  return { repo = repo, name = "Threads", base = "Threads", type = "threads", title = "Thread board", needs_you = false,
+  return { repo = repo, name = "Threads", base = "Threads", type = "threads", title = "Board", needs_you = false,
     sig = "", error_file = "", file = threads.dir(repo) }
 end
 
@@ -1556,7 +1566,7 @@ function M.open(entry)
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
   if entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" then
-    -- Drawn by isovim: its PRs, its decisions, or its threads as a tree.
+    -- Drawn by isovim: its PRs, its decisions, or its board.
     require("isovim.surface_view").open(entry)
   elseif entry.type == "markdown" then
     -- Rendered, with an input box to the repo's router under it.

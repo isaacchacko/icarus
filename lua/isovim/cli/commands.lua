@@ -813,16 +813,15 @@ M.role_actions = {
       resolve = { args = { "<text>", "<text>..." } },
       rename = { args = { "<text>", "<text>..." } },
       ask = { args = { "<text>", "<path>" } },
-      ls = { flags = { ["--all"] = false, ["--tree"] = false } },
+      ls = { flags = { ["--all"] = false } },
       board = {},
-      priority = { args = { "<text>", "<text>" } },
       show = { args = { "<text>" } },
       bypass = { args = { "<text>", "<text>" } },
       release = { args = { "<text>..." } },
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
     help = [=[
-       iso thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none]
+       iso thread new "<title>" ["first post"] [--no-reply]
                                      open a thread for each ask that's different, rather
                                      than burying it in your own chat; prints its id (t1,
                                      t2...).
@@ -856,12 +855,6 @@ M.role_actions = {
                                      a bypassed worker: ask the router to end the bypass,
                                      with the outcome you'd propose, as you can't resolve or
                                      move it. It changes nothing until the router does
-       iso thread parent <id> <parent>|none
-                                     put a thread under another of this repo, refusing a
-                                     cycle. thread new takes --parent, and during your
-                                     turn on a thread it goes under that thread unless
-                                     --parent none. Its parent and children show at the
-                                     top of its view
        iso thread post <id> <text...> [--image <file>]... [--no-reply]
                                      post to a thread anytime: a follow-up, or what a
                                      worker finished that it was about. After a post
@@ -899,11 +892,13 @@ M.role_actions = {
                                      title is fair game, the user's too: the first stays shown
                                      at the top, and each rename says what it was
        iso thread board              the board, by column: Backburner, Working, Checking,
-                                     Done. Only the user moves cards, and no agent can
-       iso thread priority <id> <0-4>
-                                     0 none, 1 urgent, 2 high, 3 medium, 4 low
-       iso thread ls [--all|--tree]  the repo's open threads (--all: resolved too; --tree: all
-                                     of them, each child indented under its parent)
+                                     Done, each with its tasks and their threads. A task is
+                                     the user's: they alone make, rename and move one, and
+                                     no agent can. During your turn on a thread with a task,
+                                     thread new lands on that task, beside it. There are no
+                                     subthreads
+       iso thread ls [--all]         the repo's open threads, each's task if any (--all:
+                                     resolved too)
        iso thread show <id>          a thread's posts
                                      Any role can make, post on, rename and resolve threads
                                      and read them (ls, show); routers own them. Only a router

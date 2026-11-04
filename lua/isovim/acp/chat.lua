@@ -1240,8 +1240,8 @@ local function update_banner(chat)
 end
 
 -- The rows under the banner, only when they exist: the title it started with, once renamed, as that's
--- often the user's whole question; who it goes to; its parent and its children, as link chips with their
--- state (isovim.links), so ]l and <Tab> work on them.
+-- often the user's whole question; who it goes to; its task, and the threads beside it on that as link
+-- chips with their state (isovim.links), so ]l and <Tab> work on them.
 local function update_related(chat)
   if not (chat.thread and chat.banner) or safe.text_locked() then
     return
@@ -1262,7 +1262,7 @@ local function update_related(chat)
   local function thread_address(id)
     return ("iso:thread/%s#%s"):format(chat.ws, id)
   end
-  local parent, children, bypass, first_title = threads.related(chat.ws, chat.thread)
+  local task, siblings, bypass, first_title = threads.related(chat.ws, chat.thread)
   chat.bypass = bypass
   local rows = {}
   if first_title then
@@ -1272,11 +1272,13 @@ local function update_related(chat)
   if bypass then
     rows[#rows + 1] = row("→ goes to  ", { "iso:agent/" .. bypass })
   end
-  if parent then
-    rows[#rows + 1] = row("↑ parent  ", { thread_address(parent) })
-  end
-  if #children > 0 then
-    rows[#rows + 1] = row("↓ children  ", vim.tbl_map(thread_address, children))
+  local on = task and require("isovim.board_tasks").read(chat.ws)[task]
+  if on then
+    local text = ("▣ task  %s  %s"):format(on.id, on.title)
+    rows[#rows + 1] = { text = text, lead = #text, chips = {} }
+    if #siblings > 0 then
+      rows[#rows + 1] = row("⇄ beside it  ", vim.tbl_map(thread_address, siblings))
+    end
   end
   local texts = vim.tbl_map(function(each)
     return each.text
@@ -1346,7 +1348,7 @@ function RENDER.thread(chat, entry)
   update_related(chat)
 end
 
-function RENDER.parent(chat)
+function RENDER.task(chat)
   update_related(chat)
 end
 
@@ -1602,7 +1604,7 @@ function M.bar_parts(chat)
   end
   if chat.pending_title or chat.thread then
     if chat.pending_title then
-      add(THREAD_GLYPH .. (chat.pending_parent and (" a new thread under " .. chat.pending_parent) or (" a new thread in " .. chat.ws))
+      add(THREAD_GLYPH .. (chat.pending_task and (" a new thread on task " .. chat.pending_task) or (" a new thread in " .. chat.ws))
         .. ": its title first", "IsovimAcpSpinner")
     elseif chat.renaming then
       add("✎ its new title: <CR> renames it · <C-c> keeps " .. (chat.title or chat.thread), "IsovimAcpSpinner")
@@ -2588,8 +2590,8 @@ local function map_keys(chat)
   end
   if chat.thread or chat.pending_title then
     map("n", "t", function()
-      return mine() and "t" or "<Cmd>lua require('isovim.acp.chat').child_thread()<CR>"
-    end, "a new thread under this one (in the composer: vim's t)", { expr = true, nowait = false })
+      return mine() and "t" or "<Cmd>lua require('isovim.acp.chat').sibling_thread()<CR>"
+    end, "a new thread beside this one, on its task (in the composer: vim's t)", { expr = true, nowait = false })
   end
   map("n", "U", function()
     return mine() and "U" or "<Cmd>lua require('isovim.acp.chat').toggle_read()<CR>"
@@ -2665,7 +2667,7 @@ M.help_keys = {
     { "D", "on the thread: mark it read, whatever it was (in the composer, vim's D)" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
-    { "t", "on the thread: a new thread under this one (in the composer, vim's t). The parent and children show under its banner, as links" },
+    { "t", "on the thread: a new thread beside it, on the same task if it has one (in the composer, vim's t). Its task and the threads beside it show under its banner, the threads as links" },
     { "t / <leader>it", "a new thread: t on a repo's (or agent's) row in the sidebar, <leader>it in the current repo" },
     { "", "otherwise as a chat: insert keys go to the draft, u undoes it, ]] [[ your posts" },
   },
@@ -3584,9 +3586,8 @@ function M.open_thread(repo, id, qid)
   return chat
 end
 
--- A new thread in repo, under parent if given: its view opens with the composer asking for its title
--- first.
-function M.new_thread(repo, parent)
+-- A new thread in repo, on task if given: its view opens with the composer asking for its title first.
+function M.new_thread(repo, task)
   local why = threads.refusal(repo)
   if why then
     return say("no thread: " .. why, vim.log.levels.WARN)
@@ -3596,15 +3597,16 @@ function M.new_thread(repo, parent)
     chat = make(repo, "thread:new")
     chats[key(repo, "thread:new")] = chat
   end
-  chat.pending_parent = parent
+  chat.pending_task = task
   return show_thread(chat)
 end
 
--- t on a thread's conversation: a new thread under it.
-function M.child_thread()
+-- t on a thread's conversation: a new thread on its task; with none, on none, as only the user's board
+-- makes a task.
+function M.sibling_thread()
   local chat = by_buf(vim.api.nvim_get_current_buf())
   if chat and chat.thread then
-    return M.new_thread(chat.ws, chat.thread)
+    return M.new_thread(chat.ws, (threads.related(chat.ws, chat.thread)))
   end
   say("give this thread its title first")
 end
@@ -3622,7 +3624,7 @@ function M.post_thread(chat, text)
     M.set_draft(chat, before)
     return update_bar(chat)
   elseif chat.pending_title then
-    local id, err = threads.new(chat.ws, text, "user", chat.pending_parent)
+    local id, err = threads.new(chat.ws, text, "user", chat.pending_task)
     if not id then
       return say("no thread: " .. tostring(err), vim.log.levels.WARN)
     end
@@ -3631,7 +3633,7 @@ function M.post_thread(chat, text)
     pcall(chat.stop)
     chats[key(chat.ws, chat.agent)] = nil
     unbind(chat)
-    chat.agent, chat.thread, chat.pending_title, chat.pending_parent, chat.dead = "thread:" .. id, id, nil, nil, nil
+    chat.agent, chat.thread, chat.pending_title, chat.pending_task, chat.dead = "thread:" .. id, id, nil, nil, nil
     chats[key(chat.ws, chat.agent)] = chat
     pcall(vim.api.nvim_buf_set_name, chat.buf, ("isovim-thread://%s/%s"):format(chat.ws, id))
     vim.b[chat.buf].isovim_surface = chat.ws .. "/" .. id

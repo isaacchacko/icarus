@@ -61,7 +61,6 @@ M.prs_keys = {
 ---@field repo string
 ---@field name string
 ---@field kind "markdown"|"prs"|"decisions"|"threads"|"page"|"question"
----@field hide_resolved? boolean threads: r hides the resolved ones
 ---@field line_items? table<integer, table> prs and decisions: the PR or decision each line is, for its keys
 ---@field buf integer the rendered view
 ---@field input integer the input box
@@ -316,52 +315,6 @@ local function decisions_board(entry, width)
   return lines, marks, rows
 end
 
--- The repo's threads as a tree, each drawn as its sidebar row is, with its id, under its parent. With
--- the resolved ones hidden, a parent of an open one stays for the shape. The thread on each line.
-local function threads_board(entry)
-  local threads = require("isovim.threads")
-  local sidebar = require("isovim.sidebar")
-  local lines, marks, rows = {}, {}, {}
-  local function add(chunks, thread)
-    local text = ""
-    for _, chunk in ipairs(chunks) do
-      if chunk[2] then
-        marks[#marks + 1] = { #lines, #text, #text + #chunk[1], chunk[2] }
-      end
-      text = text .. chunk[1]
-    end
-    lines[#lines + 1] = text
-    rows[#lines] = thread
-  end
-  local entries = surfaces.thread_rows(entry.repo)
-  local keep = entry.hide_resolved and function(info)
-    return info.status == "open" or (entries[info.id] and entries[info.id].needs_you)
-  end or nil
-  local tree = threads.tree(entry.repo, keep)
-  add({ { "Threads", "Title" }, { "  " .. entry.repo, "Comment" },
-    { entry.hide_resolved and "  · resolved hidden: r shows them" or "  · r hides the resolved", "Comment" } })
-  add({})
-  for _, row in ipairs(tree) do
-    local thread = entries[row.info.id]
-    if thread then
-      local shown = vim.tbl_extend("force", thread, { title = row.info.id .. "  " .. (thread.title or row.info.id) })
-      if thread.outcome then
-        shown.outcome = thread.outcome:match("^[^\n]*")
-      end
-      local chunks = sidebar.surface_chunks(shown)
-      table.insert(chunks, 1, { row.guide, "NonText" })
-      if thread.bypass_name then
-        chunks[#chunks + 1] = { "  → " .. thread.bypass_name, "Comment" }
-      end
-      add(chunks, thread)
-    end
-  end
-  if #tree == 0 then
-    add({ { entry.hide_resolved and "Nothing open: r shows the resolved ones." or "No threads yet: <leader>it starts one.", "Comment" } })
-  end
-  return lines, marks, rows
-end
-
 -- The lines the view shows for a surface, and their highlights: a markdown surface's body (drawn
 -- by render-markdown, so no highlights), the PRs surface as
 -- prs_board does (with the PR on each line).
@@ -374,7 +327,7 @@ function M.render(entry, width)
   elseif entry.type == "decisions" then
     return decisions_board(entry, width)
   elseif entry.type == "threads" then
-    return threads_board(entry)
+    return require("isovim.thread_board").text(entry.repo), {}
   elseif entry.type == "page" then
     -- Its body line for line (no title over it, nothing trimmed from its top), so a comment's
     -- lines are the file's less where the body starts (isovim.pages.draw).
@@ -427,12 +380,11 @@ local set_lines
 local function draw_surface(view, entry)
   view.base = entry.base
   local win = vim.fn.bufwinid(view.buf)
-  -- The thread board has its own drawing, and only flips to the tree.
-  if view.kind == "threads" and not view.tree then
+  -- The board has its own drawing.
+  if view.kind == "threads" then
     return require("isovim.thread_board").draw(view)
   end
   view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
-  entry.hide_resolved = view.hide_resolved
   local lines, marks, rows = M.render(entry, view.width)
   view.line_items = rows
   set_lines(view.buf, lines, marks)
@@ -796,58 +748,6 @@ local function refresh(view, entry)
   draw(view)
 end
 
--- A thread view's keys: the board's, or on its tree, these.
-function M.bind_threads(view)
-  local board = require("isovim.thread_board")
-  board.unbind(view)
-  if not view.tree then
-    return board.bind(view)
-  end
-  vim.keymap.set("n", "T", function()
-    M.flip_threads(view)
-  end, { buffer = view.buf, nowait = true, desc = "isovim: back to the board" })
-  vim.keymap.set("n", "<CR>", function()
-    local thread = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
-    if thread then
-      surfaces.open(thread)
-    end
-  end, { buffer = view.buf, nowait = true, desc = "isovim: open this thread" })
-  vim.keymap.set("n", "r", function()
-    local thread = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
-    view.hide_resolved = not view.hide_resolved or nil
-    draw_surface(view, own_entry(view))
-    -- On the thread it was on, if that's still shown.
-    for row, each in pairs(thread and view.line_items or {}) do
-      if each.name == thread.name then
-        pcall(vim.api.nvim_win_set_cursor, 0, { row, 0 })
-      end
-    end
-  end, { buffer = view.buf, nowait = true, desc = "isovim: hide or show the resolved threads" })
-end
-
--- T: the thread board's tree of what spawned what, and back.
-function M.flip_threads(view)
-  local cursor_thread = view.tree and (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
-  view.tree = not view.tree or nil
-  view.board_columns, view.drawn_tree = nil, nil
-  if cursor_thread then
-    view.board_focus = cursor_thread.name
-  end
-  M.bind_threads(view)
-  for _, win in ipairs(vim.fn.win_findbuf(view.buf)) do
-    M.dress(view, win)
-  end
-  if view.tree then
-    M.set_lines(view.buf, {}, {})
-  end
-  draw_surface(view, own_entry(view))
-  local win = vim.fn.bufwinid(view.buf)
-  if view.tree and win ~= -1 then
-    vim.wo[win][0].winbar = ""
-    pcall(vim.api.nvim_win_set_cursor, win, { 3, 0 })
-  end
-end
-
 -- The keys of the view and its input box, and the box going with the view.
 local function bind(view)
   if view.kind == "markdown" or view.kind == "page" then
@@ -924,7 +824,7 @@ local function bind(view)
       end, { buffer = view.buf, nowait = true, desc = "isovim: " .. key[2] })
     end
   elseif view.kind == "threads" then
-    M.bind_threads(view)
+    require("isovim.thread_board").bind(view)
   elseif view.kind == "decisions" then
     vim.keymap.set("n", "<CR>", function()
       local decision = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
@@ -1104,7 +1004,7 @@ end
 function M.dress(view, win)
   local question = view.kind == "question"
   view_window(win, question, DRAWN[view.kind] or false)
-  if view.kind == "threads" and not view.tree then
+  if view.kind == "threads" then
     require("isovim.thread_board").dress(win)
   end
   if view.kind == "page" then
@@ -1232,8 +1132,8 @@ vim.api.nvim_create_autocmd("WinResized", {
 -- refreshes, which it does as a fetch lands, a PR is registered, a pr.* event comes or a root answers.
 function M.refresh_boards()
   for _, view in pairs(M.views) do
-    -- A thread board reads every thread: it goes by M.threads_changed, and its window's width here.
-    if view.kind == "threads" and not view.tree and vim.api.nvim_buf_is_valid(view.buf) then
+    -- A board reads every thread: it goes by M.threads_changed, and its window's width here.
+    if view.kind == "threads" and vim.api.nvim_buf_is_valid(view.buf) then
       local win = vim.fn.bufwinid(view.buf)
       if win ~= -1 and vim.api.nvim_win_get_width(win) ~= view.width then
         require("isovim.thread_board").draw(view)
@@ -1247,23 +1147,12 @@ function M.refresh_boards()
   end
 end
 
--- The repo's threads may have changed: its thread tree, if it's open, is drawn again if it reads
+-- The repo's threads or tasks may have changed: its board, if it's open, is drawn again if it reads
 -- differently, as nothing else in its iso/ should move the cursor's line under you.
 function M.threads_changed(repo)
   for _, view in pairs(M.views) do
-    if view.kind == "threads" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) and not view.tree then
+    if view.kind == "threads" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
       require("isovim.thread_board").refresh(view)
-    elseif view.kind == "threads" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
-      local entry = own_entry(view)
-      if entry then
-        entry.hide_resolved = view.hide_resolved
-        local lines, marks = M.render(entry)
-        local drawn = vim.json.encode({ lines, marks })
-        if drawn ~= view.drawn_tree then
-          view.drawn_tree = drawn
-          draw_surface(view, entry)
-        end
-      end
     end
   end
 end

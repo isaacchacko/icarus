@@ -385,9 +385,9 @@ local function jump_items(hidden)
         rows[#rows + 1] = { kind = "pr", repo_key = key, group_key = key, pr = pr, url = pr.url }
       end
     end
-    local tree = surfaces.threads_entry(key)
-    if tree then
-      rows[#rows + 1] = { kind = "surface", surface = tree, repo_key = key, group_key = key, name = tree.name, depth = 0 }
+    local board = surfaces.threads_entry(key)
+    if board then
+      rows[#rows + 1] = { kind = "surface", surface = board, repo_key = key, group_key = key, name = board.name, depth = 0 }
     end
   end
   for i, row in ipairs(rows) do
@@ -946,12 +946,12 @@ M.GROUP = {
     require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
   end, "a new thread with the project's router" },
   { "O", function()
-    local tree = require("isovim.surfaces").threads_entry(isovim().current_scope or "", true)
-    if not tree then
+    local board = require("isovim.surfaces").threads_entry(isovim().current_scope or "", true)
+    if not board then
       return vim.notify("isovim: threads live in a project with a router", vim.log.levels.INFO)
     end
-    require("isovim.surfaces").open(tree)
-  end, "the project's thread board" },
+    require("isovim.surfaces").open(board)
+  end, "the project's board" },
   { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)
