@@ -1,8 +1,10 @@
--- A task's own view (isovim.board_tasks): a tab in the main window like any surface's, opened by <CR> on
--- its card, its sidebar row, its chip or <leader><leader>. Its title and markdown description are the
--- body, its properties a compact block under them, then its threads where Linear has sub-issues, its
--- relations, its PRs and tickets, and its log. Everything in it is the user's to change, by keys; agents
--- read it with iso <role> task show. The keys here and on the board's cards are one set, M.actions.
+-- A task's view (isovim.board_tasks), drawn in the board's own buffer: no buffer or tab of its own ("one
+-- buffer for the board and everything is in that buffer"). <CR> on its card, its sidebar row, its chip
+-- or <leader><leader> shows it there, and <Esc> goes back to the board, on its card, scrolled and filtered as
+-- it was. view.task_open says which task the board's buffer shows. Its title and markdown description
+-- are the body, its properties a compact block under them, then its threads where Linear has sub-issues,
+-- its relations, its PRs and tickets, and its log. Everything in it is the user's to change, by keys;
+-- agents read it with iso <role> task show. The keys here and on the board's cards are one set, M.actions.
 local surfaces = require("isovim.surfaces")
 local tasks = require("isovim.board_tasks")
 
@@ -285,7 +287,8 @@ function M.help_keys()
   end, M.KEYS)
   vim.list_extend(list, {
     { "A", "attach one of the repo's open threads to it, picked, moving it if it's on another task" },
-    { "i", "edit the description in place (<Esc> in normal mode saves and goes back, :w saves)" },
+    { "<Esc>", "back to the board, on this task's card" },
+    { "i", "edit the description in place (<Esc> in normal mode saves and leaves the edit, :w saves)" },
     { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser)" },
     { "o", "a PR's own view here" },
     { "<Tab> ]l [l", "open the link under the cursor, walk the links" },
@@ -306,16 +309,16 @@ local function ago(at)
   return os.date("%Y-%m-%d", at)
 end
 
--- The lines of a task's view: {lines, marks, rows (what a line is, for <CR>), addresses}, addresses
--- still written out, for isovim.links to draw as chips.
-local function layout(repo, id)
+-- The lines of a task's view for width: {lines, marks, rows (what a line is, for <CR>), addresses,
+-- still written out for isovim.links to draw as chips, and chips, those a description has as boxes drew them}.
+local function layout(repo, id, width)
   local all, labels = tasks.read(repo)
   local task = all[id]
   if not task then
     return nil
   end
   local board = require("isovim.thread_board")
-  local lines, marks, rows, addresses = {}, {}, {}, {}
+  local lines, marks, rows, addresses, chips = {}, {}, {}, {}, {}
   local function add(chunks, item)
     local text = ""
     for _, chunk in ipairs(chunks) do
@@ -333,16 +336,24 @@ local function layout(repo, id)
   end
   local function heading(name, tail)
     add({})
-    add({ { "## " .. name }, tail and { "  " .. tail, "Comment" } or nil })
+    add({ { " " .. name, "Title" }, tail and { "  " .. tail, "Comment" } or nil })
   end
-  add({ { "# " .. task.title } }, { title = true })
+  add({ { " " .. task.title, "Title" } }, { title = true })
   add({})
-  local description = vim.split(task.description or "", "\n", { plain = true })
   if vim.trim(task.description or "") == "" then
-    add({ { "No description: i writes one.", "Comment" } }, { description = true })
+    add({ { " No description: i writes one.", "Comment" } }, { description = true })
   else
-    for _, line in ipairs(description) do
-      add({ { line } }, { description = true })
+    -- Markdown as isovim draws it, in the board's own buffer, a space in from the edge.
+    for _, seg in ipairs(require("isovim.boxes").markdown(task.description, math.max(10, width - 2))) do
+      lines[#lines + 1] = " " .. seg.text
+      rows[#lines] = { description = true }
+      for _, mark in ipairs(seg.marks) do
+        if mark[4] then
+          chips[#chips + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[4] }
+        elseif mark[3] then
+          marks[#marks + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[3] }
+        end
+      end
     end
   end
   add({})
@@ -362,6 +373,11 @@ local function layout(repo, id)
     return n
   end
   local function pair(left, right)
+    -- Narrow, one to a line.
+    if width < 70 then
+      add(left)
+      return add(right)
+    end
     local out = vim.deepcopy(left)
     out[#out + 1] = { (" "):rep(math.max(1, 34 - cells(left))) }
     add(vim.list_extend(out, right))
@@ -446,57 +462,121 @@ local function layout(repo, id)
     add({ { "  " .. os.date("%m-%d %H:%M", each.at) .. "  ", "Comment" },
       { (each.by == "user" and "you" or tasks.assignee_name(each.by) or each.by) .. " ", "Comment" }, { each.what, "Comment" } })
   end
-  return { lines = lines, marks = marks, rows = rows, addresses = addresses, task = task }
+  return { lines = lines, marks = marks, rows = rows, addresses = addresses, chips = chips, task = task }
 end
 
 -- The view's text, for a preview.
 function M.lines(repo, id)
-  local laid = layout(repo, id)
+  local laid = layout(repo, id, 80)
   return laid and laid.lines or { "gone" }
 end
 
--- Draws the view from what's stored, the cursor staying on its line. Not while the description's edited.
+local function drawn_key(laid, width)
+  return vim.json.encode({ laid.lines, laid.marks, vim.tbl_map(require("isovim.links").chip, laid.addresses), width })
+end
+
+local function view_width(view)
+  local win = vim.fn.bufwinid(view.buf)
+  return win ~= -1 and vim.api.nvim_win_get_width(win) or view.width or 100
+end
+
+-- The window showing a task: its lines wrap, unlike the board's, and the winbar says how to go back.
+local function dress(view)
+  local win = vim.fn.bufwinid(view.buf)
+  if win ~= -1 then
+    local wo = vim.wo[win][0]
+    wo.wrap, wo.linebreak, wo.cursorline = true, true, true
+    wo.winbar = (" <Esc> back to the board · %s · i edit · ? keys"):format(view.task_open)
+  end
+end
+
+M.dress = dress
+
+-- Draws the task in the board's buffer, the cursor staying on its line. Not while the description's edited.
 function M.draw(view)
   if view.editing then
     return
   end
-  local laid = layout(view.repo, view.name)
+  local width = view_width(view)
+  local laid = layout(view.repo, view.task_open, width)
+  -- It went (deleted): only the board's left.
   if not laid then
-    return
+    return M.back(view)
   end
   local links = require("isovim.links")
   view.line_items = laid.rows
-  view.drawn = vim.json.encode({ laid.lines, laid.marks, vim.tbl_map(links.chip, laid.addresses) })
-  local sv = require("isovim.surface_view")
-  sv.set_lines(view.buf, laid.lines, laid.marks)
-  local win = vim.fn.bufwinid(view.buf)
-  view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or view.width
+  view.task_drawn = drawn_key(laid, width)
+  view.width = width
+  require("isovim.surface_view").set_lines(view.buf, laid.lines, laid.marks)
   links.substitute(view.buf)
+  for _, chip in ipairs(laid.chips) do
+    links.register(view.buf, chip[1], chip[2], chip[3], chip[4], {})
+  end
+  dress(view)
 end
 
--- Its threads or traits may have changed: drawn again if it reads differently, its tab too.
+-- Its threads or traits may have changed: drawn again if it reads differently.
 function M.refresh(view)
   if view.editing then
     return
   end
-  local laid = layout(view.repo, view.name)
-  if not laid then
-    return
-  end
-  local links = require("isovim.links")
-  if vim.json.encode({ laid.lines, laid.marks, vim.tbl_map(links.chip, laid.addresses) }) ~= view.drawn then
+  local width = view_width(view)
+  local laid = layout(view.repo, view.task_open, width)
+  if not laid or drawn_key(laid, width) ~= view.task_drawn then
     M.draw(view)
   end
 end
 
-local bind_keys
+-- Shows a task in the board's buffer. Coming from the board itself, how that's scrolled is kept for <Esc>.
+function M.show(view, id)
+  if view.editing then
+    M.leave_edit(view)
+  end
+  local win = vim.fn.bufwinid(view.buf)
+  if not view.task_open and win ~= -1 then
+    view.board_saved = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+  end
+  view.task_open = id
+  require("isovim.thread_board").bind(view)
+  M.draw(view)
+  if win ~= -1 then
+    pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+  end
+end
+
+-- <Esc>: back to the board, on this task's card, scrolled and filtered as it was.
+function M.back(view)
+  if view.editing then
+    M.leave_edit(view)
+  end
+  local board = require("isovim.thread_board")
+  local id = view.task_open
+  view.task_open, view.line_items = nil, nil
+  view.board_focus = id or view.board_focus
+  view.board_columns = nil
+  require("isovim.links").substitute(view.buf)
+  board.bind(view)
+  local win = vim.fn.bufwinid(view.buf)
+  if win ~= -1 then
+    board.dress(win)
+  end
+  board.draw(view)
+  if win ~= -1 and view.board_saved then
+    -- The scroll as it was, then the cursor on its card, which only scrolls if it has to.
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview(view.board_saved)
+    end)
+    board.draw(view)
+  end
+  view.board_saved = nil
+end
 
 -- Saves what's being edited, and with leave goes back to the drawn view.
 local function save_description(view, leave)
   local text = table.concat(vim.api.nvim_buf_get_lines(view.buf, 0, -1, false), "\n")
-  local task = tasks.read(view.repo)[view.name]
+  local task = tasks.read(view.repo)[view.task_open]
   if task and vim.trim(text) ~= vim.trim(task.description or "") then
-    tasks.set(view.repo, view.name, "description", vim.trim(text))
+    tasks.set(view.repo, view.task_open, "description", vim.trim(text))
   end
   vim.bo[view.buf].modified = false
   if not leave then
@@ -505,34 +585,33 @@ local function save_description(view, leave)
   view.editing = nil
   vim.api.nvim_buf_clear_namespace(view.buf, NS, 0, -1)
   pcall(vim.api.nvim_del_augroup_by_name, "isovim_task_edit_" .. view.buf)
-  pcall(vim.keymap.del, "n", "<Esc>", { buffer = view.buf })
+  pcall(vim.treesitter.stop, view.buf)
   vim.bo[view.buf].buftype = "nofile"
-  local win = vim.fn.bufwinid(view.buf)
-  if win ~= -1 then
-    vim.wo[win][0].winbar = ""
-  end
-  bind_keys(view)
+  require("isovim.thread_board").bind(view)
   vim.cmd.stopinsert()
   changed(view.repo)
   M.draw(view)
 end
 
+function M.leave_edit(view)
+  save_description(view, true)
+end
+
 local function bind_edit_keys(view)
+  view.mode_keys = { "<Esc>" }
   vim.keymap.set("n", "<Esc>", function()
     require("isovim.safe").wrap("saving a task's description", save_description)(view, true)
-  end, { buffer = view.buf, nowait = true, desc = "isovim: save the description and go back" })
+  end, { buffer = view.buf, nowait = true, desc = "isovim: save the description and leave the edit" })
 end
 
 -- i: its description, editable in place, in the same buffer as markdown. Keys are vim's till it's saved.
 local function edit_description(view)
-  local task = tasks.read(view.repo)[view.name]
+  local task = tasks.read(view.repo)[view.task_open]
   if not task or view.editing then
     return
   end
-  for _, lhs in ipairs(view.task_keys or {}) do
-    pcall(vim.keymap.del, "n", lhs, { buffer = view.buf })
-  end
-  view.task_keys, view.editing = nil, true
+  require("isovim.thread_board").clear_keys(view)
+  view.editing = true
   vim.bo[view.buf].modifiable = true
   vim.bo[view.buf].buftype = "acwrite"
   vim.api.nvim_buf_clear_namespace(view.buf, NS, 0, -1)
@@ -540,9 +619,11 @@ local function edit_description(view)
   vim.api.nvim_buf_set_lines(view.buf, 0, -1, false, vim.split(task.description or "", "\n", { plain = true }))
   require("isovim.surface_view").clear_marks(view.buf)
   vim.bo[view.buf].modified = false
+  -- Plain markdown while it's edited, highlighted but with its marks showing.
+  pcall(vim.treesitter.start, view.buf, "markdown")
   local win = vim.fn.bufwinid(view.buf)
   if win ~= -1 then
-    vim.wo[win][0].winbar = (" %s's description · <Esc> in normal mode saves and goes back · :w saves"):format(view.name)
+    vim.wo[win][0].winbar = (" %s's description · <Esc> in normal mode saves and leaves the edit · :w saves"):format(view.task_open)
     pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
   end
   local group = vim.api.nvim_create_augroup("isovim_task_edit_" .. view.buf, { clear = true })
@@ -577,10 +658,7 @@ local function enter(view)
   elseif row.thread then
     surfaces.open(row.thread)
   elseif row.task then
-    local entry = surfaces.task_entry(view.repo, row.task)
-    if entry then
-      surfaces.open(entry)
-    end
+    M.show(view, row.task)
   elseif row.pr then
     links.open(row.pr)
   elseif row.ticket then
@@ -588,7 +666,7 @@ local function enter(view)
   end
 end
 
-function bind_keys(view)
+local function bind_keys(view)
   local bound = {}
   local function on(lhs, fn, desc)
     bound[#bound + 1] = lhs
@@ -598,18 +676,21 @@ function bind_keys(view)
   end
   for _, key in ipairs(M.KEYS) do
     on(key[1], function()
-      local task = tasks.read(view.repo)[view.name]
+      local task = tasks.read(view.repo)[view.task_open]
       if task then
         M.actions[key[2]](view.repo, task)
       end
     end, key[3])
   end
   on("A", function()
-    local task = tasks.read(view.repo)[view.name]
+    local task = tasks.read(view.repo)[view.task_open]
     if task then
       M.actions.attach_thread(view.repo, task)
     end
   end, "attach an open thread to it")
+  on("<Esc>", function()
+    M.back(view)
+  end, "back to the board")
   on("i", function()
     edit_description(view)
   end, "edit the description")
@@ -633,7 +714,7 @@ function bind_keys(view)
     end, M.help_keys())
     vim.notify(table.concat(text, "\n"), vim.log.levels.INFO, { title = "A task" })
   end, "the task's keys")
-  view.task_keys = bound
+  view.mode_keys = bound
 end
 
 function M.bind(view)
@@ -643,7 +724,6 @@ function M.bind(view)
   else
     bind_keys(view)
   end
-  require("isovim.links").attach(view.buf)
 end
 
 return M

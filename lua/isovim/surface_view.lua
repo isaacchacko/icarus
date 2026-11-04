@@ -60,7 +60,8 @@ M.prs_keys = {
 ---@class isovim.SurfaceView
 ---@field repo string
 ---@field name string
----@field kind "markdown"|"prs"|"decisions"|"threads"|"task"|"page"|"question"
+---@field kind "markdown"|"prs"|"decisions"|"threads"|"page"|"question"
+---@field task_open? string threads: the task its buffer shows in place of the board (isovim.task_view)
 ---@field line_items? table<integer, table> prs and decisions: the PR or decision each line is, for its keys
 ---@field buf integer the rendered view
 ---@field input integer the input box
@@ -168,8 +169,6 @@ local function own_entry(view)
     return surfaces.decisions_entry(view.repo, true)
   elseif view.kind == "threads" then
     return surfaces.threads_entry(view.repo, true)
-  elseif view.kind == "task" then
-    return surfaces.task_entry(view.repo, view.name)
   end
 end
 
@@ -387,8 +386,6 @@ local function draw_surface(view, entry)
   -- The board has its own drawing.
   if view.kind == "threads" then
     return require("isovim.thread_board").draw(view)
-  elseif view.kind == "task" then
-    return require("isovim.task_view").draw(view)
   end
   view.width = win ~= -1 and vim.api.nvim_win_get_width(win) or 100
   local lines, marks, rows = M.render(entry, view.width)
@@ -835,8 +832,6 @@ local function bind(view)
     end
   elseif view.kind == "threads" then
     require("isovim.thread_board").bind(view)
-  elseif view.kind == "task" then
-    require("isovim.task_view").bind(view)
   elseif view.kind == "decisions" then
     vim.keymap.set("n", "<CR>", function()
       local decision = (view.line_items or {})[vim.api.nvim_win_get_cursor(0)[1]]
@@ -861,12 +856,13 @@ local function bind(view)
     end
   end
   -- Its links open with <Tab> and o, in a view that draws them as they're written.
-  if view.kind == "markdown" or view.kind == "question" then
+  if view.kind == "markdown" or view.kind == "question" or view.kind == "threads" then
     require("isovim.links").attach(view.buf)
   end
   -- u: marked read if it's holding your attention, else unread until it's opened again; what someone's
-  -- blocked on stays (isovim.surfaces.toggle_read). A task holds no attention, and is sometimes edited.
-  if view.kind ~= "task" then
+  -- blocked on stays (isovim.surfaces.toggle_read). The board holds no attention, and a task's description
+  -- is edited in it.
+  if view.kind ~= "threads" then
     vim.keymap.set("n", "u", function()
       local entry = view.kind == "question" and view.entry
         or view.kind == "prs" and surfaces.prs_entry(view.repo) or surfaces.get(view.repo, view.name)
@@ -1020,6 +1016,9 @@ function M.dress(view, win)
   view_window(win, question, DRAWN[view.kind] or false)
   if view.kind == "threads" then
     require("isovim.thread_board").dress(win)
+    if view.task_open then
+      require("isovim.task_view").dress(view)
+    end
   end
   if view.kind == "page" then
     require("isovim.pages").dress(win, view)
@@ -1091,7 +1090,10 @@ end
 -- window kept where it was scrolled.
 function M.rebind()
   for _, view in pairs(M.views) do
-    if vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
+    -- A task used to have a tab of its own; it's in the board's buffer now.
+    if view.kind == "task" then
+      pcall(Snacks.bufdelete, { buf = view.buf, force = true })
+    elseif vim.api.nvim_buf_is_valid(view.buf) and vim.api.nvim_buf_is_valid(view.input) then
       for _, buf in ipairs({ view.buf, view.input }) do
         for _, mode in ipairs({ "n", "i", "x" }) do
           for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
@@ -1153,7 +1155,7 @@ function M.refresh_boards()
         require("isovim.thread_board").draw(view)
       end
     end
-    local entry = view.kind ~= "threads" and view.kind ~= "task" and vim.api.nvim_buf_is_valid(view.buf) and own_entry(view)
+    local entry = view.kind ~= "threads" and vim.api.nvim_buf_is_valid(view.buf) and own_entry(view)
     if entry then
       tab(view, entry)
       draw_surface(view, entry)
@@ -1167,12 +1169,6 @@ function M.threads_changed(repo)
   for _, view in pairs(M.views) do
     if view.kind == "threads" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
       require("isovim.thread_board").refresh(view)
-    elseif view.kind == "task" and view.repo == repo and vim.api.nvim_buf_is_valid(view.buf) then
-      local entry = own_entry(view)
-      if entry then
-        tab(view, entry)
-        require("isovim.task_view").refresh(view)
-      end
     end
   end
 end

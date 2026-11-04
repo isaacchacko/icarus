@@ -1,6 +1,6 @@
 -- A project's board, as Linear's: one view, one buffer drawn in four columns, no splits. Cards are tasks
 -- (isovim.board_tasks), which only the user makes or changes, each with its threads under it as rows and
--- a view of its own (isovim.task_view), whose keys work on a card too. A thread is on one task at most, and there are no subthreads: a thread made from a thread on a
+-- a view drawn in this same buffer (isovim.task_view), <Esc> coming back here, whose keys work on a card too. A thread is on one task at most, and there are no subthreads: a thread made from a thread on a
 -- task lands on the same task, as a sibling.
 --
 -- Motion is the user's: a card's column changes only when they move it with H or L. No post, state
@@ -470,8 +470,11 @@ local function winbar(view, fit, columns)
   return table.concat(parts, (" "):rep(GAP)) .. "%#Normal#"
 end
 
--- Draws the board in the view's buffer, the cursor on its focus.
+-- Draws the board in the view's buffer, the cursor on its focus: or the task it's showing.
 function M.draw(view)
+  if view.task_open then
+    return require("isovim.task_view").draw(view)
+  end
   local sv = require("isovim.surface_view")
   local win = vim.fn.bufwinid(view.buf)
   local width = win ~= -1 and vim.api.nvim_win_get_width(win) or 120
@@ -491,6 +494,9 @@ end
 
 -- Threads or tasks changed under it: read them again, and draw if it reads differently.
 function M.refresh(view)
+  if view.task_open then
+    return require("isovim.task_view").refresh(view)
+  end
   view.board_columns = nil
   local win = vim.fn.bufwinid(view.buf)
   local width = win ~= -1 and vim.api.nvim_win_get_width(win) or view.width or 120
@@ -674,8 +680,39 @@ M.help_keys = {
   { "?", "these keys" },
 }
 
+-- The keys of what the buffer's showing, the board or a task, off.
+function M.clear_keys(view)
+  for _, lhs in ipairs(view.mode_keys or {}) do
+    pcall(vim.keymap.del, "n", lhs, { buffer = view.buf })
+  end
+  view.mode_keys = nil
+end
+
+-- Shows the task in the repo's board, reusing it if it's open: how anything outside the board opens one.
+function M.open_task(repo, id)
+  local entry = surfaces.threads_entry(repo, true)
+  if entry then
+    require("isovim.task_view").show(require("isovim.surface_view").open(entry), id)
+  end
+end
+
+-- Opens the board as itself, whatever task it was showing.
+function M.open(entry)
+  local view = require("isovim.surface_view").open(entry)
+  if view.task_open then
+    require("isovim.task_view").back(view)
+  end
+end
+
 function M.bind(view)
+  M.clear_keys(view)
+  vim.b[view.buf].completion = false
+  if view.task_open then
+    return require("isovim.task_view").bind(view)
+  end
+  local bound = {}
   local function on(lhs, fn, desc)
+    bound[#bound + 1] = lhs
     vim.keymap.set("n", lhs, function()
       require("isovim.safe").wrap("the board", fn)()
     end, { buffer = view.buf, nowait = true, desc = "isovim: " .. desc })
@@ -712,7 +749,6 @@ function M.bind(view)
             end
           end
           tasks.delete(view.repo, task.id)
-          require("isovim.surface_view").close(view.repo, task.id)
           changed(view)
         end
       end)
@@ -737,7 +773,7 @@ function M.bind(view)
   on("<CR>", function()
     local row = focused(view)
     if row and row.task then
-      surfaces.open(surfaces.task_entry(view.repo, row.task.id))
+      require("isovim.task_view").show(view, row.task.id)
     elseif row and row.entry then
       surfaces.open(row.entry)
     end
@@ -752,6 +788,7 @@ function M.bind(view)
       M.draw(view)
     end
   end, "fold the task's threads")
+  view.mode_keys = bound
 end
 
 -- A window showing the board: its lines cut, not wrapped.

@@ -246,7 +246,7 @@ local KINDS = {
     end,
     id = { "host", "repo_key", "section" },
   },
-  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter opens its view.
+  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter shows it in the board.
   thread_task = {
     format = function(item, width)
       local row = { { "  " }, { item.guide, "NonText" }, { item.task_title, "Comment" } }
@@ -2052,7 +2052,7 @@ function M.help()
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
   section("The board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
-  section("A task (<CR> on its card, <leader><leader>)", require("isovim.task_view").help_keys())
+  section("A task, in the board's buffer (<CR> on its card, <leader><leader>)", require("isovim.task_view").help_keys())
   section("A surface's view (markdown, a page, the PRs, a question)", {
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })

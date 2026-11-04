@@ -370,13 +370,18 @@ host; General, Root and Terminals have none, and starting one there says why.
   workspace of any URL the repo's tasks hold, else Linear's own `linear.app/issue/<id>`. There's no Linear
   client and so no live state for tickets, only what's stored; ticket data stays in `iso/`. Linking
   moves nothing and tells nobody.
-- **A task's view** (isovim.task_view): `<CR>` on its card, its sidebar row or its `iso:task/<repo>#k1` chip
-  (`iso <role> link k1` prints it), or `<leader><leader>`, opens it as a tab in the main window like any
-  surface, listed so `<leader>,` has it too. Its title and description are the body, drawn as markdown,
+- **A task's view** (isovim.task_view) is drawn in the board's own buffer, with no buffer or tab of its own
+  ("i want to be able to have one buffer for the board and everything is in that buffer"). `<CR>` on its card,
+  its sidebar row or its `iso:task/<repo>#k1` chip (`iso <role> link k1` prints it), or `<leader><leader>`,
+  shows it there, opening the board or reusing the open one. `<Esc>` goes back to the board, on that task's
+  card, scrolled and filtered as it was, and the winbar says so. Opening the board itself (`<CR>` on Threads,
+  `<leader>iO`) shows the board. A thread's row still opens the thread in its own tab, as it has an input
+  box and a chat of its own. Its title and description are the body, drawn as markdown,
   then its properties in a compact block, its threads where Linear has sub-issues, relations, PRs,
   Linear, and activity, newest first. `i` (or `<CR>` on the description) makes the same buffer the
-  description alone, in place: vim's keys work till `<Esc>` in normal mode saves and goes back, `:w` saves,
-  and leaving keeps what's typed. Its keys are the card's: `s` status, `p` priority, `a` assignee, `t`
+  description alone, in place, as plain highlighted markdown: vim's keys work till `<Esc>` in normal mode
+  saves and leaves the edit, a further `<Esc>` going to the board; `:w` saves, and going elsewhere keeps what's
+  typed. Its keys are the card's: `s` status, `p` priority, `a` assignee, `t`
   labels (a new one takes a name and a color), `D` due date (`2026-11-30`, `today`, `tomorrow`, `+3`), `e`
   estimate, `r` rename, `n` a new thread, `A` attach an open thread, `R` relations, `K` PRs and tickets, as Linear's where they don't
   clash: `l` is the board's column to the right, so labels are `t`. `<CR>` on a row opens it, `?` lists them.
