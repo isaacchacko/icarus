@@ -16,6 +16,8 @@
 --   repo_defaults  {glyph, palette}: the glyph and the list of colors (names or "#rrggbb") written into a
 --              repo's config when it's first seen; default the repo glyph and the 12 palette colors from
 --              red to pink. Repos take the colors in the order they're first seen, wrapping round.
+--   dedicated_label  what a router dedicated to a task is called on its card and in its view; default
+--              "dedicated"
 --   enforce    true once iso cutover has run on this host (M.enforced)
 --   browser_tab_idle  seconds a tab in isovim's Chrome may go unused, its owner not working, before
 --              it's closed (isovim.browser); default 3600, 0 closes only tabs whose owner is gone
@@ -34,6 +36,13 @@ function M.get()
   local ok, lines = pcall(vim.fn.readfile, M.path)
   local decoded, config = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
   return decoded and type(config) == "table" and config or {}
+end
+
+-- What a router dedicated to a task is called on the board.
+---@return string
+function M.dedicated_label()
+  local label = M.get().dedicated_label
+  return type(label) == "string" and label ~= "" and label or "dedicated"
 end
 
 -- How long, in seconds, a tab may go unused before it's closed; 0 is never for that reason.

@@ -316,7 +316,7 @@ function M.help_keys()
     { "A", "on a thread's row, move it to another task or take it off (No task, first); elsewhere, attach one of the repo's open threads, picked, moving it if it's on another task" },
     { "<Esc>", "back to the board, on this task's card" },
     { "i", "edit the description in place (<Esc> in normal mode saves and leaves the edit, :w saves)" },
-    { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser); on the description, edit it" },
+    { "<CR>", "open the thread, task, dedicated router, PR or ticket on this line (a PR in the browser); on the description, edit it" },
     { "o", "a PR's own view here" },
     { "<Tab>", "open the link under the cursor" },
     { "[ / ]", "the previous / next project's board" },
@@ -430,6 +430,11 @@ local function layout(repo, id, width)
     property("Estimate", task.estimate and { { tostring(task.estimate) } } or { { "none", "Comment" } }))
   pair(property("Created", { { os.date("%Y-%m-%d %H:%M", task.at), "Comment" } }), property("Updated", { { ago(task.last_at), "Comment" } }))
   pair(property("Id", { { task.id, "Comment" } }), property("Link", { { ("iso:task/%s#%s"):format(repo, task.id):gsub("^iso:", ""), "Comment" } }))
+
+  local dedicated = require("isovim.threads").routers(repo).tasks[id]
+  if dedicated then
+    add({ { (" %s  "):format(require("isovim.config").dedicated_label()), "Comment" }, { address("iso:agent/" .. dedicated) } }, { agent = "iso:agent/" .. dedicated })
+  end
 
   local own = vim.tbl_filter(function(entry)
     return entry.task == id
@@ -692,6 +697,8 @@ local function enter(view)
     M.show(view, row.task)
   elseif row.pr then
     links.open(row.pr)
+  elseif row.agent then
+    links.open(row.agent)
   elseif row.ticket then
     links.open_url(tasks.link_url(view.repo, row.ticket))
   end

@@ -1142,6 +1142,8 @@ function M.refresh_boards()
       local win = vim.fn.bufwinid(view.buf)
       if win ~= -1 and vim.api.nvim_win_get_width(win) ~= view.width then
         require("isovim.thread_board").draw(view)
+      elseif win ~= -1 then
+        require("isovim.thread_board").dedicated_changed(view)
       end
     end
     local entry = view.kind ~= "threads" and vim.api.nvim_buf_is_valid(view.buf) and own_entry(view)

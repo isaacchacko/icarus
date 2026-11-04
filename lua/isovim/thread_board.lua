@@ -113,6 +113,7 @@ function M.columns(repo, query)
   for i in ipairs(M.COLUMNS) do
     columns[i] = {}
   end
+  local dedicated = threads.routers(repo).tasks
   -- Priority first, then most recent.
   local ordered = vim.tbl_values(all_tasks)
   for _, task in ipairs(ordered) do
@@ -164,7 +165,7 @@ function M.columns(repo, query)
         done = done + (entry.resolved and 1 or 0)
       end
       local list = columns[INDEX[task.column] or INDEX.working]
-      list[#list + 1] = { task = task, threads = own, done = done, key = task.id }
+      list[#list + 1] = { task = task, threads = own, done = done, key = task.id, dedicated = dedicated[task.id] }
     end
   end
   return columns
@@ -220,9 +221,21 @@ local function badge(task)
   return b and boxes.seg(b[1], b[2]) or nil
 end
 
--- What's under a card's progress: assignee, due date, estimate, how many PRs and tickets.
-local function card_meta(task)
+-- A router dedicated to a task, as its card shows it: how it is, and what it's called.
+local function dedicated_mark(address)
+  local ws, agent = address:match("^(.*)/([^/]+)$")
+  local state = require("isovim.status").get(ws, agent)
+  local glyph, hl = require("isovim.status").icon(state)
+  local working = state == "working"
+  return boxes.seg((working and glyph or "○") .. " " .. require("isovim.config").dedicated_label(), working and hl or "Comment")
+end
+
+-- What's under a card's progress: its dedicated router, assignee, due date, estimate, how many PRs and tickets.
+local function card_meta(task, dedicated)
   local parts = {}
+  if dedicated then
+    parts[#parts + 1] = dedicated_mark(dedicated)
+  end
   if task.assignee then
     parts[#parts + 1] = boxes.seg("@" .. (tasks.assignee_name(task.assignee) or "?"), "Comment")
   end
@@ -283,7 +296,7 @@ local function card(row, column, width, focused, labels)
     under = boxes.seg(("%d/%d done"):format(row.done, total), "Comment")
   end
   lines[#lines + 1] = boxes.side(width, boxes.fit(under, inner), border)
-  local extra = card_meta(task)
+  local extra = card_meta(task, row.dedicated)
   if extra then
     lines[#lines + 1] = boxes.side(width, boxes.fit(extra, inner), border)
   end
@@ -494,6 +507,21 @@ function M.draw(view)
       pcall(vim.api.nvim_win_set_cursor, win, { focus_at[3], 0 })
       pcall(vim.api.nvim_win_set_cursor, win, { focus_at[1], focus_at[2] })
     end
+  end
+end
+
+-- A task's dedicated router changed state with no file here changing: the sidebar's refresh asks.
+function M.dedicated_changed(view)
+  local states = {}
+  for task, address in pairs(threads.routers(view.repo).tasks) do
+    local ws, agent = address:match("^(.*)/([^/]+)$")
+    states[#states + 1] = task .. address .. tostring(require("isovim.status").get(ws, agent) == "working")
+  end
+  table.sort(states)
+  local sig = table.concat(states, " ")
+  if sig ~= view.board_dedicated then
+    view.board_dedicated = sig
+    M.refresh(view)
   end
 end
 
