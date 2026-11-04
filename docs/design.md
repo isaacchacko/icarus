@@ -291,6 +291,12 @@ virtual chat: the router stays one agent with one session, its context warm, and
 shows only the exchanges about its one thing. Threads exist only in a repo with a router on this
 host; General, Root and Terminals have none, and starting one there says why.
 
+- **Shortcuts:** a post whose whole text, trimmed, is `qqq` or `www` reaches the agent (the router or a
+  bypass holder) as an instruction to rewrite the last agent post on the thread: shorter with no fluff,
+  or as `/kin` would for a reader with no context. The thread keeps what you typed, and the rewrite is
+  the turn's reply. `SHORTCUTS` in `isovim.threads` is the table: adding one is a line. With no agent
+  post yet it's an ordinary post. Queued with other posts it merges as any post does, in order, and
+  the agent answers them together.
 - **Stored** as `iso/threads/<id>.jsonl` (`t1`, `t2`…), appended to, never rewritten: a header
   `{kind: thread, id, title, created_by, at, status: open}`, then posts `{kind: post, by: user|<agent
   address>, text, at, images?, no_reply?}`, `resolved {by, outcome?}`, `reopened {by}`, and `working

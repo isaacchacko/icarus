@@ -615,9 +615,31 @@ local function send_to(address, text, images)
   return vim.system(cmd, { text = true })
 end
 
+-- A post that is only one of these asks for the last agent post on the thread again, this way.
+local SHORTCUTS = {
+  qqq = "with fewer characters and no fluff, losing no fact or decision",
+  www = "as /kin would (the kin skill), for a reader with no context on what's going on",
+}
+
+-- What the agent is told for a shortcut; nil for any other post, and with no agent post yet to
+-- rewrite, when it's an ordinary post. Posts merged with it (isovim.acp.host) go in order around it.
+local function shortcut(repo, id, text)
+  local how = SHORTCUTS[vim.trim(text)]
+  local last
+  for _, entry in ipairs(how and M.read(repo, id) or {}) do
+    if entry.kind == "post" and entry.by ~= "user" then
+      last = entry
+    end
+  end
+  return last and ("[isovim: the user posted only \"%s\", which asks you to rewrite the last agent post on this thread %s. "
+    .. "It's %s's, starting \"%s\"; iso <your role> thread show %s has it if it's been compacted away. Unless other posts "
+    .. "came with this one, the rewrite is this turn's reply, and needs no work beyond that.]")
+    :format(vim.trim(text), how, last.by, (last.text or ""):gsub("%s+", " "):sub(1, 60), id) or nil
+end
+
 -- What the router is sent for a post of the user's.
 function M.prompt(repo, id, title, text)
-  return ("[thread %s#%s %q] %s"):format(repo, id, title, text)
+  return ("[thread %s#%s %q] %s"):format(repo, id, title, shortcut(repo, id, text) or text)
 end
 
 -- The thread a prompt is for, from its tag (anywhere on its first line, after a stamp): repo, id.

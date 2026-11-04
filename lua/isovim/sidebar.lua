@@ -1936,7 +1936,7 @@ local LIST_KEYS = {
   { "s", "isovim_spawn", "spawn a worker over ACP in its project (its worktree comes on its first edit), or in General" },
   { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },
   { "U", "isovim_toggle_read", "mark the surface, thread or agent's chat read if it's holding your attention, out of the Inbox till something new, else unread, until you open it. A waiting question, a page awaiting your reply or an agent blocked on a permission stays: it says so" },
-  { "t", "isovim_new_thread", "a new thread with the project's router (isovim.threads): its title, then your first post" },
+  { "t", "isovim_new_thread", "a new thread with the project's router (isovim.threads): its title, then your first post; a post of only qqq asks for the agent's last post shorter, www for it as if you had no context" },
   { "n", "isovim_terminal", "new terminal (it opens in ~)" },
   { "r", "isovim_rename", "rename the workspace, agent, terminal or thread" },
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the Task Board or PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
