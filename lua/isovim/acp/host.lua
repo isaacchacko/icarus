@@ -1575,6 +1575,8 @@ local function subscribe_inbox()
   S.inbox = true
   require("isovim.rootmode").listen(S.ws .. "/" .. S.agent, function(text)
     submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
+  end, function()
+    return S.busy
   end)
 end
 

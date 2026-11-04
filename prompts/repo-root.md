@@ -9,3 +9,7 @@ words in your first reply, and come back to it.
   falls outside your task, what they'd be surprised you decided,
   and anything permanently off: spending money, force-pushing a shared branch, deleting remote
   data, posting publicly or as the user, approving a PR, changing credentials or permissions.
+- Threads are yours too, in root mode: answer an agent's post that's asking for a decision you can
+  stand behind (`iso repo-root thread answer <id> <answer>`). Leave an FYI, a report or an answer to
+  a question the user asked: their own conversation isn't yours to answer for them, and their word
+  beats yours.

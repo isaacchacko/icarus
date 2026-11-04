@@ -97,7 +97,7 @@ end
 function M.summary(entries)
   local head = entries[1] or {}
   local info = { id = head.id, title = head.title or head.id or "?", first_title = head.title, created_by = head.created_by, at = head.at,
-    status = head.status or "open", posts = 0, last_reply = 0, working = false }
+    status = head.status or "open", posts = 0, last_reply = 0, working = false, root_posts = 0 }
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
   end
@@ -115,7 +115,14 @@ function M.summary(entries)
     if entry.kind == "post" then
       info.posts = info.posts + 1
       info.last_by = entry.by
-      if entry.by ~= "user" then
+      if entry.by == "user" then
+        info.root_posts, info.handed = 0, nil
+      end
+      if entry.root then
+        -- The root answered in the user's place: it no longer waits on them, and nothing new to read.
+        info.root_posts, info.handed = info.root_posts + 1, nil
+        waits(nil)
+      elseif entry.by ~= "user" then
         info.last_reply = entry.seq
         if turn then
           turn.posted, turn.spoke = turn.posted or not entry.no_reply, true
@@ -149,6 +156,8 @@ function M.summary(entries)
         bypass_ended(entry, entry.why or (on and "replaced" or "deleted"))
       end
       info.bypass = on
+    elseif entry.kind == "handed" then
+      info.handed = entry.seq
     elseif entry.kind == "bypass_told" then
       info.ended_bypasses = vim.tbl_filter(function(each)
         return each.seq > (entry.upto or 0)
@@ -189,6 +198,7 @@ function M.summary(entries)
       end
     end
   end
+  info.last_seq = entries[#entries] and entries[#entries].seq or 0
   info.questions = M.questions(entries)
   info.pending = #vim.tbl_filter(function(q)
     return not q.answer
@@ -819,6 +829,120 @@ function M.listen(repo, say, busy)
       soon:start(2000, 0, vim.schedule_wrap(sweep))
     end
   end)
+end
+
+-- Root mode (isovim.rootmode) has a root on top of its repo's threads, as of its Inbox's questions.
+-- When an agent's post has sat on the user's turn for a while, the root is told once, and answers in
+-- the user's place or leaves it, which leaves it in their Inbox. A root doesn't go back and forth with
+-- a router for long: past ROOT_ANSWERS answers with no word from the user, the thread stays theirs.
+local ROOT_ANSWERS, VIEW_FRESH = 3, 30
+
+local function root_told_file(repo)
+  return store.run_dir(repo) .. "/root-threads.json"
+end
+
+-- The thread is on screen in front of the user (the TUI's, every few seconds while it is).
+function M.viewing(repo, id)
+  vim.fn.mkdir(store.run_dir(repo), "p")
+  vim.fn.writefile({}, store.run_dir(repo) .. "/thread-view-" .. id)
+end
+
+local function viewed(repo, id)
+  local stat = vim.uv.fs_stat(store.run_dir(repo) .. "/thread-view-" .. id)
+  return stat ~= nil and os.time() - stat.mtime.sec < VIEW_FRESH
+end
+
+local function by_a_root(address)
+  local ws, agent = (address or ""):match("^(.*)/([^/]+)$")
+  local record = ws and store.agent(ws, agent)
+  local role = record and store.role(record)
+  return role == "root" or role == "repo-root"
+end
+
+-- The user hands the thread to the root at once (gr on it), past the wait and whatever it says.
+function M.hand_to_root(repo, id)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  append(repo, id, { kind = "handed", by = "user" })
+  local events = require("isovim.events")
+  events.publish(events.topic("thread", repo, id, "handed"), { repo = repo, id = id })
+  return true
+end
+
+-- Whether the root may answer now: the user has spoken since, or it's moved on, and it may not.
+function M.root_may_answer(info)
+  return info.status == "open" and (info.handed ~= nil or (info.waiting_on == "user" and info.last_by ~= "user"))
+end
+
+-- What a router or a bypass holder is told with the root's answer: their reply is a turn on the
+-- thread as any other, and would land on the user's turn.
+M.ROOT_NOTE = "\n\n(That's the root, answering in the user's place. If your reply needs nothing from the user, "
+  .. "iso <your role> thread waiting %s none with it keeps it out of their Inbox.)"
+
+---@return table? post, string? err
+function M.root_post(repo, id, by, text)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  return append(repo, id, { kind = "post", by = by, text = vim.trim(text), root = true })
+end
+
+-- The threads the root should hear of now, each marked told so it's told once: up to limit, what the
+-- user handed it first, then the longest waiting. handed_only is for between its regular looks. The
+-- first look at a repo tells nothing and starts from there: threads already waiting stay the user's,
+-- and gr hands one over.
+---@param grace integer seconds on the user's turn before the root hears of it
+---@return {id: string, title: string, handed: boolean, by?: string, at?: integer, text?: string}[]
+function M.for_root(repo, grace, limit, handed_only)
+  local infos = M.list(repo)
+  local file = root_told_file(repo)
+  local ok, lines = pcall(vim.fn.readfile, file)
+  local decoded, told = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
+  local first_look = not (decoded and type(told) == "table")
+  told = not first_look and told or {}
+  local tasks = require("isovim.board_tasks").read(repo)
+  local now, due = os.time(), {}
+  for _, info in ipairs(infos) do
+    local seen = told[info.id] or 0
+    local task = info.task and tasks[info.task]
+    if first_look then
+      told[info.id] = info.last_seq
+    elseif info.status == "open" and (info.handed or 0) > seen then
+      due[#due + 1] = { info = info, handed = true }
+    elseif not handed_only and M.root_may_answer(info) and not info.handed and info.last_reply > seen
+      and now - (info.waiting_at or now) >= grace and info.root_posts < ROOT_ANSWERS and info.pending == 0
+      and not info.working and not by_a_root(info.last_by) and not (task and task.column == "backburner")
+      and not drafted(repo, info.id) and not viewed(repo, info.id) then
+      due[#due + 1] = { info = info }
+    end
+  end
+  table.sort(due, function(a, b)
+    if (a.handed or false) ~= (b.handed or false) then
+      return a.handed == true
+    end
+    return (a.info.waiting_at or 0) < (b.info.waiting_at or 0)
+  end)
+  local taken = {}
+  for i = 1, math.min(limit, #due) do
+    local each = due[i]
+    told[each.info.id] = each.info.last_seq
+    local post
+    for _, entry in ipairs(M.read(repo, each.info.id) or {}) do
+      if entry.kind == "post" and entry.by ~= "user" then
+        post = entry
+      end
+    end
+    taken[#taken + 1] = { id = each.info.id, title = each.info.title, handed = each.handed == true,
+      by = post and post.by, at = post and post.at, text = post and post.text }
+  end
+  if first_look or #taken > 0 then
+    vim.fn.mkdir(store.run_dir(repo), "p")
+    vim.fn.writefile({ vim.json.encode(next(told) and told or vim.empty_dict()) }, file)
+  end
+  return taken
 end
 
 -- Follows a thread file: on_entry(entry) for each line from line from+1 on, as it's appended

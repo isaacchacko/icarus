@@ -978,6 +978,7 @@ function M.setup(opts)
     _G.isovim_idle_timer = vim.uv.new_timer()
     _G.isovim_idle_timer:start(60000, 60000, safe.ticker("the idle check", function()
       require("isovim.hooks").check_idle()
+      require("isovim.hooks").check_tick()
     end))
   end
   safe.watch_errors()

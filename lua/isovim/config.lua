@@ -15,6 +15,8 @@
 --   enforce    true once iso cutover has run on this host (M.enforced)
 --   browser_tab_idle  seconds a tab in isovim's Chrome may go unused, its owner not working, before
 --              it's closed (isovim.browser); default 3600, 0 closes only tabs whose owner is gone
+--   thread_root_grace  minutes a thread sits on your turn before root mode's root is told (and at
+--              least this long between those messages); default 5
 --   compact_at the context size, in tokens, past which a router's, repo-root's or root's session is
 --              compacted when a turn ends (isovim.acp.host); default 250000, 0 turns it off
 local store = require("isovim.store")
@@ -35,6 +37,13 @@ end
 function M.browser_tab_idle()
   local idle = M.get().browser_tab_idle
   return type(idle) == "number" and idle >= 0 and idle or 3600
+end
+
+-- How long, in minutes, the root stays out of a thread on the user's turn.
+---@return number
+function M.thread_root_grace()
+  local grace = M.get().thread_root_grace
+  return type(grace) == "number" and grace >= 0 and grace or 5
 end
 
 -- The context size past which a long-lived role's session is compacted; 0 is never.

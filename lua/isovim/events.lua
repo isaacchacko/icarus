@@ -57,6 +57,7 @@ M.topics = {
   { "bug.*.filed", "a report about isovim was filed (iso bug)" },
   { "bug.*.taken", "a bug report's worker was spawned" },
   { "bug.*.issued", "a bug report's GitHub issue was opened" },
+  { "thread.*.*.handed", "the user handed a thread to its root" },
   { "root.*.raised", "a root left a question to the user" },
   { "root.*.decided", "a root answered a question itself" },
   { "**", "everything" },

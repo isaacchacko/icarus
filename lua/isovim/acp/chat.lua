@@ -1365,6 +1365,7 @@ function RENDER.post(chat, entry)
     body[#body + 1] = boxes.seg("\u{f03e} image: " .. vim.fn.fnamemodify(image.path or "", ":t"), "IsovimPrLink")
   end
   local who = mine and "you" or entry.by:match("([^/]+)$") or entry.by
+  who = entry.root and (who .. " · the root") or who
   local title = mine and boxes.cat(boxes.seg(GLYPH.prompt .. " " .. who, "IsovimAcpPromptGlyph"), boxes.seg(" · " .. clock(entry.at), "IsovimPrDim"))
     or boxes.cat(boxes.seg(GLYPH.message .. " ", "IsovimAcpMessage"), boxes.seg(who, "IsovimPrTitle"), boxes.seg(" · " .. clock(entry.at), "IsovimPrDim"))
   draw_box(chat, title, body, mine and "IsovimPrBorder" or "IsovimAcpMessage", mine and "IsovimAcpPrompt" or nil, mine)
@@ -1444,6 +1445,10 @@ function RENDER.answered(chat, entry)
       replace_box(chat, box, { ("? %s → %s%s"):format(box.texts[1], answer, by) }, "IsovimAcpNotice")
     end
   end
+end
+
+function RENDER.handed(chat, entry)
+  add_block(chat, { ("handed to the root · %s"):format(clock(entry.at)) }, "IsovimPrDim")
 end
 
 function RENDER.renamed(chat, entry)
@@ -2590,6 +2595,11 @@ local function map_keys(chat)
       step(chat, -1)
     end, thread_u and "mark the thread read or unread (in the composer: undo)" or "undo in the composer")
   end
+  if chat.thread then
+    map("n", "gr", function()
+      return mine() and "gr" or "<Cmd>lua require('isovim.acp.chat').hand_thread()<CR>"
+    end, "hand the thread to the root, now (in the composer: vim's gr)", { expr = true })
+  end
   if chat.thread or chat.pending_title then
     map("n", "t", function()
       return mine() and "t" or "<Cmd>lua require('isovim.acp.chat').sibling_thread()<CR>"
@@ -2667,6 +2677,7 @@ M.help_keys = {
     { "r", "on the thread: resolve it, or open it again" },
     { "u", "on the thread: mark it read if it's holding your attention (your turn or unread), out of the Inbox till the router's next post, else unread until you open it again (in the composer, undo)" },
     { "D", "on the thread: mark it read, whatever it was (in the composer, vim's D)" },
+    { "gr", "on the thread, in root mode: hand it to the root now, past its wait; a post of yours takes it back" },
     { "1 <CR>", "while the router's question waits: its number (or an option's name) in the composer answers it; <CR> on an option too" },
     { "R", "on the thread (or :IsovimThreadRename): rename it, its title in the composer (<CR> renames, <C-c> keeps it); r in the sidebar too" },
     { "C", "on the thread: make a task and attach this thread, its title filled in to accept or edit, moving it from any task it's on (in the composer, vim's C)" },
@@ -3037,6 +3048,12 @@ local function follow(chat, from)
   chat.timer:start(1000, 1000, safe.ticker("the chat's subscription", function()
     if not chat.dead and not chat.backlog and vim.api.nvim_buf_is_loaded(chat.buf) then
       subscribe(chat)
+    end
+    -- What keeps root mode's root out of a thread open in front of the user (isovim.threads).
+    if chat.thread and not chat.dead and os.time() - (chat.viewed_at or 0) >= 10 and vim.fn.bufwinid(chat.buf) ~= -1
+      and require("isovim").focused then
+      chat.viewed_at = os.time()
+      threads.viewing(chat.ws, chat.thread)
     end
   end))
   local stop = chat.stop
@@ -3528,6 +3545,20 @@ function M.toggle_read(chat)
     require("isovim.status").toggle_read(chat.ws, chat.agent)
     require("isovim.sidebar").refresh()
   end
+end
+
+-- gr on a thread's conversation: the root takes it now, not after its wait.
+function M.hand_thread()
+  local chat = by_buf(vim.api.nvim_get_current_buf())
+  if not (chat and chat.thread) then
+    return say("gr: open a thread first")
+  end
+  local root = require("isovim.rootmode").route(chat.ws)
+  if not root then
+    return say("root mode is off for " .. chat.ws .. ", so there's no root to hand it to")
+  end
+  local handed, err = threads.hand_to_root(chat.ws, chat.thread)
+  say(handed and ("handed to the root, " .. root) or ("could not hand it over: " .. tostring(err)))
 end
 
 -- D on a thread's conversation: marked read, whatever it was, not a toggle.

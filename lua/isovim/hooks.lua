@@ -1,6 +1,7 @@
 -- Your own scripts in ~/.isovim/hooks/, run on isovim's events. Each is any executable file:
 --   idle   once every agent has been quiet for the config's idle_after minutes (default 30); runs
 --          once per quiet spell, with ISOVIM_QUIET (seconds) set. Checked while the TUI is open.
+--   tick   every 10 minutes while the TUI is open, quiet or not.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 local status = require("isovim.status")
@@ -52,5 +53,14 @@ function M.check_idle()
   M.run("idle", { ISOVIM_QUIET = tostring(os.time() - latest) })
 end
 M.check_idle = require("isovim.safe").wrap("the idle check", M.check_idle)
+
+_G.isovim_tick_at = _G.isovim_tick_at or os.time()
+
+function M.check_tick()
+  if os.time() - _G.isovim_tick_at >= 600 then
+    _G.isovim_tick_at = os.time()
+    M.run("tick")
+  end
+end
 
 return M

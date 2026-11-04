@@ -291,6 +291,23 @@ virtual chat: the router stays one agent with one session, its context warm, and
 shows only the exchanges about its one thing. Threads exist only in a repo with a router on this
 host; General, Root and Terminals have none, and starting one there says why.
 
+- **The root is on top of them,** in root mode, for whichever root decides that repo; off when root mode's
+  off. Its supervisor looks once a minute (`isovim.threads.for_root`). A thread is due when an agent's
+  post has sat on your turn for `thread_root_grace` minutes (default 5), with no draft in its composer,
+  not open and focused in front of you, not on a Backburner task, with no question of its own pending,
+  and the last post not a root's. One message per grace at most, only when the root is free, up to 8
+  threads, each with its last agent post (up to 1500 characters), so the post is the first read and `iso
+  <role> thread show <repo>#<id>` the second. Each post is told once (`run/<repo>/root-threads.json`).
+  The first look at a repo tells nothing: threads already waiting stay yours. The root answers with `iso
+  <role> thread answer`, or leaves it with no reply, which is an FYI's, a report's or an answer to your
+  own question's fate, and stays in your Inbox. An answer is a post marked `root`, shown as the root's,
+  not unread and not on your turn, and goes to the thread's router or bypass holder stamped as a root's,
+  with the authority a question's answer carries, even from a repo-root (only by this path), and is a turn on
+  the thread like your post. Refused once you've spoken since: your word beats the root's, and a post
+  of yours ends it till the next agent post. Past 3 answers with no word from you, it stops being told, so a root
+  and a router don't go back and forth at your expense. A raise is an ordinary `thread post` from the
+  root, its one line in the thread and the thread on your turn. `gr` on a thread hands it over at once,
+  past the wait and whatever it says (a `handed` entry, `thread.<repo>.<id>.handed` on the bus).
 - **Shortcuts:** a post whose whole text, trimmed, is `qqq` or `www` reaches the agent (the router or a
   bypass holder) as an instruction to rewrite the last agent post on the thread: shorter with no fluff,
   or as `/kin` would for a reader with no context. The thread keeps what you typed, and the rewrite is

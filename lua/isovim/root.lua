@@ -122,11 +122,12 @@ local function digest(text)
 end
 
 -- The stamp for a message from `from` to `to`, recorded in the ledger. kind is "from" or "ask".
-function M.stamp(kind, from, to, text)
+-- as_root stamps it as a root's: a repo root answering a thread in the repo root mode gives it.
+function M.stamp(kind, from, to, text, as_root)
   local id = ("m%x%s"):format(os.time(), vim.uv.random(3):gsub(".", function(c)
     return ("%02x"):format(c:byte())
   end))
-  local root = M.is_root(from)
+  local root = as_root or M.is_root(from)
   local sent = normalize(text)
   local entry = { id = id, at = os.time(), kind = kind, from = from, to = to, root = root or nil, sum = digest(sent),
     len = #sent, preview = sent:sub(1, 120) }

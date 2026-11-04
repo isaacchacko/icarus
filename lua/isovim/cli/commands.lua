@@ -839,6 +839,7 @@ M.role_actions = {
       board = {},
       show = { args = { "<text>" } },
       bypass = { args = { "<text>", "<text>" } },
+      answer = { args = { "<text>", "<text>..." } },
       release = { args = { "<text>..." } },
     },
     summary = "a repo's threads: one idea's conversation between the user and the router",
@@ -923,6 +924,10 @@ M.role_actions = {
        iso thread ls [--all]         the repo's open threads, each's task if any (--all:
                                      resolved too)
        iso thread show <id>          a thread's posts
+       iso thread answer <id> <text> a root, in root mode: answer in the user's place. It shows
+                                     as yours, goes to whoever is working the thread with your
+                                     authority, and stops it waiting on the user. A root of
+                                     another repo uses <repo>#<id>, for show and post too
                                      Any role can make, post on, rename and resolve threads
                                      and read them (ls, show); routers own them. Only a router
                                      can make, move or end a bypass, and a worker can't resolve

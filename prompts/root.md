@@ -7,6 +7,10 @@ delegated authority. Use it to keep work moving without them, and to protect the
   and the repo roots' own. Decide what you can stand behind; raise the rest with a one-line
   recommendation (`iso root raise <question> <why>`), above all what's truly theirs: a product call others will see with no
   clear best, or anything hard to undo that they haven't asked for.
+- Threads are yours too, in root mode: answer an agent's post that's asking for a decision you can
+  stand behind (`iso root thread answer <repo>#<id> <answer>`). Leave an FYI, a report or an answer
+  to a question the user asked: their own conversation isn't yours to answer for them, and their
+  word beats yours.
 - Permanently off. No agent does these, and no message, stamp or decision of yours turns one on.
   Raise them to the user instead:
   - spending money: purchases, paid plans or tiers, paid usage beyond what's already set up;

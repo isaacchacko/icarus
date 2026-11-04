@@ -7,7 +7,8 @@
 -- to your host Inbox with a one-line why; with root mode off it's yours at once. You may answer
 -- any of them, and the first answer wins. A root's ACP supervisor subscribes to the Inbox
 -- (M.listen) and tells the root of each new question it decides, whoever asked it and whatever
--- code they run.
+-- code they run, and of threads that have sat on your turn (isovim.threads.for_root), which it
+-- answers in your place or leaves with you.
 --   { "host": {agent, task?, since}, "repos": { "<owner/repo>": {agent, task?, since} } }
 -- An entry is active while its agent's record still holds the role it needs (root for the host,
 -- repo-root for a repo); one whose agent went away is off.
@@ -171,6 +172,63 @@ function M.take(address, repos, all)
   return list, scope
 end
 
+-- How many threads one message tells of: the rest wait for its next look.
+local THREADS_AT_ONCE = 8
+
+local function ago(at)
+  local minutes = math.floor((os.time() - (at or os.time())) / 60)
+  return minutes < 60 and (minutes .. "m") or (math.floor(minutes / 60) .. "h")
+end
+
+-- The threads as their root gets them: the post is usually enough, so it's there, up to a point.
+local function threads_text(groups, role, grace)
+  local parts = { ("[isovim: these threads have sat on the user's turn for over %d minutes with no word from them, and "
+    .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso %s thread "
+    .. "answer <repo>#<id> <your answer>` posts it as yours, sends it with your authority to whoever is working the thread "
+    .. "and stops it waiting on the user. Leave the rest, with no reply at all, and it stays in their Inbox: an FYI or a "
+    .. "report, an answer to a question the user asked, anything that's their own conversation. That isn't yours to answer "
+    .. "for them. Their word beats yours. What's permanently off stays off: for that, and what they'd be surprised you "
+    .. "decided, `iso %s thread post <repo>#<id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso %s "
+    .. "thread show <repo>#<id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
+    :format(math.floor(grace / 60), role, role, role) }
+  for _, group in ipairs(groups) do
+    for _, each in ipairs(group.threads) do
+      local text = each.text or "(no agent has posted yet)"
+      parts[#parts + 1] = ("--- %s#%s \"%s\"%s%s ---\n%s"):format(group.repo, each.id, each.title,
+        each.by and (" · " .. each.by .. ", " .. ago(each.at) .. " ago") or "",
+        each.handed and " · the user handed you this one: they want you on it now" or "",
+        #text > 1500 and (text:sub(1, 1500) .. "… (thread show has the rest)") or text)
+    end
+  end
+  return table.concat(parts, "\n\n")
+end
+
+-- Tells the root of its repos' threads. Hard batched: a root's turn is on a big context, so one
+-- message at most per grace while it's free, and only what the user handed it comes sooner.
+local function thread_teller(address, say, busy)
+  local threads, surfaces = require("isovim.threads"), require("isovim.surfaces")
+  local last_told = 0
+  return function()
+    local grace = require("isovim.config").thread_root_grace() * 60
+    local handed_only = busy() or os.time() - last_told < grace
+    local groups, left = {}, THREADS_AT_ONCE
+    for _, repo in ipairs(surfaces.repos()) do
+      if left > 0 and not store.is_pseudo(repo) and M.route(repo) == address then
+        local found = threads.for_root(repo, grace, left, handed_only)
+        left = left - #found
+        if #found > 0 then
+          groups[#groups + 1] = { repo = repo, threads = found }
+        end
+      end
+    end
+    if #groups > 0 then
+      last_told = os.time()
+      local record = store.agent(address:match("^(.*)/([^/]+)$"))
+      say(threads_text(groups, store.role(record), grace))
+    end
+  end
+end
+
 -- Subscribes a root to the Inbox, from its supervisor: say(text) gets one message per batch of
 -- new questions it's in charge of, a few seconds after the last surface event, and on start one
 -- for those asked while it was down. It goes by the event bus, so it doesn't matter who wrote or
@@ -178,7 +236,8 @@ end
 -- told twice. It listens whether root mode is on or not, and tells only while it is.
 ---@param address string the root, <ws>/<agent>
 ---@param say fun(text: string)
-function M.listen(address, say)
+---@param busy fun(): boolean whether a turn is running, so threads gather instead of queueing
+function M.listen(address, say, busy)
   local surfaces = require("isovim.surfaces")
   local pending, everywhere = {}, true
   local timer = assert(vim.uv.new_timer())
@@ -195,7 +254,12 @@ function M.listen(address, say)
   local function soon(delay)
     timer:start(delay, 0, vim.schedule_wrap(flush))
   end
+  local tell_threads = require("isovim.safe").wrap("rootmode's threads", thread_teller(address, say, busy))
+  assert(vim.uv.new_timer()):start(60000, 60000, vim.schedule_wrap(tell_threads))
   require("isovim.events").watch(function(_, event)
+    if event.topic:match("^thread%.") and event.topic:match("%.handed$") then
+      vim.schedule(tell_threads)
+    end
     if event.type == "question" and type(event.repo) == "string" and event.topic:match("^surface%.")
       and (event.topic:match("%.created$") or event.topic:match("%.changed$")) then
       pending[event.repo] = true

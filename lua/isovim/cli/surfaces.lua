@@ -414,6 +414,14 @@ function M.thread(args)
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
+  -- The root of another repo reaches its threads as <repo>#<id>.
+  local named, named_id = (args[1] or ""):match("^(.+)#(t%d+)$")
+  if named and (sub == "show" or sub == "post" or sub == "answer") then
+    if named:lower() ~= repo and require("isovim.rootmode").route(named:lower()) ~= me then
+      fail(("%s isn't your repo, and root mode doesn't have you on top of it"):format(named))
+    end
+    repo, args[1] = named:lower(), named_id
+  end
   if sub ~= "ls" and sub ~= "show" then
     local ws, id = (me or ""):match("^(.*)/([^/]+)$")
     local record = ws and store.agent(ws, id)
@@ -466,6 +474,38 @@ function M.thread(args)
       fail(err)
     end
     out(("posted to %s#%s%s"):format(repo, id, no_reply and ", needing no reply" or ": it's the user's turn"))
+  elseif sub == "answer" then
+    -- A root in the user's place: it shows as its own, goes to whoever is working the thread with
+    -- its authority, and the thread stops waiting on the user. Only while it's still theirs to leave.
+    local id = args[1] or fail(usage)
+    local text = vim.trim(table.concat(vim.list_slice(args, 2), " "))
+    if text == "" then
+      fail(usage)
+    elseif require("isovim.rootmode").route(repo) ~= me then
+      fail(("only the root root mode has on top of %s answers its threads, and that isn't you"):format(repo))
+    end
+    local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
+    local info = threads.summary(entries)
+    if not threads.root_may_answer(info) then
+      fail(("%s#%s isn't yours to answer now: %s"):format(repo, id, info.last_by == "user" and "the user has spoken since, and their word beats yours"
+        or "it isn't on the user's turn any more"))
+    end
+    local posted, err = threads.root_post(repo, id, me, text)
+    if not posted then
+      fail(err)
+    end
+    local to, bypassed = threads.recipient(repo, id)
+    if not to then
+      return out(("posted to %s#%s; it has no router on this host to tell"):format(repo, id))
+    end
+    local root = require("isovim.root")
+    local ws, agent = c.resolve_agent(to)
+    local body = threads.prompt(repo, id, info.title, text) .. threads.ROOT_NOTE:format(id) .. (bypassed and threads.BYPASS_NOTE or "")
+    local sender = root.address(me:match("^(.*)/([^/]+)$"))
+    local stamp = root.stamp("from", sender, root.address(ws.id, agent.id), body, true)
+    c.ensure_running(ws, agent)
+    c.prompt(ws, agent, stamp .. " " .. body, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = body })
+    out(("answered %s#%s, and told %s with your authority"):format(repo, id, to))
   elseif sub == "waiting" then
     local id = args[1] or fail(usage)
     local on = args[2] or fail(usage)
@@ -581,8 +621,10 @@ function M.thread(args)
         local task = require("isovim.board_tasks").read(repo)[entry.on]
         out(("\n[%s by %s]"):format(entry.on == "none" and "on no task" or ("on task %s%s"):format(entry.on, task and (" " .. vim.inspect(task.title)) or ""),
           entry.by or "?"))
+      elseif entry.kind == "handed" then
+        out("\n[handed to the root by the user]")
       elseif entry.kind == "post" then
-        out(("\n%s, %s:"):format(entry.by, os.date("%H:%M", entry.at or 0)))
+        out(("\n%s%s, %s:"):format(entry.by, entry.root and " (the root)" or "", os.date("%H:%M", entry.at or 0)))
         out(entry.text)
       elseif entry.kind == "ask" then
         out(("\n%s asks (%s): %s"):format(entry.by or "?", entry.qid, entry.question or ""))
