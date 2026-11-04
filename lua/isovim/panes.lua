@@ -354,7 +354,9 @@ local function dedicated_text(dedicated)
     .. "- You aren't the repo's one interface; the main router stays that for everything outside what you're dedicated to, and "
     .. "can list, steer and remove you. Report to your parent (`iso router msg parent`), not to the repo as a whole.\n"
     .. "- %s Keep each with `iso router thread`: post, ask, resolve, and bypass one to a worker of yours, which comes back to you when it ends.\n"
-    .. "- You spawn and remove your own workers, and no others; you don't start routers or promote anyone.\n"
+    .. "- For each piece of work, decide whether to do it yourself, in your own worktree (your first edit makes it), or to spawn "
+    .. "workers, as many as it needs, who report to you. What's easy you just do: you don't owe anyone a team.\n"
+    .. "- You remove your own workers, and no others; you don't start routers or promote anyone.\n"
     .. "- Register PRs, post to the user and ask through question surfaces as any router does.\n"
     .. "- Your word is a router's: a peer's to other agents. It never carries the user's authority."):format(what,
     dedicated.task and ("The user's posts on this task's threads, old and new, come straight to you. `iso router task show "

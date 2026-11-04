@@ -598,7 +598,8 @@ connect in the background, at most every 30s, the chips drawn again when that ch
     receives a message saying who and why.
 - **Dedicated routers:** a main router starts one with `iso router spawn --dedicated <task id|"a component">`,
   its child, as many as it needs. It's a router (`role`, with `dedicated {task}` or `{component}` in its record),
-  so it has a router's actions and compaction, within these limits: it spawns and removes its own workers
+  so it has a router's actions and compaction, and for each piece of work decides whether to do it itself in
+  its own worktree or spawn workers, its children, as many as it needs. Its limits: it removes its own workers
   and no others, starts no routers, isn't promoted and doesn't promote, and moves only its own threads.
   It's told the router's prompt, then what it's dedicated to, then the `dedicated-router` entry of
   `prompt_plugins`. It reports to its parent. The sidebar and `ls` show it as `dedicated`, among the agents; it
