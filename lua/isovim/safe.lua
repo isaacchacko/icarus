@@ -64,9 +64,17 @@ function M.report(name, err)
   end)
 end
 
--- What only reaches :messages or the notifier goes in errors.log too: a callback's error (E5108, a
--- raw luv callback's) that nothing caught, or a toast at error level. Each once, across hot reloads.
+-- What only reaches :messages or the notifier goes in errors.log too, if it's code failing: a
+-- callback's error (E5108, E5560, a raw luv callback's) that nothing caught, or a toast at error level.
+-- A plain vim error (E21, E486, a man lookup) is what someone just typed, and if it counted, a growing
+-- errors.log would stop meaning anything. Each once, across hot reloads.
 _G.isovim_logged = _G.isovim_logged or { lines = {}, toast = 0 }
+
+local function code_failing(text)
+  return text:find("E5%d%d%d:") or text:find("%.lua:%d+:") or text:find("stack traceback", 1, true)
+    or text:find("Lua callback", 1, true) or text:find("Error executing", 1, true)
+    or text:find("/isovim/", 1, true) or text:find("isovim%.")
+end
 
 local function log_messages()
   local seen = _G.isovim_logged.lines
@@ -74,14 +82,17 @@ local function log_messages()
   local i = 1
   while i <= #lines do
     local line = lines[i]
-    if (line:match("%f[%w]E%d%d%d+:") or line:match("^Error ")) and not seen[line] then
+    if (line:match("%f[%w]E%d%d%d*:") or line:match("^Error ") or line:match("%.lua:%d+:")) and not seen[line] then
       seen[line] = true
       local block = { line }
       while lines[i + 1] and #block < 30 and (lines[i + 1]:match("^%s") or lines[i + 1]:match("^stack traceback")) do
         i = i + 1
         block[#block + 1] = lines[i]
       end
-      append(":messages", table.concat(block, "\n"))
+      local text = table.concat(block, "\n")
+      if code_failing(text) then
+        append(":messages", text)
+      end
     end
     i = i + 1
   end
@@ -93,8 +104,11 @@ local function log_toasts()
     if toast.id > logged.toast then
       logged.toast = toast.id
       -- isovim.reload logs its own, with what it was for.
-      if toast.level == "error" and not tostring(toast.msg):match("^isovim reload failed") then
-        append("the notifier", tostring(toast.msg))
+      local text = tostring(toast.msg)
+      -- noice turns vim's own errors into toasts too.
+      local typed = (text:match("^E%d+:") or text:match("^man%.lua:")) and not code_failing(text)
+      if toast.level == "error" and not typed and not text:match("^isovim reload failed") then
+        append("the notifier", text)
       end
     end
   end
