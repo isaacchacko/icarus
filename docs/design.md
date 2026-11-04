@@ -378,7 +378,7 @@ host; General, Root and Terminals have none, and starting one there says why.
   description alone, in place: vim's keys work till `<Esc>` in normal mode saves and goes back, `:w` saves,
   and leaving keeps what's typed. Its keys are the card's: `s` status, `p` priority, `a` assignee, `t`
   labels (a new one takes a name and a color), `D` due date (`2026-11-30`, `today`, `tomorrow`, `+3`), `e`
-  estimate, `r` rename, `n` a new thread, `R` relations, `K` PRs and tickets, as Linear's where they don't
+  estimate, `r` rename, `n` a new thread, `A` attach an open thread, `R` relations, `K` PRs and tickets, as Linear's where they don't
   clash: `l` is the board's column to the right, so labels are `t`. `<CR>` on a row opens it, `?` lists them.
 - **The board:** a project's tasks as a kanban board (isovim.thread_board): one view, one buffer drawn
   in four columns, Backburner, Working, Checking and Done, opened by `<CR>` on the Threads header
@@ -397,8 +397,10 @@ host; General, Root and Terminals have none, and starting one there says why.
   nothing of state, marks do, in any column: unread `●`, your turn, a question `?`, an agent working,
   resolved `✓`, a card that needs you bordered in the warning color.
   Open threads on no task are slim rows under a **No task** group at the top of Working, which `H` and
-  `L` don't move; `A` on one picks a task for it, its first entry a new task of its title (`A` also
-  moves a thread between tasks). Resolved, they aren't on the board, but stay in the sidebar and
+  `L` don't move. `A` on a thread's row picks a task for it, moving it from any it's on: its first entry
+  is a new task of its title on a thread with none, and No task, taking it off, on a thread with one. `A` on
+  a card or in a task's view goes the other way, picking one of the repo's open threads not on that task
+  and putting it there, moving it if it's on another. Resolved, they aren't on the board, but stay in the sidebar and
   `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` a new task, asking its title, with no thread on it, wherever the focus is, `A` attach, `d` delete
   the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `z` folds a task's
   threads, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the

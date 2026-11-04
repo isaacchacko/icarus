@@ -328,7 +328,7 @@ local function hints(view, width)
   if view.board_searching or (view.board_query or "") ~= "" then
     line = boxes.cat(line, boxes.seg("/", "IsovimBoardKey"), boxes.seg(" " .. (view.board_query or "") .. (view.board_searching and "▏" or "") .. "  "))
   end
-  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "new task" }, { "n", "thread" }, { "⏎", "open" }, { "/", "search" }, { "?", "keys" } }) do
+  for _, hint in ipairs({ { "hjkl", "move" }, { "H L", "status" }, { "0-4", "priority" }, { "C", "new task" }, { "n", "thread" }, { "A", "attach" }, { "⏎", "open" }, { "/", "search" }, { "?", "keys" } }) do
     local piece = boxes.cat(boxes.seg(" " .. hint[1] .. " ", "IsovimBoardKey"), boxes.seg(" " .. hint[2] .. "  ", "Comment"))
     if boxes.cells(line) + boxes.cells(piece) > width then
       break
@@ -519,6 +519,8 @@ local function changed(view)
   surfaces.recheck()
   view.board_columns = nil
   M.draw(view)
+  -- A task's view may be showing what changed.
+  require("isovim.surface_view").threads_changed(view.repo)
 end
 
 local function toast(text)
@@ -618,11 +620,14 @@ local function create(view)
   end)
 end
 
--- A: the thread on a task, picked; on a thread with none, first a new task of its title.
+-- A on a card: an open thread put on it, picked. On a thread: a task for it, picked, first a new task of
+-- its title if it's on none, or No task, taking it off, if it's on one.
 local function attach(view)
   local row = focused(view)
-  if not (row and row.entry) then
-    return toast("A attaches a thread to a task: go to a thread's row")
+  if row and row.task then
+    return require("isovim.task_view").actions.attach_thread(view.repo, row.task)
+  elseif not row then
+    return
   end
   local choices = vim.tbl_filter(function(task)
     return not (row.on and row.on.id == task.id)
@@ -630,19 +635,17 @@ local function attach(view)
   table.sort(choices, function(x, y)
     return number_of(x.id) > number_of(y.id)
   end)
-  if not row.on then
-    table.insert(choices, 1, { new = true })
-  end
-  if #choices == 0 then
-    return toast("there's no other task to attach it to: C makes one")
-  end
+  table.insert(choices, 1, row.on and { none = true } or { new = true })
   vim.ui.select(choices, {
     prompt = ("Attach %s to:"):format(row.entry.name),
     format_item = function(task)
+      if task.none then
+        return "No task"
+      end
       return task.new and ("New task: " .. row.entry.title) or ("%s  %s"):format(task.id, task.title)
     end,
   }, function(task)
-    local id = task and (task.new and tasks.new(view.repo, row.entry.title) or task.id)
+    local id = task and (task.none and "none" or task.new and tasks.new(view.repo, row.entry.title) or task.id)
     if id then
       threads.set_task(view.repo, row.entry.name, id, "user")
       view.board_focus = task.new and id or view.board_focus
@@ -662,7 +665,7 @@ M.help_keys = {
   { "D e", "the task's due date, estimate" },
   { "r", "rename the task" },
   { "R K", "add or remove a relation to another task; link or unlink a PR or Linear ticket" },
-  { "A", "attach the thread to a task, picked; on a thread with none, first a new task of its title" },
+  { "A", "on a task, attach an open thread to it, picked, moving it if it's on another; on a thread, a task for it, picked, with first a new task of its title if it's on none, or No task, taking it off, if it's on one" },
   { "d", "delete the task, its threads kept, on no task" },
   { "<CR>", "open the task's own view, or the thread" },
   { "z", "fold the task's threads" },

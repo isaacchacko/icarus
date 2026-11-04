@@ -248,6 +248,22 @@ function M.actions.link(repo, task)
   end)
 end
 
+-- A: one of the repo's open threads not on this task, picked, put on it, moving it if it's on another.
+function M.actions.attach_thread(repo, task)
+  local choices = vim.tbl_filter(function(info)
+    return info.task ~= task.id
+  end, require("isovim.threads").list(repo))
+  if #choices == 0 then
+    return vim.notify("isovim: every open thread is on this task already", vim.log.levels.INFO)
+  end
+  select(choices, ("Attach to %s:"):format(task.id), function(info)
+    return ("%s  %s%s"):format(info.id, info.title, info.task and ("  (on %s)"):format(info.task) or "")
+  end, function(info)
+    require("isovim.threads").set_task(repo, info.id, task.id, "user")
+    changed(repo)
+  end)
+end
+
 -- Keys both here and on the board's cards: {lhs, the action, what it does}.
 M.KEYS = {
   { "s", "status", "its status" },
@@ -268,6 +284,7 @@ function M.help_keys()
     return { key[1], key[3] }
   end, M.KEYS)
   vim.list_extend(list, {
+    { "A", "attach one of the repo's open threads to it, picked, moving it if it's on another task" },
     { "i", "edit the description in place (<Esc> in normal mode saves and goes back, :w saves)" },
     { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser)" },
     { "o", "a PR's own view here" },
@@ -587,6 +604,12 @@ function bind_keys(view)
       end
     end, key[3])
   end
+  on("A", function()
+    local task = tasks.read(view.repo)[view.name]
+    if task then
+      M.actions.attach_thread(view.repo, task)
+    end
+  end, "attach an open thread to it")
   on("i", function()
     edit_description(view)
   end, "edit the description")
