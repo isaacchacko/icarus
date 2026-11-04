@@ -1,16 +1,16 @@
 -- Root mode: a repo's root decides its Inbox's questions before they reach you, and is on top of its
--- threads. iso rootmode on|off <repo> (isovim.cli.rootmode) turns it on for one repo, for its repo root;
+-- threads. iso rootmode on|off <repo> (isovim.cli.rootmode) turns it on for one repo, for its root;
 -- this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it isn't synced), and
 -- says which root decides a question.
 -- A question isn't routed anywhere: it stays in its repo's Inbox, tagged root deciding (the
 -- surface's deciding, so it doesn't count as needing you) until the root answers it or raises it to
--- you with a one-line why; with root mode off, or no repo root, it's yours at once. You may answer
+-- you with a one-line why; with root mode off, or no root, it's yours at once. You may answer
 -- any of them, and the first answer wins. A root's ACP supervisor subscribes to the Inbox
 -- (M.listen) and tells the root of each new question it decides, whoever asked it and whatever
 -- code they run, and of threads that have sat on your turn (isovim.threads.for_root), which it
 -- answers in your place or leaves with you.
 --   { "repos": { "<owner/repo>": {agent, task?, since} } }
--- An entry is active while its agent's record still holds the repo-root role; one whose agent went
+-- An entry is active while its agent's record still holds the root role; one whose agent went
 -- away is off.
 local store = require("isovim.store")
 
@@ -57,7 +57,7 @@ function M.route(repo)
     ws, id = entry.agent:match("^(.*)/([^/]+)$")
   end
   local record = ws and store.agent(ws, id)
-  if record and store.role(record) == "repo-root" then
+  if record and store.role(record) == "root" then
     return entry.agent, entry
   end
 end
@@ -102,8 +102,8 @@ function M.questions_text(intro, entries, repo)
       lines[#lines + 1] = "  (or your own words)"
     end
   end
-  lines[#lines + 1] = ("Decide what you can stand behind with `iso repo-root answer <repo>/<name> <answer...>`; raise "
-    .. "the rest to the user with `iso repo-root raise <repo>/<name> <one line: why, and your recommendation>`. Until "
+  lines[#lines + 1] = ("Decide what you can stand behind with `iso root answer <repo>/<name> <answer...>`; raise "
+    .. "the rest to the user with `iso root raise <repo>/<name> <one line: why, and your recommendation>`. Until "
     .. "you do, it's tagged root deciding and doesn't count as needing them; they may still answer it first, "
     .. "and the first answer wins.")
   local mode = M.entry(repo)
@@ -134,13 +134,13 @@ end
 -- The threads as their root gets them: the post is usually enough, so it's there, up to a point.
 local function threads_text(repo, threads, grace)
   local parts = { ("[isovim: these threads have sat on the user's turn for over %d minutes with no word from them, and "
-    .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso repo-root thread "
+    .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso root thread "
     .. "answer <id> <your answer>` posts it as yours, sends it with your authority to whoever is working the thread "
     .. "and stops it waiting on the user. Leave the rest, with no reply at all, and it stays in their Inbox: an FYI or a "
     .. "report, an answer to a question the user asked, anything that's their own conversation. That isn't yours to answer "
     .. "for them. Their word beats yours. What's permanently off stays off: for that, and what they'd be surprised you "
-    .. "decided, `iso repo-root thread post <id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso "
-    .. "repo-root thread show <id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
+    .. "decided, `iso root thread post <id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso "
+    .. "root thread show <id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
     :format(math.floor(grace / 60)) }
   for _, each in ipairs(threads) do
     local text = each.text or "(no agent has posted yet)"

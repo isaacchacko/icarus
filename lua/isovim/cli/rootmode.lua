@@ -1,14 +1,14 @@
 -- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode on <repo> has the
 -- repo's root decide its Inbox's questions before they reach you: an agent spawned over ACP with the
--- repo-root role, or the agent that holds it already, with --task "<description>" as its first
+-- root role, or the agent that holds it already, with --task "<description>" as its first
 -- message (guidance only: the root decides what's outside it and raises that to you). iso rootmode
 -- off makes what it hadn't decided yours.
 --
 -- The root is told of each new question by its own supervisor's subscription
 -- (isovim.rootmode.listen, one message per batch), and of those already waiting when root mode
--- turns on (one message listing them, from here). It answers with iso repo-root answer <question>
+-- turns on (one message listing them, from here). It answers with iso root answer <question>
 -- <answer>, which reaches the asker as yours does (a router blocked in iso router surface
--- question, an ACP agent's supervisor), or raises it to you with iso repo-root raise <question>
+-- question, an ACP agent's supervisor), or raises it to you with iso root raise <question>
 -- <why>.
 local store = require("isovim.store")
 local rootmode = require("isovim.rootmode")
@@ -37,8 +37,8 @@ end
 
 -- The --task text, as the root's first message.
 local function task_text(repo, task)
-  return ("Root mode is on for %s, and you are its repo root. Your task, as guidance (you decide what falls "
-    .. "outside it, and raise that to the user with iso repo-root raise <question> <why>):\n\n%s"):format(repo, task)
+  return ("Root mode is on for %s, and you are its root. Your task, as guidance (you decide what falls "
+    .. "outside it, and raise that to the user with iso root raise <question> <why>):\n\n%s"):format(repo, task)
 end
 
 -- A repo from what was typed: owner/repo, or a dir in a repo.
@@ -96,14 +96,14 @@ local function on(repo, task)
     tell_waiting(repo, address)
     return
   end
-  address = require("isovim.cli.roles").holders("repo-root", repo)[1]
+  address = require("isovim.cli.roles").holders("root", repo)[1]
   local first = task and task_text(repo, task) or nil
   if address then
     rootmode.set(repo, { agent = address, task = task, since = os.time() })
     if first then
       send(address, first)
     end
-    out(("root mode is on for %s: %s, its repo-root already, decides its Inbox before you now"):format(repo, address))
+    out(("root mode is on for %s: %s, its root already, decides its Inbox before you now"):format(repo, address))
   else
     -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
     -- the role's prompt, which a resumed or reloaded session couldn't take as its system prompt.
@@ -112,7 +112,7 @@ local function on(repo, task)
     if blocked then
       fail(("root mode stays off for %s: %s"):format(repo, blocked))
     end
-    local agent, err = store.add_agent(repo, { kind = "claude", acp = true, name = "repo-root", role = "repo-root",
+    local agent, err = store.add_agent(repo, { kind = "claude", acp = true, name = "root", role = "root",
       checkout = known_clone(repo), prompt = first })
     if not agent then
       fail(err or "could not add the agent")
@@ -120,7 +120,7 @@ local function on(repo, task)
     address = repo .. "/" .. agent.id
     rootmode.set(repo, { agent = address, task = task, since = os.time() })
     c.ensure_running(c.resolve(repo), store.agent(repo, agent.id))
-    out(("root mode is on for %s: %s, a new repo-root, decides its Inbox before you"):format(repo, address))
+    out(("root mode is on for %s: %s, a new root, decides its Inbox before you"):format(repo, address))
   end
   tell_waiting(repo, address)
   c.tui("require('isovim.surfaces').recheck() require('isovim').refresh()")

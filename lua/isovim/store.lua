@@ -661,7 +661,7 @@ end
 ---@field kind "claude"|"codex"|"shell"|"command"
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
----@field role? "repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+---@field role? "root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
 ---@field dedicated? {task?: string, component?: string} a router a main router started for one task or component
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 ---@field read_only? boolean a new-layout agent that works in its repo's base clone; on a workspace's
@@ -676,9 +676,9 @@ end
 ---@field branch? string a new-layout agent's worktree branch (iso <role> wt)
 ---@field acp? boolean a new-layout claude agent that runs over ACP (isovim.acp), not in claude's TUI
 
--- The root sets the north star, a repo-root holds one repo's, the router is a repo's one interface
+-- The root sets the north star, a root holds one repo's, the router is a repo's one interface
 -- to the user, workers do the work.
-M.roles = { "repo-root", "router", "worker" }
+M.roles = { "root", "router", "worker" }
 
 ---@param agent isovim.Agent
 function M.role(agent)
@@ -699,10 +699,19 @@ end
 
 -- A repo key's agents, in the order they were made.
 ---@return isovim.Agent[]
+-- An agent's record. The root was called repo-root; the record's next write says root.
+local function read_record(path)
+  local record = read_json(path)
+  if record and record.role == "repo-root" then
+    record.role = "root"
+  end
+  return record
+end
+
 local function records_of(key)
   local list = {}
   for _, path in ipairs(vim.fn.glob(records(key) .. "/a*.json", false, true)) do
-    local record = number(vim.fs.basename(path):sub(1, -6)) and read_json(path)
+    local record = number(vim.fs.basename(path):sub(1, -6)) and read_record(path)
     if record and record.id then
       list[#list + 1] = record
     end
@@ -725,7 +734,7 @@ end
 ---@return isovim.Agent?
 function M.agent(ws, id)
   if M.v2(ws) then
-    return number(id) and read_json(M.record_file(ws, id)) or nil
+    return number(id) and read_record(M.record_file(ws, id)) or nil
   end
   for _, agent in ipairs(M.agents(ws)) do
     if agent.id == id then

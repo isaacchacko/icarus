@@ -877,7 +877,7 @@ end
 -- while the cache is still warm: reading it costs a tenth of rewriting it. A worker's session ends
 -- with its work, and Claude compacts one that fills up by itself. Codex's isn't compacted: its
 -- adapter (codex-acp 2.5.0) has no compact command and reports no context size.
-local COMPACTED = { router = true, ["repo-root"] = true }
+local COMPACTED = { router = true, root = true }
 local COMPACT = "/compact Keep what you need to go on running this repo: the open threads and where each stands; the "
   .. "running workers and standing owners, by address, and what each is on; what's waiting on the user; and the "
   .. "decisions the user made today, in their words. Thread files and transcripts stay on disk: "
@@ -1565,11 +1565,11 @@ function M.tell_self(text)
   submit({ text = text, kind = "from", message = text, publish = true, via = "iso" })
 end
 
--- A root (or repo-root, from its first session as one) subscribes to the Inbox: while root mode
+-- A root (or root, from its first session as one) subscribes to the Inbox: while root mode
 -- has it clear one, it's told of each new question there as a message (isovim.rootmode.listen).
 local function subscribe_inbox()
   local role = store.role(S.spec)
-  if S.inbox or role ~= "repo-root" then
+  if S.inbox or role ~= "root" then
     return
   end
   S.inbox = true
@@ -1744,7 +1744,7 @@ local function fork_request(source, message_id, callback)
 end
 
 -- A fork's first session: an agent iso fork made (fork_from: its journal starts with its parent's up
--- to the fork, fork_seq, all of it without one), or a router or repo-root made root (isovim.cli.roles,
+-- to the fork, fork_seq, all of it without one), or a router or root made root (isovim.cli.roles,
 -- no fork_from). Its session is a copy of spec.fork_of (at fork_at; none before the first thing the
 -- agent said, which is a new session), opened with its own role prompt; a new one when the agent
 -- can't fork.

@@ -557,7 +557,7 @@ function M.refusal(key, agent)
   local role = store.role(agent)
   if agent.of or not (agent.kind == "claude" or agent.kind == "codex") then
     return address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
-  elseif role == "repo-root" then
+  elseif role == "root" then
     return ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
   elseif agent.dedicated then
     return address .. " is a dedicated router, and works with its host's main router and threads"

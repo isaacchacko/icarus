@@ -18,11 +18,11 @@ function M.address(ws, agent)
 end
 
 -- Whether a message from `from` to `to` (<host>:<ws>/<agent> each) speaks for the user: from is the
--- repo root of the repo to is in.
+-- root of the repo to is in.
 local function from_its_root(from, to)
   local repo, id = from:match("^[^:]+:(.*)/([^/]+)$")
   local record = repo and store.agent(repo, id)
-  return record ~= nil and store.role(record) == "repo-root" and to:match("^[^:]+:(.*)/[^/]+$") == repo
+  return record ~= nil and store.role(record) == "root" and to:match("^[^:]+:(.*)/[^/]+$") == repo
 end
 
 -- The agent this process runs inside, proven by ancestry: the agent whose pane process is one of

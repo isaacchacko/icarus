@@ -1,6 +1,6 @@
 -- Surfaces on the command line (isovim.surfaces): iso router surface question|file|folder|chat puts
 -- one in the router's repo's Inbox, iso <role> page comments|reply|resolve reads and answers the
--- comments on a page (isovim.pages), iso answer answers a question (also iso repo-root
+-- comments on a page (isovim.pages), iso answer answers a question (also iso root
 -- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first. In root mode
 -- the root answers the Inbox's questions with you, the first answer winning (isovim.rootmode).
 local store = require("isovim.store")
@@ -225,7 +225,7 @@ local function publish_root(what, me, entry, details)
   }, details or {}))
 end
 
--- iso answer <question> <answer...>, and a repo root's iso repo-root answer, which takes any
+-- iso answer <question> <answer...>, and a root's iso root answer, which takes any
 -- question in the Inbox root mode has it clear (isovim.rootmode.may_answer), and --raise [why...]
 -- to give one to the user, in the repo's Inbox. A root's answer and its raise are published as
 -- root.<scope>.decided and root.<scope>.raised.
@@ -275,7 +275,7 @@ function M.answer(args)
   out(surfaces.answer_text(answer))
 end
 
--- A root's iso repo-root raise <question> [why...]: gives the question to the user, in the repo's
+-- A root's iso root raise <question> [why...]: gives the question to the user, in the repo's
 -- Inbox, with a one-line why (its recommendation); iso <role> answer <question> --raise [why].
 function M.raise(args)
   table.insert(args, "--raise")
@@ -463,7 +463,7 @@ function M.thread(args)
     if text == "" then
       fail(usage)
     elseif require("isovim.rootmode").route(repo) ~= me then
-      fail(("only the root root mode has on top of %s answers its threads, and that isn't you"):format(repo))
+      fail(("only the root that root mode has on top of %s answers its threads, and that isn't you"):format(repo))
     end
     local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
     local info = threads.summary(entries)

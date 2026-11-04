@@ -288,7 +288,7 @@ local KINDS = {
     end,
     id = { "ws", "agent", "task_id" },
   },
-  -- Under its repo's header with a status icon: the router and repo-root by role, a worker by name
+  -- Under its repo's header with a status icon: the router and root by role, a worker by name
   -- with the size of its team (counted, not listed); the root pinned at the top. Anything not
   -- running is dimmed; hidden agents have an eye at the right edge. In an Inbox the attention icon still marks a legacy
   -- agent that raised something, until the cutover.
@@ -298,7 +298,7 @@ local KINDS = {
       local kind_icon, kind_hl = icons.get(item.glyph or ((item.role == "router" or item.role == "dedicated") and "router") or item.agent_kind)
       local name_hl = item.hidden and "Comment" or (not item.running and "Comment" or nil)
       local label = item.label
-      if not label and (item.role == "router" or item.role == "repo-root") then
+      if not label and (item.role == "router" or item.role == "root") then
         label = item.v2 and item.role or (item.role .. " · " .. item.name)
       end
       local lead = item.guide and { { "  " }, { item.guide, "NonText" } } or { { ("  "):rep((item.depth or 0) + 1) } }
@@ -787,7 +787,7 @@ local function set_collapsed(host, what, key, value)
 end
 M.is_collapsed, M.set_collapsed = is_collapsed, set_collapsed
 
-local ROLE_ORDER = { ["repo-root"] = 1, router = 2, worker = 3 }
+local ROLE_ORDER = { root = 1, router = 2, worker = 3 }
 
 -- One host's agents as the list groups them: each repo (legacy
 -- workspaces folded under the repo their dir is a checkout of, a new-layout key under its repo),
@@ -826,7 +826,7 @@ local function group(entries)
 end
 M.group = group
 
--- A group's rows under its header: routers and repo-roots, then the workers that aren't a worker's
+-- A group's rows under its header: routers and roots, then the workers that aren't a worker's
 -- (each with the size of the team behind it, which isn't listed); newest first, or most active.
 local function listed_agents(agents)
   local by_address = {}
@@ -1230,9 +1230,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         ws_name = g.name,
         running_mark = running_mark(g.agents),
       })
-      -- Its router, then its repo-root, under the project's row whatever's folded, hidden or not; only
+      -- Its router, then its root, under the project's row whatever's folded, hidden or not; only
       -- a jump, which lists hidden agents when asked, leaves a hidden one out.
-      for _, role in ipairs({ "router", "repo-root" }) do
+      for _, role in ipairs({ "router", "root" }) do
         for _, entry in ipairs(g.agents) do
           if entry.role == role and (not all_open or listed(entry)) then
             entry.group_key = g.key
@@ -1243,10 +1243,10 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
       end
       if not collapsed then
         local root_mode = rootmode and rootmode.route(g.key) ~= nil or (not rootmode and vim.iter(agents):any(function(entry)
-          return entry.role == "repo-root"
+          return entry.role == "root"
         end))
         local function pinned(entry)
-          return entry.role == "router" or entry.role == "repo-root"
+          return entry.role == "router" or entry.role == "root"
         end
         group_sections(items, base_host, host, g.key, {
           list = surfaces_by_key and list or {},
@@ -1473,9 +1473,9 @@ local function collect()
         live = live + 1
       end
       ws.active = math.max(ws.active, running[agent.id] or 0)
-      -- A hidden router or repo-root still shows, under the project's row.
+      -- A hidden router or root still shows, under the project's row.
       local role = store.role(agent)
-      if not listed(agent) and not is_terminal(agent) and role ~= "router" and role ~= "repo-root" then
+      if not listed(agent) and not is_terminal(agent) and role ~= "router" and role ~= "root" then
         hidden = hidden + 1
       end
       -- Every agent goes on, as another host's do: host_rows leaves hidden ones out of the rows, not
@@ -2393,7 +2393,7 @@ function M.spawn(target)
   return add_agent(key, { kind = "claude", acp = true, checkout = checkout })
 end
 
--- The repo root mode goes with on a row (or, with none, on what's in focus); nil for none, as General
+-- The root mode goes with on a row (or, with none, on what's in focus); nil for none, as General
 -- and the Inbox's title have no root.
 ---@param item? table a sidebar row
 ---@return string? repo

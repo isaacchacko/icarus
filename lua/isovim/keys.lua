@@ -852,9 +852,9 @@ local function open_role(role, missing)
   end
 end
 
--- The repo's repo-root.
+-- The repo's root.
 function M.nearest_root()
-  local agent = in_repo("repo-root")
+  local agent = in_repo("root")
   return agent and open(agent) or toast("No root in this repo")
 end
 

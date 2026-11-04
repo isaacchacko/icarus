@@ -16,7 +16,7 @@ local M = {}
 
 local RANK = commands.rank
 -- Roots have no parent.
-local ROOTS = { ["repo-root"] = true }
+local ROOTS = { root = true }
 
 local function warn(message)
   io.stderr:write("iso: warning: " .. message .. "\n")
@@ -168,10 +168,10 @@ local function holders(role, key, except)
 end
 M.holders = holders
 
--- One main router per repo on a host, one repo-root per repo. Each belongs to a repo, so it needs one.
+-- One main router per repo on a host, one root per repo. Each belongs to a repo, so it needs one.
 ---@param address? string the agent being promoted, which doesn't count; nil for a spawn
 local function check_unique(role, key, address)
-  if (role == "router" or role == "repo-root") and not key then
+  if (role == "router" or role == "root") and not key then
     fail(address and ("%s isn't in a git repo, and a %s is a repo's"):format(address, role)
       or ("a %s is a repo's: spawn it with --repo and a git repo"):format(role))
   end
@@ -391,7 +391,7 @@ end
 -- Which promotions there are: to the role, from these roles.
 local PROMOTIONS = {
   router = { worker = true },
-  ["repo-root"] = { worker = true, router = true },
+  root = { worker = true, router = true },
 }
 
 -- The restart runs on the tmux server, outside the agent: a self-promotion would otherwise kill
@@ -470,7 +470,7 @@ function M.promote(args)
   local role = table.remove(args, 1)
   local reason = vim.trim(table.concat(args, " "))
   if not role or not RANK[role] then
-    fail("usage: iso <role> promote [<agent>] router|repo-root [\"reason\"]")
+    fail("usage: iso <role> promote [<agent>] router|root [\"reason\"]")
   end
   local ws, agent = c.resolve_agent(target or promoter, true)
   local address = ws.id .. "/" .. agent.id
@@ -541,9 +541,9 @@ local function descends(address, by)
 end
 
 -- Fails unless the agent by (a role, in by_ws) may restart or remove the agent at address in ws:
--- itself and the agents below it; for a router or repo-root, any agent in its repo.
+-- itself and the agents below it; for a router or root, any agent in its repo.
 local function check_manages(by, role, by_ws, ws, address, verb)
-  local whole_repo = (role == "router" or role == "repo-root") and not (store.agent(by:match("^(.*)/([^/]+)$")) or {}).dedicated
+  local whole_repo = (role == "router" or role == "root") and not (store.agent(by:match("^(.*)/([^/]+)$")) or {}).dedicated
   local in_repo = whole_repo and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
   if not (descends(address, by) or in_repo) then
     fail(("a %s %s itself and the agents below it%s, and %s is neither"):format(role, verb,
@@ -628,7 +628,7 @@ local function at_risk(worktree)
   return lost, #commits
 end
 
--- iso <role> rm <agent> [--keep-branch] [--force]: a router, repo-root or root removes an agent it
+-- iso <role> rm <agent> [--keep-branch] [--force]: a router or root removes an agent it
 -- manages (check_manages) once it's done, as d in the sidebar does (iso rm): its supervisor stops,
 -- its record and aN/ go, and its children go to its parent. Never mid-turn or while a question or
 -- permission it asked waits in the Inbox, and not while its worktree has uncommitted or unpushed

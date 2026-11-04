@@ -27,7 +27,7 @@
 local M = {}
 
 -- The roles, lowest first. An agent spawns roles up to its own.
-M.roles = { "worker", "router", "repo-root" }
+M.roles = { "worker", "router", "root" }
 M.rank = {}
 for i, role in ipairs(M.roles) do
   M.rank[role] = i
@@ -40,7 +40,7 @@ M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "brows
 M.only = {
   worker = { "wt", "setup", "teardown", "run", "page", "thread", "task" },
   router = { "surface", "page", "thread", "task", "pr", "rm", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer", "raise", "rm", "page", "thread", "task" },
+  root = { "answer", "raise", "rm", "page", "thread", "task" },
 }
 
 M.header = [=[
@@ -50,7 +50,7 @@ M.footer = [=[
 <ws> is a workspace id, name, or unique prefix of either. <agent> is <ws>/<agent id or name>,
 or just <ws> for the workspace's first visible agent. send, msg, status, wait and peek also take
 <host>:<agent> for an agent on another host (hosts in ~/.isovim/config.json).
-A router's or repo-root's session is compacted when a turn leaves it past compact_at tokens
+A router's or root's session is compacted when a turn leaves it past compact_at tokens
 in ~/.isovim/config.json (default 250000; 0 turns it off), so its next call after a pause isn't a
 rewrite of all of it; the chat says "compacted 212k → 18k", and ~/.isovim/compactions.log has a line
 for each.]=]
@@ -65,7 +65,7 @@ M.list = {
   { name = "worker", module = "roles",
     summary = "a worker's actions (iso worker help)",
     help = [=[
-       iso worker|router|repo-root <action> ...
+       iso worker|router|root <action> ...
                                      what an agent runs, under its role: iso <role> help lists
                                      a role's actions. isovim checks the role against the
                                      agent's record and, for now, warns on a mismatch; an
@@ -77,8 +77,8 @@ M.list = {
   { name = "router", module = "roles",
     summary = "a router's actions (iso router help)",
   },
-  { name = "repo-root", module = "roles",
-    summary = "a repo-root's actions (iso repo-root help)",
+  { name = "root", module = "roles",
+    summary = "a root's actions (iso root help)",
   },
   { name = "spawn", module = "roles",
     args = { "<text>..." },
@@ -96,7 +96,7 @@ M.list = {
                                      worktree, aN/<repo>-aN (aN/w links to it), on its first
                                      edit (or iso <role> wt).
                                      An agent's spawn is its child, of a role no higher than
-                                     its own; one main router per repo here, one repo-root per
+                                     its own; one main router per repo here, one root per
                                      repo. --dedicated <task id|"a component"> is a main router's:
                                      a router of its own for that one task or component, as many
                                      as it needs, reporting to it, which takes a task's threads
@@ -190,7 +190,7 @@ M.list = {
                      [--parent agent] [--v2 [--read-only]]
                                      add an agent (claude|codex|terminal|command), start it;
                                      --prompt starts a claude or codex agent on that prompt;
-                                     --role repo-root|router|worker (default worker) picks
+                                     --role root|router|worker (default worker) picks
                                      the role prompt it's told (prompts in ~/.isovim/config.json).
                                      Its parent is the agent running this (iso new and iso fork
                                      set it too), or --parent. --v2 (trying out the new layout)
@@ -203,7 +203,7 @@ M.list = {
     role_form = "promote",
     args = { "<agent>", "<role>" },
     help = [=[
-       iso role <agent> [repo-root|router|worker]   print or change its role; a change
+       iso role <agent> [root|router|worker]   print or change its role; a change
                                      takes effect when it next restarts]=],
   },
   { name = "rm", module = "agents",
@@ -373,7 +373,7 @@ M.list = {
                                      tagged root deciding and wait on you only once
                                      raised); you can answer any of them anyway, and
                                      the first answer wins. A root answers with iso
-                                     repo-root answer, --why "<reason>" saying
+                                     root answer, --why "<reason>" saying
                                      why in its decision log, or gives one to you with
                                      iso <role> raise <question> [why] (or --raise)]=],
   },
@@ -390,7 +390,7 @@ M.list = {
                                      raises them, with its why
                                      (permission requests always do). It's told of each
                                      new one, and on lists those waiting. on spawns a
-                                     worker over ACP and promotes it to repo-root, or
+                                     worker over ACP and promotes it to root, or
                                      uses the agent holding that role; --task is its first message, guidance it
                                      narrows itself by. off puts every question not
                                      decided yours; the root keeps its role]=],
@@ -923,13 +923,13 @@ M.role_actions = {
                                      a bypassed thread]=],
   },
   promote = { name = "promote", module = "roles",
-    args = { "<agent>|router|repo-root", "router|repo-root", "<text>" },
-    summary = "raise an agent (default: you) to router or repo-root",
+    args = { "<agent>|router|root", "router|root", "<text>" },
+    summary = "raise an agent (default: you) to router or root",
     help = [=[
-       iso promote [<agent>] router|repo-root ["reason"]
+       iso promote [<agent>] router|root ["reason"]
                                      raise an agent (default: you): a worker to router when
                                      it's in a repo with no router here; a worker or router
-                                     to repo-root, when there's none.
+                                     to root, when there's none.
                                      No demotion. It restarts on its conversation as the new
                                      role (an ACP agent's session reloads once its turn ends),
                                      and one you promote gets a stamped message saying who and
@@ -945,7 +945,7 @@ M.role_actions = {
                                      same address once its running turn ends, its queue kept;
                                      its next message says who restarted it, and the note
                                      (else to continue where it left off). You restart
-                                     yourself and the agents below you; a router or repo-root
+                                     yourself and the agents below you; a router or root
                                      any agent in its repo.
                                      It also waits for the agent's background shells (a
                                      background Bash, a Monitor) to end, an hour at most,

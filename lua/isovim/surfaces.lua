@@ -1167,7 +1167,7 @@ function M.parse_answer(entry, value)
     entry.multi and "; give several for a multi question" or "")
 end
 
--- The decision log of a repo-root's repo. Append-only and
+-- The decision log of a root's repo. Append-only and
 -- its own file, as the event log ages out and an asker removes its question once answered.
 local function decisions_file(key)
   return M.dir(key) .. "/decisions.jsonl"

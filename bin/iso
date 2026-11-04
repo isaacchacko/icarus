@@ -21,13 +21,19 @@ if [ "${1:-}" = receive ]; then
   NVIM_APPNAME=isovim exec nvim -l "$cli" receive "$incoming"
 fi
 
+# What a root running since the role had this name was told to run, until its next restart tells it.
+if [ "${1:-}" = repo-root ]; then
+  shift
+  set -- root "$@"
+fi
+
 case "${1:-}" in
 browser)
   NVIM_APPNAME=isovim nvim -l "$cli" __warn "$@" || exit 1
   shift
   exec node "$repo/bin/iso-browser.mjs" "$@"
   ;;
-worker | router | repo-root)
+worker | router | root)
   # iso <role> browser: the same browser, after the role check.
   if [ "${2:-}" = browser ]; then
     NVIM_APPNAME=isovim nvim -l "$cli" __warn "$@" || exit 1

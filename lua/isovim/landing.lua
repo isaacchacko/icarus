@@ -160,7 +160,7 @@ local function page()
   add({})
   for _, line in ipairs({
     { "Projects", "a repo, General or Terminals: the sidebar shows one at a time ([ and ])" },
-    { "Agents", "each one an ACP session with a role: worker < router < repo-root" },
+    { "Agents", "each one an ACP session with a role: worker < router < root" },
     { "Inbox", "surfaces an agent left for you: a question, a file, a chat" },
     { "Terminals", "shells of your own, beside the agents" },
   }) do
