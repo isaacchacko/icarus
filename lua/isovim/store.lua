@@ -789,6 +789,15 @@ local function take_number(key, want)
   return n
 end
 
+-- Whether a repo key has given out this aN: a number is never given twice, so its counter has passed
+-- every one it has.
+function M.gave_out(key, id)
+  key = M.canon(key)
+  local n = number(id)
+  local ok, lines = pcall(vim.fn.readfile, M.valid_key(key) and M.path(key) .. "/next" or "")
+  return n ~= nil and ok and n < (tonumber(lines[1]) or 0)
+end
+
 -- A new-layout agent: aN/ and its record. Its name is the one given, else its id.
 ---@return isovim.Agent? agent, string? err
 local function add_record(key, spec)

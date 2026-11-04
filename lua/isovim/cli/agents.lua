@@ -190,12 +190,12 @@ function commands.rm(args)
   if #args == 0 then
     fail("usage: iso rm <agent>...")
   end
-  for _, query in ipairs(args) do
+  c.remove_each(args, function(query)
     local ws, agent = resolve_agent(query, true)
     panes.stop(ws.id, agent.id)
     store.remove_agent(ws.id, agent.id)
     tui("require('isovim').forget_agent(...)", ws.id, agent.id)
-  end
+  end)
 end
 
 local function set_hidden(args, hidden)

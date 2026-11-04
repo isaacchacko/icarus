@@ -15,6 +15,9 @@
 --             help doesn't give one
 --   hidden    not offered by completion
 --   shared    an action every role has too (iso <role> <name>), as are those M.shared lists
+--   strict    its words are only agents and flags that take no value, so it destroys nothing on a
+--             slip: --help or -h anywhere asks for usage, and any other word starting with - that
+--             flags doesn't list refuses before it runs
 --   audience  who runs it: "anyone" is the user and agents alike, bare or under a role (iso bug);
 --             "user" is the user's own (bare) commands, which an agent is warned off
 --             (and later refused); nil is a command agents still run until what replaces it
@@ -209,10 +212,12 @@ M.list = {
   { name = "rm", module = "agents",
     audience = "user",
     args = { "<agent>..." },
+    strict = true,
     help = [=[
        iso rm <agent>...             stop agents and remove them from their workspace; their
                                      children go to their parent (archiving a workspace does
-                                     the same)]=],
+                                     the same). A flag, or a word that isn't an agent or
+                                     one already gone, refuses them all before any goes]=],
   },
   { name = "pr", module = "workspaces",
     args = { "<ws>", "<text>" },
@@ -958,14 +963,17 @@ M.role_actions = {
   rm = { name = "rm", module = "roles",
     args = { "<agent>..." },
     flags = { ["--keep-branch"] = false, ["--force"] = false },
+    strict = true,
     summary = "remove an agent you manage once its work is done",
     help = [=[
        iso rm <agent>... [--keep-branch] [--force]
                                      remove agents you may restart once their work is done,
-                                     several in one go (one refused doesn't stop the rest):
-                                     not mid-turn or with a question in the Inbox. Its
-                                     supervisor stops and its record and aN/ go, as d in the
-                                     sidebar does; its children go to its parent. Its journal
+                                     several in one go. A flag it doesn't take, or a word
+                                     that isn't an agent or one already gone, refuses them
+                                     all before any goes; past that, one refused doesn't stop
+                                     the rest: not mid-turn or with a question in the Inbox.
+                                     Its supervisor stops and its record and aN/ go, as d in
+                                     the sidebar does; its children go to its parent. Its journal
                                      and transcript stay in iso/ (iso find still sees it),
                                      its pushed branches and PRs stay, and its local branch
                                      goes once origin has all of it (--keep-branch keeps it).
@@ -1073,10 +1081,27 @@ function M.entry_usage(entry, role)
   return table.concat(parts, "\n")
 end
 
--- Whether a command's arguments ask only for its usage: --help or -h alone. Anywhere else they're
--- the command's own words.
-function M.asks_help(args)
-  return #args == 1 and (args[1] == "--help" or args[1] == "-h")
+-- Whether a command's arguments ask only for its usage: --help or -h alone, or anywhere for a strict
+-- command. Anywhere else they're the command's own words.
+function M.asks_help(args, entry)
+  return (#args == 1 or entry.strict) and (vim.tbl_contains(args, "--help") or vim.tbl_contains(args, "-h"))
+end
+
+-- Why a strict command won't run on these arguments: the first flag it doesn't take, and its usage.
+---@return string?
+function M.flag_refusal(entry, args, role)
+  local flags = entry.flags or {}
+  for _, word in ipairs(entry.strict and args or {}) do
+    if word:sub(1, 1) == "-" and flags[word] == nil then
+      local usage = vim.list_extend({ role and "iso " .. role or "iso", entry.name }, vim.deepcopy(entry.args))
+      local names = vim.tbl_keys(flags)
+      table.sort(names)
+      for _, name in ipairs(names) do
+        usage[#usage + 1] = "[" .. name .. "]"
+      end
+      return ("%s isn't a flag it takes; nothing was done\nusage: %s"):format(word, table.concat(usage, " "))
+    end
+  end
 end
 
 function M.role_usage(role)

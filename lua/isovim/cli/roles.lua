@@ -101,9 +101,13 @@ function M.run(role, args)
     fail(("%s isn't a %s action; iso %s help lists them"):format(name, role, role))
   elseif commands.retired(entry) then
     fail(("iso %s %s was retired at the cutover: %s"):format(role, name, entry.retired))
-  elseif commands.asks_help(args) then
+  elseif commands.asks_help(args, entry) then
     out(commands.entry_usage(entry, role))
     os.exit(0)
+  end
+  local refusal = commands.flag_refusal(entry, args, role)
+  if refusal then
+    fail(refusal)
   end
   check_role(role, name)
   if not entry.module then
@@ -689,7 +693,7 @@ local function rm_one(query, by, role, by_ws, force, keep_branch)
 end
 
 -- iso <role> rm <agent>... [--keep-branch] [--force]: several in one process, each checked on
--- its own; one refused doesn't stop the rest.
+-- its own (c.remove_each).
 function M.rm(args)
   local force, keep_branch = flag(args, "--force"), flag(args, "--keep-branch")
   local by, role, by_ws = caller()
@@ -698,17 +702,9 @@ function M.rm(args)
   elseif #args == 0 then
     fail("usage: iso <role> rm <agent>... [--keep-branch] [--force]")
   end
-  local refused = 0
-  for _, query in ipairs(args) do
-    local ok, err = c.try(rm_one, query, by, role, by_ws, force, keep_branch)
-    if not ok then
-      refused = refused + 1
-      io.stderr:write("iso: " .. tostring(err) .. "\n")
-    end
-  end
-  if refused > 0 then
-    fail(("%d of %d not removed"):format(refused, #args))
-  end
+  c.remove_each(args, function(query)
+    rm_one(query, by, role, by_ws, force, keep_branch)
+  end)
 end
 
 -- Runs from the tmux server: waits until the agent isn't busy, restarts it so it starts on its

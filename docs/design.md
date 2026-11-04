@@ -1008,7 +1008,9 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   `--force`, which drops the uncommitted files and keeps unpushed commits on the local branch. The
   removal is `iso rm`'s, `d` in the sidebar: the supervisor stops, the record and `aN/` go (teardown,
   below), and the children go to its parent. Several agents go in one process, each checked on its
-  own, and `iso rm` runs the teardown itself, asking the TUI only to close the chat, so the TUI never
+  own. Before any goes, a flag it doesn't take or a word that isn't an agent refuses the whole batch,
+  and `--help` anywhere prints its usage (the bare `iso rm` too); an agent the repo had and no longer
+  has is only refused itself, so a half-refused batch can run again. `iso rm` runs the teardown itself, asking the TUI only to close the chat, so the TUI never
   waits on its git. The journal and the transcript stay in `iso/`, the
   transcript headed `# <name> (removed <date> by <who>)`, so `iso find` and grep still find the agent.
   Pushed branches and PRs are left alone; the local branch is deleted once origin has all of it,

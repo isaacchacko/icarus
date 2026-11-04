@@ -106,6 +106,34 @@ local function resolve_agent(query, exact)
   end, "agent in " .. ws.name, exact)
 end
 
+-- remove_one(query) for each of a batch. A word that's no agent here refuses the whole batch before
+-- anything goes, so a typo leaves nothing half done. An agent this repo had and no longer has passes
+-- that check and is only refused itself: running a half-refused batch again has to work.
+local function remove_each(queries, remove_one)
+  local wrong = {}
+  for _, query in ipairs(queries) do
+    local ok, err = try(resolve_agent, query, true)
+    local key, id = store.canon_address(query):match("^(.*)/([^/]*)$")
+    if not ok and not (key and store.gave_out(key, id)) then
+      wrong[#wrong + 1] = err
+    end
+  end
+  if #wrong > 0 then
+    fail(table.concat(wrong, "\n") .. "\nnothing was removed")
+  end
+  local refused = 0
+  for _, query in ipairs(queries) do
+    local ok, err = try(remove_one, query)
+    if not ok then
+      refused = refused + 1
+      io.stderr:write("iso: " .. tostring(err) .. "\n")
+    end
+  end
+  if refused > 0 then
+    fail(("%d of %d not removed"):format(refused, #queries))
+  end
+end
+
 -- <host>:<ws>/<agent> names an agent on another host: the command runs there over ssh, as the
 -- sidebar lists them. This host's own name, or none, means here.
 ---@return string? host, string query
@@ -313,6 +341,7 @@ return {
   unique = unique,
   resolve = resolve,
   resolve_agent = resolve_agent,
+  remove_each = remove_each,
   unit = unit,
   spawn = spawn,
   split_host = split_host,
