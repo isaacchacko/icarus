@@ -951,7 +951,7 @@ M.GROUP = {
       return vim.notify("isovim: threads live in a project with a router", vim.log.levels.INFO)
     end
     require("isovim.surfaces").open(tree)
-  end, "the project's threads as a tree: what spawned what" },
+  end, "the project's thread board" },
   { "N", M.new_terminal, "new terminal" },
   { "<lt>", function()
     sidebar().step_host(-1)

@@ -816,6 +816,8 @@ M.role_actions = {
       rename = { args = { "<text>", "<text>..." } },
       ask = { args = { "<text>", "<path>" } },
       ls = { flags = { ["--all"] = false, ["--tree"] = false } },
+      board = {},
+      priority = { args = { "<text>", "<text>" } },
       show = { args = { "<text>" } },
       bypass = { args = { "<text>", "<text>" } },
       release = { args = { "<text>..." } },
@@ -898,6 +900,10 @@ M.role_actions = {
                                      messages to ease router delays", not "two routers?". Any
                                      title is fair game, the user's too: the first stays shown
                                      at the top, and each rename says what it was
+       iso thread board              the board, by column: Backburner, Working, Checking,
+                                     Done. Only the user moves cards, and no agent can
+       iso thread priority <id> <0-4>
+                                     0 none, 1 urgent, 2 high, 3 medium, 4 low
        iso thread ls [--all|--tree]  the repo's open threads (--all: resolved too; --tree: all
                                      of them, each child indented under its parent)
        iso thread show <id>          a thread's posts

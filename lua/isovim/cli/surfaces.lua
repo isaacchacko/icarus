@@ -410,7 +410,7 @@ end
 function M.thread(args)
   local threads = require("isovim.threads")
   local sub = table.remove(args, 1)
-  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all|--tree] | show <id>'
+  local usage = 'usage: iso <role> thread new "<title>" ["first post"] [--no-reply] [--parent <id>|none] | parent <id> <parent>|none | bypass <id> [<worker>|none] | release <reason...> | post <id> <text...> [--image f] [--no-reply] | waiting <id> user|<agent>|none | resolve <id> [<outcome...>] | rename <id> <title...> | ask <id> <json|file|-> | ls [--all|--tree] | board | priority <id> <0-4> | show <id>'
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
@@ -559,6 +559,20 @@ function M.thread(args)
       fail(err)
     end
     out(("%s#%s is %q now"):format(repo, id, title))
+  elseif sub == "board" then
+    for _, line in ipairs(require("isovim.thread_board").text(repo)) do
+      out(line)
+    end
+  elseif sub == "priority" then
+    local id, value = args[1] or fail(usage), tonumber(args[2] or "")
+    if not value or value < 0 or value > 4 or value % 1 ~= 0 then
+      fail("a priority is 0 (none), 1 (urgent), 2 (high), 3 (medium) or 4 (low)")
+    end
+    local set, err = threads.set_priority(repo, id, value, me)
+    if not set then
+      fail(err)
+    end
+    out(("%s#%s has priority %d"):format(repo, id, value))
   elseif sub == "ls" and flag(args, "--tree") then
     local tree = threads.tree(repo)
     if #tree == 0 then

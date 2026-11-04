@@ -678,8 +678,10 @@ function M.threads(repo, all)
     -- A reply you haven't read, or your turn, which outlasts your reading it; a question waiting is in
     -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
     -- isn't yours.
-    local new_reply = not info.working and info.last_reply > (seen[info.id] or 0)
-    local on_you = info.waiting_on == "user" and not info.working
+    -- On the backburner it stops nagging: out of the Inbox, a new post only marking its card.
+    local parked = info.column == "backburner"
+    local new_reply = not parked and not info.working and info.last_reply > (seen[info.id] or 0)
+    local on_you = not parked and info.waiting_on == "user" and not info.working
     local needs_you = new_reply or on_you
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     -- Its questions still waiting, each a question surface: the Inbox, root mode and iso answer
@@ -730,9 +732,15 @@ function M.threads(repo, all)
       waiting_name = worker and worker_name(worker),
       bypass_name = info.bypass and worker_name(info.bypass),
       pending = info.pending,
+      parent = info.parent,
+      priority = info.priority,
+      column = info.column,
+      last_at = info.last_at,
+      parked = parked or nil,
+      parked_unread = parked and info.last_reply > (seen[info.id] or 0) or nil,
       sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
         tostring(needs_you), info.pending, tostring(info.waiting_on))
-        .. tostring(info.parent) .. tostring(info.bypass)),
+        .. tostring(info.parent) .. tostring(info.bypass) .. tostring(info.column) .. tostring(info.priority)),
     }
   end
   table.sort(resolved, function(a, b)
@@ -757,24 +765,32 @@ function M.threads(repo, all)
       created = info.at or 0,
       posts = info.posts,
       last_glyph = poster_glyph(info.last_by),
-      needs_you = unread(info),
+      -- Unread till opened, unless it's on the backburner: that's left the Inbox for good.
+      needs_you = unread(info) and info.column ~= "backburner",
+      parked = info.column == "backburner" or nil,
+      parked_unread = info.column == "backburner" and unread(info) or nil,
       resolved = true,
       outcome = info.outcome,
       pending = 0,
-      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), tostring(info.parent))),
+      parent = info.parent,
+      priority = info.priority,
+      column = info.column,
+      last_at = info.last_at,
+      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), tostring(info.parent) .. tostring(info.priority) .. tostring(info.column))),
     }
   end
   return list
 end
 
--- The Threads overview, a view of isovim's own: nil for a repo with no threads, unless empty.
+-- The thread board (isovim.thread_board), flipping to their tree, a view of isovim's own: nil for a
+-- repo with no threads, unless empty.
 function M.threads_entry(key, empty)
   local repo = canon(key)
   local threads = require("isovim.threads")
   if threads.refusal(repo) or not (empty or #threads.list(repo, true) > 0) then
     return nil
   end
-  return { repo = repo, name = "Threads", base = "Threads", type = "threads", title = "Threads", needs_you = false,
+  return { repo = repo, name = "Threads", base = "Threads", type = "threads", title = "Thread board", needs_you = false,
     sig = "", error_file = "", file = threads.dir(repo) }
 end
 

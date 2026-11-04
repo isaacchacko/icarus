@@ -235,7 +235,7 @@ local KINDS = {
       return row
     end,
     open = function(item)
-      -- Threads opens its tree of who spawned what, <Tab> folding it as any section.
+      -- Threads opens its board (isovim.thread_board), <Tab> folding it as any section.
       local tree = item.section == "Threads" and not item.host and M.surfaces().threads_entry(item.repo_key, true)
       if tree then
         M.surfaces().open(tree)
@@ -456,7 +456,7 @@ local SURFACE_GLYPHS = {
 function M.surface_chunks(entry)
   local kind = entry.type
   local title = entry.title or entry.name or "?"
-  local dim = not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved)
+  local dim = entry.nested or (not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
   local title_hl = dim and "Comment" or nil
   local glyph, hl
   if kind == "file" or kind == "folder" then
@@ -526,7 +526,9 @@ function M.surface_chunks(entry)
     -- reply's unread), the router's turn on it, a reply you haven't read that needs nothing from you,
     -- the worker it waits on. A resolved one, its outcome, marked till you've read what an agent resolved.
     row[#row + 1] = { "  " .. tostring(entry.posts or 0), "Comment" }
-    if entry.resolved then
+    if entry.parked then
+      row[#row + 1] = { (entry.parked_unread and "  ● " or "  ") .. "backburner", "Comment" }
+    elseif entry.resolved then
       local outcome = entry.outcome and vim.trim((entry.outcome:gsub("%s+", " ")))
       row[#row + 1] = entry.needs_you and { "  ● resolved" .. (outcome and (": " .. outcome) or ""), "DiagnosticWarn" }
         or { "  ✓ " .. (outcome or "resolved"), "Comment" }
@@ -1002,10 +1004,65 @@ local function group_sections(items, base, host, key, opts)
       children()
     end
   end
-  local listed = vim.list_extend(vim.list_slice(threads, 1), resolved)
+  -- Each subthread under its parent, dim, if that's listed with it: open under open, resolved under
+  -- resolved. Otherwise it's a row of its own.
+  local function nested(list)
+    local here, under, out = {}, {}, {}
+    for _, entry in ipairs(list) do
+      here[entry.name] = true
+    end
+    for _, entry in ipairs(list) do
+      if entry.parent and entry.parent ~= entry.name and here[entry.parent] then
+        under[entry.parent] = under[entry.parent] or {}
+        table.insert(under[entry.parent], 1, entry)
+      end
+    end
+    local placed = {}
+    local function place(entry, depth)
+      placed[entry.name] = true
+      out[#out + 1] = { entry = entry, depth = depth }
+      for _, child in ipairs(under[entry.name] or {}) do
+        if not placed[child.name] then
+          place(child, depth + 1)
+        end
+      end
+    end
+    for _, entry in ipairs(list) do
+      if not (entry.parent and entry.parent ~= entry.name and here[entry.parent]) then
+        place(entry, 0)
+      end
+    end
+    for _, entry in ipairs(list) do
+      if not placed[entry.name] then
+        place(entry, 0)
+      end
+    end
+    return out
+  end
+  local listed = vim.list_extend(nested(threads), nested(resolved))
   section("Threads", #listed, function()
-    for i, entry in ipairs(listed) do
-      items[#items + 1] = surface(entry, "Threads", i, #listed)
+    local tops = #vim.tbl_filter(function(row)
+      return row.depth == 0
+    end, listed)
+    local top = 0
+    for i, row in ipairs(listed) do
+      local extra
+      if row.depth == 0 then
+        top = top + 1
+        extra = { guide = guide(top, tops) }
+      else
+        -- A sibling still to come, before this branch ends.
+        local more = false
+        for j = i + 1, #listed do
+          if listed[j].depth <= row.depth then
+            more = listed[j].depth == row.depth
+            break
+          end
+        end
+        extra = { guide = (top == tops and "   " or "│  ") .. ("   "):rep(row.depth - 1) .. (more and "├─ " or "└─ ") }
+      end
+      local entry = row.depth > 0 and vim.tbl_extend("force", row.entry, { nested = true }) or row.entry
+      items[#items + 1] = surface(entry, "Threads", i, #listed, extra)
     end
   end, { count = #threads, always = opts.threads, unread = vim.iter(threads):any(function(entry)
     return entry.new_reply and not entry.marked_unread
@@ -1931,7 +1988,7 @@ local COLUMN_KEYS = {
   { "?", "isovim_help", "this help" },
 }
 local LIST_KEYS = {
-  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Threads header, its tree of what spawned what; on the Inbox, Root or another section (Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
+  { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Threads header, the thread board; on the Inbox, Root or another section (Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
   { "<Tab>", "isovim_toggle_expand", "open or collapse the project, its Inbox or a section, or Root (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its project (its worktree comes on its first edit), or in General" },
   { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },
@@ -2016,6 +2073,7 @@ function M.help()
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
+  section("The thread board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
   section("A surface's view (markdown, a page, the Task Board, the PRs, a question)", {
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })

@@ -343,8 +343,28 @@ host; General, Root and Terminals have none, and starting one there says why.
   and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
-- **The overview:** a tree of the project's threads, what spawned what, as a tab of isovim's own: `<CR>`
-  on the Threads header in the sidebar (`<Tab>` still folds it), `<leader>iO`, or `<leader><leader>`.
+- **The board:** threads read as equal weight when some are subthreads of others, so a project's are a
+  kanban board (isovim.thread_board): one view, one buffer drawn in four columns, opened by `<CR>` on
+  the Threads header (`<Tab>` still folds it), `<leader>iO` or `<leader><leader>`, redrawn as threads
+  change. Column heads are the winbar, so they stay as it scrolls. A top-level thread is a full
+  card: icon, id, last poster, priority, wrapped title, who it waits on or goes to, unread, and its
+  children's progress (`2/3 done`). A subthread is a slim dim row, under its parent's card in the
+  same column, else `↳ t19` in its own. Within a column, priority first, then most recent. Narrow, the
+  columns shrink to 28 cells, then as many as fit show, moving as the focus does, so the layout never
+  wraps. Motion is yours: a card's column changes only when you move it with `H` or `L`, as a `column
+  {on, by}` entry in its thread. No post, state change or agent moves one, and no agent can. A new
+  thread lands in Working, a new subthread in its parent's column, and a thread older than the board
+  is placed once, resolved in Done and the rest in Working. `L` into Done resolves it and `H` out of
+  Done opens it again, prompting nobody; a thread an agent resolves stays where it is, marked, unread
+  in the Inbox as ever. Backburner leaves the Inbox and stops nagging, a new post only marking its
+  card (a question waiting stays, as its asker is blocked). As columns say nothing of state, marks
+  do, in any column: unread `●`, your turn, a question `?`, an agent working, resolved `✓`, in words
+  under the title too, a card that needs you bordered in the warning color and a slim row undimmed.
+  `priority {value}` entries hold 0-4, as Linear's. Keys: `hjkl` move, `H L` status, `0-4` priority,
+  `C` new thread, `/` search as you type, `<CR>` open, `<Esc>` clear, `gg G`, `T` the tree below, `?`.
+  `iso <role> thread board` and `thread priority <id> <0-4>` are for agents. In the sidebar each
+  subthread sits indented and dim under its parent, if that's listed with it.
+- **The tree:** `T` on the board flips to a tree of the project's threads, what spawned what.
   Each row is drawn as the sidebar's, with its id and who it goes to, under its parent on a tree
   guide: newest root first, children oldest first, so a conversation's splits read in order. `<CR>`
   opens the thread. The resolved show, dimmed with their outcome's first line, as the point is seeing

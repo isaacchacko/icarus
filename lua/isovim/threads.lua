@@ -21,6 +21,8 @@
 -- waiting as a question surface (named <id>-<qid>, its file the thread's), so the Inbox, root mode
 -- and iso answer take it as any question; its answer is appended here, where the asker's thread
 -- ask waits for it.
+--   {kind = "column", on = "backburner"|"working"|"checking"|"done", by, at}   its column on the board
+--                                                   (isovim.thread_board); {kind = "priority", value (0-4), by, at}
 --   {kind = "bypass", on = <worker address>|"none", by, why?, at}   who the user's posts go to, in the
 --                                                   router's place (below); {kind = "bypass_told", upto, at}
 --   {kind = "working", state = "start"|"end", by?, died?, at}   the router's turn on one of its posts;
@@ -109,6 +111,9 @@ function M.summary(entries)
   -- The router's turn on the thread, while it runs: whether it posted for the user, and its mark.
   local turn
   for _, entry in ipairs(entries) do
+    if entry.kind == "post" or entry.kind == "resolved" or entry.kind == "reopened" or entry.kind == "thread" then
+      info.last_at = entry.at or info.last_at
+    end
     if entry.kind == "post" then
       info.posts = info.posts + 1
       info.last_by = entry.by
@@ -150,6 +155,10 @@ function M.summary(entries)
       info.ended_bypasses = vim.tbl_filter(function(each)
         return each.seq > (entry.upto or 0)
       end, info.ended_bypasses)
+    elseif entry.kind == "column" then
+      info.column = entry.on
+    elseif entry.kind == "priority" then
+      info.priority = tonumber(entry.value) or 0
     elseif entry.kind == "working" then
       info.working = entry.state == "start"
       info.working_at = entry.at
@@ -280,6 +289,11 @@ function M.new(repo, title, by, parent)
   until fd
   vim.uv.fs_close(fd)
   append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open", parent = parent })
+  -- On the board: in Working, or a subthread in its parent's column.
+  local above = parent and M.read(repo, parent)
+  local info = above and M.summary(above)
+  append(repo, id, { kind = "column", by = "isovim",
+    on = info and (info.column or (info.status == "resolved" and "done")) or "working" })
   return id
 end
 
@@ -569,6 +583,36 @@ function M.set_bypass(repo, id, on, by, why)
     append(repo, id, { kind = "waiting", on = "none", by = "isovim", why = "bypass" })
   end
   append(repo, id, { kind = "bypass", on = on, by = by, why = why })
+end
+
+-- A card's column on the board: only the user's H and L, past where it was first placed.
+function M.set_column(repo, id, on, by)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  append(repo, id, { kind = "column", on = on, by = by })
+  return true
+end
+
+-- Where a thread goes the first time the board has to say: resolved in Done, the rest in Working.
+-- Stored once, and then the user's.
+function M.place_all(repo)
+  for _, info in ipairs(M.list(repo, true)) do
+    if not info.column then
+      append(repo, info.id, { kind = "column", on = info.status == "resolved" and "done" or "working", by = "isovim" })
+    end
+  end
+end
+
+-- Its priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+function M.set_priority(repo, id, value, by)
+  local entries, err = exists(repo, id)
+  if not entries then
+    return nil, err
+  end
+  append(repo, id, { kind = "priority", value = value, by = by })
+  return true
 end
 
 -- Who the user's posts on the thread go to: its bypass, while that worker exists, else the router.
