@@ -389,12 +389,13 @@ host; General, Root and Terminals have none, and starting one there says why.
   in four columns, Backburner, Working, Checking and Done, opened by `<CR>` on the Threads header
   (`<Tab>` still folds it), `<leader>iO` or `<leader><leader>`, redrawn as threads and tasks change.
   Column heads are the winbar, so they stay as it scrolls. A card is a task: icon, id, what its threads
-  are up to rolled up, priority, wrapped title, how far along it is (`2/3 done`, `✓ all 3 resolved`),
-  assignee, due date (red once past), estimate, how many PRs and tickets, and labels. Under it its
-  threads are rows you can focus, open ones first, each with its marks. Within a column, priority first,
+  need rolled up (unread, your turn, a question, working), priority, wrapped title, how far along it is
+  (`2/3 done`, `✓ all 3 resolved`), assignee, due date (red once past), estimate, how many PRs and tickets, and
+  labels. Its threads aren't on the board ("dont show threads if theyre inside a task"): the task's view lists
+  them, and a card that needs you is bordered in the warning color, so nothing's hidden silently. Within a column, priority first,
   then most recent. Narrow, the columns shrink to 28 cells, then as many as fit show, moving as the
   focus does, so the layout never wraps. Motion is yours: a task's column changes only by you, with `H` or
-  `L` on the card or any of its rows, or `s`; columns belong to tasks alone. No post, state change or
+  `L` on the card, or `s`; columns belong to tasks alone. No post, state change or
   agent moves one, so a task whose threads all resolved stays put, and the card says so. A new task lands
   in Working. Into Done resolves its open threads, prompting nobody, and records which on the column
   entry; out of it opens those again, not any others. Backburner keeps its threads out of the Inbox, a
@@ -402,19 +403,19 @@ host; General, Root and Terminals have none, and starting one there says why.
   nothing of state, marks do, in any column: unread `●`, your turn, a question `?`, an agent working,
   resolved `✓`, a card that needs you bordered in the warning color.
   Open threads on no task are slim rows under a **No task** group at the top of Working, which `H` and
-  `L` don't move. `A` on a thread's row picks a task for it, moving it from any it's on: its first entry
-  is a new task of its title on a thread with none, and No task, taking it off, on a thread with one. `A` on
-  a card or in a task's view goes the other way, picking one of the repo's open threads not on that task
-  and putting it there, moving it if it's on another. Resolved, they aren't on the board, but stay in the sidebar and
+  `L` don't move. `A` on one picks a task for it, its first entry a new task of its title. `A` on a card,
+  or in a task's view off its thread rows, goes the other way, picking one of the repo's open threads not on
+  that task and putting it there, moving it if it's on another. `A` on a thread's row in a task's view
+  moves it to another task or, with No task first, takes it off. Resolved, they aren't on the board, but stay in the sidebar and
   `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` a new task, asking its title, with no thread on it, wherever the focus is, `A` attach, `d` delete
-  the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `z` folds a task's
-  threads, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the
+  the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the
   view's keys above. `[` and `]`, on the board or a task in it, go to the previous or next project as the
   sidebar's do, landing on its board, a project with none passed over; they don't wait for a second key, so
   vim's `]l` isn't there in this buffer, and `<Tab>` opens a task's links. `<C-d> <C-u> <C-f> <C-b>` move the focus
   with the window, half a window or a whole one, and scrolling any other way (the wheel, `<C-e>`) moves a focus
-  gone out of sight to the nearest row of its column in sight, so the next `j` or `k` doesn't jump back. In the sidebar, Threads are grouped under a dim row per task that has any listed,
-  `<CR>` on it opening the task, and those on no task come after.
+  gone out of sight to the nearest row of its column in sight, so the next `j` or `k` doesn't jump back. In the sidebar's Threads, a task is one row with its threads' marks rolled up, `<CR>` opening
+  it in the board's buffer, its threads not listed, and those on no task come after; the Inbox still lists
+  any thread that needs you, on a task or not, unless its task is on the Backburner.
 - **Finding one** (isovim.board_find): `<leader>i/`, or `F` on the board, is a fuzzy picker in the style of
   `<leader><leader>` over tasks and threads only, in every project on this host. Each row shows what it is, its id,
   project, title and state, a task's column or a thread's marks, and when the words were only in its text, a

@@ -246,10 +246,12 @@ local KINDS = {
     end,
     id = { "host", "repo_key", "section" },
   },
-  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter shows it in the board.
+  -- A task of the board's (isovim.board_tasks), one row with its threads' marks rolled up, as its threads
+  -- aren't listed. Enter shows it in the board's buffer.
   thread_task = {
     format = function(item, width)
-      local row = { { "  " }, { item.guide, "NonText" }, { item.task_title, "Comment" } }
+      local row = { { "  " }, { item.guide, "NonText" }, { "\u{f0ae} ", "Comment" }, { item.task_title, item.needs and "" or "Comment" } }
+      vim.list_extend(row, item.marks or {})
       return width and M.fit(row, width) or row
     end,
     open = function(item)
@@ -1013,7 +1015,8 @@ local function group_sections(items, base, host, key, opts)
       children()
     end
   end
-  -- Threads under a dim row per task, in the order they come; those on none after.
+  -- A row per task, its threads' marks rolled up, in the order they come, then those with no thread listed but
+  -- not Done; threads on no task after. The jump's list (all_open) still has every thread.
   local listed = vim.list_extend(vim.list_extend({}, threads), resolved)
   local groups, by_task, loose = {}, {}, {}
   for _, entry in ipairs(listed) do
@@ -1027,15 +1030,35 @@ local function group_sections(items, base, host, key, opts)
       loose[#loose + 1] = entry
     end
   end
-  section("Threads", #listed, function()
+  if opts.threads and not host then
+    local all = require("isovim.board_tasks").read(key)
+    local ids = vim.tbl_keys(all)
+    table.sort(ids, function(a, b)
+      return (tonumber(a:sub(2)) or 0) > (tonumber(b:sub(2)) or 0)
+    end)
+    for _, id in ipairs(ids) do
+      if not by_task[id] and all[id].column ~= "done" then
+        by_task[id] = { id = id, title = all[id].title, repo = key, list = {} }
+        groups[#groups + 1] = by_task[id]
+      end
+    end
+  end
+  section("Threads", #groups + #loose, function()
     local tops, top = #groups + #loose, 0
+    local board = require("isovim.thread_board")
     for _, group in ipairs(groups) do
       top = top + 1
+      local marks = {}
+      for _, seg in ipairs(board.rolled_up(group.list)) do
+        marks[#marks + 1] = { "  " .. seg.text, seg.marks[1] and seg.marks[1][3] }
+      end
       items[#items + 1] = vim.tbl_extend("force", base, { kind = "thread_task", task_id = group.id, task_title = group.title,
-        repo_key = group_key(group.repo), name = group.id, depth = 2, guide = guide(top, tops), section = "Threads", group_key = key })
-      local lead = top == tops and "   " or "│  "
-      for i, entry in ipairs(group.list) do
-        items[#items + 1] = surface(entry, "Threads", i, #group.list, { guide = lead .. guide(i, #group.list) })
+        repo_key = group_key(group.repo), name = group.id, depth = 2, guide = guide(top, tops), section = "Threads", group_key = key,
+        marks = marks, needs = vim.iter(group.list):any(function(entry)
+          return entry.needs_you
+        end) })
+      for i, entry in ipairs(all_open and group.list or {}) do
+        items[#items + 1] = surface(entry, "Threads", i, #group.list)
       end
     end
     for _, entry in ipairs(loose) do

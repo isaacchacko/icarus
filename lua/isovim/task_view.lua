@@ -266,6 +266,33 @@ function M.actions.attach_thread(repo, task)
   end)
 end
 
+-- A on a thread: a task for it, picked, moving it from any it's on; first, on a thread with one, No task,
+-- taking it off, and on a thread with none, a new task of its title.
+function M.actions.thread_task(repo, entry, on_done)
+  local choices = vim.tbl_filter(function(task)
+    return task.id ~= entry.task
+  end, vim.tbl_values((tasks.read(repo))))
+  table.sort(choices, function(a, b)
+    return (tonumber(a.id:sub(2)) or 0) > (tonumber(b.id:sub(2)) or 0)
+  end)
+  table.insert(choices, 1, entry.task and { none = true } or { new = true })
+  select(choices, ("Attach %s to:"):format(entry.name), function(task)
+    if task.none then
+      return "No task"
+    end
+    return task.new and ("New task: " .. entry.title) or ("%s  %s"):format(task.id, task.title)
+  end, function(task)
+    local id = task.none and "none" or task.new and tasks.new(repo, entry.title) or task.id
+    if id then
+      require("isovim.threads").set_task(repo, entry.name, id, "user")
+      if on_done then
+        on_done(id, task.new)
+      end
+      changed(repo)
+    end
+  end)
+end
+
 -- Keys both here and on the board's cards: {lhs, the action, what it does}.
 M.KEYS = {
   { "s", "status", "its status" },
@@ -286,10 +313,10 @@ function M.help_keys()
     return { key[1], key[3] }
   end, M.KEYS)
   vim.list_extend(list, {
-    { "A", "attach one of the repo's open threads to it, picked, moving it if it's on another task" },
+    { "A", "on a thread's row, move it to another task or take it off (No task, first); elsewhere, attach one of the repo's open threads, picked, moving it if it's on another task" },
     { "<Esc>", "back to the board, on this task's card" },
     { "i", "edit the description in place (<Esc> in normal mode saves and leaves the edit, :w saves)" },
-    { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser)" },
+    { "<CR>", "open the thread, task, PR or ticket on this line (a PR in the browser); on the description, edit it" },
     { "o", "a PR's own view here" },
     { "<Tab>", "open the link under the cursor" },
     { "[ / ]", "the previous / next project's board" },
@@ -418,7 +445,7 @@ local function layout(repo, id, width)
   end, own)
   heading("Threads", #own > 0 and ("%d/%d done"):format(resolved, #own) or nil)
   if #own == 0 then
-    add({ { "None yet: n starts one.", "Comment" } })
+    add({ { " None yet: n starts one.", "Comment" } })
   end
   for _, entry in ipairs(own) do
     local chunks = { { "  " } }
@@ -685,11 +712,14 @@ local function bind_keys(view)
     end, key[3])
   end
   on("A", function()
+    local row = here(view)
     local task = tasks.read(view.repo)[view.task_open]
-    if task then
+    if row.thread then
+      M.actions.thread_task(view.repo, row.thread)
+    elseif task then
       M.actions.attach_thread(view.repo, task)
     end
-  end, "attach an open thread to it")
+  end, "move this thread, or attach an open one")
   on("<Esc>", function()
     M.back(view)
   end, "back to the board")
