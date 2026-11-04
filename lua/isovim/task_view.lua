@@ -509,12 +509,14 @@ local function view_width(view)
   return win ~= -1 and vim.api.nvim_win_get_width(win) or view.width or 100
 end
 
--- The window showing a task: its lines wrap, unlike the board's, and the winbar says how to go back.
+-- The window showing a task: its lines wrap and it has line numbers, unlike the board's (isovim.thread_board
+-- dress puts those back), and the winbar says how to go back.
 local function dress(view)
   local win = vim.fn.bufwinid(view.buf)
   if win ~= -1 then
     local wo = vim.wo[win][0]
     wo.wrap, wo.linebreak, wo.cursorline = true, true, true
+    wo.number, wo.relativenumber = true, true
     wo.winbar = (" <Esc> back to the board · %s · i edit · ? keys"):format(view.task_open)
   end
 end

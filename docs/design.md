@@ -377,7 +377,7 @@ host; General, Root and Terminals have none, and starting one there says why.
   ("i want to be able to have one buffer for the board and everything is in that buffer"). `<CR>` on its card,
   its sidebar row or its `iso:task/<repo>#k1` chip (`iso <role> link k1` prints it), or `<leader><leader>`,
   shows it there, opening the board or reusing the open one. `<Esc>` goes back to the board, on that task's
-  card, scrolled and filtered as it was, and the winbar says so. Opening the board itself (`<CR>` on Threads,
+  card, scrolled and filtered as it was, and the winbar says so. A task has relative line numbers, and the board none. Opening the board itself (`<CR>` on Threads,
   `<leader>iO`) shows the board. A thread's row still opens the thread in its own tab, as it has an input
   box and a chat of its own. Its title and description are the body, drawn as markdown,
   then its properties in a compact block, its threads where Linear has sub-issues, relations, PRs,
