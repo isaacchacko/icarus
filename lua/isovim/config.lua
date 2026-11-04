@@ -4,7 +4,7 @@
 --   aliases    other names for those hosts
 --   repo_dirs  more folders whose git repos are offered when making a workspace, besides ~ and the usual
 --              code folders (~/code, ~/src, ~/Programs, ...)
---   prompts    role -> file (worker, router, repo-root, root; relative to ~) added to what agents of
+--   prompts    role -> file (worker, router, repo-root; relative to ~) added to what agents of
 --              that role are told at launch, after isovim's own words and instructions.md. isovim
 --              seeds ~/.isovim/prompts/<role>.md (from prompts/ in this tree) when one is missing,
 --              never writing over one, and names it here for a role that has no entry; null for a
@@ -17,7 +17,7 @@
 --              it's closed (isovim.browser); default 3600, 0 closes only tabs whose owner is gone
 --   thread_root_grace  minutes a thread sits on your turn before root mode's root is told (and at
 --              least this long between those messages); default 5
---   compact_at the context size, in tokens, past which a router's, repo-root's or root's session is
+--   compact_at the context size, in tokens, past which a router's or repo-root's session is
 --              compacted when a turn ends (isovim.acp.host); default 250000, 0 turns it off
 local store = require("isovim.store")
 
@@ -110,7 +110,7 @@ end
 local here = debug.getinfo(1, "S").source:sub(2)
 M.shipped_prompts = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.uv.fs_realpath(here) or here))) .. "/prompts"
 M.prompts_dir = store.root .. "/prompts"
-M.prompt_roles = { "worker", "router", "repo-root", "root" }
+M.prompt_roles = { "worker", "router", "repo-root" }
 
 -- A role's seeded prompt file, ~/.isovim/prompts/<role>.md.
 function M.seeded_prompt(role)

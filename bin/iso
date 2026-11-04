@@ -27,7 +27,7 @@ browser)
   shift
   exec node "$repo/bin/iso-browser.mjs" "$@"
   ;;
-worker | router | repo-root | root)
+worker | router | repo-root)
   # iso <role> browser: the same browser, after the role check.
   if [ "${2:-}" = browser ]; then
     NVIM_APPNAME=isovim nvim -l "$cli" __warn "$@" || exit 1

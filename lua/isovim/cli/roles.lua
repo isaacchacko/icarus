@@ -16,7 +16,7 @@ local M = {}
 
 local RANK = commands.rank
 -- Roots have no parent.
-local ROOTS = { ["repo-root"] = true, root = true }
+local ROOTS = { ["repo-root"] = true }
 
 local function warn(message)
   io.stderr:write("iso: warning: " .. message .. "\n")
@@ -34,13 +34,9 @@ local function caller()
 end
 M.caller = caller
 
--- iso root <address>|--clear (or nothing) is still the old iso root; any other role word, and
--- root followed by one of its actions, is a namespace.
-function M.namespace(command, args)
-  if not RANK[command] then
-    return false
-  end
-  return command ~= "root" or args[1] == "help" or commands.action("root", args[1]) ~= nil
+-- A role's word is its namespace: iso <role> <action>.
+function M.namespace(command)
+  return RANK[command] ~= nil
 end
 
 -- Until the cutover turns enforcement on, a refusal is only a warning that says it will be one.
@@ -163,7 +159,7 @@ local function holders(role, key, except)
   for _, ws in ipairs(store.list()) do
     for _, agent in ipairs(store.agents(ws.id)) do
       local address = ws.id .. "/" .. agent.id
-      if store.role(agent) == role and address ~= except and (role == "root" or ws_key(ws) == key) then
+      if store.role(agent) == role and address ~= except and ws_key(ws) == key then
         found[#found + 1] = address
       end
     end
@@ -172,29 +168,15 @@ local function holders(role, key, except)
 end
 M.holders = holders
 
--- One router per repo on a host, one repo-root per repo, one root per host. A router or repo-root
--- belongs to a repo, so it needs one.
+-- One router per repo on a host, one repo-root per repo. Each belongs to a repo, so it needs one.
 ---@param address? string the agent being promoted, which doesn't count; nil for a spawn
----@param by? string the promoter: the root the iso root file names may hand its place on
-local function check_unique(role, key, address, by)
+local function check_unique(role, key, address)
   if (role == "router" or role == "repo-root") and not key then
     fail(address and ("%s isn't in a git repo, and a %s is a repo's"):format(address, role)
       or ("a %s is a repo's: spawn it with --repo and a git repo"):format(role))
   end
   local taken = role ~= "worker" and holders(role, key, address)[1]
-  -- The root the iso root file names holds the place too, while it's here.
-  local root = require("isovim.root")
-  local named = role == "root" and not taken and root.named()
-  local function is(who)
-    return who and named == root.address(who:match("^(.*)/([^/]+)$"))
-  end
-  if named and not is(address) and not is(by) then
-    fail(("this host's root is %s, named by iso root; only the user takes that over, with iso rootmode on host")
-      :format(named))
-  end
-  if taken and role == "root" then
-    fail("this host already has a root: " .. taken)
-  elseif taken then
+  if taken then
     fail(("%s already has a %s%s: %s"):format(repo_name(key), role, role == "router" and " here" or "", taken))
   end
 end
@@ -203,7 +185,7 @@ end
 -- repo's role on an agent in no repo has nothing to clash with, and is the user's to set.
 function M.check_unique(ws, role, address)
   local key = ws_key(ws)
-  if key or role == "root" or role == "worker" then
+  if key or role == "worker" then
     check_unique(role, key, address)
   end
 end
@@ -310,10 +292,9 @@ function M.spawn(args)
   if not dir and not address and not legacy and not to_general then
     dir = checkout_of(vim.uv.cwd())
   end
-  -- An agent in root/ (the host root) spawns into general/, as the root's own key is its alone; so
-  -- does one in an old _/ whose move waits, as nothing new goes there.
+  -- One in an old _/ whose move waits spawns into general/, as nothing new goes there.
   local caller_key = caller_ws and store.v2(caller_ws) and store.canon(caller_ws) or nil
-  if caller_key == store.ROOT or caller_key == store.OLD then
+  if caller_key == store.OLD then
     caller_key = nil
   end
   -- An agent's child in its repo is made from the clone its spawner was, as a user's spawn from
@@ -359,7 +340,6 @@ end
 local PROMOTIONS = {
   router = { worker = true },
   ["repo-root"] = { worker = true, router = true },
-  root = { worker = true, router = true, ["repo-root"] = true },
 }
 
 -- The restart runs on the tmux server, outside the agent: a self-promotion would otherwise kill
@@ -377,38 +357,6 @@ local function promoted_text(role, promoter, reason, acp)
     :format(role, promoter, reason ~= "" and (": " .. reason) or "",
       acp and ("Your session was reloaded on this conversation, and isovim gave you the %s's prompt as the message before this one (a resumed session keeps the system prompt it started with)."):format(role)
       or ("You restarted as a %s on this conversation, with that role's prompt."):format(role))
-end
-
--- A router or repo-root made root: a fork of it (iso fork) becomes the root, and it keeps its
--- role, so the repo keeps its router or repo root with the same context. An ACP agent's fork is
--- the next aN beside it, whose supervisor forks the session (session/fork).
-local function fork_root(ws, agent, promoter, reason)
-  local from = store.role(agent)
-  local session = store.session_id(ws.id, agent.id)
-  if agent.kind ~= "claude" or not session then
-    fail(("%s/%s has no Claude conversation to fork into the root"):format(ws.id, agent.id))
-  end
-  -- As iso fork makes it: a new workspace in the same project, or a new-layout agent's next aN.
-  local id = ws.id
-  if not store.v2(ws.id) then
-    local dir = store.dir(ws.id)
-    id = store.create(ws.name .. " root", dir ~= store.path(ws.id) and dir or nil)
-    store.remove_agent(id, "main")
-  end
-  local fork, err = store.add_agent(id, { kind = "claude", name = not store.v2(id) and agent.name or nil, role = "root",
-    acp = agent.acp, checkout = agent.checkout })
-  if not fork then
-    fail(err)
-  end
-  store.update_agent(id, fork.id, { fork_of = session })
-  local events = require("isovim.events")
-  events.publish_agent(id, fork.id, "promoted", { role = "root", previous = from, fork_of = ws.id .. "/" .. agent.id })
-  local root_ws = c.resolve(id)
-  local text = ("You are a fork of the %s %s/%s, made the root by %s%s. %s/%s stays the %s; you have no parent.")
-    :format(from, ws.id, agent.id, promoter, reason ~= "" and (": " .. reason) or "", ws.id, agent.id, from)
-  send_as(promoter, root_ws, store.agent(id, fork.id), text)
-  c.tui("require('isovim').refresh()")
-  out(("%s/%s is the root, forked from the %s %s/%s, which stays the %s"):format(id, fork.id, from, ws.id, agent.id, from))
 end
 
 -- An ACP agent's promotion: its supervisor reloads the session with the new role's prompt once
@@ -470,7 +418,7 @@ function M.promote(args)
   local role = table.remove(args, 1)
   local reason = vim.trim(table.concat(args, " "))
   if not role or not RANK[role] then
-    fail("usage: iso <role> promote [<agent>] router|repo-root|root [\"reason\"]")
+    fail("usage: iso <role> promote [<agent>] router|repo-root [\"reason\"]")
   end
   local ws, agent = c.resolve_agent(target or promoter, true)
   local address = ws.id .. "/" .. agent.id
@@ -484,11 +432,7 @@ function M.promote(args)
   elseif not require("isovim.panes").reports(agent.kind) then
     fail(("%s is a %s, and only claude and codex agents have roles"):format(address, agent.kind))
   end
-  check_unique(role, ws_key(ws), address, promoter)
-  if role == "root" and (from == "router" or from == "repo-root") then
-    fork_root(ws, agent, promoter, reason)
-    return
-  end
+  check_unique(role, ws_key(ws), address)
   store.set_role(ws.id, agent.id, role)
   if ROOTS[role] then
     store.set_parent(ws.id, agent.id, nil)
@@ -542,11 +486,10 @@ local function descends(address, by)
 end
 
 -- Fails unless the agent by (a role, in by_ws) may restart or remove the agent at address in ws:
--- itself and the agents below it; for a router or repo-root, any agent in its repo; for the root,
--- any agent on this host.
+-- itself and the agents below it; for a router or repo-root, any agent in its repo.
 local function check_manages(by, role, by_ws, ws, address, verb)
   local in_repo = (role == "router" or role == "repo-root") and ws_key(ws) ~= nil and ws_key(ws) == ws_key(c.resolve(by_ws))
-  if not (descends(address, by) or in_repo or role == "root") then
+  if not (descends(address, by) or in_repo) then
     fail(("a %s %s itself and the agents below it%s, and %s is neither"):format(role, verb,
       (role == "router" or role == "repo-root") and ", or any in its repo" or "", address))
   end

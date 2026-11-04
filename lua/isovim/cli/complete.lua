@@ -248,15 +248,10 @@ local function complete(spec, words)
   return expand(pattern, before)
 end
 
--- After iso <role>: its actions, then what the action takes. iso root also still takes the old
--- iso root's <agent> or --clear.
+-- After iso <role>: its actions, then what the action takes.
 local function complete_role(role, words)
-  local old = role == "root" and commands.find("root")
   if #words == 1 then
     local found, directive = {}, ":"
-    if old then
-      found, directive = complete(old, words)
-    end
     for _, name in ipairs(commands.actions(role)) do
       found[#found + 1] = { name, commands.summary(commands.action(role, name)) }
     end

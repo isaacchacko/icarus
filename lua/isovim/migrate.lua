@@ -1,7 +1,6 @@
 -- The one-time moves of the old work root, ~/iso, to ~/.iso (move_work, first), and of the old _/
--- (general's key before it was "general") to general/ and root/. Agents in no repo used to live in
--- _/ and be addressed _/aN, the host root among them; now they live in general/ (general/aN) and the
--- host root in root/ (root/aN). The TUI's start and every iso command call M.run, which costs a stat
+-- (general's key before it was "general") to general/. Agents in no repo used to live in
+-- _/ and be addressed _/aN; now they live in general/ (general/aN). The TUI's start and every iso command call M.run, which costs a stat
 -- or two when there's nothing to move, and is safe to run any number of times: it takes a lock, and
 -- once ~/iso and _/ are gone there's nothing left to do. Run inside an agent, whose stop would end
 -- it partway, it starts `iso __migrate` apart from the agent's processes instead.
@@ -11,14 +10,13 @@
 -- worktrees are repaired; terminals, commands and script panes keep running. Until it has moved,
 -- ~/iso stays the work root (store.refresh_work).
 --
--- Each agent in _/ goes to root/ when it holds the root role (a script pane goes with the agent it
--- runs for), else to general/. Its number stays unless the folder it goes to has had that number
+-- Each agent in _/ goes to general/. Its number stays unless the folder it goes to has had that number
 -- already (a record, an aN/ dir, or its iso/next past it), and then it takes the next free one.
 -- What it moves: the record (iso/agents/aN.json, its id, name, of and parent updated), aN/ (its
 -- worktree repaired, if it has one), the journal and the sessions it kept (iso/journal/aN.jsonl,
 -- aN.sessions/), its transcript, and its run dir files (run/_/aN.* to run/<key>/aN.*). Then every
 -- reference to an old address: other agents' parent fields, rootmode.json, ~/.isovim/root, and the
--- question surfaces a moved agent asked. Nothing in general/ or root/ is ever overwritten: a
+-- question surfaces a moved agent asked. Nothing in general/ is ever overwritten: a
 -- file whose place is taken is kept under ~/.isovim/migrate-leftover-<time>/.
 --
 -- A running agent is stopped first and started again at its new address, where it resumes its
@@ -27,7 +25,7 @@
 -- is, and the next start or iso command tries again; so does one while a running agent's claude (or
 -- codex) isn't logged in here (isovim.auth), as it would restart unable to work. While it waits, _/
 -- stays fully live as a key of its own (store.old_live): its agents are listed, addressed and
--- messaged at _/aN, and the root among them holds the role. Once moved, old _/aN addresses keep
+-- messaged at _/aN. Once moved, old _/aN addresses keep
 -- working: the move's map (~/.isovim/migrated.json) says where each went (store.canon_address).
 -- Every step is logged to ~/.isovim/migrate.log.
 --
@@ -280,7 +278,7 @@ local function move(opts)
   local old = old_dir()
   local old_iso = old .. "/iso"
   local old_run = store.run .. "/" .. OLD
-  log(("moving %s (general's old folder) to %s and %s"):format(old, store.key_dir(store.GENERAL), store.key_dir(store.ROOT)))
+  log(("moving %s (general's old folder) to %s and %s"):format(old, store.key_dir(store.GENERAL), store.key_dir(store.GENERAL)))
 
   -- What's there: records, and aN/ dirs that have none.
   local agents, by_id = {}, {}
@@ -328,23 +326,11 @@ local function move(opts)
     end
   end
 
-  -- Where each goes: root/ for a root and its script panes, general/ for the rest.
-  local function target(agent)
-    local record = agent.record
-    if record and record.of and by_id[record.of] then
-      record = by_id[record.of].record
-    end
-    return record and record.role == "root" and not record.of and store.ROOT or store.GENERAL
-  end
-  local plans = {}
-  for _, key in ipairs({ store.GENERAL, store.ROOT }) do
-    local taken, floor, counter = taken_in(key)
-    plans[key] = { taken = taken, floor = floor, counter = counter, top = -1 }
-  end
+  local key = store.GENERAL
+  local taken, floor, counter = taken_in(key)
+  local plan = { taken = taken, floor = floor, counter = counter, top = -1 }
   local map = {}
   for _, agent in ipairs(agents) do
-    local key = target(agent)
-    local plan = plans[key]
     local n = number(agent.id)
     -- Below the counter, the number was given out there once, even if that agent is gone.
     if plan.taken[n] or n < plan.counter then
@@ -447,13 +433,11 @@ local function move(opts)
   end
 
   -- The counters: past every number given out.
-  for key, plan in pairs(plans) do
-    if plan.top >= 0 then
-      local _, floor = taken_in(key)
-      vim.fn.mkdir(store.path(key), "p")
-      vim.fn.writefile({ tostring(math.max(floor, plan.top + 1)) }, store.path(key) .. "/next")
-      log(("%s/iso/next is %d"):format(key, math.max(floor, plan.top + 1)))
-    end
+  if plan.top >= 0 then
+    local _, next_floor = taken_in(key)
+    vim.fn.mkdir(store.path(key), "p")
+    vim.fn.writefile({ tostring(math.max(next_floor, plan.top + 1)) }, store.path(key) .. "/next")
+    log(("%s/iso/next is %d"):format(key, math.max(next_floor, plan.top + 1)))
   end
 
   -- The rest of _/ is general's: its .isovim.json's pins and PRs join general's, everything else

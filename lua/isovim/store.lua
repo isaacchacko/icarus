@@ -24,7 +24,7 @@ if M.old_work == M.new_work then
 end
 
 -- Whether dir holds isovim's work: a key's iso/agents/ in it, at any depth a key can be (general/,
--- root/, owner/repo/, up to host/group/sub/repo/).
+-- owner/repo/, up to host/group/sub/repo/).
 local function holds_work(dir)
   local stat = dir and vim.uv.fs_lstat(dir)
   if not stat or stat.type ~= "directory" then
@@ -63,19 +63,19 @@ local META = ".isovim.json"
 --   <key>/iso/                 also the repo's transcripts/, layout.json and the .isovim.json
 --                              holding its PRs and pins, as a workspace's own dir holds them
 -- <key> is the repo as isovim.repos names it ("owner/repo"), or a pseudo-repo: "general" for agents
--- in no repo, "root" for the host root that `iso rootmode on host` spawns. A key stands wherever a
+-- in no repo. A key stands wherever a
 -- workspace id does (store.list, run dirs, tmux names), so an agent's address is <key>/aN. A
 -- workspace id is six hex digits, never holding a "/" nor being a pseudo-repo's name, so the two
 -- can't be confused.
--- "_" was general's key before; isovim.migrate moves an old <work>/_/ to general/ and root/ on the
+-- "_" was general's key before; isovim.migrate moves an old <work>/_/ to general/ on the
 -- first start. Until it has, _ is a key of its own, read from <work>/_/ as the old isovim wrote it
 -- (M.old_live): a deferred move (an agent mid-turn, or claude logged out) leaves its agents fully
 -- live at _/aN. Once _/ is gone, _ is read as general wherever one is typed (M.canon, and
--- M.canon_address for _/aN, which isovim.migrate may have moved to root/ or renumbered).
-M.GENERAL, M.ROOT, M.OLD = "general", "root", "_"
-M.pseudo = { general = true, root = true }
+-- M.canon_address for _/aN, which isovim.migrate may have renumbered).
+M.GENERAL, M.OLD = "general", "_"
+M.pseudo = { general = true }
 
--- Whether the old <work>/_/ is still there, its move to general/ and root/ deferred (or going on).
+-- Whether the old <work>/_/ is still there, its move to general/ deferred (or going on).
 function M.old_live()
   local stat = vim.uv.fs_lstat(M.work .. "/" .. M.OLD)
   return stat ~= nil and stat.type == "directory"
@@ -141,7 +141,7 @@ function M.folder_key(folder)
   return folder
 end
 
--- The migration's map of old addresses to new ones (_/aN to general/aM or root/aM), isovim.migrate's.
+-- The migration's map of old addresses to new ones (_/aN to general/aM), isovim.migrate's.
 M.migrated_file = M.root .. "/migrated.json"
 -- Held while isovim.migrate checks or moves _/.
 M.migrate_lock = M.root .. "/migrate.lock"
@@ -661,11 +661,11 @@ end
 ---@field kind "claude"|"codex"|"shell"|"command"
 ---@field cmd? string what a "command" agent runs
 ---@field hidden? boolean left out of the sidebar and never notifies
----@field role? "root"|"repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
+---@field role? "repo-root"|"router"|"worker" which role prompt it gets at launch; unset is a worker
 ---@field parent? string the agent that started it: <ws>/<agent> here, <host>:<ws>/<agent> on another host
 ---@field read_only? boolean a new-layout agent that works in its repo's base clone; on a workspace's
 --- agent, iso spawn --read-only records it and nothing enforces it yet
----@field repo? string a new-layout agent's repo key; nil in a pseudo-repo (general, root)
+---@field repo? string a new-layout agent's repo key; nil in a pseudo-repo (general)
 ---@field created? integer when a new-layout agent was made
 ---@field session? string a new-layout agent's conversation id, as also kept in its run dir
 ---@field script? string on a "command" pane isovim runs a repo script or action in: its name ("setup",
@@ -677,7 +677,7 @@ end
 
 -- The root sets the north star, a repo-root holds one repo's, the router is a repo's one interface
 -- to the user, workers do the work.
-M.roles = { "root", "repo-root", "router", "worker" }
+M.roles = { "repo-root", "router", "worker" }
 
 ---@param agent isovim.Agent
 function M.role(agent)

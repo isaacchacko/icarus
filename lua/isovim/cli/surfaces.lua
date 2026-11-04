@@ -1,6 +1,6 @@
 -- Surfaces on the command line (isovim.surfaces): iso router surface question|file|folder|chat puts
 -- one in the router's repo's Inbox, iso <role> page comments|reply|resolve reads and answers the
--- comments on a page (isovim.pages), iso answer answers a question (also iso <root|repo-root>
+-- comments on a page (isovim.pages), iso answer answers a question (also iso repo-root
 -- answer), and iso __surfaces prints a repo's surfaces as JSON, scanning them first. In root mode
 -- the root answers the Inbox's questions with you, the first answer winning (isovim.rootmode).
 local store = require("isovim.store")
@@ -29,18 +29,16 @@ local function repo_key(text)
   elseif store.valid_key(text) then
     return text:lower()
   end
-  fail(("%s is neither a repo (owner/repo, root or general) nor a dir in one"):format(text))
+  fail(("%s is neither a repo (owner/repo or general) nor a dir in one"):format(text))
 end
 
--- The repo whose Inbox a surface goes in: the calling agent's (root for the host root, a new-layout
+-- The repo whose Inbox a surface goes in: the calling agent's (a new-layout
 -- agent's key, a workspace agent's checkout's origin, general for no repo), else --repo, else the
 -- cwd's.
 local function my_repo(given)
   local ws, agent = require("isovim.root").caller()
   local mine
-  if ws and require("isovim.scope").is_root(ws, vim.tbl_extend("force", store.agent(ws, agent) or {}, { id = agent })) then
-    mine = "root"
-  elseif ws and store.v2(ws) then
+  if ws and store.v2(ws) then
     mine = surfaces.key(ws)
   elseif ws then
     mine = require("isovim.repos").of(store.dir(ws)) or "general"
@@ -218,36 +216,18 @@ local function print_question(entry)
   end
 end
 
--- The root-mode scope a root answers for: "host" for the host root, else the repo key of the repo
--- root (rootmode's entry first, then its record).
-local function root_scope(me, entry)
-  local rootmode = require("isovim.rootmode")
-  if rootmode.active("host") == me then
-    return "host"
-  elseif rootmode.active(entry.repo) == me then
-    return entry.repo
-  end
-  local ws, id = me:match("^(.*)/([^/]+)$")
-  local record = ws and store.agent(ws, id)
-  if record and store.role(record) == "root" then
-    return "host"
-  end
-  return store.v2(ws) and ws or entry.repo
-end
-
 -- root.<scope>.raised|decided: a root gave a question to the user, or answered it itself.
 local function publish_root(what, me, entry, details)
   local events = require("isovim.events")
-  local scope = root_scope(me, entry)
-  events.publish(events.topic("root", scope, what), vim.tbl_extend("force", {
-    scope = scope, root = me, question = entry.repo .. "/" .. entry.name, repo = entry.repo, name = entry.name,
+  events.publish(events.topic("root", entry.repo, what), vim.tbl_extend("force", {
+    scope = entry.repo, root = me, question = entry.repo .. "/" .. entry.name, repo = entry.repo, name = entry.name,
     text = entry.question,
   }, details or {}))
 end
 
--- iso answer <question> <answer...>, and a root's iso <root|repo-root> answer, which takes any
+-- iso answer <question> <answer...>, and a repo root's iso repo-root answer, which takes any
 -- question in the Inbox root mode has it clear (isovim.rootmode.may_answer), and --raise [why...]
--- to give one to the user, in the host Inbox. A root's answer and its raise are published as
+-- to give one to the user, in the repo's Inbox. A root's answer and its raise are published as
 -- root.<scope>.decided and root.<scope>.raised.
 function M.answer(args)
   local raise = flag(args, "--raise")
@@ -275,7 +255,7 @@ function M.answer(args)
       fail(err)
     end
     publish_root("raised", me, entry, { why = raised_why })
-    out(id .. " is in the user's host Inbox now" .. (raised_why and "" or "; a one-line why helps them: iso <role> raise <question> <why>"))
+    out(id .. " needs the user now, in the repo's Inbox" .. (raised_why and "" or "; a one-line why helps them: iso <role> raise <question> <why>"))
     c.tui("require('isovim.surfaces').recheck()")
     return
   end
@@ -295,8 +275,8 @@ function M.answer(args)
   out(surfaces.answer_text(answer))
 end
 
--- A root's iso <root|repo-root> raise <question> [why...]: gives the question to the user, in the
--- host Inbox, with a one-line why (its recommendation); iso <role> answer <question> --raise [why].
+-- A root's iso repo-root raise <question> [why...]: gives the question to the user, in the repo's
+-- Inbox, with a one-line why (its recommendation); iso <role> answer <question> --raise [why].
 function M.raise(args)
   table.insert(args, "--raise")
   M.answer(args)
@@ -414,14 +394,6 @@ function M.thread(args)
   local repo = my_repo(nil)
   local me = require("isovim.cli.roles").caller()
   local no_reply = flag(args, "--no-reply")
-  -- The root of another repo reaches its threads as <repo>#<id>.
-  local named, named_id = (args[1] or ""):match("^(.+)#(t%d+)$")
-  if named and (sub == "show" or sub == "post" or sub == "answer") then
-    if named:lower() ~= repo and require("isovim.rootmode").route(named:lower()) ~= me then
-      fail(("%s isn't your repo, and root mode doesn't have you on top of it"):format(named))
-    end
-    repo, args[1] = named:lower(), named_id
-  end
   if sub ~= "ls" and sub ~= "show" then
     local ws, id = (me or ""):match("^(.*)/([^/]+)$")
     local record = ws and store.agent(ws, id)
@@ -500,9 +472,10 @@ function M.thread(args)
     end
     local root = require("isovim.root")
     local ws, agent = c.resolve_agent(to)
+    -- From a repo's root to an agent in it: the stamp carries the user's authority there.
     local body = threads.prompt(repo, id, info.title, text) .. threads.ROOT_NOTE:format(id) .. (bypassed and threads.BYPASS_NOTE or "")
     local sender = root.address(me:match("^(.*)/([^/]+)$"))
-    local stamp = root.stamp("from", sender, root.address(ws.id, agent.id), body, true)
+    local stamp = root.stamp("from", sender, root.address(ws.id, agent.id), body)
     c.ensure_running(ws, agent)
     c.prompt(ws, agent, stamp .. " " .. body, { from = sender, kind = "from", id = stamp:match("(m%x+)%]$"), text = body })
     out(("answered %s#%s, and told %s with your authority"):format(repo, id, to))

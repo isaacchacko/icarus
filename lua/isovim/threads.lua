@@ -855,8 +855,7 @@ end
 local function by_a_root(address)
   local ws, agent = (address or ""):match("^(.*)/([^/]+)$")
   local record = ws and store.agent(ws, agent)
-  local role = record and store.role(record)
-  return role == "root" or role == "repo-root"
+  return record ~= nil and store.role(record) == "repo-root"
 end
 
 -- The user hands the thread to the root at once (gr on it), past the wait and whatever it says.

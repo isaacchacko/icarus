@@ -557,10 +557,10 @@ function M.refusal(key, agent)
   local role = store.role(agent)
   if agent.of or not (agent.kind == "claude" or agent.kind == "codex") then
     return address .. " isn't an agent that moves (a terminal or script pane stays with its host)"
-  elseif role == "root" or role == "repo-root" then
+  elseif role == "repo-root" then
     return ("%s is a %s, and a root belongs to its host: turn root mode off, or move a worker"):format(address, role)
   elseif store.canon(key) == store.OLD then
-    return address .. " is in the old _/, whose move to general/ and root/ waits (~/.isovim/migrate.log): move it once that's done"
+    return address .. " is in the old _/, whose move to general/ waits (~/.isovim/migrate.log): move it once that's done"
   end
   local running = panes.running(key, id)
   if running and agent.acp then

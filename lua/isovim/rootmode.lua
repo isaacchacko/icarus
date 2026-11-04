@@ -1,17 +1,17 @@
--- Root mode: a root decides the Inbox's questions before they reach you. iso rootmode on|off
--- <repo|host> (isovim.cli.rootmode) turns it on for one repo (its repo root) or the whole host (the
--- host root); this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it
--- isn't synced), and says which roots may answer a question and which one decides it.
+-- Root mode: a repo's root decides its Inbox's questions before they reach you, and is on top of its
+-- threads. iso rootmode on|off <repo> (isovim.cli.rootmode) turns it on for one repo, for its repo root;
+-- this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it isn't synced), and
+-- says which root decides a question.
 -- A question isn't routed anywhere: it stays in its repo's Inbox, tagged root deciding (the
--- surface's deciding, so it doesn't count as needing you) until the root answers it or raises it
--- to your host Inbox with a one-line why; with root mode off it's yours at once. You may answer
+-- surface's deciding, so it doesn't count as needing you) until the root answers it or raises it to
+-- you with a one-line why; with root mode off, or no repo root, it's yours at once. You may answer
 -- any of them, and the first answer wins. A root's ACP supervisor subscribes to the Inbox
 -- (M.listen) and tells the root of each new question it decides, whoever asked it and whatever
 -- code they run, and of threads that have sat on your turn (isovim.threads.for_root), which it
 -- answers in your place or leaves with you.
---   { "host": {agent, task?, since}, "repos": { "<owner/repo>": {agent, task?, since} } }
--- An entry is active while its agent's record still holds the role it needs (root for the host,
--- repo-root for a repo); one whose agent went away is off.
+--   { "repos": { "<owner/repo>": {agent, task?, since} } }
+-- An entry is active while its agent's record still holds the repo-root role; one whose agent went
+-- away is off.
 local store = require("isovim.store")
 
 local M = {}
@@ -20,7 +20,7 @@ M.file = store.root .. "/rootmode.json"
 
 ---@alias isovim.RootMode {agent: string, task?: string, since: number}
 
----@return {host?: isovim.RootMode, repos: table<string, isovim.RootMode>}
+---@return {repos: table<string, isovim.RootMode>}
 function M.read()
   local ok, lines = pcall(vim.fn.readfile, M.file)
   local decoded, state = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "", { luanil = { object = true } })
@@ -32,57 +32,33 @@ end
 local function write(state)
   vim.fn.mkdir(store.root, "p")
   local tmp = ("%s.%d.tmp"):format(M.file, vim.uv.os_getpid())
-  vim.fn.writefile({ vim.json.encode({ host = state.host, repos = next(state.repos) and state.repos or vim.empty_dict() }) }, tmp)
+  vim.fn.writefile({ vim.json.encode({ repos = next(state.repos) and state.repos or vim.empty_dict() }) }, tmp)
   assert(vim.uv.fs_rename(tmp, M.file))
 end
 
--- The role a scope's root holds: "host" is the host root's, a repo key a repo root's.
-function M.role(scope)
-  return scope == "host" and "root" or "repo-root"
-end
-
 ---@return isovim.RootMode?
-function M.entry(scope)
-  local state = M.read()
-  if scope == "host" then
-    return state.host
-  end
-  return state.repos[scope]
+function M.entry(repo)
+  return M.read().repos[repo]
 end
 
 ---@param entry? isovim.RootMode nil turns it off
-function M.set(scope, entry)
+function M.set(repo, entry)
   local state = M.read()
-  if scope == "host" then
-    state.host = entry
-  else
-    state.repos[scope] = entry
-  end
+  state.repos[repo] = entry
   write(state)
 end
 
--- The scope's root while root mode is on there: its address (<ws>/<agent>) and entry.
+-- The repo's root while root mode is on there: its address (<ws>/<agent>) and entry.
 ---@return string? address, isovim.RootMode? entry
-function M.active(scope)
-  local entry = M.entry(scope)
+function M.route(repo)
+  local entry = M.entry(repo)
   local ws, id
   if entry and type(entry.agent) == "string" then
     ws, id = entry.agent:match("^(.*)/([^/]+)$")
   end
   local record = ws and store.agent(ws, id)
-  if record and store.role(record) == M.role(scope) then
+  if record and store.role(record) == "repo-root" then
     return entry.agent, entry
-  end
-end
-
--- The root in charge of repo's Inbox: the repo's root, else the host root, else nil (only you).
----@return string? address, isovim.RootMode? entry, string? scope "host" or the repo
-function M.route(repo)
-  for _, scope in ipairs({ repo, "host" }) do
-    local address, entry = M.active(scope)
-    if address then
-      return address, entry, scope
-    end
   end
 end
 
@@ -92,42 +68,29 @@ local function open(entry)
   return entry.type == "question" and not entry.answer and not entry.raised
 end
 
--- Whether address may answer the question: it's the root of the question's repo or the host's,
--- while root mode is on there. You may answer any question; a root never answers its own, nor one
--- that's yours (raised: a root's --raise, or a permission request).
+-- Whether address may answer the question: it's the root of the question's repo, while root mode is
+-- on there. You may answer any question; a root never answers its own, nor one that's yours
+-- (raised: a root's raise, or a permission request).
 function M.may_answer(address, entry)
-  return open(entry) and address ~= entry.asker
-    and (M.active(entry.repo) == address or M.active("host") == address)
+  return open(entry) and address ~= entry.asker and M.route(entry.repo) == address
 end
 
--- The root told of a question, the one in charge of its repo's Inbox: the repo's root, else the
--- host root, passing over the one that asked it (a repo root's own question goes to the host root).
----@return string? address, string? scope
+-- The root deciding a question: its repo's, unless that root asked it, which makes it yours.
+---@return string? address
 function M.root_for(entry)
-  if not open(entry) then
-    return nil
-  end
-  for _, scope in ipairs({ entry.repo, "host" }) do
-    local address = M.active(scope)
-    if address and address ~= entry.asker then
-      return address, scope
-    end
+  local address = open(entry) and M.route(entry.repo) or nil
+  if address and address ~= entry.asker then
+    return address
   end
 end
 
--- Whether root mode is on for a repo (its own root) or, with "host", for the host.
-function M.on(scope)
-  return M.active(scope) ~= nil
+-- Whether root mode is on for a repo.
+function M.on(repo)
+  return M.route(repo) ~= nil
 end
-
-local function label(scope)
-  return scope == "host" and "this host" or scope
-end
-M.label = label
 
 -- The questions as their root gets them: intro, each with its options, then how to answer.
-function M.questions_text(intro, entries, scope)
-  local role = M.role(scope)
+function M.questions_text(intro, entries, repo)
   local lines = { intro }
   for _, entry in ipairs(entries) do
     lines[#lines + 1] = ("[question %s/%s, from %s] %s%s"):format(entry.repo, entry.name, entry.asker or "a shell",
@@ -139,37 +102,25 @@ function M.questions_text(intro, entries, scope)
       lines[#lines + 1] = "  (or your own words)"
     end
   end
-  lines[#lines + 1] = ("Decide what you can stand behind with `iso %s answer <repo>/<name> <answer...>`; raise "
-    .. "the rest to the user with `iso %s raise <repo>/<name> <one line: why, and your recommendation>`. Until "
-    .. "you do, it's tagged root deciding and stays out of their host Inbox; they may still answer it first, "
-    .. "and the first answer wins."):format(role, role)
-  local mode = M.entry(scope)
+  lines[#lines + 1] = ("Decide what you can stand behind with `iso repo-root answer <repo>/<name> <answer...>`; raise "
+    .. "the rest to the user with `iso repo-root raise <repo>/<name> <one line: why, and your recommendation>`. Until "
+    .. "you do, it's tagged root deciding and doesn't count as needing them; they may still answer it first, "
+    .. "and the first answer wins.")
+  local mode = M.entry(repo)
   if mode and mode.task then
     lines[#lines + 1] = "Your task (raise what's outside it): " .. mode.task
   end
   return table.concat(lines, "\n")
 end
 
--- The questions in repos that address is the root in charge of and wasn't told of yet, marked
--- told; all takes those told before too. Nil while root mode is on for it nowhere.
----@return isovim.Surface[]? entries, string? scope "host" or its repo
-function M.take(address, repos, all)
-  local scope = M.active("host") == address and "host" or nil
-  for repo in pairs(scope and {} or M.read().repos) do
-    scope = scope or (M.active(repo) == address and repo or nil)
-  end
-  if not scope then
-    return nil
-  end
+-- The repo's questions its root hasn't been told of, marked told; all takes those told before too.
+---@return isovim.Surface[]
+function M.take(address, repo, all)
   local surfaces = require("isovim.surfaces")
-  local list = {}
-  for _, repo in ipairs(repos) do
-    surfaces.scan(repo)
-    vim.list_extend(list, surfaces.take_untold(repo, function(entry)
-      return M.root_for(entry) == address
-    end, all))
-  end
-  return list, scope
+  surfaces.scan(repo)
+  return surfaces.take_untold(repo, function(entry)
+    return M.root_for(entry) == address
+  end, all)
 end
 
 -- How many threads one message tells of: the rest wait for its next look.
@@ -181,88 +132,75 @@ local function ago(at)
 end
 
 -- The threads as their root gets them: the post is usually enough, so it's there, up to a point.
-local function threads_text(groups, role, grace)
+local function threads_text(repo, threads, grace)
   local parts = { ("[isovim: these threads have sat on the user's turn for over %d minutes with no word from them, and "
-    .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso %s thread "
-    .. "answer <repo>#<id> <your answer>` posts it as yours, sends it with your authority to whoever is working the thread "
+    .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso repo-root thread "
+    .. "answer <id> <your answer>` posts it as yours, sends it with your authority to whoever is working the thread "
     .. "and stops it waiting on the user. Leave the rest, with no reply at all, and it stays in their Inbox: an FYI or a "
     .. "report, an answer to a question the user asked, anything that's their own conversation. That isn't yours to answer "
     .. "for them. Their word beats yours. What's permanently off stays off: for that, and what they'd be surprised you "
-    .. "decided, `iso %s thread post <repo>#<id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso %s "
-    .. "thread show <repo>#<id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
-    :format(math.floor(grace / 60), role, role, role) }
-  for _, group in ipairs(groups) do
-    for _, each in ipairs(group.threads) do
-      local text = each.text or "(no agent has posted yet)"
-      parts[#parts + 1] = ("--- %s#%s \"%s\"%s%s ---\n%s"):format(group.repo, each.id, each.title,
-        each.by and (" · " .. each.by .. ", " .. ago(each.at) .. " ago") or "",
-        each.handed and " · the user handed you this one: they want you on it now" or "",
-        #text > 1500 and (text:sub(1, 1500) .. "… (thread show has the rest)") or text)
-    end
+    .. "decided, `iso repo-root thread post <id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso "
+    .. "repo-root thread show <id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
+    :format(math.floor(grace / 60)) }
+  for _, each in ipairs(threads) do
+    local text = each.text or "(no agent has posted yet)"
+    parts[#parts + 1] = ("--- %s#%s \"%s\"%s%s ---\n%s"):format(repo, each.id, each.title,
+      each.by and (" · " .. each.by .. ", " .. ago(each.at) .. " ago") or "",
+      each.handed and " · the user handed you this one: they want you on it now" or "",
+      #text > 1500 and (text:sub(1, 1500) .. "… (thread show has the rest)") or text)
   end
   return table.concat(parts, "\n\n")
 end
 
--- Tells the root of its repos' threads. Hard batched: a root's turn is on a big context, so one
+-- Tells the root of its repo's threads. Hard batched: a root's turn is on a big context, so one
 -- message at most per grace while it's free, and only what the user handed it comes sooner.
-local function thread_teller(address, say, busy)
-  local threads, surfaces = require("isovim.threads"), require("isovim.surfaces")
+local function thread_teller(address, repo, say, busy)
+  local threads = require("isovim.threads")
   local last_told = 0
   return function()
-    local grace = require("isovim.config").thread_root_grace() * 60
-    local handed_only = busy() or os.time() - last_told < grace
-    local groups, left = {}, THREADS_AT_ONCE
-    for _, repo in ipairs(surfaces.repos()) do
-      if left > 0 and not store.is_pseudo(repo) and M.route(repo) == address then
-        local found = threads.for_root(repo, grace, left, handed_only)
-        left = left - #found
-        if #found > 0 then
-          groups[#groups + 1] = { repo = repo, threads = found }
-        end
-      end
+    if M.route(repo) ~= address then
+      return
     end
-    if #groups > 0 then
+    local grace = require("isovim.config").thread_root_grace() * 60
+    local found = threads.for_root(repo, grace, THREADS_AT_ONCE, busy() or os.time() - last_told < grace)
+    if #found > 0 then
       last_told = os.time()
-      local record = store.agent(address:match("^(.*)/([^/]+)$"))
-      say(threads_text(groups, store.role(record), grace))
+      say(threads_text(repo, found, grace))
     end
   end
 end
 
--- Subscribes a root to the Inbox, from its supervisor: say(text) gets one message per batch of
--- new questions it's in charge of, a few seconds after the last surface event, and on start one
--- for those asked while it was down. It goes by the event bus, so it doesn't matter who wrote or
--- scanned the surface, or what code they run; take_untold's marks keep any question from being
--- told twice. It listens whether root mode is on or not, and tells only while it is.
----@param address string the root, <ws>/<agent>
+-- Subscribes a root to its repo's Inbox, from its supervisor: say(text) gets one message per batch of
+-- new questions, a few seconds after the last surface event, and on start one for those asked while
+-- it was down. It goes by the event bus, so it doesn't matter who wrote or scanned the surface, or
+-- what code they run; take_untold's marks keep any question from being told twice. It listens whether
+-- root mode is on or not, and tells only while it is.
+---@param address string the root, <repo>/<agent>
 ---@param say fun(text: string)
 ---@param busy fun(): boolean whether a turn is running, so threads gather instead of queueing
 function M.listen(address, say, busy)
-  local surfaces = require("isovim.surfaces")
-  local pending, everywhere = {}, true
+  local repo = address:match("^(.*)/[^/]+$")
   local timer = assert(vim.uv.new_timer())
   local flush = require("isovim.safe").wrap("rootmode.listen", function()
-    local repos = everywhere and surfaces.repos() or vim.tbl_keys(pending)
-    pending, everywhere = {}, false
-    local list, scope = M.take(address, repos)
-    if list and #list > 0 then
-      say(M.questions_text(("%s in %s, which root mode has you decide before the user:"):format(
-        #list == 1 and "A new question" or (#list .. " new questions"),
-        scope == "host" and "this host's Inboxes" or (scope .. "'s Inbox")), list, scope))
+    if M.route(repo) == address then
+      local list = M.take(address, repo)
+      if #list > 0 then
+        say(M.questions_text(("%s in %s's Inbox, which root mode has you decide before the user:"):format(
+          #list == 1 and "A new question" or (#list .. " new questions"), repo), list, repo))
+      end
     end
   end)
   local function soon(delay)
     timer:start(delay, 0, vim.schedule_wrap(flush))
   end
-  local tell_threads = require("isovim.safe").wrap("rootmode's threads", thread_teller(address, say, busy))
+  local tell_threads = require("isovim.safe").wrap("rootmode's threads", thread_teller(address, repo, say, busy))
   assert(vim.uv.new_timer()):start(60000, 60000, vim.schedule_wrap(tell_threads))
   require("isovim.events").watch(function(_, event)
-    if event.topic:match("^thread%.") and event.topic:match("%.handed$") then
+    if event.repo == repo and event.topic:match("^thread%.") and event.topic:match("%.handed$") then
       vim.schedule(tell_threads)
     end
-    if event.type == "question" and type(event.repo) == "string" and event.topic:match("^surface%.")
+    if event.type == "question" and event.repo == repo and event.topic:match("^surface%.")
       and (event.topic:match("%.created$") or event.topic:match("%.changed$")) then
-      pending[event.repo] = true
       soon(3000)
     end
   end)

@@ -46,8 +46,7 @@ function M.agents()
           agent = agent.id,
           name = agent.name,
           kind = agent.kind,
-          -- The root `iso root` named has the role in all but its record.
-          role = scope.is_root(ws.id, agent) and "root" or store.role(agent),
+          role = store.role(agent),
           scope = scope.of_agent(ws.id, agent.id),
         }
       end
@@ -124,13 +123,6 @@ local function pick_agents(title, list)
   })
 end
 
--- The host's root.
-local function host_root()
-  return find(function(entry)
-    return entry.role == "root"
-  end)[1]
-end
-
 -- The current repo's agent with the role.
 local function in_repo(role)
   local here = current_scope()
@@ -145,9 +137,6 @@ function M.select_scope(name)
   if name == scope.TERMINALS then
     isovim().set_scope(name)
     return sidebar().focus_window("terminals")
-  elseif name == scope.ROOT then
-    local root = host_root()
-    return root and open(root) or toast("No root on this host")
   end
   local agent = find(function(entry)
     return entry.scope == name
@@ -159,15 +148,10 @@ function M.select_scope(name)
   toast(("Nothing in %s yet"):format(scope.label(name)))
 end
 
--- The repos with agents here, the one used last first, between the pseudo-repos: Root (when there
--- is one) pinned first, then General and Terminals.
+-- The repos with agents here, the one used last first, then General and Terminals.
 function M.scopes()
   local seen, list = {}, {}
-  local root = host_root()
-  if root then
-    list[1] = scope.ROOT
-  end
-  seen[scope.ROOT], seen[scope.GENERAL], seen[scope.TERMINALS] = true, true, true
+  seen[scope.GENERAL], seen[scope.TERMINALS] = true, true
   for _, entry in ipairs(by_recency(M.agents())) do
     if not seen[entry.scope] then
       seen[entry.scope] = true
@@ -184,9 +168,9 @@ function M.scopes()
   return vim.list_extend(list, { scope.GENERAL, scope.TERMINALS })
 end
 
-local PSEUDO_ICONS = { root = "root", general = "general", terminals = "terminals" }
+local PSEUDO_ICONS = { general = "general", terminals = "terminals" }
 
--- A project's glyph and color (Root's among them), as the switcher draws it.
+-- A project's glyph and color, as the switcher draws it.
 ---@return string glyph, string? hl
 local function project_mark(name)
   if PSEUDO_ICONS[name] then
@@ -709,9 +693,9 @@ function M.jump()
   })
 end
 
--- A repo's PRs surface (the current scope's when key is nil: the root's in Root, the workspace's repo
+-- A repo's PRs surface (the current scope's when key is nil: the workspace's repo
 -- in Terminals), opened as a tab; one with none registered says so.
----@param key? string a repo key, or "root"
+---@param key? string a repo key
 function M.prs(key)
   if not key then
     local here = current_scope()
@@ -868,15 +852,10 @@ local function open_role(role, missing)
   end
 end
 
--- The repo's repo-root, else the host's root.
+-- The repo's repo-root.
 function M.nearest_root()
-  local agent = in_repo("repo-root") or host_root()
-  return agent and open(agent) or toast("No root on this host")
-end
-
-function M.open_host_root()
-  local root = host_root()
-  return root and open(root) or toast("No root on this host")
+  local agent = in_repo("repo-root")
+  return agent and open(agent) or toast("No root in this repo")
 end
 
 -- The current repo's Inbox (repo) or this host's (host, at the top of the sidebar's list), opened, the
@@ -888,14 +867,13 @@ local function inbox(which)
 end
 
 -- Spawns a worker in the current repo, as s does on a repo in the sidebar: General's when that's
--- current, even with nothing in it; in Terminals a terminal, as a worker there means nothing. In
--- Root (nothing spawns there) or the workspace's own repo, the workspace's, which knows a legacy
--- one's clone.
+-- current, even with nothing in it; in Terminals a terminal, as a worker there means nothing. In the
+-- workspace's own repo, the workspace's, which knows a legacy one's clone.
 function M.spawn()
   local here, ws = current_scope(), isovim().current
   if here == scope.TERMINALS then
     return M.new_terminal()
-  elseif here == scope.ROOT or (ws and scope.of_workspace(ws) == here) then
+  elseif ws and scope.of_workspace(ws) == here then
     return sidebar().spawn(ws)
   end
   sidebar().spawn({ repo_key = here })
@@ -928,12 +906,11 @@ M.GROUP = {
   { "i", inbox("repo"), "the project's Inbox" },
   { "h", inbox("host"), "the host's Inbox" },
   { "r", open_role("router", "router"), "the project's router" },
-  { "R", M.nearest_root, "the nearest root (repo-root, else host root)" },
-  { "H", M.open_host_root, "the host root" },
+  { "R", M.nearest_root, "the repo's root" },
   { "w", M.workers, "a worker in the project" },
   { "a", M.any_agent, "any agent" },
   { "b", M.previous_agent, "the previous agent" },
-  { "P", M.pick_repo, "pick a project (or Root)" },
+  { "P", M.pick_repo, "pick a project" },
   { "C", M.create_project, "make a project from a clone's dir, with its glyph and color" },
   { "o", function()
     M.prs()
@@ -949,7 +926,7 @@ M.GROUP = {
   { "t", function()
     local scope = require("isovim.scope")
     local current = isovim().current_scope
-    require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.ROOT and current ~= scope.TERMINALS and current or nil)
+    require("isovim.acp.chat").new_thread(current ~= scope.GENERAL and current ~= scope.TERMINALS and current or nil)
   end, "a new thread with the project's router" },
   { "O", function()
     local board = require("isovim.surfaces").threads_entry(isovim().current_scope or "", true)
@@ -976,7 +953,7 @@ M.GROUP = {
   end, "the next host" },
   { "x", function()
     sidebar().toggle_root_mode()
-  end, "root mode on or off for the project in focus (in Root or General: the host)" },
+  end, "root mode on or off for the project in focus" },
   { "j", function()
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },

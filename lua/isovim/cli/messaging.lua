@@ -210,8 +210,7 @@ function commands.queue(args)
   end
 end
 
--- A worker's question goes to the root; the root's own (or any agent's while there's no root) is
--- raised to you, and the agent shows in the Inbox until you've looked at it.
+-- A question raised to you, and the agent shows in the Inbox until you've looked at it.
 function commands.ask(args)
   local root = require("isovim.root")
   local question = table.concat(args, " ")
@@ -221,52 +220,10 @@ function commands.ask(args)
   elseif question == "" then
     fail("usage: iso ask <question...>")
   end
-  local boss = root.get()
-  if boss and boss ~= root.address(ws, agent) then
-    deliver(boss, question, "ask")
-    out(("Asked the root (%s). Its answer comes into this chat stamped [from %s · root · m...]; "
-      .. "carry on with what doesn't depend on it."):format(boss, boss))
-    return
-  end
   root.raise(ws, agent, question)
   tui("require('isovim').refresh()")
   out("Raised to the user. End your turn on this question in your own chat, with the evidence and "
     .. "your recommendation; the Inbox shows it to them.")
-end
-
--- The root: shown, or set by the user from a shell, by the root handing over, or claimed by an agent
--- while there is none. Agents can't make themselves root over another.
-function commands.root(args)
-  local root = require("isovim.root")
-  local current = root.get()
-  if #args == 0 then
-    out(current or "no root")
-    return
-  end
-  local holder = root.holder()
-  if holder then
-    fail(("the host root is %s, the agent with the root role: your authority goes with it, not with "
-      .. "iso root"):format(holder))
-  end
-  local target
-  local host, rest = split_host(args[1])
-  if args[1] == "--clear" then
-    target = nil
-  elseif host then
-    -- A root on another host is named as that host names it, <host>:<ws>/<agent>.
-    target = args[1]:match("^([^:]+):") .. ":" .. rest
-  else
-    local ws, agent = resolve_agent(rest)
-    target = root.address(ws.id, agent.id)
-  end
-  local ws, agent = root.caller()
-  local caller = ws and root.address(ws, agent)
-  if caller and caller ~= current and not (current == nil and target == caller) then
-    fail(("only the user, or the root itself, can change the root (it is %s)"):format(current or "unset"))
-  end
-  root.set(target)
-  out(target or "no root")
-  tui("require('isovim').refresh()")
 end
 
 -- What isovim recorded for a stamp id: who sent it, to whom, and how it began. A stamp from another

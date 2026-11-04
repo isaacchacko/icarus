@@ -6,7 +6,7 @@
 --   1. each worktree with uncommitted work or unpushed commits is pushed to its origin, as a
 --      wip/<ws>/<agent> branch. The uncommitted part goes as a snapshot commit (worktree.snapshot),
 --      made without touching the checkout.
---   2. every legacy agent is stopped. New-layout agents keep running, the host's root/aN among them.
+--   2. every legacy agent is stopped. New-layout agents keep running.
 --   3. each repo they worked in gets its config (glyph and color, its scripts imported once), its
 --      base clone and its work dir.
 --   4. the old layout is moved, not deleted, into ~/.isovim/legacy-backup-<date>/, with a README
@@ -457,7 +457,7 @@ function M.plan()
     end
   end
 
-  -- The agents still in the old _/, while its move to general/ and root/ waits (isovim.migrate
+  -- The agents still in the old _/, while its move to general/ waits (isovim.migrate
   -- defers it while one is mid-turn, or while a running one's kind isn't logged in): new-layout
   -- agents too, which keep running and move once it can.
   plan.pending = {}
@@ -467,26 +467,13 @@ function M.plan()
     for name, kind in vim.fs.dir(old) do
       local id = kind == "file" and name:match("^(a%d+)%.json$")
       if id then
-        local ok, lines = pcall(vim.fn.readfile, old .. "/" .. name)
-        local decoded, record = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
-        record = decoded and type(record) == "table" and record or {}
-        plan.pending[#plan.pending + 1] = { address = "_/" .. id, root = record.role == "root" }
+        plan.pending[#plan.pending + 1] = { address = "_/" .. id }
       end
     end
     table.sort(plan.pending, function(a, b)
       return tonumber(a.address:match("%d+")) < tonumber(b.address:match("%d+"))
     end)
   end
-
-  -- Who keeps running: the host's root, when it's a new-layout agent (one in _/ too).
-  local holder = require("isovim.root").holder()
-  for _, agent in ipairs(plan.pending) do
-    if not holder and agent.root then
-      holder = agent.address
-    end
-  end
-  plan.root_holder = holder
-  plan.root_kept = holder and store.v2(holder:match("^(.*)/[^/]+$")) or nil
 
   plan.clu = require("isovim.cluscan").scan()
   plan.clu_dir = require("isovim.cluscan").dir()
@@ -692,9 +679,9 @@ function M.render(plan)
   add("  new-layout agents: %d under %s, and their run state", plan.v2_agents, short(store.work))
   if #plan.pending > 0 then
     add("    %d of them still in %s/_/: %s", #plan.pending, short(store.work), table.concat(vim.tbl_map(function(agent)
-      return agent.address .. (agent.root and " (this host's root)" or "")
+      return agent.address
     end, plan.pending), ", "))
-    add("    _/ moves to general/ and root/ once none there is mid-turn and the running ones are logged in")
+    add("    _/ moves to general/ once none there is mid-turn and the running ones are logged in")
   end
   if #plan.rest > 0 then
     add("  also left as they are in %s: %s", short(store.root), table.concat(plan.rest, ", "))
@@ -705,8 +692,7 @@ function M.render(plan)
 
   add("")
   add("Afterwards nothing restarts. Only the legacy agents in step 2 are stopped, and they start cold")
-  add("(iso spawn, iso rootmode on host). New-layout agents keep running%s.",
-    plan.root_kept and (", this host's root, " .. plan.root_holder .. ", among them") or "")
+  add("(iso spawn). New-layout agents keep running.")
   if plan.old_root then
     local host, named = plan.old_root:match("^([^:]+):(.+)$")
     local stopped = host == plan.host and vim.iter(plan.stops):any(function(stop)

@@ -59,7 +59,7 @@ local function unique(query, candidates, keys, what, exact_only)
 end
 
 -- A repo key (store.v2) is matched by its start only when the query has a "/" or is a pseudo-repo's
--- (general, root, or _ for general), so a workspace id's prefix never runs into one.
+-- (general, or _ for it), so a workspace id's prefix never runs into one.
 local function resolve(query, exact)
   if not query then
     fail("missing workspace\n" .. usage())
@@ -78,7 +78,7 @@ local function resolve_agent(query, exact)
   if not query then
     fail("missing agent\n" .. usage())
   end
-  -- _/aN, from before general/ and root/, is where it is now.
+  -- _/aN, from before general/, is where it is now.
   query = store.canon_address(query)
   -- The last "/" splits it, as a repo key (owner/repo/aN) has one of its own, unless the whole of
   -- it is a repo key: owner/repo means its first agent.

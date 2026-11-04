@@ -3,7 +3,7 @@
 --
 -- A markdown surface: a read-only markdown buffer (render-markdown draws it, as LazyVim's markdown
 -- extra sets it up), its body without its frontmatter, with an input box under it.
--- The input box is a buffer of its own, shown under the view and closed with it; <CR> sends what's in it to the repo's router (the host root for the root pseudo-repo)
+-- The input box is a buffer of its own, shown under the view and closed with it; <CR> sends what's in it to the repo's router
 -- with iso send, so it goes into the router's queue through its supervisor, as any prompt of yours
 -- does, and starts the router if it isn't running. It takes images as the chat's composer does
 -- (isovim.acp.images), sent with iso send --image.
@@ -94,20 +94,9 @@ local function scratch(name, filetype)
   return buf
 end
 
--- Who reads what's typed under a surface: the repo's router, or for the root pseudo-repo (the host
--- root's surfaces) the host root.
+-- Who reads what's typed under a surface: the repo's router.
 ---@return string? address <key>/aN
 function M.reader(repo)
-  if repo == "root" then
-    for _, ws in ipairs(store.list()) do
-      for _, agent in ipairs(store.agents(ws.id)) do
-        if store.role(agent) == "root" then
-          return ws.id .. "/" .. agent.id
-        end
-      end
-    end
-    return nil
-  end
   return store.router(repo)
 end
 
@@ -292,7 +281,7 @@ local function decisions_board(entry, width)
   add(cat(seg("Decisions", "Title"), seg("  " .. entry.repo, "Comment")))
   local decisions = surfaces.decisions(entry.repo)
   for _, decision in ipairs(decisions) do
-    local who = entry.repo == "root" and decision.by or decision.by:match("[^/]+$")
+    local who = decision.by:match("[^/]+$")
     local where = decision.repo ~= entry.repo and ("  " .. decision.repo) or ""
     add(seg(""))
     add(boxes.top(width, cat(seg(os.date("%b %-d %H:%M", decision.at), "IsovimPrTitle"), seg("  " .. who .. where, "IsovimPrDim"))), decision)
@@ -456,7 +445,7 @@ local function asked(entry)
   if record and record.name and record.name ~= id then
     by = ("%s (%s)"):format(record.name, by)
   end
-  return by or (entry.repo == "root" and "the host root" or entry.repo .. "'s router"), "asks", entry.question
+  return by or (entry.repo .. "'s router"), "asks", entry.question
 end
 
 local HINT = {

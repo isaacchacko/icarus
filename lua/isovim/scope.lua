@@ -1,4 +1,4 @@
--- Buffers are listed by scope: a repo ("owner/repo"), "root" (the host root's), "general" (agents in
+-- Buffers are listed by scope: a repo ("owner/repo"), "general" (agents in
 -- no repo and files outside every repo) or "terminals" (terminals and repo script panes). Only the
 -- current scope's buffers are listed; the rest stay loaded but drop out of the tab bar, :bnext and
 -- <leader>, until their scope is current again. Splits still follow the workspace (b:isovim_ws):
@@ -7,8 +7,8 @@ local store = require("isovim.store")
 
 local M = {}
 
-M.ROOT, M.GENERAL, M.TERMINALS = "root", "general", "terminals"
-local LABELS = { root = "Root", general = "General", terminals = "Terminals" }
+M.GENERAL, M.TERMINALS = "general", "terminals"
+local LABELS = { general = "General", terminals = "Terminals" }
 
 -- What a scope is called in pickers and toasts: a repo by its name.
 function M.label(name)
@@ -19,35 +19,21 @@ function M.is_terminal(agent)
   return agent.kind == "terminal" or agent.kind == "shell" or require("isovim.scripts").of(agent) ~= nil
 end
 
--- The host's root: the agent with the root role, or the one `iso root` named.
-function M.is_root(ws, agent)
-  local root = require("isovim.root")
-  return store.role(agent) == "root" or root.is_root(root.address(ws, agent.id))
-end
-
--- A workspace's scope: a new-layout repo key's repo (general and root are General's and Root's); a
--- workspace holding the host root is Root's; else the repo its dir is a checkout of, or General
--- outside git.
+-- A workspace's scope: a new-layout repo key's repo (general is General's); else the repo its dir is
+-- a checkout of, or General outside git.
 function M.of_workspace(ws)
   if store.v2(ws) then
-    -- An old _/ whose move waits holds what general/ and root/ will: General's.
+    -- An old _/ whose move waits holds what general/ will: General's.
     return store.canon(ws) == store.OLD and M.GENERAL or store.canon(ws)
-  end
-  for _, agent in ipairs(store.agents(ws)) do
-    if M.is_root(ws, agent) then
-      return M.ROOT
-    end
   end
   return require("isovim.repos").of(store.dir(ws)) or M.GENERAL
 end
 
--- An agent's scope: Terminals for a terminal or script pane, Root for the root, else its workspace's.
+-- An agent's scope: Terminals for a terminal or script pane, else its workspace's.
 function M.of_agent(ws, id)
   local agent = store.agent(ws, id)
   if agent and M.is_terminal(agent) then
     return M.TERMINALS
-  elseif agent and M.is_root(ws, agent) then
-    return M.ROOT
   end
   return M.of_workspace(ws)
 end

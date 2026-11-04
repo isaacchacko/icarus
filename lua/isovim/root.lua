@@ -1,17 +1,12 @@
--- The root: the one agent the user runs the others through. isovim stamps what agents send each
--- other ([from <host>:<ws>/<agent> · m<id>], with "root" when the root sent it) and keeps a ledger of
--- the stamps, so a receiver can tell a real stamp from a typed one. A stamp from the root carries
--- the user's delegated authority, which belongs to the host root: the agent here with the root
--- role. The old `iso root` file (~/.isovim/root) names one only while no agent holds that role, and
--- that root keeps the role's place: only iso rootmode on host (the user) takes it over.
--- Workers ask the root with `iso ask`, and the root raises the user's own decisions to them, which
--- the Inbox shows.
+-- What agents send each other is stamped by isovim ([from <host>:<ws>/<agent> · m<id>]), and it keeps
+-- a ledger of the stamps, so a receiver can tell a real stamp from a typed one. A stamp from a repo's
+-- root to an agent in that repo says "root" and carries the user's delegated authority there, and
+-- nowhere else. Also: who's calling (M.caller), and decisions an old agent raises with iso ask.
 local store = require("isovim.store")
 local panes = require("isovim.panes")
 
 local M = {}
 
-M.file = store.root .. "/root"
 M.ledger = store.run .. "/messages.jsonl"
 
 local function self()
@@ -22,60 +17,12 @@ function M.address(ws, agent)
   return ("%s:%s/%s"):format(self(), ws, agent)
 end
 
--- The agent on this host with the root role, <ws>/<agent>: the first, as iso rootmode picks it
--- (isovim keeps it to one). Looked up at most every half second: the sidebar asks for each agent it
--- draws.
-local held = { at = 0 }
----@return string?
-function M.holder()
-  local now = vim.uv.hrtime()
-  if now - held.at > 5e8 then
-    held.at, held.address = now, nil
-    for _, ws in ipairs(store.list()) do
-      for _, agent in ipairs(store.agents(ws.id)) do
-        if not held.address and store.role(agent) == "root" then
-          held.address = ws.id .. "/" .. agent.id
-        end
-      end
-    end
-  end
-  return held.address
-end
-
--- The root the `iso root` file names, while that agent is still here (one on another host is
--- taken as live: it's checked when a message goes to it).
----@return string? address <host>:<ws>/<agent>
-function M.named()
-  local ok, lines = pcall(vim.fn.readfile, M.file)
-  local address = ok and vim.trim(lines[1] or "") or ""
-  local host, ws, agent = address:match("^([^:]+):(.+)/([^/]+)$")
-  if address == "" or (host == self() and not store.agent(ws, agent)) then
-    return nil
-  end
-  return address
-end
-
--- The root: the agent with the root role, else the one the file names while it's here, else none
--- (questions are raised to the user).
----@return string? address of the root, <host>:<ws>/<agent>
-function M.get()
-  local holder = M.holder()
-  if holder then
-    return M.address(holder:match("^(.*)/([^/]+)$"))
-  end
-  return M.named()
-end
-
-function M.set(address)
-  if address then
-    vim.fn.writefile({ address }, M.file)
-  else
-    os.remove(M.file)
-  end
-end
-
-function M.is_root(address)
-  return address ~= nil and address == M.get()
+-- Whether a message from `from` to `to` (<host>:<ws>/<agent> each) speaks for the user: from is the
+-- repo root of the repo to is in.
+local function from_its_root(from, to)
+  local repo, id = from:match("^[^:]+:(.*)/([^/]+)$")
+  local record = repo and store.agent(repo, id)
+  return record ~= nil and store.role(record) == "repo-root" and to:match("^[^:]+:(.*)/[^/]+$") == repo
 end
 
 -- The agent this process runs inside, proven by ancestry: the agent whose pane process is one of
@@ -122,12 +69,11 @@ local function digest(text)
 end
 
 -- The stamp for a message from `from` to `to`, recorded in the ledger. kind is "from" or "ask".
--- as_root stamps it as a root's: a repo root answering a thread in the repo root mode gives it.
-function M.stamp(kind, from, to, text, as_root)
+function M.stamp(kind, from, to, text)
   local id = ("m%x%s"):format(os.time(), vim.uv.random(3):gsub(".", function(c)
     return ("%02x"):format(c:byte())
   end))
-  local root = as_root or M.is_root(from)
+  local root = from_its_root(from, to)
   local sent = normalize(text)
   local entry = { id = id, at = os.time(), kind = kind, from = from, to = to, root = root or nil, sum = digest(sent),
     len = #sent, preview = sent:sub(1, 120) }

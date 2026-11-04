@@ -13,9 +13,9 @@ gets. It's a personal tool, not built for teams.
 | **host** | a machine |
 | **repo** | a codebase identified by its remote, `owner/repo` |
 | **project** | what the sidebar shows one of at a time: a repo, General or Terminals |
-| **pseudo-repo** | `root` (the host root, pinned first), `general` (agents with no repo, and files outside every repo), `terminals` |
+| **pseudo-repo** | `general` (agents with no repo, and files outside every repo), `terminals` |
 | **agent** | one ACP session run by a supervisor, addressed `<owner>/<repo>/aN` |
-| **role** | `worker` < `router` < `repo-root` < `root` |
+| **role** | `worker` < `router` < `repo-root` |
 | **surface** | an agent's structured output, a file in a repo's `iso/` that isovim draws in a TUI buffer (a question, markdown, a file or folder, a chat); some take an answer |
 | **thread** | one idea's conversation between you and a repo's router, a view of it apart from the router's own chat (`iso/threads/<id>.jsonl`); only in a repo with a router |
 | **page** | markdown a router writes for you to read and comment on line by line (`iso/pages/<name>.md`) |
@@ -40,11 +40,11 @@ gets. It's a personal tool, not built for teams.
       images/                    images pasted or dropped into an input box
     aN/<repo>-aN/                an agent's worktree (app-a7), made the first time it needs one
     aN/w -> <repo>-aN            a symlink to it, for paths and habits that say w
-  root/  general/                the pseudo-repos, same shape
+  general/                       the pseudo-repo, same shape
 ```
 
 - Agent numbers are never reused.
-- `root` and `general` are reserved; a real owner with one of those names gets a suffixed folder.
+- `general` is reserved; a real owner with that name gets a suffixed folder.
 - The work root was `~/iso`, which a shell with AUTO_CD (oh-my-zsh's default) enters when `iso` is
   typed in `~`. The first `iso` command or TUI start that finds it moves it to `~/.iso`, every agent
   at the same address: chat agents restart there on their sessions, worktrees are repaired, terminals
@@ -152,7 +152,7 @@ goes back first in the queue, which holds. It reaches the session once:
 **Resume, fork, rewind.**
 - A restarted supervisor loads its session by id.
 - `iso <role> restart [<agent>] ["note"]` restarts an agent: itself or one below it (it started it, or
-  started one that did); a router or repo-root, any agent in its repo; the root, any on the host. The
+  started one that did); a router or repo-root, any agent in its repo. The
   supervisor waits for the running turn to end (it never cancels it), puts `[isovim: you were
   restarted by <who>: <note>]` (with no note, to continue where it left off) first in its queue on
   disk, and has the tmux server run `iso restart`, what `R` in the sidebar does. The next supervisor
@@ -171,7 +171,7 @@ goes back first in the queue, which holds. It reaches the session once:
   yours and never waits. This holds for Claude only: Codex's process tree is untested.
 - A long-lived role's session is compacted. All of a repo's threads share its router's one session,
   and after an idle gap the expired cache rewrites all of it (630k tokens was about $5 for one call).
-  So when a turn leaves a router's, repo-root's or root's session past `compact_at` tokens
+  So when a turn leaves a router's or repo-root's session past `compact_at` tokens
   (`~/.isovim/config.json`; default 250000, 0 turns it off; the size is the adapter's `usage_update`,
   input + output + cache read + cache write) with nothing queued, no question or permission waiting
   and no restart or session switch pending, the supervisor sends it `/compact <what to keep>` right
@@ -289,7 +289,7 @@ A single chat for a single idea is easy to read, but a new agent per small idea 
 each time, and one router taking every idea in its one chat is hard to follow. A thread is a
 virtual chat: the router stays one agent with one session, its context warm, and each thread
 shows only the exchanges about its one thing. Threads exist only in a repo with a router on this
-host; General, Root and Terminals have none, and starting one there says why.
+host; General and Terminals have none, and starting one there says why.
 
 - **The root is on top of them,** in root mode, for whichever root decides that repo; off when root mode's
   off. Its supervisor looks once a minute (`isovim.threads.for_root`). A thread is due when an agent's
@@ -535,7 +535,7 @@ words point at what they mention and you go there with a key (isovim.links):
 
 | address | opens |
 |---|---|
-| `iso:agent/<owner>/<repo>/aN` (`root/aN`, `general/aN`) | the agent's chat |
+| `iso:agent/<owner>/<repo>/aN` (`general/aN`) | the agent's chat |
 | `iso:thread/<owner>/<repo>#t3` | the thread |
 | `iso:pr/<owner>/<repo>#12` and a GitHub PR's URL | the PR's page in isovim's Chrome, as a web page; `o` on it, the PR's view here |
 | `iso:surface/<owner>/<repo>/<name>` | the surface (the PRs surface is `PRs`) |
@@ -579,7 +579,7 @@ connect in the background, at most every 30s, the chips drawn again when that ch
 ## Roles and root mode
 
 - **Starting role:** every agent starts as a worker. An agent spawns only roles at or below its own, and
-  the limits hold: one router per repo per host, one repo-root per repo, one root per host.
+  the limits hold: one router per repo per host, one repo-root per repo.
 - **A router's workers start hidden** (`iso router spawn --shown` for one the user should see): the
   sidebar, its team counts and the pickers leave them out until `H` shows them (persisted), and a
   hint at the list's end counts them (`3 hidden · H`). One that needs the user (a raised decision)
@@ -594,38 +594,39 @@ connect in the background, at most every 30s, the chips drawn again when that ch
     receives a message saying who and why.
 - **Roots have no parent.** When an agent is removed, its children go to its parent; at the top, to the
   repo's router.
-- **Role prompts** are files set in `config.json` (`prompts`). The host root's prompt lists the actions
+- **Role prompts** are files set in `config.json` (`prompts`). The repo-root's prompt lists the actions
   that are permanently off; agents are trusted to follow it.
-- **Root mode:** a root decides the Inbox's questions before they reach you.
-  `iso rootmode on|off <repo|host> [--task "<description>"]` turns it on for a repo (its repo-root) or
-  the host (the host root), spawning a worker and promoting it if the role is empty.
-  - Questions aren't routed: each stays in its repo's Inbox. While root mode is on for its repo or
-    the host, its root decides it first, however it was asked: a router's surface question, an ACP
-    agent's AskUserQuestion, a shell. The root deciding a question is the repo's root, else the host
-    root, never the one that asked it.
+- **Root mode:** a repo's root decides its Inbox's questions before they reach you, and is on top of its
+  threads (see Threads). `iso rootmode on|off <repo> [--task "<description>"]` turns it on for a repo,
+  spawning a worker and promoting it if the role is empty. There's no root above a repo: with root mode
+  off, no repo root, or in General, a question goes straight to you.
+  - Questions aren't routed: each stays in its repo's Inbox. While root mode is on, its root decides it
+    first, however it was asked: a router's surface question, an ACP agent's AskUserQuestion, a shell.
+    Never one it asked itself, which is yours.
   - A question a root is deciding is tagged "root deciding" in its repo's Inbox (the surface's
-    `deciding`, read when it's parsed) and doesn't need you: it isn't counted, notified, in the host
-    Inbox or reached by `<leader>in` (`needs_you` is false). The root's answer
-    (`iso <root|repo-root> answer`) clears it. Its raise (`iso <root|repo-root> raise <question>
-    <why>`, or `answer --raise <why>`) writes `raised`, `raised_by` and `why` into the surface: the
-    question goes to your host Inbox, its row and view showing the one-line why, and no root answers
-    it after. An ACP agent's permission requests are raised from the start (`raised_by` isovim), since
-    they let it run a tool its mode stopped.
+    `deciding`, read when it's parsed) and doesn't need you: it isn't counted, notified, in the list
+    at the top of the sidebar or reached by `<leader>in` (`needs_you` is false). The root's answer
+    (`iso repo-root answer`) clears it. Its raise (`iso repo-root raise <question> <why>`, or `answer
+    --raise <why>`) writes `raised`, `raised_by` and `why` into the surface: the question stays in the
+    repo's Inbox needing you, its row and view showing the one-line why, and no root answers it after.
+    An ACP agent's permission requests are raised from the start (`raised_by` isovim), since they let it
+    run a tool its mode stopped.
   - You may answer anything, root deciding or not. The first answer wins, and reaches the asker the
     same way whoever gave it.
   - With root mode off, no root decides anything: every pending question needs you. So turning it on
-    tags what's waiting, and turning it off puts what the root hadn't decided in your host Inbox,
-    neither touching the files; the TUI rechecks its surfaces when `iso rootmode` runs, or within 5s
-    of `rootmode.json` changing.
+    tags what's waiting, and turning it off makes what the root hadn't decided yours, neither touching
+    the files; the TUI rechecks its surfaces when `iso rootmode` runs, or within 5s of `rootmode.json`
+    changing.
   - The root is told of each new question it decides, in one message per batch, and when root mode
     turns on gets one message listing those already waiting. The telling is a subscription: a root's
-    ACP supervisor listens on the event bus for its Inboxes' question surfaces, a few seconds after
+    ACP supervisor listens on the event bus for its Inbox's question surfaces, a few seconds after
     the last, and catches up on start with those asked while it was down, so it doesn't matter who
     asked or scanned a question, or on what code. Each question is told once (marked in the scan's
     state).
   - A root narrowed by `--task` raises everything outside it. The description is guidance only,
     delivered as the root's first message.
-  - Your delegated authority (stamps) belongs to the host root.
+  - Your delegated authority: a stamp from a repo's root to an agent in that repo says `root`, and
+    carries it there and nowhere else.
 
 ## Surfaces
 
@@ -756,8 +757,8 @@ folder or a link, which have no view of their own.
   draws from the cache at once with "refreshing…" in its header, says when gh gave nothing, and
   fetches again on a `pr.<repo>.<n>.ci|review|state` event. The sidebar's
   P toggle, which swapped a repo's agents for its PRs, is gone with the PR rows and their `y`.
-- The decision log is isovim's own view of what a root decided: `iso/decisions.jsonl` of the root's
-  scope (the repo-root's repo; `root/iso/` for the host root), append-only, a line a decision (when,
+- The decision log is isovim's own view of what a root decided: `iso/decisions.jsonl` of the
+  repo-root's repo, append-only, a line a decision (when,
   who, the question, the answer, why), written as `surfaces.answer` takes a root's answer, since the
   event log ages out and an asker removes its question once it has the answer. It holds only roots'
   decisions, not the ones you answered yourself, and it's a plain surface that's never in an Inbox:
@@ -782,12 +783,6 @@ S (7) - swarming            ← style meter: live agents on this host
 Inbox 2                     ← the shown host's: every surface that needs you
 ├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
 └─  isovim - ? mini-animate …
-▾ ♛ Root               1    ← the host root and what it brought up; kept while it has anything
-  ⏺ ♛ root
-  󰊛 Decisions 3             ← what it decided
-  ▾ Inbox 1                 ← its own, as a project's sections
-  ├─ ? which host?
-  ▸ Surfaces 2
 ▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
                                have something that needs you, how many of its agents run
   ⏺ 󰑩 router                ← its router, whatever's folded, hidden or not; none, no row
@@ -813,9 +808,8 @@ ISOVIM 2de9e2b
 
 The column is two windows, the list and the footer. The list starts with the Inbox of the host it
 shows, so `<` and `>` switch it with the rest (on another host it says whose, `Inbox 2 ·
-cleopatra`); `<leader>ih` brings it back to this host. Under it comes Root, the host root with its
-decision log and the surfaces and files it brought up, which folds as a section does and stays while
-it has anything, no root running or not.
+cleopatra`); `<leader>ih` brings it back to this host. It's a view, across the repos, of what needs
+you; each item stays in its repo's Inbox.
 
 Then the project switcher, and only the current project. A project is a repo, General or Terminals:
 every repo on the host and those two, in that order. `[` and `]` (`<leader>i[` and `<leader>i]` from
@@ -863,7 +857,7 @@ quietly, and one it raised to you shows its why after "↑".
 ## The tab bar
 
 A tab is a view of a sidebar entry, as a file's buffer is a view of the file. The tab bar shows what
-you opened, under the current scope (a repo, Root, General or Terminals): agents' chats (Enter on a
+you opened, under the current scope (a repo, General or Terminals): agents' chats (Enter on a
 row, a picker, `<leader>ib` / `<leader>ip`), named with their status mark as in the sidebar (`…`
 working, `●` unread, `●!` waiting on you), the router first and then the others by number; then
 surfaces, the landing and any files. Closing a tab (`<leader>bd`, `:bd`, its x) hides it as closing a
@@ -936,7 +930,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 ## The CLI
 
-- `iso <worker|router|repo-root|root> <action>` is for agents, checked against the caller's identity.
+- `iso <worker|router|repo-root> <action>` is for agents, checked against the caller's identity.
 - `iso <action>` (bare) is for you, and refuses agents.
 - Actions every role needs repeat under each role.
 - `iso completion zsh|bash` gives Tab completion at every position, plus the `iso jump` shell function.
@@ -950,7 +944,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 **Router only:** `surface question|file|folder|chat`, `pr`.
 
-**Router, repo-root and root:** `rm <agent>... [--keep-branch] [--force]`.
+**Router and repo-root:** `rm <agent>... [--keep-branch] [--force]`.
 
 **Roots:** `answer`, `raise`.
 
@@ -984,7 +978,7 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   <agent>` once a worker's work has landed and nothing more is expected of it, unless the router keeps
   it as the standing owner of an area it keeps sending follow-ups to, which a thread about that area says.
   Cleaning up finished workers is the router's job, not the reaper's.
-- **`iso <role> rm <agent>... [--keep-branch] [--force]`** is a router's, repo-root's or root's, on the
+- **`iso <role> rm <agent>... [--keep-branch] [--force]`** is a router's or repo-root's, on the
   agents it may restart: its own descendants; for a router or repo-root any agent in its repo; for the
   root any on the host. It refuses an agent mid-turn or with a question or permission waiting in the
   Inbox, and a worktree with uncommitted files or commits no origin branch has (it lists them) unless
@@ -1014,7 +1008,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
   nothing waiting on the network or an agent, opening it as `<CR>` on its row would and moving the sidebar's
   cursor there; `H` in the picker (`<M-h>` while typing) toggles hidden agents in. `<leader>iP` picks a project; `<leader>ff` finds a file in it; `<leader>/` greps it, transcripts
   included.
-- `<leader>,` shows the open views of every project on this host, Root, General and Terminals too:
+- `<leader>,` shows the open views of every project on this host, General and Terminals too:
   what their tab bars hold (agents, surfaces, threads, PRs, pages, terminals, files), each drawn as
   the jump draws its row after its project's glyph and name in its color, the one you looked at last
   first and the one on screen last, so Enter flips back. Enter makes its project current, as the
@@ -1028,12 +1022,11 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `n` | the next thing that needs you |
 | `i` / `h` | the project's / host's Inbox (the host's is at the top of the list) |
 | `r` | the router |
-| `R` | the nearest root |
-| `H` | the host root |
+| `R` | the repo's root |
 | `w` / `a` | pick a worker / pick any agent |
 | `b` | the previous agent |
 | `p` | the previous project, at the agent last open there |
-| `P` | pick a project (or Root) |
+| `P` | pick a project |
 | `C` | make a project from a clone's dir, with its glyph and color (see The sidebar); `C` in the sidebar and `c` on the landing too |
 | `[` / `]` | the sidebar's previous / next project |
 | `o` | the current project's PRs surface |
@@ -1096,7 +1089,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `o` / `c` | open the port / changes |
 | `u` | measure CPU/RAM |
 | `H` / `L` | toggles |
-| `P` | the project's PRs surface (the root's in Root); one with none registered says so |
+| `P` | the project's PRs surface; one with none registered says so |
 | `?` | help |
 
 `m` sends the row under the cursor to a host picked from the peers (this one left out), by `iso move`.
@@ -1211,8 +1204,8 @@ Then, after your go, `iso cutover`:
 3. seeds the repo configs and base clones;
 4. wipes the old layout: it is moved, not deleted, into `~/.isovim/legacy-backup-<date>/`.
 
-The old conversations in `~/.claude/projects` are left untouched. Every legacy agent, including
-clu's root on cleopatra, starts cold. New-layout agents keep running, a host's `root/aN` among them.
+The old conversations in `~/.claude/projects` are left untouched. Every legacy agent starts cold.
+New-layout agents keep running.
 
 ## After v0
 

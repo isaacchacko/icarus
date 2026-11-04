@@ -245,8 +245,8 @@ end
 
 -- Whether path is somewhere the agent (aN in ws) never edits: the base clone, its record's checkout,
 -- any other clone or worktree of its repo outside its own worktree (yours anywhere, or another
--- agent's), whatever its record says, or a clone of any other repo isovim knows, for every agent (general/ and
--- root/ ones too). Returns path relative to that clone, why, and the other repo's key when it's that;
+-- agent's), whatever its record says, or a clone of any other repo isovim knows, for every agent (general/ ones
+-- too). Returns path relative to that clone, why, and the other repo's key when it's that;
 -- nil when it's none.
 ---@return string? rel, string? why, string? other
 local function forbidden(path, ws, agent)
@@ -338,7 +338,7 @@ end
 -- makes its worktree, aN/<repo>-aN, and is refused with where to make it instead: the edit would
 -- otherwise land outside it, so the agent makes it again there. An edit in a clone of its repo
 -- outside its own worktree is always refused, worktree or not and whatever its record says, and so
--- is a mutating git command there. So is any agent's (general/ and root/ ones too) in a clone of another repo isovim
+-- is a mutating git command there. So is any agent's (general/ ones too) in a clone of another repo isovim
 -- knows, with word to spawn an agent into that repo; anything else goes through, as edits in repos
 -- isovim doesn't know (~/.clu/discs, dotfiles) and outside any repo always do.
 M.__pretool = function(args)

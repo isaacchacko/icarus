@@ -7,7 +7,7 @@ package.path = lua_dir .. "/?.lua;" .. lua_dir .. "/?/init.lua;" .. package.path
 
 local commands = require("isovim.cli.commands")
 
--- An old ~/iso moves to ~/.iso, and an old _/ to general/ and root/, first, whatever the command
+-- An old ~/iso moves to ~/.iso, and an old _/ to general/, first, whatever the command
 -- (a stat or two once they're gone). Not for iso closed, which tmux runs as the move stops an agent
 -- and which mustn't wait on it, nor iso __migrate, which is that move.
 if _G.arg[1] ~= "closed" and _G.arg[1] ~= "__migrate" then

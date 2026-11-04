@@ -1,5 +1,5 @@
--- Surfaces: the files in a repo's iso/ (~/.iso/<owner>/<repo>/iso/, or a pseudo-repo's: root/iso/ for
--- the host root, general/iso/ for no repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
+-- Surfaces: the files in a repo's iso/ (~/.iso/<owner>/<repo>/iso/, or general/iso/ for no
+-- repo) that show the user something, written only by the repo's router. Only the top level of iso/ counts, so
 -- agents/, journal/ and transcripts/ never do:
 --   <name>.md       a markdown surface, every *.md. Optional YAML frontmatter, plain
 --                   key: value lines between --- lines: name (the row's title; else the file's),
@@ -90,13 +90,13 @@ local M = {}
 ---@field exists? boolean
 ---@field agent? string chat: the agent's address
 
--- The pseudo-repos, keys beside owner/repo: root (the host root's) and general (no repo's), the same
+-- The pseudo-repo, a key beside owner/repo: general (no repo's), the same
 -- keys store gives agents. "_" (general's old key) is still read as general, even while an old _/
 -- waits on its move (store.old_live): nothing new is written there.
 M.pseudo = store.pseudo
 local canon = store.canon_new
 
--- The surface key for a repo key (owner/repo, root, general or _); nil when it's none of those.
+-- The surface key for a repo key (owner/repo, general or _); nil when it's none of those.
 ---@return string?
 function M.key(key)
   key = canon(key)
@@ -1005,7 +1005,7 @@ function M.ask(repo, spec, name, by, yours)
 end
 
 -- Makes a pending question the user's alone, from the root by (its raise), with why, its one-line
--- recommendation: it's in the host Inbox from then on, and no root answers it.
+-- recommendation: it needs them from then on, and no root answers it.
 ---@return isovim.Surface? entry, string? err
 function M.raise(entry, by, why)
   local current = M.get(entry.repo, entry.name)
@@ -1165,7 +1165,7 @@ function M.parse_answer(entry, value)
     entry.multi and "; give several for a multi question" or "")
 end
 
--- The decision log of a scope: a repo-root's repo, or "root" for the host root's. Append-only and
+-- The decision log of a repo-root's repo. Append-only and
 -- its own file, as the event log ages out and an asker removes its question once answered.
 local function decisions_file(key)
   return M.dir(key) .. "/decisions.jsonl"

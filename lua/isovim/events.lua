@@ -19,9 +19,8 @@
 --   surface.<repo>.<name>.consumed   the user opened a chat or consumable surface (isovim.surfaces)
 --   bug.<id>.filed|taken|issued   a report about isovim was filed (iso bug), its worker spawned, its
 --                                issue opened (isovim.bugs)   {id, reporter?, scope?, worker?, url?}
---   root.<scope>.raised|decided   a root left a question to the user (iso <root|repo-root> answer
---                                --raise) or answered it itself; scope is "host" for the host root,
---                                else the repo root's repo   {scope, root, question, repo, name, text,
+--   root.<scope>.raised|decided   a root left a question to the user (iso repo-root answer
+--                                --raise) or answered it itself; scope is the repo root's repo   {scope, root, question, repo, name, text,
 --                                answer? (decided: {labels, other?, by, at})}
 -- So agent.<owner>/<repo>.** is everything about a repo's agents, agent.<ws>.*.status every state
 -- in a workspace, agent.*.*.status everyone's. Inside a part "%" is written %25 and then "." %2E

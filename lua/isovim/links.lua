@@ -1,6 +1,6 @@
 -- Links: a one-line pointer to anything in isovim, written as an address in text, so an agent's
 -- words can point at what they mention and you go there with <Tab>:
---   iso:agent/<owner>/<repo>/aN          an agent's chat (root/aN, general/aN too)
+--   iso:agent/<owner>/<repo>/aN          an agent's chat (general/aN too)
 --   iso:thread/<owner>/<repo>#t3          a thread
 --   iso:task/<owner>/<repo>#k3            a task of the board's
 --   iso:pr/<owner>/<repo>#12              a PR, on GitHub; o instead opens its view here

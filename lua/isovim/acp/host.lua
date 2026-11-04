@@ -877,7 +877,7 @@ end
 -- while the cache is still warm: reading it costs a tenth of rewriting it. A worker's session ends
 -- with its work, and Claude compacts one that fills up by itself. Codex's isn't compacted: its
 -- adapter (codex-acp 2.5.0) has no compact command and reports no context size.
-local COMPACTED = { router = true, ["repo-root"] = true, root = true }
+local COMPACTED = { router = true, ["repo-root"] = true }
 local COMPACT = "/compact Keep what you need to go on running this repo: the open threads and where each stands; the "
   .. "running workers and standing owners, by address, and what each is on; what's waiting on the user; and the "
   .. "decisions the user made today, in their words. Thread files and transcripts stay on disk: "
@@ -1569,7 +1569,7 @@ end
 -- has it clear one, it's told of each new question there as a message (isovim.rootmode.listen).
 local function subscribe_inbox()
   local role = store.role(S.spec)
-  if S.inbox or (role ~= "root" and role ~= "repo-root") then
+  if S.inbox or role ~= "repo-root" then
     return
   end
   S.inbox = true

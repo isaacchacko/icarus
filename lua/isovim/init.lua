@@ -21,7 +21,7 @@ M.explorer_roots = {} ---@type table<string, {cwd: string, file?: string}> works
 M.recent = {} ---@type string[] workspace ids, most recently selected first
 M.recent_agents = {} ---@type string[] "<ws>/<agent>", most recently opened first (<leader>fr, <leader>ib, <leader>ip)
 M.recent_views = {} ---@type string[] what you looked at (isovim.tabs.view_key), most recent first (<leader>,, <leader><leader>)
-M.current_scope = nil ---@type string? whose buffers are listed: a repo, "root", "general" or "terminals" (isovim.scope)
+M.current_scope = nil ---@type string? whose buffers are listed: a repo, "general" or "terminals" (isovim.scope)
 M.recent_scopes = {} ---@type string[] the scopes current_scope was, most recent first (<leader>ip)
 M.host_projects = {} ---@type table<string, string> the project the list shows of each other host
 M.expanded = {} ---@type table<string, true> workspaces (host:id for another host's) whose rows show; the rest are collapsed
@@ -65,7 +65,7 @@ local function enter_dir(id)
   end
 end
 
--- The scope a workspace's selection makes current: the scope of its buffer just opened (Root's for
+-- The scope a workspace's selection makes current: the scope of its buffer just opened (General's for
 -- the root's chat), else the workspace's. A terminal keeps Terminals current only if it was.
 local function scope_for(id)
   local buf = vim.api.nvim_get_current_buf()
@@ -1227,7 +1227,7 @@ function M.run_script()
 end
 
 local function rank(key)
-  return key == "root" and 0 or key == "general" and 2 or 1
+  return key == "general" and 2 or 1
 end
 
 -- Where a surface sits in the Inbox hierarchy's order, {rank, repo, file}, as waiting_surfaces sorts.
@@ -1235,7 +1235,7 @@ function M.inbox_place(entry)
   return { rank(entry.repo), entry.repo, entry.base or entry.name }
 end
 
--- The surfaces waiting on you, in the Inbox hierarchy's order: the host root's, then each repo's by
+-- The surfaces waiting on you, in the Inbox hierarchy's order: each repo's by
 -- name, general's last; within one, the Inbox's order (by file name).
 local function waiting_surfaces()
   local ok, surfaces = pcall(require, "isovim.surfaces")
@@ -1272,8 +1272,7 @@ local function after(a, b)
 end
 
 -- Opens the next thing that needs you: the next waiting surface after the one opened last (a
--- question you left unanswered steps aside for the rest, then comes round again), the host root's
--- first, then the repos'. With none, the agent that has waited longest (legacy agents, until
+-- question you left unanswered steps aside for the rest, then comes round again), the repos'. With none, the agent that has waited longest (legacy agents, until
 -- cutover): questions before finished work.
 function M.next_needs_you()
   local waiting, surfaces = waiting_surfaces()

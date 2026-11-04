@@ -1,7 +1,7 @@
 -- The sidebar: a column of two windows under its title in the tab line, and the file explorer that
--- can take its place. A footer, and the shown host's list: its Inbox, its Root section, then the
+-- can take its place. A footer, and the shown host's list: its Inbox, then the
 -- project switcher's row and the current project's sections. A project is a repo, General or
--- Terminals, and the current one follows the focused tab (the current scope; Root's isn't a project,
+-- Terminals, and the current one follows the focused tab (the current scope,
 -- so on the root's chat it stays the one before).
 -- init.lua requires this module only from inside functions, so requiring it back makes no cycle.
 local store = require("isovim.store")
@@ -126,24 +126,6 @@ local KINDS = {
       M.open_router(item)
     end,
     id = { "host", "repo_key" },
-  },
-  -- The Root section's head: the host root, its decision log and what it brought up under it, kept
-  -- while it has any of those with no root running. Enter or Tab folds it.
-  root_head = {
-    format = function(item)
-      local glyph, glyph_hl = icons.get("root")
-      local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { glyph, glyph_hl }, { " " }, { "Root", "Title" } }
-      if item.idle then
-        row[#row + 1] = { "  (none here now)", "Comment" }
-      end
-      row[#row + 1] = item.running_mark
-      return row
-    end,
-    open = function(item)
-      M.set_collapsed(item.host, "host_root", nil, not item.collapsed)
-      M.refresh()
-    end,
-    id = { "host" },
   },
   -- Terminals, the list's last group, as General is one: its terminals and repo script panes under
   -- it. Enter or Tab collapses it.
@@ -723,10 +705,10 @@ local function surfaces()
 end
 M.surfaces = surfaces
 
--- The keys a host's groups are under: a repo's key, "general" for general, "root" for the root, as
+-- The keys a host's groups are under: a repo's key, "general" for general, as
 -- store and isovim.surfaces name them. "_" is general's old key, which a host on an older isovim
 -- still lists its agents under.
-local GENERAL_KEY, ROOT_KEY = store.GENERAL, store.ROOT
+local GENERAL_KEY = store.GENERAL
 local function group_key(surface_key)
   return store.canon_new(surface_key)
 end
@@ -807,20 +789,17 @@ M.is_collapsed, M.set_collapsed = is_collapsed, set_collapsed
 
 local ROLE_ORDER = { ["repo-root"] = 1, router = 2, worker = 3 }
 
--- One host's agents as the list groups them: the host root pinned first, each repo (legacy
+-- One host's agents as the list groups them: each repo (legacy
 -- workspaces folded under the repo their dir is a checkout of, a new-layout key under its repo),
 -- then general (no repo). Each entry: {ws, agent, address, name, kind, role, parent, repo?, style?,
--- is_root?, ...the row fields}.
----@return {key: string, kind: "root"|"repo"|"general", name: string, style?: table, agents: table[], spawn_ws?: string}[]
+-- ...the row fields}.
+---@return {key: string, kind: "repo"|"general", name: string, style?: table, agents: table[], spawn_ws?: string}[]
 local function group(entries)
-  local roots = { key = ROOT_KEY, kind = "root", name = "root", agents = {} }
   local general = { key = GENERAL_KEY, kind = "general", name = "general", agents = {} }
   local by_repo, repo_list = {}, {}
   for _, entry in ipairs(entries) do
     local target
-    if entry.is_root then
-      target = roots
-    elseif entry.repo then
+    if entry.repo then
       target = by_repo[entry.repo]
       if not target then
         target = { key = entry.repo, kind = "repo", name = entry.repo, style = entry.style, agents = {} }
@@ -841,9 +820,6 @@ local function group(entries)
     return a.name < b.name
   end)
   local groups = {}
-  if #roots.agents > 0 then
-    groups[1] = roots
-  end
   vim.list_extend(groups, repo_list)
   groups[#groups + 1] = general
   return groups, by_repo
@@ -959,7 +935,7 @@ local function trace_of(host, entry)
 end
 
 -- A group's sections under its header, each child on a tree guide. threads: whether it has a
--- Threads section (a repo; Root's and General's threads, if any, are surfaces). pins: its pinned
+-- Threads section (a repo; General's threads, if any, are surfaces). pins: its pinned
 -- paths' rows. agents: its listed agents, add_tasks: puts an agent's tasks under it.
 local function group_sections(items, base, host, key, opts)
   local inbox, threads, resolved, boards, others, files = {}, {}, {}, {}, {}, {}
@@ -1132,12 +1108,10 @@ local function current_project(host, keys)
   return host and keys[1] or GENERAL_KEY
 end
 
--- Makes key the project the list shows (the root's key: opens the Root section, which isn't one).
+-- Makes key the project the list shows.
 local function show_project(host, key)
   if not key then
     return
-  elseif key == ROOT_KEY then
-    set_collapsed(host, "host_root", nil, false)
   elseif host then
     isovim.host_projects[host] = key
     isovim.remember("host_projects", isovim.host_projects)
@@ -1146,8 +1120,8 @@ local function show_project(host, key)
   end
 end
 
--- One host's list and its Inbox for the list's top (a row per surface waiting on you): its Root
--- section, then the project switcher's row and that project's sections; with M.all_rows every
+-- One host's list and its Inbox for the list's top (a row per surface waiting on you): the
+-- project switcher's row and that project's sections; with M.all_rows every
 -- project's, each under a plain header. host/ssh are nil for this host. surfaces_by_key nil: no
 -- surfaces module (or the host hasn't answered). terminals: its Terminals rows.
 ---@return table[] items, table[] inbox
@@ -1163,7 +1137,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   local base_host = { host = host, ssh = ssh }
   -- Repos with surfaces but no agents still get a header.
   for key, list in pairs(surfaces_by_key or {}) do
-    if key ~= GENERAL_KEY and key ~= ROOT_KEY and not by_repo[key] and #list > 0 then
+    if key ~= GENERAL_KEY and not by_repo[key] and #list > 0 then
       local made = { key = key, kind = "repo", name = key, agents = {}, style = not host and repos.style(key) or nil }
       by_repo[key] = made
       table.insert(groups, #groups, made)
@@ -1179,12 +1153,6 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   end
   -- Root mode, as iso rootmode set it here; another host's is guessed from its roots.
   local rootmode = not host and require("isovim.rootmode") or nil
-  local has_root = rootmode and rootmode.on("host") or (not rootmode and groups[1] and groups[1].kind == "root")
-  -- The root's surfaces have their Inbox under the root's row, as a repo's do, even with no root
-  -- left to head it.
-  if surfaces_by_key and #(surfaces_by_key[ROOT_KEY] or {}) > 0 and not (groups[1] and groups[1].kind == "root") then
-    table.insert(groups, 1, { key = ROOT_KEY, kind = "root", name = "root", agents = {} })
-  end
   if surfaces_by_key then
     -- Exactly what needs you (needs_you: a question a root is still deciding has none), a row each,
     -- in the order <leader>in walks them (isovim.waiting_surfaces); all of them are in the root's and
@@ -1206,10 +1174,10 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
       return false
     end)
     local collapsed = is_collapsed(host, "inbox")
-    inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = #waiting_on, root_mode = has_root, collapsed = collapsed })
+    inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = #waiting_on, collapsed = collapsed })
     for i, w in ipairs(collapsed and {} or waiting_on) do
       local key = w.key
-      local mark = key == ROOT_KEY and { icons.get("root") } or key == GENERAL_KEY and { icons.get("general") } or nil
+      local mark = key == GENERAL_KEY and { icons.get("general") } or nil
       inbox[#inbox + 1] = vim.tbl_extend("force", base_host, {
         kind = "waiting",
         guide = i == #waiting_on and "└─ " or "├─ ",
@@ -1226,15 +1194,13 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   if not all_open then
     local keys = {}
     for _, g in ipairs(groups) do
-      if g.kind ~= "root" then
-        keys[#keys + 1] = g.key
-      end
+      keys[#keys + 1] = g.key
     end
     keys[#keys + 1] = scope.TERMINALS
     project = current_project(host, keys)
     M.projects, M.project = keys, project
     for _, g in ipairs(groups) do
-      if g.kind ~= "root" and g.key ~= project and (waiting(surfaces_by_key and surfaces_by_key[g.key]) > 0 or vim.iter(g.agents):any(M.needs_you)) then
+      if g.key ~= project and (waiting(surfaces_by_key and surfaces_by_key[g.key]) > 0 or vim.iter(g.agents):any(M.needs_you)) then
         others = others + 1
       end
     end
@@ -1242,28 +1208,9 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   for _, g in ipairs(groups) do
     local agents = vim.tbl_filter(listed, g.agents)
     local list = surfaces_by_key and surfaces_by_key[g.key] or {}
-    if g.kind == "root" then
-      local folded = is_collapsed(host, "host_root")
-      items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "root_head", repo_key = ROOT_KEY, collapsed = folded, idle = #g.agents == 0, running_mark = running_mark(g.agents) })
-      if not folded then
-        for i, entry in ipairs(agents) do
-          items[#items + 1] = vim.tbl_extend("force", entry, { kind = "agent", label = i == 1 and "root" or ("root · " .. entry.name), depth = 0, group_key = ROOT_KEY, glyph = "root", trace = trace_of(host, entry) })
-          add_tasks(items, entry, { id = entry.agent, name = entry.name, tasks = entry.tasks })
-        end
-        -- Its decision log, then its sections as a repo's (no Threads).
-        local log = vim.iter(list):find(function(entry)
-          return entry.type == "decisions"
-        end) or (#agents > 0 and not host and surfaces_by_key and M.surfaces().decisions_entry(ROOT_KEY, true))
-        if log then
-          items[#items + 1] = vim.tbl_extend("force", base_host, { kind = "surface", surface = log, repo_key = ROOT_KEY, name = log.name, depth = 0, group_key = ROOT_KEY })
-        end
-        group_sections(items, base_host, host, ROOT_KEY, { list = vim.tbl_filter(function(entry)
-          return entry.type ~= "decisions"
-        end, list), pins = pin_rows(host, extra, ROOT_KEY), agents = {}, root_mode = has_root })
-      end
     -- The current project always shows (General when empty, so s on it spawns a general/aN); with
     -- every project listed, those with something in them.
-    elseif g.key == project or (all_open and (g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host))) then
+    if g.key == project or (all_open and (g.kind == "repo" or #agents > 0 or #list > 0 or (g.kind == "general" and not host))) then
       local collapsed = is_collapsed(host, "repo", g.key)
       items[#items + 1] = vim.tbl_extend("force", base_host, {
         kind = "repo",
@@ -1350,10 +1297,7 @@ local function local_entries(workspaces)
     if not v2 then
       added, removed = diffstat.get(ws.dir, M.refresh)
     end
-    local holds_root = false
     for i, agent in ipairs(ws.agents) do
-      local is_root = scope.is_root(ws.id, agent)
-      holds_root = holds_root or is_root
       local address = ws.id .. "/" .. agent.id
       local legacy_main = not v2 and (agent.id == "main" or #vim.tbl_filter(listed, ws.agents) == 1)
       entries[#entries + 1] = {
@@ -1365,14 +1309,13 @@ local function local_entries(workspaces)
         legacy_main = legacy_main or nil,
         agent_kind = agent.kind,
         acp = agent.acp,
-        role = scope.is_root(ws.id, agent) and "root" or store.role(agent),
+        role = store.role(agent),
         parent = agent.parent,
         status = agent.status,
         running = agent.running,
         hidden = agent.hidden,
         tasks = agent.tasks,
         v2 = v2 or nil,
-        is_root = is_root or nil,
         repo = repo,
         style = repo and repos.style(repo) or nil,
         order = (isovim.sort == "active" and (ws.active or 0)) or agent.created or ws.created or 0,
@@ -1383,9 +1326,6 @@ local function local_entries(workspaces)
       }
     end
     local key = repo or GENERAL_KEY
-    if holds_root and not repo then
-      key = ROOT_KEY
-    end
     workspaces_of[key] = workspaces_of[key] or {}
     table.insert(workspaces_of[key], ws)
   end
@@ -1425,7 +1365,6 @@ local function remote_entries(name, ssh, rows)
         tasks = agent.tasks,
         subtitle = agent.doing,
         v2 = v2 or nil,
-        is_root = row.role == "root" or nil,
         repo = repo,
         style = type(row.repo) == "table" and row.repo or nil,
         order = 0,
@@ -1510,7 +1449,7 @@ local function is_live(agent)
 end
 M.is_live = is_live
 
--- The shown host's list: its Inbox, root, repos, General, then Terminals with its terminals. Hidden
+-- The shown host's list: its Inbox, repos, General, then Terminals with its terminals. Hidden
 -- agents show only while show_hidden is on or while they need you; a hint counts the rest.
 local function collect()
   isovim.mark_visible_seen()
@@ -1990,7 +1929,7 @@ local COLUMN_KEYS = {
 }
 local LIST_KEYS = {
   { "<cr>", "isovim_open", "open the agent, terminal, surface or PR; on the project's row, its router (General's agent last open; on Terminals, collapse or expand it); on the Threads header, the thread board; on the Inbox, Root or another section (Surfaces, Files, Root, Agents), collapse or expand it; a pinned file as a tab" },
-  { "<Tab>", "isovim_toggle_expand", "open or collapse the project, its Inbox or a section, or Root (from a row in one, collapse it)" },
+  { "<Tab>", "isovim_toggle_expand", "open or collapse the project, its Inbox or a section (from a row in one, collapse it)" },
   { "s", "isovim_spawn", "spawn a worker over ACP in its project (its worktree comes on its first edit), or in General" },
   { "D", "isovim_dismiss_thread", "the thread marked read, out of the Inbox without replying or resolving it, till the agent's next post (U does the same on one holding your attention)" },
   { "U", "isovim_toggle_read", "mark the surface, thread or agent's chat read if it's holding your attention, out of the Inbox till something new, else unread, until you open it. A waiting question, a page awaiting your reply or an agent blocked on a permission stays: it says so" },
@@ -2000,7 +1939,7 @@ local LIST_KEYS = {
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
-  { "x", "isovim_root_mode", "root mode on or off for the project (in Root, on the Inbox's title or in General: the host; on a surface in the Inbox, its project)" },
+  { "x", "isovim_root_mode", "root mode on or off for the project (on a surface in the Inbox, its project)" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's; on a link to a PR, its view here" },
   { "c", "isovim_changes", "its changes since its base" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
@@ -2009,7 +1948,7 @@ local LIST_KEYS = {
   { "L", "isovim_toggle_ports", "show or hide the ports agents listen on" },
   { "E", "isovim_explorer", "file explorer (W comes back)" },
   { "C", "isovim_create_project", "make a project from a clone's dir, its glyph and color picked; on one that's set up, change them" },
-  { "P", "isovim_open_prs", "the project's PRs surface (the root's in Root)" },
+  { "P", "isovim_open_prs", "the project's PRs surface" },
 }
 -- Keys on their way out: they still work, the first press in a session naming what replaced them.
 -- {key, action, replacement, legacy}: a legacy one is refused once enforcement is on (its action
@@ -2064,7 +2003,7 @@ function M.help()
     lines[#lines + 1] = ""
   end
   section("Sidebar (any of its windows)", COLUMN_KEYS)
-  section("Host list (its Inbox, Root, the current project; a robot marks a repo script's pane)", LIST_KEYS)
+  section("Host list (its Inbox, the current project; a robot marks a repo script's pane)", LIST_KEYS)
   section("Footer", FOOTER_KEYS)
   section("Chat (terminal mode)", isovim.chat_keys)
   section("Chat (normal mode)", isovim.chat_normal_keys)
@@ -2246,9 +2185,7 @@ function M.open_row(item)
   elseif item.kind == "terminal" then
     set_collapsed(host, "terminals", nil, false)
   elseif item.group_key then
-    if item.group_key ~= ROOT_KEY then
-      set_collapsed(host, "repo", item.group_key, false)
-    end
+    set_collapsed(host, "repo", item.group_key, false)
     if item.section then
       set_section_folded(host, item.group_key, item.section, false)
     end
@@ -2281,14 +2218,11 @@ function M.focus_window(role)
   end
 end
 
--- The list's group key a workspace (or repo key) is under: its repo, "general" for general, "root"
--- for the root's workspace.
+-- The list's group key a workspace (or repo key) is under: its repo, "general" for general.
 function M.group_key(ws)
   local name = scope.of_workspace(ws)
   if name == scope.GENERAL then
     return GENERAL_KEY
-  elseif name == scope.ROOT then
-    return ROOT_KEY
   end
   return name
 end
@@ -2339,7 +2273,7 @@ function M.focus_inbox(which)
     return
   end
   local current = isovim.current_scope
-  local key = ({ [scope.ROOT] = ROOT_KEY, [scope.GENERAL] = GENERAL_KEY })[current] or current
+  local key = ({ [scope.GENERAL] = GENERAL_KEY })[current] or current
   if not key or current == scope.TERMINALS then
     key = isovim.current and M.group_key(isovim.current)
   end
@@ -2430,7 +2364,7 @@ end
 ---@return string key, string? checkout
 local function spawn_target(target)
   local item = type(target) == "table" and target or { ws = target }
-  if item.repo_key and item.repo_key ~= ROOT_KEY then
+  if item.repo_key then
     return item.repo_key
   end
   local ws = item.ws
@@ -2453,17 +2387,13 @@ function M.spawn(target)
   return add_agent(key, { kind = "claude", acp = true, checkout = checkout })
 end
 
--- The root-mode scope of a row (or, with none, of what's in focus): its repo, or "host" for the
--- host Inbox, the root's rows and General (which has no root of its own: its questions go to the
--- host root).
+-- The repo root mode goes with on a row (or, with none, on what's in focus); nil for none, as General
+-- and the Inbox's title have no root.
 ---@param item? table a sidebar row
----@return string scope
+---@return string? repo
 function M.root_mode_scope(item)
   local key
   if item then
-    if item.kind == "host_inbox" then
-      return "host"
-    end
     key = item.repo_key or item.group_key
     if not key and item.ws then
       key = M.group_key(item.ws)
@@ -2477,10 +2407,9 @@ function M.root_mode_scope(item)
     end
   end
   key = key and store.canon(key)
-  if not key or store.is_pseudo(key) then
-    return "host"
+  if key and not store.is_pseudo(key) then
+    return key
   end
-  return key
 end
 
 -- x and <leader>ix: root mode on for the scope (iso rootmode on, which spawns its root if it has
@@ -2491,8 +2420,11 @@ function M.toggle_root_mode(item)
     return Snacks.notify.info(("That's on %s; turn root mode on there"):format(item.host), { title = "isovim" })
   end
   local where = M.root_mode_scope(item)
+  if not where then
+    return Snacks.notify.info("Root mode is a repo's: General has no root", { title = "isovim" })
+  end
   local mode = require("isovim.rootmode").entry(where) and "off" or "on"
-  local label = where == "host" and "this host" or where
+  local label = where
   Snacks.notify.info(("Root mode %s for %s…"):format(mode, label), { title = "isovim" })
   vim.system({ panes.bin, "rootmode", mode, where }, { text = true }, require("isovim.safe").schedule_wrap("root mode's toggle", function(result)
     local text = vim.trim(result.code == 0 and result.stdout or (result.stderr or ""):gsub("^iso: ", ""))
@@ -2754,12 +2686,6 @@ M.actions = {
     elseif item.kind == "repo" then
       set_collapsed(host, "repo", item.repo_key, not item.collapsed)
       keep = { kind = "repo", host = host, repo_key = item.repo_key }
-    elseif item.kind == "root_head" then
-      set_collapsed(host, "host_root", nil, not item.collapsed)
-      keep = { kind = "root_head", host = host }
-    elseif item.group_key == ROOT_KEY then
-      set_collapsed(host, "host_root", nil, true)
-      keep = { kind = "root_head", host = host }
     elseif item.group_key then
       set_collapsed(host, "repo", item.group_key, true)
       keep = { kind = "repo", host = host, repo_key = item.group_key }
@@ -2806,10 +2732,10 @@ M.actions = {
     end
     M.refresh()
   end,
-  -- t: a new thread in the row's repo, an agent's row's too (none in General, Root or Terminals).
+  -- t: a new thread in the row's repo, an agent's row's too (none in General or Terminals).
   isovim_new_thread = function(item)
     local key = item and (item.repo_key or item.group_key or (item.ws and not item.host and M.group_key(item.ws)))
-    require("isovim.acp.chat").new_thread(key ~= GENERAL_KEY and key ~= ROOT_KEY and key or nil)
+    require("isovim.acp.chat").new_thread(key ~= GENERAL_KEY and key or nil)
   end,
   isovim_toggle_ports = toggle("show_ports"),
   isovim_toggle_tasks = toggle("show_tasks"),
