@@ -152,11 +152,12 @@ local function first_buf(node)
   return node[1] == "leaf" and node[2].buf or first_buf(node[2][1])
 end
 
--- Lays node out in win: splits it once per extra child, then recurses into each part.
-local function build(node, win, leaves)
+-- Lays node out in win: splits it once per extra child, then recurses into each part. A leaf notes
+-- whether a split gives it a neighbor across (in_row) or above or below (in_col).
+local function build(node, win, leaves, in_row, in_col)
   if node[1] == "leaf" then
     vim.api.nvim_win_set_buf(win, node[2].buf)
-    leaves[#leaves + 1] = { win = win, spec = node[2] }
+    leaves[#leaves + 1] = { win = win, spec = node[2], in_row = in_row, in_col = in_col }
     return
   end
   local wins, last = { win }, win
@@ -165,7 +166,22 @@ local function build(node, win, leaves)
     wins[i] = last
   end
   for i, child in ipairs(node[2]) do
-    build(child, wins[i], leaves)
+    build(child, wins[i], leaves, in_row or node[1] == "row", in_col or node[1] == "col")
+  end
+end
+
+-- The sizes a layout was saved with, between its splits. They date from when it was saved, maybe at
+-- another terminal size, so a window spanning the editing area keeps what it has now: set narrower
+-- it would give the rest to the sidebar, its winfixwidth or not with no other window to take it, and
+-- set shorter to the command line, raising cmdheight.
+local function apply_sizes(leaves)
+  for _, leaf in ipairs(leaves) do
+    if leaf.in_row then
+      pcall(vim.api.nvim_win_set_width, leaf.win, leaf.spec.width)
+    end
+    if leaf.in_col then
+      pcall(vim.api.nvim_win_set_height, leaf.win, leaf.spec.height)
+    end
   end
 end
 
@@ -193,10 +209,7 @@ function M.restore(ws, is_sidebar, want)
   end
   local leaves = {}
   build(tree, keep, leaves)
-  for _, leaf in ipairs(leaves) do
-    pcall(vim.api.nvim_win_set_width, leaf.win, leaf.spec.width)
-    pcall(vim.api.nvim_win_set_height, leaf.win, leaf.spec.height)
-  end
+  apply_sizes(leaves)
   local focus_win, want_win
   for _, leaf in ipairs(leaves) do
     if leaf.spec.buf == saved.focus then
@@ -261,10 +274,7 @@ function M.resume(ws, is_sidebar, open, want)
       focus = leaf.win
     end
   end
-  for _, leaf in ipairs(leaves) do
-    pcall(vim.api.nvim_win_set_width, leaf.win, leaf.spec.width)
-    pcall(vim.api.nvim_win_set_height, leaf.win, leaf.spec.height)
-  end
+  apply_sizes(leaves)
   if want and vim.api.nvim_buf_is_valid(want) and vim.fn.bufwinid(want) == -1 then
     vim.api.nvim_win_set_buf(focus or leaves[1].win, want)
   end
