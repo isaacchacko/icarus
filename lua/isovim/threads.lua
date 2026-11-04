@@ -13,7 +13,8 @@
 --                                                   keeps_wait: the turn that made it also marked a worker
 --   {kind = "resolved", by, outcome?, tell?, at}, {kind = "reopened", by, at}   tell: an agent resolved
 --                                                   it, so it's unread until the user opens it
---   {kind = "renamed", by, title, at}               its title from then on (posts keep their tags)
+--   {kind = "renamed", by, title, from?, at}        its title from then on, and what it was (posts keep
+--                                                   their tags); the header keeps the first, which stays shown
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
 --   {kind = "answered", qid, labels, other?, by, at}, {kind = "raised", qid, by, why?, at}
 -- A question asked in a thread lives there, not in the repo: isovim.surfaces lists each one still
@@ -95,7 +96,7 @@ end
 -- posts, the last router post's seq, whether a turn on it runs.
 function M.summary(entries)
   local head = entries[1] or {}
-  local info = { id = head.id, title = head.title or head.id or "?", created_by = head.created_by, at = head.at,
+  local info = { id = head.id, title = head.title or head.id or "?", first_title = head.title, created_by = head.created_by, at = head.at,
     status = head.status or "open", posts = 0, last_reply = 0, working = false, parent = head.parent }
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
@@ -400,7 +401,7 @@ function M.rename(repo, id, by, title)
   elseif title == M.summary(entries).title then
     return nil, ("%s is %q already"):format(id, title)
   end
-  append(repo, id, { kind = "renamed", by = by, title = title })
+  append(repo, id, { kind = "renamed", by = by, title = title, from = M.summary(entries).title })
   return title
 end
 
@@ -432,18 +433,20 @@ function M.set_parent(repo, id, parent, by)
   return true
 end
 
--- The thread's parent, if any, its children, oldest first, resolved ones too, and who it's bypassed to.
----@return string? parent, string[] children, string? bypass
+-- The thread's parent, if any, its children, oldest first, resolved ones too, who it's bypassed to, and
+-- the title it started with if it has been renamed since, as the user's question is often all of it.
+---@return string? parent, string[] children, string? bypass, string? first_title
 function M.related(repo, id)
-  local parent, children, bypass = nil, {}, nil
+  local parent, children, bypass, first_title = nil, {}, nil, nil
   for _, info in ipairs(M.list(repo, true)) do
     if info.id == id then
       parent, bypass = info.parent, info.bypass
+      first_title = info.first_title ~= info.title and info.first_title or nil
     elseif info.parent == id then
       table.insert(children, 1, info.id)
     end
   end
-  return parent, children, bypass
+  return parent, children, bypass, first_title
 end
 
 -- The repo's threads as a tree, in the order they're shown: {info, depth, guide (its tree guide), shape

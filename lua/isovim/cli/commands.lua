@@ -890,7 +890,14 @@ M.role_actions = {
                                      answer, so run it in the background; run again,
                                      it reattaches
        iso thread rename <id> <title...>
-                                     a new title (posts already sent keep their tags)
+                                     a new title (posts already sent keep their tags). Do it
+                                     unasked, when you first answer one titled with a raw
+                                     question, a stub or keywords, and whenever what it's about
+                                     shifts or it's settled: 4 to 8 words that read as a phrase
+                                     and say what it's about, in context, like "Batching worker
+                                     messages to ease router delays", not "two routers?". Any
+                                     title is fair game, the user's too: the first stays shown
+                                     at the top, and each rename says what it was
        iso thread ls [--all|--tree]  the repo's open threads (--all: resolved too; --tree: all
                                      of them, each child indented under its parent)
        iso thread show <id>          a thread's posts

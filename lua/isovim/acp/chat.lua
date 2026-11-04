@@ -1239,8 +1239,9 @@ local function update_banner(chat)
   chat.drawing_banner = nil
 end
 
--- The rows under the banner: one for the thread's parent and one for its children, only when they
--- exist, as link chips with their state (isovim.links), so ]l and <Tab> work on them.
+-- The rows under the banner, only when they exist: the title it started with, once renamed, as that's
+-- often the user's whole question; who it goes to; its parent and its children, as link chips with their
+-- state (isovim.links), so ]l and <Tab> work on them.
 local function update_related(chat)
   if not (chat.thread and chat.banner) or safe.text_locked() then
     return
@@ -1261,9 +1262,13 @@ local function update_related(chat)
   local function thread_address(id)
     return ("iso:thread/%s#%s"):format(chat.ws, id)
   end
-  local parent, children, bypass = threads.related(chat.ws, chat.thread)
+  local parent, children, bypass, first_title = threads.related(chat.ws, chat.thread)
   chat.bypass = bypass
   local rows = {}
+  if first_title then
+    local text = "✎ first titled  " .. first_title
+    rows[#rows + 1] = { text = text, lead = #text, chips = {} }
+  end
   if bypass then
     rows[#rows + 1] = row("→ goes to  ", { "iso:agent/" .. bypass })
   end
@@ -1441,12 +1446,15 @@ function RENDER.answered(chat, entry)
 end
 
 function RENDER.renamed(chat, entry)
+  -- A rename from before entries said what from: it was what the thread was called until now.
+  local from = entry.from or chat.title
   chat.title = entry.title or chat.title
   thread_tab(chat)
   local who = entry.by == "user" and "you" or (entry.by or "?"):match("([^/]+)$")
-  add_block(chat, { ("renamed “%s” by %s · %s"):format(chat.title, who, clock(entry.at)) },
+  add_block(chat, { ("renamed from “%s” to “%s” by %s · %s"):format(from or "?", chat.title, who, clock(entry.at)) },
     "IsovimPrDim")
   update_banner(chat)
+  update_related(chat)
 end
 
 function RENDER.reopened(chat, entry)

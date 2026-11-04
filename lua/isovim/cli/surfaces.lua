@@ -583,8 +583,10 @@ function M.thread(args)
   elseif sub == "show" then
     local id = args[1] or fail(usage)
     local entries = threads.read(repo, id) or fail(("%s has no thread %s"):format(repo, id))
+    local titled
     for _, entry in ipairs(entries) do
       if entry.kind == "thread" then
+        titled = entry.title
         out(("%s: %s (started by %s, %s%s)"):format(entry.id, entry.title, entry.created_by or "?", os.date("%Y-%m-%d %H:%M", entry.at or 0),
           entry.parent and (", under " .. entry.parent) or ""))
       elseif entry.kind == "bypass" then
@@ -606,7 +608,8 @@ function M.thread(args)
       elseif entry.kind == "waiting" then
         out(("\n[%s by %s]"):format(entry.on == "none" and "waiting on nobody" or ("waiting on " .. tostring(entry.on)), entry.by or "?"))
       elseif entry.kind == "renamed" then
-        out(("\n[renamed %q by %s]"):format(entry.title or "", entry.by or "?"))
+        out(("\n[renamed from %q to %q by %s]"):format(entry.from or titled or "?", entry.title or "", entry.by or "?"))
+        titled = entry.title or titled
       elseif entry.kind == "resolved" or entry.kind == "reopened" then
         out(("\n[%s by %s%s]"):format(entry.kind, entry.by or "?", entry.outcome and (": " .. entry.outcome) or ""))
       end

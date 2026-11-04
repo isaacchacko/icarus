@@ -311,7 +311,10 @@ host; General, Root and Terminals have none, and starting one there says why.
   conversation resolves the thread, or opens a resolved one again; `R` (or `:IsovimThreadRename`)
   renames it, its title in the composer to edit (`<CR>` renames, `<C-c>` keeps it), as `r` on its
   row in the sidebar does and `iso router thread rename <id> "<title>"`; the banner, tab, row and
-  jump picker show the new title.
+  jump picker show the new title. Routers rename unasked, for context over keywords, so your words
+  are kept: the first title stays shown under the banner (`✎ first titled`), as a question typed as a
+  title is often all of it, and each `renamed` entry says what it was renamed from, in the view and
+  `thread show`.
 - **The router's replies:** its supervisor sees the tag on the prompt it delivers, marks that turn
   working in the thread, and when the turn ends posts its last message (what it said after its
   last tool call) there, so the router just answers. Its tool calls stay in its own chat. It posts
