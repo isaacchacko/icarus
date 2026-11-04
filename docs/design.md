@@ -439,7 +439,7 @@ words point at what they mention and you go there with a key (isovim.links):
 |---|---|
 | `iso:agent/<owner>/<repo>/aN` (`root/aN`, `general/aN`) | the agent's chat |
 | `iso:thread/<owner>/<repo>#t3` | the thread |
-| `iso:pr/<owner>/<repo>#12` | the PR's view |
+| `iso:pr/<owner>/<repo>#12` and a GitHub PR's URL | the PR's page in isovim's Chrome, as a web page; `o` on it, the PR's view here |
 | `iso:surface/<owner>/<repo>/<name>` | the surface (the Task Board is `tasks`, the PRs `PRs`) |
 | `iso:page/<owner>/<repo>/<name>[#c4]` | the page, at the comment |
 | `iso:file/<path>` | the file as a tab, a folder in the explorer |
@@ -465,7 +465,10 @@ still streaming may be cut by a chunk); in a box (a thread's post, a PR's descri
 words are joined by no-break spaces so the box's wrapping keeps it whole; a page's comments quote
 and find their lines by the page's own text, addresses and all. `<Tab>` in normal mode with the
 cursor on one opens its target as a tab, `gf` too (`<Tab>` on an `[Image #n]`, that image); anywhere
-else `<Tab>` is vim's own (`<C-i>`, the jump forward). `]l` and `[l` walk them, wrapping at the ends, and in a
+else `<Tab>` is vim's own (`<C-i>`, the jump forward). `o` on a link to a PR opens the PR's view here,
+the only link with a second way to open, whether or not the PR is registered; on anything else `o`
+keeps what it means in that view (to the draft in a chat, to the router in a page). A markdown
+surface, the Task Board and a question draw no chips, but a link written in them opens the same way. `]l` and `[l` walk them, wrapping at the ends, and in a
 chat or thread stop at its images and its waiting questions (on the first option, where `<CR>`
 answers) too; they don't enter the composer. `iso <role> link <thing>` prints the address of an agent
 (`owner/repo/aN` or `aN`), a PR (`#12`, `owner/repo#12`, its URL), a thread (`t3`), a page or

@@ -1943,7 +1943,7 @@ local LIST_KEYS = {
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
   { "x", "isovim_root_mode", "root mode on or off for the project (in Root, on the Inbox's title or in General: the host; on a surface in the Inbox, its project)" },
-  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's" },
+  { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's; on a link to a PR, its view here" },
   { "c", "isovim_changes", "its changes since its base" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
   { "S", "isovim_sort", "sort by creation or by recent activity" },
@@ -2537,7 +2537,11 @@ M.actions = {
     isovim.find()
   end,
   isovim_open_port = function(item)
-    if item and item.ws and not item.host then
+    -- A link to a PR: its view here (Enter is its page in the browser).
+    local target = item and item.surface and item.surface.type == "link" and not item.host and require("isovim.links").resolve(item.surface.address)
+    if target and target.secondary then
+      return target.secondary()
+    elseif item and item.ws and not item.host then
       isovim.open_port(item.ws, item.agent)
     end
   end,

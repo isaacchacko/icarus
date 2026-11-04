@@ -2,12 +2,13 @@
 -- words can point at what they mention and you go there with <Tab>:
 --   iso:agent/<owner>/<repo>/aN          an agent's chat (root/aN, general/aN too)
 --   iso:thread/<owner>/<repo>#t3          a thread
---   iso:pr/<owner>/<repo>#12              a PR's view
+--   iso:pr/<owner>/<repo>#12              a PR, on GitHub; o instead opens its view here
 --   iso:surface/<owner>/<repo>/<name>     a surface (the Task Board is tasks, the PRs PRs)
 --   iso:page/<owner>/<repo>/<name>[#c4]   a page, at a comment
 --   iso:file/<path>                       a file or folder (absolute; ~ is home)
 --   http(s)://...                         a web page: a dev server on localhost or 127.0.0.1:<port>,
---                                         a preview deploy, a dashboard (a GitHub PR's URL is a PR)
+--                                         a preview deploy, a dashboard (a GitHub PR's URL is a PR,
+--                                         and goes to that URL)
 -- A bare <repo> in place of <owner>/<repo> means the one repo on this host of that name; with two,
 -- it's refused rather than guessed. An address that leads nowhere is drawn as broken, and opening
 -- one says why, in one notification per address and reason, not one per try.
@@ -125,7 +126,8 @@ local function whole_repo(name)
   return nil, ("no repo on this host is named %s: write it as <owner>/<repo>"):format(name)
 end
 
--- What an address points at, as drawn and opened: {glyph, hl, label, status?, status_hl?, open()},
+-- What an address points at, as drawn and opened: {glyph, hl, label, status?, status_hl?, open(),
+-- secondary()?, its other way to open, which only a PR has},
 -- or nil and why not.
 function M.resolve(addr)
   local p = M.parse(addr)
@@ -181,6 +183,9 @@ function M.resolve(addr)
       status = state, status_hl = state == "merged" and "DiagnosticHint" or state == "closed" and "DiagnosticError"
         or state == "open" and "DiagnosticOk" or "Comment",
       open = function()
+        M.open_url(addr:match("^https?://") and addr or url)
+      end,
+      secondary = function()
         require("isovim.pr_view").open(p.repo, url)
       end }
   elseif p.kind == "surface" or p.kind == "page" then
@@ -536,6 +541,31 @@ function M.open(addr)
   return true
 end
 
+-- The other way to open the link under the cursor, if it has one.
+local function secondary_here()
+  local addr = M.at_cursor()
+  local target = addr and M.resolve(addr)
+  return target and target.secondary
+end
+
+-- Whether o here means the link's other way to open, so an expr map needn't open it itself.
+function M.has_secondary()
+  return secondary_here() ~= nil
+end
+
+-- o on a link with another way to open (a PR: its view here, where its primary is the browser): opens
+-- it. False on anything else, where o keeps whatever it means in that view.
+---@return boolean
+function M.secondary()
+  local open = secondary_here()
+  if not open then
+    return false
+  end
+  vim.cmd.stopinsert()
+  open()
+  return true
+end
+
 -- A yank over chips gives their addresses: each chip on the yanked lines, its text replaced.
 local function yanked(buf)
   local event = vim.v.event
@@ -565,7 +595,8 @@ local function yanked(buf)
 end
 
 -- <Tab> on a link opens it, else it's vim's own (the jump forward); gf too, unless the buffer maps
--- gf itself (the chat's gf asks M.at_cursor first). Its chips are drawn again on coming back to it,
+-- gf itself (the chat's gf asks M.at_cursor first). o is the link's other way to open (M.secondary),
+-- unless the buffer maps o itself, which then asks M.secondary first. Its chips are drawn again on coming back to it,
 -- and a yank of them gives their addresses. write as M.substitute takes it.
 _G.isovim_link_writers = _G.isovim_link_writers or {}
 local writers = _G.isovim_link_writers
@@ -601,7 +632,19 @@ function M.attach(buf, write, opts)
       end
     end, { buffer = buf, desc = ("isovim: the %s link, image or waiting question"):format(direction > 0 and "next" or "previous") })
   end
-  if vim.fn.maparg("gf", "n", false, true).buffer ~= 1 then
+  local function mapped(lhs)
+    return vim.api.nvim_buf_call(buf, function()
+      return vim.fn.maparg(lhs, "n", false, true).buffer == 1
+    end)
+  end
+  if not mapped("o") then
+    vim.keymap.set("n", "o", function()
+      if not M.secondary() then
+        vim.api.nvim_feedkeys("o", "n", false)
+      end
+    end, { buffer = buf, desc = "isovim: a PR's link: its view here (else o)" })
+  end
+  if not mapped("gf") then
     vim.keymap.set("n", "gf", function()
       local addr = M.at_cursor()
       if addr then

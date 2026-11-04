@@ -2461,7 +2461,12 @@ local function map_keys(chat)
     local thread_rename = lhs == "R" and (chat.thread or chat.pending_title)
     if not taken[lhs] then
       map("n", lhs, function()
-        return mine() and lhs or (thread_rename and rename or to_composer)
+        if mine() then
+          return lhs
+        elseif lhs == "o" and require("isovim.links").has_secondary() then
+          return "<Cmd>lua require('isovim.links').secondary()<CR>"
+        end
+        return thread_rename and rename or to_composer
       end, thread_rename and "rename the thread (in the composer: replace mode)"
         or "type to the agent (from the conversation: at the end of your draft)", { expr = true, nowait = false })
     end
@@ -2638,6 +2643,7 @@ M.help_keys = {
     { "]m / [m", "the next / previous message" },
     { "za zo zc", "fold the tool call's output under the cursor" },
     { "<C-o>", "open every tool call's output and thought, or collapse them all (those to come too)" },
+    { "o on a PR's link", "its view here (<Tab> is its page in the browser)" },
     { "i a o O I A c C <CR>", "on the conversation: to the end of your draft, typing (<CR> on a box's option answers with it)" },
     { "u / <C-r>", "undo / redo in the composer, never the conversation" },
     { "<C-c>", "cancel the agent's turn (or the rewind you're editing)" },

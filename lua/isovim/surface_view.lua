@@ -897,7 +897,9 @@ local function bind(view)
     end
     for _, lhs in ipairs({ "i", "a", "o" }) do
       on(lhs, function()
-        to_input(view)
+        if lhs ~= "o" or not require("isovim.links").secondary() then
+          to_input(view)
+        end
       end, "type your own answer")
     end
     on("q", function()
@@ -948,6 +950,9 @@ local function bind(view)
   elseif view.kind == "markdown" then
     for _, lhs in ipairs({ "i", "a", "o", "<CR>" }) do
       vim.keymap.set("n", lhs, function()
+        if lhs == "o" and require("isovim.links").secondary() then
+          return
+        end
         local win = vim.fn.bufwinid(view.input)
         if win ~= -1 then
           vim.api.nvim_set_current_win(win)
@@ -955,6 +960,10 @@ local function bind(view)
         end
       end, { buffer = view.buf, nowait = true, desc = "isovim: type to the repo's router" })
     end
+  end
+  -- Its links open with <Tab> and o, in a view that draws them as they're written.
+  if view.kind == "markdown" or view.kind == "tasks" or view.kind == "question" then
+    require("isovim.links").attach(view.buf)
   end
   -- u: marked read if it's holding your attention, else unread until it's opened again; what someone's
   -- blocked on stays (isovim.surfaces.toggle_read).

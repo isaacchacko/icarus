@@ -1113,8 +1113,10 @@ function M.bind(view)
     to_input(view, nil)
   end, "reply to the comment here (else type to the router)")
   on("n", "o", function()
-    to_input(view, nil)
-  end, "type to the repo's router")
+    if not require("isovim.links").secondary() then
+      to_input(view, nil)
+    end
+  end, "a PR's link: its view here (else type to the repo's router)")
   on("n", "i", function()
     local row = vim.api.nvim_win_get_cursor(0)[1]
     dive_on(view, row, row)
@@ -1253,7 +1255,7 @@ M.help_keys = {
   { "u", "mark the page unread: back in the Inbox until you open it again" },
   { "i (or V/v then i)", "ask a question to dive into: [? it] goes at the end of the line, or after the lines selected, and the router answers with a page in its place" },
   { "[[ / ]]", "up to this page's parent (a count for further up) / back down to the child you came up from, else the first child linked here" },
-  { "o", "type to the repo's router" },
+  { "o", "type to the repo's router; on a PR's link, its view here (<Tab> is its page in the browser)" },
   { "<C-c>", "in the box: cancel the comment or reply" },
 }
 

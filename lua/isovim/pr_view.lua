@@ -488,8 +488,10 @@ M.keys = {
   { "c", "every file's diff", function(view)
     open_diff(view, nil)
   end },
-  { "o", "open the PR in the browser", function(view)
-    vim.ui.open(view.url)
+  { "o", "open the PR in the browser; on another PR's link, its view here", function(view)
+    if not require("isovim.links").secondary() then
+      vim.ui.open(view.url)
+    end
   end },
   { "y", "copy the PR's URL", function(view)
     vim.fn.setreg("+", view.url)
