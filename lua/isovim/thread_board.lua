@@ -368,7 +368,9 @@ local function focusable(list)
   end, list or {})
 end
 
--- Where the focus is, in what's listed: its row if that's still there, else what's nearest it.
+-- Where the focus is, in what's listed: its row if that's still there, else what's nearest it. A column with
+-- no rows keeps the focus if h or l went there on purpose (board_empty_col); otherwise, as on first opening or
+-- under a filter that empties it, the focus goes to the first column with rows.
 local function settle_focus(view, columns)
   for i, list in ipairs(columns) do
     for j, row in ipairs(focusable(list)) do
@@ -380,7 +382,9 @@ local function settle_focus(view, columns)
   end
   local col = view.board_col or 2
   local list = focusable(columns[col])
-  if #list == 0 and not view.board_focus then
+  if #list > 0 then
+    view.board_empty_col = nil
+  elseif view.board_empty_col ~= col then
     for i, each in ipairs(columns) do
       if #focusable(each) > 0 then
         col, list = i, focusable(each)
@@ -506,6 +510,11 @@ function M.draw(view)
       -- The whole of its card in sight, its first line under the cursor.
       pcall(vim.api.nvim_win_set_cursor, win, { focus_at[3], 0 })
       pcall(vim.api.nvim_win_set_cursor, win, { focus_at[1], focus_at[2] })
+    elseif #lines > 2 then
+      -- On an empty column: the cursor in it, on the line it's on, so nothing scrolls.
+      local line = math.max(3, vim.api.nvim_win_get_cursor(win)[1])
+      local cell = (view.board_col - fit.first) * (fit.each + GAP) + 1
+      pcall(vim.api.nvim_win_set_cursor, win, { line, math.max(0, vim.fn.virtcol2col(win, line, cell) - 1) })
     end
   end
 end
@@ -569,8 +578,10 @@ end
 -- H and L: the task a column left or right, the only thing that moves one. L into Done resolves its open
 -- threads, prompting nobody; H out opens again the ones that move resolved, and no others.
 local function move_status(view, direction)
-  local task = focused_task(view)
-  if not task then
+  local task, row = focused_task(view)
+  if not row then
+    return toast("this column has no tasks: C makes one")
+  elseif not task then
     return toast("a thread on no task isn't moved: A attaches it to a task, or makes one of it")
   end
   local to = M.COLUMNS[INDEX[task.column] + direction]
@@ -582,8 +593,10 @@ local function move_status(view, direction)
 end
 
 local function set_priority(view, value)
-  local task = focused_task(view)
-  if not task then
+  local task, row = focused_task(view)
+  if not row then
+    return toast("this column has no tasks: C makes one")
+  elseif not task then
     return toast("priority is a task's: this thread is on none")
   end
   tasks.set_priority(view.repo, task.id, value)
@@ -601,6 +614,7 @@ local function move_focus(view, column_step, row_step)
     local index = math.max(1, math.min(view.board_index or 1, #list))
     view.board_col, view.board_index = to, index
     view.board_focus = list[index] and list[index].key or nil
+    view.board_empty_col = #list == 0 and to or nil
   else
     local list = focusable(columns[view.board_col or 0])
     local index = (view.board_index or 1) + row_step
@@ -722,6 +736,7 @@ local function search(view)
   view.board_query = view.board_query or ""
   local function redraw()
     view.board_columns = nil
+    view.board_empty_col = nil
     M.draw(view)
     vim.cmd.redraw()
   end
@@ -841,8 +856,10 @@ function M.bind(view)
   local actions = require("isovim.task_view").actions
   for _, key in ipairs(require("isovim.task_view").KEYS) do
     on(key[1], function()
-      local task = focused_task(view)
-      if not task then
+      local task, row = focused_task(view)
+      if not row then
+        return toast("this column has no tasks: C makes one")
+      elseif not task then
         return toast("that's a task's: this thread is on none (A attaches it to one, or makes one of it)")
       end
       actions[key[2]](view.repo, task)
