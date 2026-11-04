@@ -38,10 +38,10 @@ end
 M.shared = { "msg", "ls", "status", "peek", "wait", "find", "transcript", "browser", "listen", "checkhealth",
   "version", "update", "pilot", "fork", "spawn", "promote", "restart", "bug", "link", "queue" }
 M.only = {
-  worker = { "wt", "setup", "teardown", "run", "page", "thread" },
-  router = { "surface", "page", "thread", "pr", "rm", "wt", "setup", "teardown", "run" },
-  ["repo-root"] = { "answer", "raise", "rm", "page", "thread" },
-  root = { "answer", "raise", "rm", "page", "thread" },
+  worker = { "wt", "setup", "teardown", "run", "page", "thread", "task" },
+  router = { "surface", "page", "thread", "task", "pr", "rm", "wt", "setup", "teardown", "run" },
+  ["repo-root"] = { "answer", "raise", "rm", "page", "thread", "task" },
+  root = { "answer", "raise", "rm", "page", "thread", "task" },
 }
 
 M.header = [=[
@@ -706,6 +706,27 @@ M.list = {
 -- puts the role in.
 local SURFACE_FLAGS = { ["--name"] = "<text>", ["--repo"] = "<repo>" }
 M.role_actions = {
+  task = { name = "task", module = "surfaces",
+    subs = {
+      ls = {},
+      show = { args = { "<text>" } },
+      link = { args = { "<text>", "<text>", "<text>..." } },
+      unlink = { args = { "<text>", "<text>" } },
+    },
+    summary = "read the board's tasks, and link a PR or Linear ticket to one",
+    help = [=[
+       iso task ls                   the repo's tasks: the board's cards. Only the user makes or
+                                     changes one, and no agent can
+       iso task show <id>            a task (k3): its description, threads, relations, PRs and
+                                     tickets, and its log
+       iso task link <id> <ref> [title...]
+                                     link a PR (URL, owner/repo#n, #n) or Linear ticket (URL, or
+                                     ABC-123, with its title if you know it). It shows in the
+                                     task's view and log, moves nothing and tells nobody. A PR
+                                     registered during your turn on a thread of a task goes on
+                                     it by itself
+       iso task unlink <id> <ref>    take one off]=],
+  },
   raise = { name = "raise", module = "surfaces",
     args = { "<question>", "<text>..." },
     summary = "give a question root mode has you decide to the user, with a one-line why",
@@ -796,12 +817,13 @@ M.role_actions = {
     help = [=[
        iso link <thing>              print the iso: address of an agent (owner/repo/aN or aN),
                                      a PR (#12, owner/repo#12 or its URL), a thread (t3), a
-                                     page or surface (its name) or a path; a web page's URL
+                                     task (k3), a page or surface (its name) or a path; a web page's URL
                                      (localhost:3000 too) is its own address. Written in a post,
                                      a thread, a page or a PR comment, isovim draws it as a
                                      chip (glyph, label, state) that <Tab> or gf opens:
                                      iso:agent/<owner>/<repo>/aN,
                                      iso:thread/<owner>/<repo>#t3,
+                                     iso:task/<owner>/<repo>#k3,
                                      iso:pr/<owner>/<repo>#12,
                                      iso:surface/<owner>/<repo>/<name>,
                                      iso:page/<owner>/<repo>/<name>[#c4], iso:file/<path>]=],
@@ -893,8 +915,9 @@ M.role_actions = {
                                      at the top, and each rename says what it was
        iso thread board              the board, by column: Backburner, Working, Checking,
                                      Done, each with its tasks and their threads. A task is
-                                     the user's: they alone make, rename and move one, and
-                                     no agent can. During your turn on a thread with a task,
+                                     the user's: they alone make and change one, and no agent
+                                     can (iso task reads them, and links a PR or ticket
+                                     to one). During your turn on a thread with a task,
                                      thread new lands on that task, beside it. There are no
                                      subthreads
        iso thread ls [--all]         the repo's open threads, each's task if any (--all:

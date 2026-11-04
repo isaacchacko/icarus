@@ -276,6 +276,7 @@ function M.new(repo, title, by, task)
   append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open" })
   if task then
     append(repo, id, { kind = "task", on = task, by = by })
+    require("isovim.board_tasks").note_thread(repo, task, id, true, by)
   end
   return id
 end
@@ -409,7 +410,12 @@ function M.set_task(repo, id, task, by)
   if not entries then
     return nil, err
   end
+  local tasks = require("isovim.board_tasks")
+  tasks.note_thread(repo, M.summary(entries).task, id, false, by)
   append(repo, id, { kind = "task", on = task, by = by })
+  if task ~= "none" then
+    tasks.note_thread(repo, task, id, true, by)
+  end
   return true
 end
 

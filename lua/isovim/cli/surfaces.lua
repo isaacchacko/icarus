@@ -607,12 +607,84 @@ function M.thread(args)
   surfaces.scan(repo)
 end
 
+-- iso <role> task ls|show|link|unlink: reading the board's tasks (isovim.board_tasks), the caller's repo's,
+-- and any role linking a PR or ticket to one. There's no verb to make or change a task otherwise: those
+-- are the user's keys.
+function M.task(args)
+  local tasks = require("isovim.board_tasks")
+  local threads = require("isovim.threads")
+  local sub = table.remove(args, 1)
+  local usage = "usage: iso <role> task ls | show <id> | link <id> <pr or ticket> [title...] | unlink <id> <pr or ticket>"
+  local repo = my_repo(nil)
+  local all = tasks.read(repo)
+  local me = require("isovim.cli.roles").caller() or "user"
+  if sub == "ls" then
+    local ids = vim.tbl_keys(all)
+    table.sort(ids, function(a, b)
+      return (tonumber(a:sub(2)) or 0) < (tonumber(b:sub(2)) or 0)
+    end)
+    if #ids == 0 then
+      out(repo .. " has no tasks")
+    end
+    for _, id in ipairs(ids) do
+      out(tasks.summary_line(repo, all[id]))
+    end
+  elseif sub == "show" then
+    local id = args[1] or fail(usage)
+    local task = all[id] or fail(("%s has no task %s"):format(repo, id))
+    out(tasks.summary_line(repo, task))
+    out(("made %s, updated %s"):format(os.date("%Y-%m-%d %H:%M", task.at), os.date("%Y-%m-%d %H:%M", task.last_at)))
+    if vim.trim(task.description or "") ~= "" then
+      out("\n" .. task.description)
+    end
+    out("\nThreads:")
+    for _, info in ipairs(threads.list(repo, true)) do
+      if info.task == id then
+        out(("  %s  %s  %s"):format(info.id, info.title, info.status))
+      end
+    end
+    for name, list in pairs({ blocks = task.blocks, ["blocked by"] = task.blocked_by, ["related to"] = task.related }) do
+      if #list > 0 then
+        out(("%s: %s"):format(name, table.concat(list, ", ")))
+      end
+    end
+    if #task.links > 0 then
+      out("\nLinks:")
+      for _, link in ipairs(task.links) do
+        out(("  %s%s (linked by %s)"):format(link.ref, link.title and ("  " .. link.title) or "", link.by or "?"))
+      end
+    end
+    out("\nActivity:")
+    for _, each in ipairs(task.activity) do
+      out(("  %s  %s %s"):format(os.date("%m-%d %H:%M", each.at), each.by, each.what))
+    end
+  elseif sub == "link" then
+    local id, ref = args[1] or fail(usage), args[2] or fail(usage)
+    local stored, err = tasks.link(repo, id, ref, table.concat(vim.list_slice(args, 3), " "), me)
+    if not stored then
+      fail(err)
+    end
+    out(("%s linked to %s; nothing else changes, and nobody's told"):format(stored, id))
+    surfaces.scan(repo)
+  elseif sub == "unlink" then
+    local id, ref = args[1] or fail(usage), args[2] or fail(usage)
+    local stored, err = tasks.unlink(repo, id, ref, me)
+    if not stored then
+      fail(err)
+    end
+    out(("%s unlinked from %s"):format(stored, id))
+    surfaces.scan(repo)
+  else
+    fail(usage)
+  end
+end
+
 -- iso <role> link <thing>: the iso: address of an agent, a PR, a thread, a page or surface, or a
 -- path, to write in a post, a page or a surface link (isovim.links).
 function M.link(args)
   local thing = table.concat(args, " ")
   if vim.trim(thing) == "" then
-    fail("usage: iso <role> link <agent|aN|#12|owner/repo#12|t3|page or surface name|path>")
+    fail("usage: iso <role> link <agent|aN|#12|owner/repo#12|t3|k3|page or surface name|path>")
   end
   local ok, repo = pcall(my_repo, nil)
   local address, err = require("isovim.links").address(thing, ok and repo or nil)

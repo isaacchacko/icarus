@@ -389,6 +389,10 @@ local function jump_items(hidden)
     if board then
       rows[#rows + 1] = { kind = "surface", surface = board, repo_key = key, group_key = key, name = board.name, depth = 0 }
     end
+    for id in pairs(require("isovim.board_tasks").read(key)) do
+      local task = surfaces.task_entry(key, id)
+      rows[#rows + 1] = { kind = "surface", surface = task, repo_key = key, group_key = key, name = id, depth = 0 }
+    end
   end
   for i, row in ipairs(rows) do
     if jumpable(row) then

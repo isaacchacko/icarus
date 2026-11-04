@@ -1274,8 +1274,7 @@ local function update_related(chat)
   end
   local on = task and require("isovim.board_tasks").read(chat.ws)[task]
   if on then
-    local text = ("▣ task  %s  %s"):format(on.id, on.title)
-    rows[#rows + 1] = { text = text, lead = #text, chips = {} }
+    rows[#rows + 1] = row("▣ task  ", { ("iso:task/%s#%s"):format(chat.ws, on.id) })
     if #siblings > 0 then
       rows[#rows + 1] = row("⇄ beside it  ", vim.tbl_map(thread_address, siblings))
     end

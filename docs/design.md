@@ -343,41 +343,67 @@ host; General, Root and Terminals have none, and starting one there says why.
   and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
   view opens with its composer asking for the title (`<CR>`), then your first post.
-- **Tasks:** a task is its own thing, and only you make one ("i am the only person who can create
-  tasks"). `iso/threads/tasks.jsonl`, appended to (isovim.board_tasks): `task {id: k1, title, by, at}`,
-  then `renamed`, `column {on, moved?}`, `priority {value}` and `deleted` entries. No agent can make,
-  rename, move or delete one: there's no command for it at any role, only the board's keys. Agents
-  read them, in `iso <role> thread board`, `thread ls`, `thread show` and the tag of a thread's prompt,
-  `[thread <repo>#t3 "<title>" · task k1 "<title>"]`. A thread is on one task at most, by a `task`
-  entry in its own file. There are no subthreads ("there are no such things as subthreads"): a thread
-  made from a thread on a task, by `thread new` in any role's turn on it or `t` in its conversation,
-  lands on the same task, beside it, without being asked. A thread on no task stays on none, as it
-  can't invent one, so one a router opens by itself or an issue's has none. Old `parent`, `column` and
-  `priority` entries in a thread's file are ignored, and nothing migrated: every thread starts on no task.
+- **Tasks:** a task is its own thing with the traits of a Linear issue, and only you make or change one
+  ("i am the only person who can create tasks", "tasks should be an entity with same traits as linear").
+  `iso/threads/tasks.jsonl`, appended to (isovim.board_tasks): an id (`k1`), title, markdown
+  description, status (the board's columns), priority (none, urgent, high, medium, low), assignee (you or
+  an agent, a label that starts and tells nobody), labels with colors, per repo, due date, estimate,
+  relations between tasks (blocks, blocked by, related), PRs and Linear tickets, created and updated
+  times, and an activity log of each change, drawn from the entries themselves. Left out on purpose:
+  cycles and projects (the repo is the project), sub-issues (threads fill that) and comments (a thread
+  is the conversation; the log records changes). No agent can make or change one: there's no command
+  for it at any role, only your keys. Agents read them, with `iso <role> task ls` and `task show <id>`,
+  `thread board`, `thread ls`, `thread show` and the tag of a thread's prompt, `[thread <repo>#t3 "<title>"
+  · task k1 "<title>"]`.
+- **Threads on tasks:** a thread is on one task at most, by a `task` entry in its own file. There are no
+  subthreads ("there are no such things as subthreads"): a thread made from a thread on a task, by
+  `thread new` in any role's turn on it or `t` in its conversation, lands on the same task, beside it,
+  without being asked. A thread on no task stays on none, as it can't invent one, so one a router opens by
+  itself or an issue's has none. Old `parent`, `column` and `priority` entries in a thread's file are
+  ignored, and nothing migrated: every thread starts on no task.
+- **PRs and tickets on a task:** the one thing agents may change, as they make most of them: `iso <role>
+  task link <id> <ref> [title]` and `task unlink`, for any role, in the log with who did it. `K` in a task's
+  view or on its card does the same. A PR is a URL, `owner/repo#n` or `#n`, registered in the repo too so its
+  row has the state the PRs surface has, and opens as a PR's link does (the browser, `o` its view here).
+  A PR registered with `iso <role> pr` during a turn on a thread of a task goes on that task by itself. A
+  ticket is its URL or identifier (`ABC-123`) and its title when told, opening in the browser, by the
+  workspace of any URL the repo's tasks hold, else Linear's own `linear.app/issue/<id>`. There's no Linear
+  client and so no live state for tickets, only what's stored; ticket data stays in `iso/`. Linking
+  moves nothing and tells nobody.
+- **A task's view** (isovim.task_view): `<CR>` on its card, its sidebar row or its `iso:task/<repo>#k1` chip
+  (`iso <role> link k1` prints it), or `<leader><leader>`, opens it as a tab in the main window like any
+  surface, listed so `<leader>,` has it too. Its title and description are the body, drawn as markdown,
+  then its properties in a compact block, its threads where Linear has sub-issues, relations, PRs,
+  Linear, and activity, newest first. `i` (or `<CR>` on the description) makes the same buffer the
+  description alone, in place: vim's keys work till `<Esc>` in normal mode saves and goes back, `:w` saves,
+  and leaving keeps what's typed. Its keys are the card's: `s` status, `p` priority, `a` assignee, `t`
+  labels (a new one takes a name and a color), `D` due date (`2026-11-30`, `today`, `tomorrow`, `+3`), `e`
+  estimate, `r` rename, `n` a new thread, `R` relations, `K` PRs and tickets, as Linear's where they don't
+  clash: `l` is the board's column to the right, so labels are `t`. `<CR>` on a row opens it, `?` lists them.
 - **The board:** a project's tasks as a kanban board (isovim.thread_board): one view, one buffer drawn
   in four columns, Backburner, Working, Checking and Done, opened by `<CR>` on the Threads header
   (`<Tab>` still folds it), `<leader>iO` or `<leader><leader>`, redrawn as threads and tasks change.
   Column heads are the winbar, so they stay as it scrolls. A card is a task: icon, id, what its threads
-  are up to rolled up, priority, wrapped title and how far along it is (`2/3 done`, `✓ all 3 resolved`).
-  Under it its threads are rows you can focus, open ones first, each with its marks. Within a column,
-  priority first, then most recent. Narrow, the columns shrink to 28 cells, then as many as fit show,
-  moving as the focus does, so the layout never wraps. Motion is yours: a task's column changes only
-  when you move it with `H` or `L`, on the card or any of its rows; columns belong to tasks alone. No
-  post, state change or agent moves one, so a task whose threads all resolved stays put, and the card
-  says so. A new task lands in Working. `L` into Done resolves its open threads, prompting nobody, and
-  records which on the column entry; `H` out opens those again, not any others. Backburner keeps its
-  threads out of the Inbox, a new post only marking them, but for a question waiting, as its asker is
-  blocked. As columns say nothing of state, marks do, in any column: unread `●`, your turn, a question
-  `?`, an agent working, resolved `✓`, a card that needs you bordered in the warning color.
+  are up to rolled up, priority, wrapped title, how far along it is (`2/3 done`, `✓ all 3 resolved`),
+  assignee, due date (red once past), estimate, how many PRs and tickets, and labels. Under it its
+  threads are rows you can focus, open ones first, each with its marks. Within a column, priority first,
+  then most recent. Narrow, the columns shrink to 28 cells, then as many as fit show, moving as the
+  focus does, so the layout never wraps. Motion is yours: a task's column changes only by you, with `H` or
+  `L` on the card or any of its rows, or `s`; columns belong to tasks alone. No post, state change or
+  agent moves one, so a task whose threads all resolved stays put, and the card says so. A new task lands
+  in Working. Into Done resolves its open threads, prompting nobody, and records which on the column
+  entry; out of it opens those again, not any others. Backburner keeps its threads out of the Inbox, a
+  new post only marking them, but for a question waiting, as its asker is blocked. As columns say
+  nothing of state, marks do, in any column: unread `●`, your turn, a question `?`, an agent working,
+  resolved `✓`, a card that needs you bordered in the warning color.
   Open threads on no task are slim rows under a **No task** group at the top of Working, which `H` and
-  `L` don't move; `C` on one makes a task of its title and puts it there, and `a` picks a task for it
+  `L` don't move; `C` on one makes a task of its title and puts it there, and `A` picks a task for it
   (or moves a thread between tasks). Resolved, they aren't on the board, but stay in the sidebar and
-  `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` the task's priority as Linear's, `C` new
-  task, `n` a new thread on the task (the usual path, so a title alone reaches the router), `a` attach,
-  `r` rename the task, `d` delete it after asking, its threads kept on no task, `<CR>` on a task folds
-  its threads and on a thread opens it, `/` search as you type, `<Esc>` clear, `gg G`, `?`. In the
-  sidebar, Threads are grouped under a dim row per task that has any listed, `<CR>` on it opening the
-  board there, and those on no task come after.
+  `thread ls --all`. Keys: `hjkl` move, `H L` status, `0-4` priority, `C` new task, `A` attach, `d` delete
+  the task after asking, its threads kept on no task, `<CR>` opens a task or thread, `z` folds a task's
+  threads, `/` searches ids, titles, labels and assignees as you type, `<Esc>` clears, `gg G`, `?`, and the
+  view's keys above. In the sidebar, Threads are grouped under a dim row per task that has any listed,
+  `<CR>` on it opening the task, and those on no task come after.
 - **Tracking work:** threads and the board are how work is tracked. They replaced the old Task Board: a
   repo's old `iso/tasks.md` moved once to `iso/archive/tasks-<date>.md`, out of what's scanned, kept.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many

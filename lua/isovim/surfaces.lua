@@ -757,6 +757,18 @@ function M.threads_entry(key, empty)
     sig = "", error_file = "", file = threads.dir(repo) }
 end
 
+-- A task's own view (isovim.task_view), a view of isovim's own: nil with no such task.
+function M.task_entry(key, id)
+  local repo = canon(key)
+  local tasks = require("isovim.board_tasks")
+  local task = tasks.read(repo)[id]
+  if not task then
+    return nil
+  end
+  return { repo = repo, name = id, base = "tasks/" .. id, type = "task", title = task.title, column = task.column, needs_you = false,
+    sig = "", error_file = "", file = tasks.file(repo) }
+end
+
 -- Every thread of the repo as a row, marked unread as the sidebar's rows are, by id.
 function M.thread_rows(repo)
   repo = canon(repo)
@@ -1565,8 +1577,8 @@ function M.open(entry)
   if entry.error then
     vim.notify(("%s: %s"):format(entry.base, entry.error), vim.log.levels.WARN)
   end
-  if entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" then
-    -- Drawn by isovim: its PRs, its decisions, or its board.
+  if entry.type == "prs" or entry.type == "decisions" or entry.type == "threads" or entry.type == "task" then
+    -- Drawn by isovim: its PRs, its decisions, its board or a task of it.
     require("isovim.surface_view").open(entry)
   elseif entry.type == "markdown" then
     -- Rendered, with an input box to the repo's router under it.

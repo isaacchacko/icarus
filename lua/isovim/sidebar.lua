@@ -246,7 +246,7 @@ local KINDS = {
     end,
     id = { "host", "repo_key", "section" },
   },
-  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter opens the board on it.
+  -- A task of the board's (isovim.board_tasks), a dim row over its threads. Enter opens its view.
   thread_task = {
     format = function(item, width)
       local row = { { "  " }, { item.guide, "NonText" }, { item.task_title, "Comment" } }
@@ -256,10 +256,9 @@ local KINDS = {
       if item.host then
         return Snacks.notify.info(("That's on %s; switch there with > (or <)"):format(item.host), { title = "isovim" })
       end
-      local board = M.surfaces().threads_entry(item.repo_key, true)
-      if board then
-        M.surfaces().open(board)
-        require("isovim.thread_board").focus(board.repo, item.task_id)
+      local task = M.surfaces().task_entry(item.repo_key, item.task_id)
+      if task then
+        M.surfaces().open(task)
       end
       M.refresh()
     end,
@@ -478,7 +477,12 @@ function M.surface_chunks(entry)
   local dim = (not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
   local title_hl = dim and "Comment" or nil
   local glyph, hl
-  if kind == "file" or kind == "folder" then
+  if kind == "task" then
+    local column = vim.iter(require("isovim.thread_board").COLUMNS):find(function(each)
+      return each.key == entry.column
+    end)
+    return { { column and column.glyph or "\u{f0db}", column and column.hl or "Special" }, { " " }, { entry.name .. "  ", "Comment" }, { title } }
+  elseif kind == "file" or kind == "folder" then
     glyph, hl = path_icon(entry.path or title, kind == "folder")
     if entry.exists == false then
       hl = "DiagnosticWarn"
@@ -2048,6 +2052,7 @@ function M.help()
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
   section("The board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
+  section("A task (<CR> on its card, <leader><leader>)", require("isovim.task_view").help_keys())
   section("A surface's view (markdown, a page, the PRs, a question)", {
     { "u", "mark it read if it's holding your attention, else unread until you open it again (a waiting question or a page awaiting your reply stays, and says so; a file's u is vim's undo: U on its row)" },
   })

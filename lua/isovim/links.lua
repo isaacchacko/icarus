@@ -2,6 +2,7 @@
 -- words can point at what they mention and you go there with <Tab>:
 --   iso:agent/<owner>/<repo>/aN          an agent's chat (root/aN, general/aN too)
 --   iso:thread/<owner>/<repo>#t3          a thread
+--   iso:task/<owner>/<repo>#k3            a task of the board's
 --   iso:pr/<owner>/<repo>#12              a PR, on GitHub; o instead opens its view here
 --   iso:surface/<owner>/<repo>/<name>     a surface (the PRs surface is PRs)
 --   iso:page/<owner>/<repo>/<name>[#c4]   a page, at a comment
@@ -93,7 +94,7 @@ function M.parse(addr)
   if kind == "agent" then
     local ws, id = rest:match("^(.+)/(a%d+)$")
     return ws and { kind = kind, ws = ws, id = id }
-  elseif kind == "thread" or kind == "pr" then
+  elseif kind == "thread" or kind == "pr" or kind == "task" then
     local repo, id = rest:match("^(.+)#(%w+)$")
     return repo and { kind = kind, repo = repo:lower(), id = id }
   elseif kind == "surface" or kind == "page" then
@@ -166,6 +167,17 @@ function M.resolve(addr)
       status_hl = info.status == "open" and "DiagnosticOk" or "Comment",
       open = function()
         require("isovim.acp.chat").open_thread(p.repo, p.id)
+      end }
+  elseif p.kind == "task" then
+    local entry = require("isovim.surfaces").task_entry(p.repo, p.id)
+    if not entry then
+      return nil, ("%s has no task %s"):format(p.repo, p.id)
+    end
+    local chunk = require("isovim.sidebar").surface_chunks(entry)[1]
+    return { glyph = chunk[1], hl = chunk[2], label = ("%s %s"):format(p.id, entry.title),
+      status = require("isovim.board_tasks").COLUMN_NAMES[entry.column], status_hl = "Comment",
+      open = function()
+        require("isovim.surfaces").open(entry)
       end }
   elseif p.kind == "pr" then
     local url = ("https://github.com/%s/pull/%s"):format(p.repo, p.id)
@@ -678,7 +690,7 @@ function M.attach(buf, write, opts)
 end
 
 -- The address of a thing named as you'd say it: an agent (owner/repo/aN, or aN in repo), a PR
--- (#12, 12, owner/repo#12 or its URL), a thread (t3), a page or surface's name, or a path.
+-- (#12, 12, owner/repo#12 or its URL), a thread (t3), a task (k3), a page or surface's name, or a path.
 ---@return string? address, string? err
 function M.address(thing, repo)
   thing = vim.trim(thing or "")
@@ -711,6 +723,9 @@ function M.address(thing, repo)
   if thing:match("^t%d+$") and repo and vim.uv.fs_stat(require("isovim.threads").file(repo, thing)) then
     return ("iso:thread/%s#%s"):format(repo, thing)
   end
+  if thing:match("^k%d+$") and repo and require("isovim.board_tasks").read(repo)[thing] then
+    return ("iso:task/%s#%s"):format(repo, thing)
+  end
   local path = vim.fs.normalize(vim.fn.fnamemodify(vim.fn.expand(thing), ":p")):gsub("(.)/$", "%1")
   if vim.uv.fs_stat(path) then
     return "iso:file/" .. path:gsub("^/", "")
@@ -723,7 +738,7 @@ function M.address(thing, repo)
       return ("iso:%s/%s/%s"):format(entry.type == "page" and "page" or "surface", repo, entry.name)
     end
   end
-  return nil, ("%s isn't an agent, PR, thread, page, surface or path isovim knows"):format(thing)
+  return nil, ("%s isn't an agent, PR, thread, task, page, surface or path isovim knows"):format(thing)
 end
 
 return M

@@ -172,7 +172,15 @@ function commands.pr(args)
   end
   local ws = resolve(args[1])
   local url = args[2] and prs.normalize(args[2]) or fail("usage: iso pr <ws> <pr url|owner/repo#n>")
-  store.add_pr(ws.id, url, caller_address())
+  local by = caller_address()
+  store.add_pr(ws.id, url, by)
+  -- During a turn on a thread of a task, it goes on that task.
+  local threads = require("isovim.threads")
+  local turn = by and not store.is_pseudo(ws.id) and threads.turn_thread(ws.id, by)
+  local task = turn and threads.related(ws.id, turn)
+  if task and require("isovim.board_tasks").link(ws.id, task, url, nil, by) then
+    io.stderr:write(("iso: linked to task %s, as %s, the thread of this turn, is on it\n"):format(task, turn))
+  end
   tui("require('isovim').refresh()")
 end
 
