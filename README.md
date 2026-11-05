@@ -1,6 +1,6 @@
 # icarus
 
-Claude Code chats in nvim, stripped down from isovim. `icarus` (or `ica`) opens a sidebar of your chats, newest first, each marked working, idle or needs you, beside a home page where `n` starts a new chat. Every chat is Claude over ACP, drawn the way Claude Code draws its own screen, in a real nvim buffer.
+Claude Code chats in nvim, stripped down from isovim. `icarus` (or `ica`) opens on a home page that's only "press n for a new chat". Once a chat is open, a sidebar beside it lists your chats, newest first, each marked working, idle or needs you. Every chat is Claude over ACP, drawn the way Claude Code draws its own screen, in a real nvim buffer.
 
 ![icarus: the sidebar of chats, one waiting on a permission, its chat on the right](docs/screenshot.png)
 
@@ -19,7 +19,7 @@ icarus
 
 ## Use
 
-- **Home**: `n` starts a new chat in the dir `icarus` was started in.
+- **Home**: the whole screen, no sidebar. `n` starts a new chat in the dir `icarus` was started in.
 - **Sidebar**: `<CR>` opens the chat under the cursor (home on the top line), `n` starts a new one.
 - **Chat**: type in the composer under it; `<CR>` sends (in insert mode too, `<S-CR>` for a new line), `<C-c>` interrupts. A prompt sent while Claude works waits its turn. A permission Claude asks for shows as its numbered box: type the number and `<CR>`, or `<CR>` on an option. `za` opens or collapses a tool call's output or a thought.
 
@@ -27,8 +27,8 @@ Chats run while icarus does, in bypassPermissions mode. Quitting stops them; ope
 
 ## Files
 
-- `init.lua`, `bin/icarus`: the config and the launcher.
-- `lua/icarus/init.lua`: the layout, sidebar on the left and home or a chat beside it.
+- `init.lua`, `bin/icarus`: the config (it only loads icarus) and the launcher.
+- `lua/icarus/init.lua`: the layout (home alone, or a chat with the sidebar on its left) and the options.
 - `lua/icarus/chats.lua`: the list of chats (`stdpath("data")/chats.json`) and their status.
 - `lua/icarus/sidebar.lua`, `lua/icarus/landing.lua`: the sidebar and home.
 - `lua/icarus/acp/session.lua`: one chat's ACP connection; `client.lua` and `transport.lua` are its JSON-RPC over stdio, `adapter.lua` installs and starts claude-agent-acp, `imports.lua` expands your CLAUDE.md `@imports`, which the adapter doesn't.

@@ -1,6 +1,6 @@
 -- Your chats: each a record {id, cwd, created, title?, session?} kept in stdpath("data")/chats.json,
 -- and a status while it's open: working, idle, or needs you (a permission waits on you). Every
--- change fires User IcarusChats, which the sidebar redraws on.
+-- change fires User IcarusChats.
 local M = {}
 
 local FILE = vim.fn.stdpath("data") .. "/chats.json"

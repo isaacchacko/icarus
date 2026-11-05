@@ -1,6 +1,6 @@
 -- Watches icarus's own source, lua/icarus/ and the directories under it, and swaps in new code
 -- without a restart: every icarus module is unloaded, this one included, and setup runs again with
--- reload = true, which binds the sidebar, home and open chats to the new code. A file that doesn't
+-- reload = true, which binds home and open chats to the new code. A file that doesn't
 -- compile, or a setup that fails, keeps the old code, and the next change tries again. A save or a
 -- git pull fires many events: they're taken together, once git is done with its index. The watchers
 -- live in _G, so a reload of this file closes the old ones.
