@@ -3583,7 +3583,7 @@ end
 function M.dismiss_thread()
   local chat = by_buf(vim.api.nvim_get_current_buf())
   local entry = chat and chat.thread and thread_surface(chat)
-  if entry and (not entry.resolved or entry.needs_you) then
+  if entry and (not entry.resolved or entry.resolved_unread) then
     require("isovim.surfaces").mark_read(entry)
   end
 end

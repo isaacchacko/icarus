@@ -76,7 +76,7 @@ local function needs_them(entry)
 end
 
 local function unread_of(entry)
-  return entry.new_reply or entry.parked_unread or entry.marked_unread or (entry.resolved and entry.needs_you)
+  return entry.new_reply or entry.parked_unread or entry.marked_unread or entry.resolved_unread
 end
 
 -- The board's rows by column, in order: a task {task, threads, done}, a thread on no task {entry}, or

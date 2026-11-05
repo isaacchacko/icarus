@@ -487,9 +487,12 @@ host; General and Terminals have none, and starting one there says why.
   `working {state: end, died: true}`. That thread is your turn whatever the turn had marked, and says
   the router stopped during it, since it may not have answered; a retry of the turn clears it.
 - **Resolved by an agent:** so a thread doesn't quietly disappear, one an agent resolves (`tell` on
-  its `resolved` entry) is unread until you open it. It's in the repo's and host's Inbox and in
-  Threads, even past the last 5, its row `● resolved: <outcome>`; opening it, `U` or `D` clears it,
-  and it joins the resolved list. It isn't your turn, as you needn't reply. Opening any resolved
+  its `resolved` entry) is unread until you open it, in Threads, even past the last 5, its row
+  `● resolved: <outcome>` and `● resolved` on the section's head; opening it, `U` or `D` clears it, and
+  it joins the resolved list. It doesn't need you, so it isn't in the repo's or host's Inbox, their
+  counts or `<leader>in`, nor under Unread. An agent's later post on it, unless it's a turn's
+  closing word or `--no-reply`, may need you, so that goes in both Inboxes until you read it, and
+  reopening it ends this. Opening any resolved
   thread lands in normal mode on its outcome's box. One you resolved isn't marked, and the router
   isn't told of any of this. Threads resolved before this have no `tell`, so aren't marked. Nor is one
   an agent resolves when a root's answer is the last word: its last post is the root's, with no

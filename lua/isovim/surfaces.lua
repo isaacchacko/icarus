@@ -54,6 +54,7 @@ local M = {}
 ---@field note? string link: the router's one line about it
 ---@field marked_unread? boolean you marked it unread (M.toggle_read): it waits on you until you open it
 ---@field new_reply? boolean an open thread with a post you haven't read, which alone doesn't need you
+---@field resolved_unread? boolean a resolved thread you haven't read the end of, which alone doesn't need you
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
@@ -714,8 +715,11 @@ function M.threads(repo, all)
   table.sort(resolved, function(a, b)
     return (a.resolved_at or 0) > (b.resolved_at or 0)
   end)
+  local function late_post(info)
+    return (info.late_post or 0) > (seen[info.id] or 0)
+  end
   local function unread(info)
-    return info.resolved_seq ~= nil and info.resolved_seq > (seen[info.id] or 0)
+    return late_post(info) or (info.resolved_seq or 0) > (seen[info.id] or 0)
   end
   local listed = vim.tbl_filter(unread, resolved)
   vim.list_extend(listed, vim.list_slice(vim.tbl_filter(function(info)
@@ -733,8 +737,9 @@ function M.threads(repo, all)
       created = info.at or 0,
       posts = info.posts,
       last_glyph = poster_glyph(info.last_by),
-      -- Unread till opened, unless it's on the backburner: that's left the Inbox for good.
-      needs_you = unread(info) and not is_parked(info),
+      -- Marked till opened, not needing you, but for an agent's post since; on the backburner neither.
+      needs_you = late_post(info) and not is_parked(info),
+      resolved_unread = unread(info) and not is_parked(info),
       parked = is_parked(info) or nil,
       parked_unread = is_parked(info) and unread(info) or nil,
       resolved = true,
@@ -743,7 +748,7 @@ function M.threads(repo, all)
       task = task_of(info) and info.task or nil,
       task_title = task_of(info) and task_of(info).title or nil,
       last_at = info.last_at,
-      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s"):format(info.title, info.posts, tostring(info.outcome), task_sig(info))),
+      sig = vim.fn.sha256(("%s|%d|resolved|%s|%s|%s"):format(info.title, info.posts, tostring(info.outcome), tostring(unread(info)), task_sig(info))),
     }
   end
   return list
@@ -1375,7 +1380,7 @@ local function unmarkable(entry)
       or "it waits on you until it's answered: its asker is blocked on it"
   elseif entry.type == "decisions" then
     return "it's a log: nothing in it waits on you"
-  elseif entry.type == "thread" and entry.resolved and not entry.needs_you then
+  elseif entry.type == "thread" and entry.resolved and not entry.resolved_unread then
     return "it's resolved: r in it opens it again"
   elseif entry.type == "page" and (entry.waiting or 0) > 0 then
     return entry.waiting == 1 and "a comment here waits on your reply" or ("%d comments here wait on your reply"):format(entry.waiting)
@@ -1418,7 +1423,7 @@ function M.toggle_read(entry)
   local why = unmarkable(entry)
   if why then
     return vim.api.nvim_echo({ { why, "Comment" } }, false, {})
-  elseif entry.needs_you or entry.new_reply then
+  elseif entry.needs_you or entry.new_reply or entry.resolved_unread then
     return M.mark_read(entry)
   end
   mark_unread(entry)

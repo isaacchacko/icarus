@@ -12,8 +12,9 @@
 --                                                   no_reply: it needs nothing from the user (below);
 --                                                   keeps_wait: the turn that made it also marked a worker
 --   {kind = "resolved", by, outcome?, tell?, at}, {kind = "reopened", by, at}   tell: an agent resolved
---                                                   it, so it's unread until the user opens it; not
---                                                   on a root's answer, which the decision log takes
+--                                                   it, so it's marked unread, without needing them,
+--                                                   until they open it; not on a root's answer, which
+--                                                   the decision log takes
 --   {kind = "renamed", by, title, from?, at}        its title from then on, and what it was (posts keep
 --                                                   their tags); the header keeps the first, which stays shown
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
@@ -124,6 +125,10 @@ function M.summary(entries)
       info.posts = info.posts + 1
       info.last_by = entry.by
       info.root_answer = entry.root and entry or nil
+      -- After it's resolved, and not a turn's closing word on it: something new that may need the user.
+      if info.status == "resolved" and entry.by ~= "user" and not entry.no_reply and not info.working then
+        info.late_post = entry.seq
+      end
       if entry.by == "user" then
         info.root_posts, info.handed = 0, nil
       end
@@ -154,7 +159,7 @@ function M.summary(entries)
         info.bypass = nil
       end
     elseif entry.kind == "reopened" then
-      info.status, info.outcome, info.resolved_seq, info.root_answer = "open", nil, nil, nil
+      info.status, info.outcome, info.resolved_seq, info.root_answer, info.late_post = "open", nil, nil, nil, nil
     elseif entry.kind == "ask" or entry.kind == "answered" or entry.kind == "raised" then
       info.root_answer = nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then

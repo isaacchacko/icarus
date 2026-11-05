@@ -472,7 +472,7 @@ local SURFACE_GLYPHS = {
 function M.surface_chunks(entry)
   local kind = entry.type
   local title = entry.title or entry.name or "?"
-  local dim = (not entry.needs_you and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
+  local dim = (not entry.needs_you and not entry.resolved_unread and (entry.consumed or entry.answer ~= nil or entry.resolved or entry.parked))
   local title_hl = dim and "Comment" or nil
   local glyph, hl
   if kind == "task" then
@@ -541,7 +541,7 @@ function M.surface_chunks(entry)
       row[#row + 1] = { (entry.parked_unread and "  ● " or "  ") .. "backburner", "Comment" }
     elseif entry.resolved then
       local outcome = entry.outcome and vim.trim((entry.outcome:gsub("%s+", " ")))
-      row[#row + 1] = entry.needs_you and { "  ● resolved" .. (outcome and (": " .. outcome) or ""), "DiagnosticWarn" }
+      row[#row + 1] = entry.resolved_unread and { "  ● resolved" .. (outcome and (": " .. outcome) or ""), "DiagnosticWarn" }
         or { "  ✓ " .. (outcome or "resolved"), "Comment" }
     elseif (entry.pending or 0) > 0 then
       row[#row + 1] = { "  ? waiting on you", "DiagnosticWarn" }
@@ -1060,7 +1060,7 @@ local function group_sections(items, base, host, key, opts)
   end), on_you = vim.iter(threads):any(function(entry)
     return entry.waiting_on == "user"
   end), resolved_unread = vim.iter(resolved):any(function(entry)
-    return entry.needs_you
+    return entry.resolved_unread
   end) })
   local surfaces_list = vim.list_extend(boards, others)
   section("Surfaces", #surfaces_list, function()
@@ -2754,7 +2754,7 @@ M.actions = {
       return vim.api.nvim_echo({ { "D takes a thread out of the Inbox", "Comment" } }, false, {})
     elseif item.host then
       return Snacks.notify.info(("That's on %s; dismiss it there"):format(item.host), { title = "isovim" })
-    elseif thread.resolved and not thread.needs_you then
+    elseif thread.resolved and not thread.resolved_unread then
       return vim.api.nvim_echo({ { "it's resolved: it's not in the Inbox", "Comment" } }, false, {})
     end
     M.surfaces().mark_read(thread)
