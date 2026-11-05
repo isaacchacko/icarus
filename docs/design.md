@@ -665,7 +665,9 @@ connect in the background, at most every 30s, the chips drawn again when that ch
 - **Root mode:** a repo's root decides its Inbox's questions before they reach you, and is on top of its
   threads (see Threads). `iso rootmode medic|sentry|off <repo> [--task "<description>"]` sets it for a
   repo (`on` is medic), spawning a worker and promoting it if the role is empty. The modes differ only in how soon
-  the root hears of a thread on your turn; its questions, the cap on answers and `gr` are the same. There's no root above a repo: with root mode
+  the root hears of a thread on your turn; its questions, the cap on answers and `gr` are the same.
+  The root is told, in a message with the mode, whenever root mode comes on or changes mode, as it is
+  when it goes off. There's no root above a repo: with root mode
   off, no root, or in General, a question goes straight to you.
   - Questions aren't routed: each stays in its repo's Inbox. While root mode is on, its root decides it
     first, however it was asked: a router's surface question, an ACP agent's AskUserQuestion, a shell.

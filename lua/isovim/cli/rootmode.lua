@@ -35,10 +35,26 @@ local function send(address, text, from)
     { from = sender, kind = "from", id = stamp and stamp:match("(m%x+)%]$"), text = text })
 end
 
--- The --task text, as the root's first message.
-local function task_text(repo, task)
-  return ("Root mode is on for %s, and you are its root. Your task, as guidance (you decide what falls "
-    .. "outside it, and raise that to the user with iso root raise <question> <why>):\n\n%s"):format(repo, task)
+-- What a root is told as root mode comes on or changes mode: which, what that means for threads, and
+-- the --task text, if any.
+local function on_text(repo, mode, task)
+  local grace = require("isovim.config").thread_root_grace()
+  local text = ("Root mode is on for %s, in %s mode, and you are its root: you decide its Inbox's questions before "
+    .. "the user, and you're told of a thread on their turn %s."):format(repo, mode, mode == "sentry" and "as soon as it lands"
+    or ("once it has sat there for %d minutes"):format(grace))
+  if task then
+    text = text .. (" Your task, as guidance (you decide what falls outside it, and raise that to the user with iso "
+      .. "root raise <question> <why>):\n\n%s"):format(task)
+  end
+  return text
+end
+
+-- Tells the root what it's on; root mode stays set if it can't be reached now.
+local function tell_on(address, text)
+  local ok, err = c.try(send, address, text)
+  if not ok then
+    io.stderr:write(("iso: root mode: could not tell %s: %s\n"):format(address, err))
+  end
 end
 
 -- A repo from what was typed: owner/repo, or a dir in a repo.
@@ -92,8 +108,8 @@ local function on(repo, mode, task)
       entry.task, entry.mode = task or entry.task, mode
       rootmode.set(repo, entry)
     end
-    if task then
-      send(address, task_text(repo, task))
+    if task or switching then
+      tell_on(address, on_text(repo, mode, task))
     end
     out(("root mode is %s %s for %s: %s%s"):format(switching and "now" or "already", mode, repo, address, task and "; it has the task now" or ""))
     tell_waiting(repo, address)
@@ -103,12 +119,10 @@ local function on(repo, mode, task)
     return
   end
   address = require("isovim.cli.roles").holders("root", repo)[1]
-  local first = task and task_text(repo, task) or nil
+  local first = on_text(repo, mode, task)
   if address then
     rootmode.set(repo, { agent = address, mode = mode, task = task, since = os.time() })
-    if first then
-      send(address, first)
-    end
+    tell_on(address, first)
     out(("root mode is on for %s: %s, its root already, decides its Inbox before you now (%s)"):format(repo, address, mode))
   else
     -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
