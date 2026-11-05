@@ -960,7 +960,7 @@ M.GROUP = {
   end, "the next host" },
   { "x", function()
     sidebar().toggle_root_mode()
-  end, "root mode on or off for the project in focus" },
+  end, "root mode for the project in focus, off to medic to sentry to off" },
   { "j", function()
     require("isovim.jump").picker()
   end, "jump: a dir isovim keeps, one level at a time" },

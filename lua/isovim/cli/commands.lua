@@ -388,21 +388,27 @@ M.list = {
   },
   { name = "rootmode", module = "rootmode",
     audience = "user",
-    args = { "on|off", "host|<repo>" },
+    args = { "medic|sentry|on|off", "host|<repo>" },
     flags = { ["--task"] = "<text>" },
     summary = "put a repo's root in charge of clearing its Inbox",
     help = [=[
-       iso rootmode on|off <repo> [--task "<description>"]
+       iso rootmode medic|sentry|off <repo> [--task "<description>"]
                                      root mode: a root decides the Inbox's questions
                                      before they reach you, however they were asked;
                                      they're tagged root deciding, and need you only when it
                                      raises them, with its why
                                      (permission requests always do). It's told of each
-                                     new one, and on lists those waiting. on spawns a
-                                     worker over ACP and promotes it to root, or
-                                     uses the agent holding that role; --task is its first message, guidance it
-                                     narrows itself by. off puts every question not
-                                     decided yours; the root keeps its role]=],
+                                     new one, and turning it on lists those waiting. The
+                                     modes differ only in threads on your turn: medic tells
+                                     the root after thread_root_grace minutes (default 5),
+                                     sentry at once; on is medic. Both hold off while you're
+                                     drafting in it or have it open, an open one only until
+                                     it's sat for thread_root_grace with no key pressed.
+                                     Turning it on spawns a worker over ACP
+                                     and promotes it to root, or uses the agent holding that
+                                     role; --task is its first message, guidance it narrows
+                                     itself by. off puts every question not decided yours;
+                                     the root keeps its role]=],
   },
   { name = "verify", module = "messaging",
     args = { "<text>" },

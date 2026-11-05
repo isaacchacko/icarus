@@ -37,6 +37,9 @@ end
 -- of its agents run.
 function M.switcher_row(item, glyph, glyph_hl, label)
   local row = { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "‹ ", "Comment" }, { glyph, glyph_hl }, { " " }, { label, glyph_hl }, { " ›", "Comment" } }
+  if item.root_mode then
+    row[#row + 1] = { "  " .. item.root_mode, "Special" }
+  end
   if item.others > 0 then
     row[#row + 1] = { ("  +%d need you"):format(item.others), "DiagnosticWarn" }
   end
@@ -1262,6 +1265,7 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
         ws = g.spawn_ws,
         ws_name = g.name,
         running_mark = running_mark(g.agents),
+        root_mode = rootmode and rootmode.mode(g.key) or nil,
       })
       -- Its router, then its root, under the project's row whatever's folded, hidden or not; only
       -- a jump, which lists hidden agents when asked, leaves a hidden one out.
@@ -1975,7 +1979,7 @@ local LIST_KEYS = {
   { "d", "isovim_delete", "remove the agent, terminal, pinned path or surface (a file or folder one at once, what it names kept; one with content after y; the PRs hidden until they change; an open thread resolved, its posts kept), or archive the workspace" },
   { "R", "isovim_restart", "restart the agent (it resumes)" },
   { "m", "isovim_move", "send it to another host, picked from the peers: on the project's row, all its agents (the list follows it there); on an agent, that agent; on another host's agent, bring it here" },
-  { "x", "isovim_root_mode", "root mode on or off for the project (on a surface in the Inbox, its project)" },
+  { "x", "isovim_root_mode", "root mode for the project, off to medic to sentry to off (on a surface in the Inbox, its project)" },
   { "o", "isovim_open_port", "open its dev server (the port it listens on) in the browser, an agent's or a terminal's; on a link to a PR, its view here" },
   { "c", "isovim_changes", "its changes since its base" },
   { "f", "isovim_find", "find the agent that was on something, on any host (iso find)" },
@@ -2454,18 +2458,18 @@ function M.root_mode_scope(item)
   end
 end
 
--- x and <leader>ix: root mode on for the scope (iso rootmode on, which spawns its root if it has
--- none), or off when it's on. It runs in the background; a toast says how it went.
+-- x and <leader>ix: root mode for the scope, one step round off, medic, sentry (iso rootmode, which
+-- spawns its root if it has none). It runs in the background; a toast says how it went.
 ---@param item? table a sidebar row, else what's in focus
 function M.toggle_root_mode(item)
   if item and item.host then
-    return Snacks.notify.info(("That's on %s; turn root mode on there"):format(item.host), { title = "isovim" })
+    return Snacks.notify.info(("That's on %s; set root mode there"):format(item.host), { title = "isovim" })
   end
   local where = M.root_mode_scope(item)
   if not where then
     return Snacks.notify.info("Root mode is a repo's: General has no root", { title = "isovim" })
   end
-  local mode = require("isovim.rootmode").entry(where) and "off" or "on"
+  local mode = ({ medic = "sentry", sentry = "off" })[require("isovim.rootmode").mode(where)] or "medic"
   local label = where
   Snacks.notify.info(("Root mode %s for %s…"):format(mode, label), { title = "isovim" })
   vim.system({ panes.bin, "rootmode", mode, where }, { text = true }, require("isovim.safe").schedule_wrap("root mode's toggle", function(result)

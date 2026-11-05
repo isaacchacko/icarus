@@ -1,5 +1,5 @@
--- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode on <repo> has the
--- repo's root decide its Inbox's questions before they reach you: an agent spawned over ACP with the
+-- Root mode on the command line (isovim.rootmode keeps the state). iso rootmode medic|sentry <repo>
+-- (on is medic) has the repo's root decide its Inbox's questions before they reach you: an agent spawned over ACP with the
 -- root role, or the agent that holds it already, with --task "<description>" as its first
 -- message (guidance only: the root decides what's outside it and raises that to you). iso rootmode
 -- off makes what it hadn't decided yours.
@@ -68,7 +68,7 @@ local function known_clone(key)
   end
 end
 
-local USAGE = 'usage: iso rootmode on|off <repo> [--task "<description>"]'
+local USAGE = 'usage: iso rootmode medic|sentry|off <repo> [--task "<description>"]'
 
 -- Tells the repo's root of every question waiting in its Inbox, in one message, marking them told so
 -- its subscription (rootmode.listen) doesn't tell them again.
@@ -84,26 +84,32 @@ local function tell_waiting(repo, address)
   end
 end
 
-local function on(repo, task)
-  local address, mode = rootmode.route(repo)
+local function on(repo, mode, task)
+  local address, entry = rootmode.route(repo)
   if address then
+    local switching = rootmode.mode(repo) ~= mode
+    if task or switching then
+      entry.task, entry.mode = task or entry.task, mode
+      rootmode.set(repo, entry)
+    end
     if task then
-      mode.task = task
-      rootmode.set(repo, mode)
       send(address, task_text(repo, task))
     end
-    out(("root mode is already on for %s: %s%s"):format(repo, address, task and "; it has the task now" or ""))
+    out(("root mode is %s %s for %s: %s%s"):format(switching and "now" or "already", mode, repo, address, task and "; it has the task now" or ""))
     tell_waiting(repo, address)
+    if switching then
+      c.tui("require('isovim').refresh()")
+    end
     return
   end
   address = require("isovim.cli.roles").holders("root", repo)[1]
   local first = task and task_text(repo, task) or nil
   if address then
-    rootmode.set(repo, { agent = address, task = task, since = os.time() })
+    rootmode.set(repo, { agent = address, mode = mode, task = task, since = os.time() })
     if first then
       send(address, first)
     end
-    out(("root mode is on for %s: %s, its root already, decides its Inbox before you now"):format(repo, address))
+    out(("root mode is on for %s: %s, its root already, decides its Inbox before you now (%s)"):format(repo, address, mode))
   else
     -- A new agent spawned with the role, never promoted: its first session opens (session/new) with
     -- the role's prompt, which a resumed or reloaded session couldn't take as its system prompt.
@@ -118,10 +124,13 @@ local function on(repo, task)
       fail(err or "could not add the agent")
     end
     address = repo .. "/" .. agent.id
-    rootmode.set(repo, { agent = address, task = task, since = os.time() })
+    rootmode.set(repo, { agent = address, mode = mode, task = task, since = os.time() })
     c.ensure_running(c.resolve(repo), store.agent(repo, agent.id))
-    out(("root mode is on for %s: %s, a new root, decides its Inbox before you"):format(repo, address))
+    out(("root mode is on for %s: %s, a new root, decides its Inbox before you (%s)"):format(repo, address, mode))
   end
+  -- The first look at a repo's threads tells nothing, so that's now: it stays with threads already
+  -- waiting, not one landing before the root's supervisor next looks.
+  require("isovim.threads").for_root(repo, 0, 0, true)
   tell_waiting(repo, address)
   c.tui("require('isovim.surfaces').recheck() require('isovim').refresh()")
 end
@@ -150,20 +159,20 @@ local function off(repo)
   c.tui("require('isovim.surfaces').recheck() require('isovim').refresh()")
 end
 
--- iso rootmode on|off <repo> [--task "<description>"]
+-- iso rootmode medic|sentry|off <repo> [--task "<description>"]
 function M.rootmode(args)
   local task = option(args, "--task")
-  local mode, target = args[1], args[2]
-  if (mode ~= "on" and mode ~= "off") or not target or args[3] then
+  local mode, target = args[1] == "on" and "medic" or args[1], args[2]
+  if not vim.tbl_contains({ "medic", "sentry", "off" }, mode) or not target or args[3] then
     fail(USAGE)
   elseif task and mode == "off" then
-    fail("--task is for iso rootmode on")
+    fail("--task is for iso rootmode medic or sentry")
   end
   local repo = repo_of(target)
-  if mode == "on" then
-    on(repo, task and vim.trim(task) ~= "" and vim.trim(task) or nil)
-  else
+  if mode == "off" then
     off(repo)
+  else
+    on(repo, mode, task and vim.trim(task) ~= "" and vim.trim(task) or nil)
   end
 end
 

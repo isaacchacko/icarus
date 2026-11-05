@@ -376,6 +376,15 @@ local function marked_this_turn(info, by)
 end
 
 -- A post in the thread; no_reply: it needs nothing from the user, so it doesn't make it their turn.
+-- Says so if that left the thread on the user's turn, for a root with no grace (isovim.rootmode).
+local function publish_users_turn(repo, id)
+  local info = M.summary(M.read(repo, id) or {})
+  if info.waiting_on == "user" and not info.working then
+    local events = require("isovim.events")
+    events.publish(events.topic("thread", repo, id, "users_turn"), { repo = repo, id = id })
+  end
+end
+
 ---@param images? {path: string, mimeType: string}[]
 ---@return table? post, string? err
 function M.post(repo, id, by, text, images, no_reply)
@@ -387,8 +396,10 @@ function M.post(repo, id, by, text, images, no_reply)
   if text == "" and not (images and images[1]) then
     return nil, "a post needs text"
   end
-  return append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil,
+  local post = append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil,
     no_reply = no_reply or nil, keeps_wait = marked_this_turn(M.summary(entries), by) or nil })
+  publish_users_turn(repo, id)
+  return post
 end
 
 -- Whose turn it is from now on: on is "user", an agent's address, or "none".
@@ -401,6 +412,7 @@ function M.wait_on(repo, id, on, by)
     return nil, id .. " is resolved"
   end
   append(repo, id, { kind = "waiting", on = on, by = by })
+  publish_users_turn(repo, id)
   return true
 end
 
@@ -499,6 +511,9 @@ end
 function M.working(repo, id, state, died, by)
   if vim.uv.fs_stat(M.file(repo, id)) then
     append(repo, id, { kind = "working", state = state, died = died or nil, by = by })
+    if state == "end" then
+      publish_users_turn(repo, id)
+    end
   end
 end
 
@@ -732,7 +747,30 @@ end
 
 -- How long a worker that's a thread's wait gets to start: it's marked as it's messaged, often before
 -- it's working. And how long a router's turn on a thread gets to show as its state: it's written just before.
-local WORKER_START, TURN_START = 30, 15
+-- And how long a draft in its composer holds root mode's root off, from its last keystroke.
+local WORKER_START, TURN_START, DRAFT_WAIT = 30, 15, 300
+
+local function draft_file(repo, id)
+  return store.run_dir(repo) .. "/thread-draft-" .. id
+end
+
+-- The user is writing a post in the thread's composer, or isn't any more.
+function M.drafting(repo, id, typing)
+  if not typing then
+    os.remove(draft_file(repo, id))
+    return
+  end
+  vim.fn.mkdir(store.run_dir(repo), "p")
+  local file = io.open(draft_file(repo, id), "wb")
+  if file then
+    file:close()
+  end
+end
+
+local function drafted(repo, id)
+  local stat = vim.uv.fs_stat(draft_file(repo, id))
+  return stat ~= nil and os.time() - stat.mtime.sec < DRAFT_WAIT
+end
 
 -- Ends the turns nothing will end: a router's supervisor that dies mid-turn never writes the end, and
 -- until it's written the thread says working… and stays out of the Inbox. Run by that supervisor
@@ -929,15 +967,24 @@ local function root_told_file(repo)
   return store.run_dir(repo) .. "/root-threads.json"
 end
 
--- The thread is on screen in front of the user (the TUI's, every few seconds while it is).
-function M.viewing(repo, id)
+-- The thread is on screen in front of the user (the TUI's, every few seconds while it is), and when
+-- they last pressed a key in it.
+function M.viewing(repo, id, last_key)
   vim.fn.mkdir(store.run_dir(repo), "p")
-  vim.fn.writefile({}, store.run_dir(repo) .. "/thread-view-" .. id)
+  vim.fn.writefile({ tostring(last_key) }, store.run_dir(repo) .. "/thread-view-" .. id)
 end
 
-local function viewed(repo, id)
-  local stat = vim.uv.fs_stat(store.run_dir(repo) .. "/thread-view-" .. id)
-  return stat ~= nil and os.time() - stat.mtime.sec < VIEW_FRESH
+-- Whether it being in front of the user holds the root back: not, in case they've walked away, once
+-- it's sat for thread_root_grace with no key pressed since the post landed.
+local function viewed(repo, info)
+  local file = store.run_dir(repo) .. "/thread-view-" .. info.id
+  local stat = vim.uv.fs_stat(file)
+  if not stat or os.time() - stat.mtime.sec >= VIEW_FRESH then
+    return false
+  end
+  local ok, lines = pcall(vim.fn.readfile, file)
+  local last_key = ok and tonumber(lines[1]) or 0
+  return os.time() - math.max(last_key, info.waiting_at or 0) < require("isovim.config").thread_root_grace() * 60
 end
 
 local function by_a_root(address)
@@ -1002,7 +1049,7 @@ function M.for_root(repo, grace, limit, handed_only)
     elseif not handed_only and M.root_may_answer(info) and not info.handed and info.last_reply > seen
       and now - (info.waiting_at or now) >= grace and info.root_posts < ROOT_ANSWERS and info.pending == 0
       and not info.working and not by_a_root(info.last_by) and not (task and task.column == "backburner")
-      and not viewed(repo, info.id) then
+      and not drafted(repo, info.id) and not viewed(repo, info) then
       due[#due + 1] = { info = info }
     end
   end

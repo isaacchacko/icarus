@@ -190,6 +190,14 @@ local function by_buf(buf)
   end
 end
 
+-- A key pressed in a chat: when, for what keeps root mode's root out of a thread in front of the user.
+vim.on_key(function(_, typed)
+  local chat = typed ~= "" and by_buf(vim.api.nvim_get_current_buf())
+  if chat then
+    chat.keyed_at = os.time()
+  end
+end, vim.api.nvim_create_namespace("isovim_chat_keys"))
+
 local update_bar, decorate
 
 -- The row after the last line of the conversation: the composer's first. While the conversation is
@@ -2434,6 +2442,10 @@ local function changed(chat, typing)
     record(chat)
   end
   decorate(chat)
+  -- A post on its way holds off root mode's root (isovim.threads.for_root).
+  if chat.thread and not chat.resolved then
+    threads.drafting(chat.ws, chat.thread, vim.trim(table.concat(draft(chat), "\n")) ~= "")
+  end
 end
 
 -- Keys that start typing (see the top). One a plugin has mapped (LazyVim's s and S are flash's
@@ -3031,9 +3043,27 @@ local function follow(chat, from)
       update_related(chat)
     end))
     chat.drain, chat.journal_at = drain, at
+    -- What keeps root mode's root out of a thread open in front of the user (isovim.threads). Coming
+    -- into view counts as a key pressed in it.
+    local timer = assert(vim.uv.new_timer())
+    timer:start(1000, 1000, safe.ticker("the thread's view", function()
+      local in_front = not chat.dead and vim.fn.bufwinid(chat.buf) ~= -1 and require("isovim").focused
+      if in_front and not chat.in_front then
+        chat.keyed_at = os.time()
+      end
+      chat.in_front = in_front
+      if in_front and os.time() - (chat.viewed_at or 0) >= 10 then
+        chat.viewed_at = os.time()
+        threads.viewing(chat.ws, chat.thread, chat.keyed_at)
+      end
+    end))
     chat.stop = function()
       chat.dead = true
       stop()
+      if not timer:is_closing() then
+        timer:stop()
+        timer:close()
+      end
     end
     return
   end
@@ -3067,12 +3097,6 @@ local function follow(chat, from)
   chat.timer:start(1000, 1000, safe.ticker("the chat's subscription", function()
     if not chat.dead and not chat.backlog and vim.api.nvim_buf_is_loaded(chat.buf) then
       subscribe(chat)
-    end
-    -- What keeps root mode's root out of a thread open in front of the user (isovim.threads).
-    if chat.thread and not chat.dead and os.time() - (chat.viewed_at or 0) >= 10 and vim.fn.bufwinid(chat.buf) ~= -1
-      and require("isovim").focused then
-      chat.viewed_at = os.time()
-      threads.viewing(chat.ws, chat.thread)
     end
   end))
   local stop = chat.stop
@@ -3704,6 +3728,7 @@ local function send_post(chat, text, attached)
   end
   chat.recall = nil
   M.set_draft(chat, { "" })
+  threads.drafting(chat.ws, chat.thread, false)
   to_bottom(chat)
   -- To its bypass's worker, if it has one, else the router.
   local router, bypassed = threads.recipient(chat.ws, chat.thread)

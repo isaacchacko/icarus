@@ -295,9 +295,17 @@ host; General and Terminals have none, and starting one there says why.
 
 - **The root is on top of them,** in root mode, for whichever root decides that repo; off when root mode's
   off. Its supervisor looks once a minute (`isovim.threads.for_root`). A thread is due when an agent's
-  post has sat on your turn for `thread_root_grace` minutes (default 5), with no draft in its composer,
+  post has sat on your turn for the mode's grace, with no draft in its composer (from its last
+  keystroke, 5 minutes at most),
   not open and focused in front of you, not on a Backburner task, with no question of its own pending,
-  and the last post not a root's. One message per grace at most, only when the root is free, up to 8
+  and the last post not a root's. The grace is one number with two names, in the repo's `rootmode.json`
+  entry: medic is `thread_root_grace` minutes (default 5), and an entry with no mode reads as it;
+  sentry is 0. With no grace it doesn't wait for the look: `thread.<repo>.<id>.users_turn`, published
+  as a thread lands on your turn, wakes it, as does its own turn ending. In both, a thread open in
+  front of you stops holding it back once it's sat for `thread_root_grace` with no key pressed since
+  the post landed, in case you've walked away. A hold ending is noticed at the next look. One message per
+  grace at most, only when the root is free (no turn running and nothing queued), which is all that
+  gathers them with no grace, up to 8
   threads, each with its last agent post (up to 1500 characters), so the post is the first read and `iso
   <role> thread show <repo>#<id>` the second. Each post is told once (`run/<repo>/root-threads.json`).
   The first look at a repo tells nothing: threads already waiting stay yours. The root answers with `iso
@@ -656,8 +664,9 @@ connect in the background, at most every 30s, the chips drawn again when that ch
   that are permanently off; agents are trusted to follow it. `prompt_plugins` adds a file of your own, by role or for `dedicated-router`,
   after a role's prompt: what's personal stays out of isovim and the prompt beneath it can keep updating.
 - **Root mode:** a repo's root decides its Inbox's questions before they reach you, and is on top of its
-  threads (see Threads). `iso rootmode on|off <repo> [--task "<description>"]` turns it on for a repo,
-  spawning a worker and promoting it if the role is empty. There's no root above a repo: with root mode
+  threads (see Threads). `iso rootmode medic|sentry|off <repo> [--task "<description>"]` sets it for a
+  repo (`on` is medic), spawning a worker and promoting it if the role is empty. The modes differ only in how soon
+  the root hears of a thread on your turn; its questions, the cap on answers and `gr` are the same. There's no root above a repo: with root mode
   off, no root, or in General, a question goes straight to you.
   - Questions aren't routed: each stays in its repo's Inbox. While root mode is on, its root decides it
     first, however it was asked: a router's surface question, an ACP agent's AskUserQuestion, a shell.
@@ -847,8 +856,9 @@ Inbox 2                     ← the shown host's: every surface that needs you
 ├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
 └─  isovim - ? mini-animate …
 ▸ Unread 16                 ← open threads with only an unread post: not counted, folded at first
-▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
-                               have something that needs you, how many of its agents run
+▾ ‹  isovim › sentry +2 need you  2 ← the project switcher ([ ]): the current project, its root
+                               mode if on, how many others have something that needs you, how
+                               many of its agents run
   ⏺ 󰑩 router                ← its router, whatever's folded, hidden or not; none, no row
   ⏺  root             ← its root under it, likewise
   ▾ Inbox 2                 ← its sections, each shown only with something in it; the Inbox
@@ -1110,7 +1120,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `o` | the current project's PRs surface |
 | `g` / `T` | general / terminals |
 | `s` / `t` / `N` | spawn / new thread / new terminal |
-| `x` | root mode for this project |
+| `x` | root mode for this project: off, medic, sentry, off |
 | `j` | jump |
 | `<` / `>` | switch host |
 | `q` | the prompt queue (opened even when empty, to add a line) |
@@ -1163,7 +1173,7 @@ and agents, and everything isovim-specific lives under `<leader>i`.
 | `<C-l>` | back to the window you came from |
 | `s` / `t` / `n` | spawn / new thread (on a repo's or agent's row) / new terminal |
 | `r` / `d` / `R` / `m` | rename / remove / restart / move |
-| `x` | root mode |
+| `x` | root mode: off, medic, sentry, off |
 | `o` / `c` | open the port / changes |
 | `u` | measure CPU/RAM |
 | `H` / `L` | toggles |

@@ -1,7 +1,7 @@
 -- Root mode: a repo's root decides its Inbox's questions before they reach you, and is on top of its
--- threads. iso rootmode on|off <repo> (isovim.cli.rootmode) turns it on for one repo, for its root;
--- this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it isn't synced), and
--- says which root decides a question.
+-- threads. iso rootmode medic|sentry|off <repo> (isovim.cli.rootmode) sets it for one repo, for its
+-- root; this module keeps which is on, in ~/.isovim/rootmode.json (this host's alone: it isn't
+-- synced), and says which root decides a question.
 -- A question isn't routed anywhere: it stays in its repo's Inbox, tagged root deciding (the
 -- surface's deciding, so it doesn't count as needing you) until the root answers it or raises it to
 -- you with a one-line why; with root mode off, or no root, it's yours at once. You may answer
@@ -9,16 +9,17 @@
 -- (M.listen) and tells the root of each new question it decides, whoever asked it and whatever
 -- code they run, and of threads that have sat on your turn (isovim.threads.for_root), which it
 -- answers in your place or leaves with you.
---   { "repos": { "<owner/repo>": {agent, task?, since} } }
+--   { "repos": { "<owner/repo>": {agent, mode?, task?, since} } }
 -- An entry is active while its agent's record still holds the root role; one whose agent went
--- away is off.
+-- away is off. mode names how long a thread sits on your turn before the root hears of it (M.grace):
+-- medic is thread_root_grace minutes, sentry none. An entry without one is medic.
 local store = require("isovim.store")
 
 local M = {}
 
 M.file = store.root .. "/rootmode.json"
 
----@alias isovim.RootMode {agent: string, task?: string, since: number}
+---@alias isovim.RootMode {agent: string, mode?: "medic"|"sentry", task?: string, since: number}
 
 ---@return {repos: table<string, isovim.RootMode>}
 function M.read()
@@ -60,6 +61,18 @@ function M.route(repo)
   if record and store.role(record) == "root" then
     return entry.agent, entry
   end
+end
+
+-- The mode root mode is in for a repo; nil while it's off.
+---@return "medic"|"sentry"|nil
+function M.mode(repo)
+  local address, entry = M.route(repo)
+  return address and (entry.mode == "sentry" and "sentry" or "medic") or nil
+end
+
+-- How long, in seconds, a thread sits on the user's turn before the repo's root hears of it.
+function M.grace(repo)
+  return M.mode(repo) == "sentry" and 0 or require("isovim.config").thread_root_grace() * 60
 end
 
 -- Whether a root may answer a question still open to roots: pending, not the user's (raised), and
@@ -133,7 +146,7 @@ end
 
 -- The threads as their root gets them: the post is usually enough, so it's there, up to a point.
 local function threads_text(repo, threads, grace)
-  local parts = { ("[isovim: these threads have sat on the user's turn for over %d minutes with no word from them, and "
+  local parts = { ("[isovim: these threads %s with no word from them, and "
     .. "root mode has you on top of them. Answer only what's asking for a decision you can stand behind: `iso root thread "
     .. "answer <id> <your answer>` posts it as yours, sends it with your authority to whoever is working the thread "
     .. "and stops it waiting on the user. Leave the rest, with no reply at all, and it stays in their Inbox: an FYI or a "
@@ -141,7 +154,8 @@ local function threads_text(repo, threads, grace)
     .. "for them. Their word beats yours. What's permanently off stays off: for that, and what they'd be surprised you "
     .. "decided, `iso root thread post <id> \"<one line: why, and what you'd pick>\"` raises it with them. `iso "
     .. "root thread show <id>` has the rest of a thread if the post isn't enough. If nothing needs you, end your turn.]")
-    :format(math.floor(grace / 60)) }
+    :format(grace > 0 and ("have sat on the user's turn for over %d minutes"):format(math.floor(grace / 60))
+      or "have just landed on the user's turn") }
   for _, each in ipairs(threads) do
     local text = each.text or "(no agent has posted yet)"
     parts[#parts + 1] = ("--- %s#%s \"%s\"%s%s ---\n%s"):format(repo, each.id, each.title,
@@ -153,7 +167,8 @@ local function threads_text(repo, threads, grace)
 end
 
 -- Tells the root of its repo's threads. Hard batched: a root's turn is on a big context, so one
--- message at most per grace while it's free, and only what the user handed it comes sooner.
+-- message at most per grace while it's free, and only what the user handed it comes sooner. With no
+-- grace, only its being busy gathers them.
 local function thread_teller(address, repo, say, busy)
   local threads = require("isovim.threads")
   local last_told = 0
@@ -161,7 +176,7 @@ local function thread_teller(address, repo, say, busy)
     if M.route(repo) ~= address then
       return
     end
-    local grace = require("isovim.config").thread_root_grace() * 60
+    local grace = M.grace(repo)
     local found = threads.for_root(repo, grace, THREADS_AT_ONCE, busy() or os.time() - last_told < grace)
     if #found > 0 then
       last_told = os.time()
@@ -195,8 +210,15 @@ function M.listen(address, say, busy)
   end
   local tell_threads = require("isovim.safe").wrap("rootmode's threads", thread_teller(address, repo, say, busy))
   assert(vim.uv.new_timer()):start(60000, 60000, vim.schedule_wrap(tell_threads))
-  require("isovim.events").watch(function(_, event)
-    if event.repo == repo and event.topic:match("^thread%.") and event.topic:match("%.handed$") then
+  local events = require("isovim.events")
+  -- With no grace it needn't wait for the timer: a thread landing, or its own turn ending on any that
+  -- gathered.
+  local own_status = events.topic("agent", repo, address:match("[^/]+$"), "status")
+  events.watch(function(_, event)
+    local thread_event = event.repo == repo and event.topic:match("^thread%.")
+    if thread_event and event.topic:match("%.handed$") then
+      vim.schedule(tell_threads)
+    elseif ((thread_event and event.topic:match("%.users_turn$")) or event.topic == own_status) and M.grace(repo) == 0 then
       vim.schedule(tell_threads)
     end
     if event.type == "question" and event.repo == repo and event.topic:match("^surface%.")

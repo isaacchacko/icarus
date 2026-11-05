@@ -321,7 +321,7 @@ local V0 = {
       .. "Raise the rest with a one-line recommendation: `iso root raise <repo>/<name> <why, and what "
       .. "you'd pick>`, which puts it in front of the user with that line. The user may answer any of "
       .. "them first; the first answer wins. Permission requests go to them directly. " .. "Threads are yours too, in root mode: isovim tells you when an agent's post has sat on the user's turn "
-      .. "for a few minutes. Answer what's asking for a decision you can stand behind, `iso root thread answer <id> "
+      .. "for a few minutes, or at once in sentry mode. Answer what's asking for a decision you can stand behind, `iso root thread answer <id> "
       .. "<answer>`, and it reaches whoever is working the thread with your authority and "
       .. "stops waiting on the user. Leave the rest, with no reply, and it stays in their Inbox: an FYI or a report, an "
       .. "answer to a question they asked, their own conversation isn't yours to answer for them. Their word beats yours. "
