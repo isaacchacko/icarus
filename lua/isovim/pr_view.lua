@@ -540,7 +540,7 @@ local function watch()
   _G.isovim_pr_view_watching = true
   require("isovim.events").watch(function(_, event)
     if event.topic:match("^pr%.") and (event.topic:match("%.ci$") or event.topic:match("%.review$") or event.topic:match("%.state$")) then
-      local view = require("isovim.pr_view").views[event.url or ""]
+      local view = require("isovim.pr_view").views[(event.url or ""):lower()]
       if view and vim.api.nvim_buf_is_valid(view.buf) then
         require("isovim.pr_view").fetch(view)
       end
@@ -551,6 +551,7 @@ end
 -- Opens the PR registered under repo as its own tab: drawn from its cache at once, fetched again
 -- in the background.
 function M.open(repo, url)
+  url = url:lower()
   local view = M.views[url]
   if not (view and vim.api.nvim_buf_is_valid(view.buf)) then
     local owner, name, number = parts(url)

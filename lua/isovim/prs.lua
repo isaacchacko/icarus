@@ -47,10 +47,10 @@ end
 ---@return string?
 function M.normalize(ref)
   if ref:match("^https://github%.com/[^/]+/[^/]+/pull/%d+") then
-    return ref:match("^(https://github%.com/[^/]+/[^/]+/pull/%d+)")
+    return ref:match("^(https://github%.com/[^/]+/[^/]+/pull/%d+)"):lower()
   end
   local repo, number = ref:match("^([%w_.-]+/[%w_.-]+)#(%d+)$")
-  return repo and ("https://github.com/%s/pull/%s"):format(repo, number) or nil
+  return repo and ("https://github.com/%s/pull/%s"):format(repo:lower(), number) or nil
 end
 
 local function cache_file(ws)
@@ -60,11 +60,19 @@ end
 local function read_cache(ws)
   local ok, lines = pcall(vim.fn.readfile, cache_file(ws))
   local decoded, cache = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
-  return decoded and type(cache) == "table" and cache or { fetched = 0, prs = {} }
+  if not (decoded and type(cache) == "table") then
+    return { fetched = 0, prs = {} }
+  end
+  local prs = {}
+  for url, pr in pairs(cache.prs or {}) do
+    prs[url:lower()] = pr
+  end
+  cache.prs = prs
+  return cache
 end
 
--- What changed since the last fetch goes on the event bus as pr.<owner>/<repo>.<n>.state|ci|review
--- (events.topic encodes the parts);
+-- What changed since the last fetch goes on the event bus as pr.<owner>/<repo>.<n>.state|ci|review,
+-- the repo in lowercase (events.topic encodes the parts);
 -- a PR seen for the first time reports what it has.
 ---@param pr isovim.Pr
 ---@param old isovim.Pr|{}
@@ -75,16 +83,17 @@ local function publish_changes(ws, pr, old)
   end
   local events = require("isovim.events")
   local about = { repo = repo, number = tonumber(number), url = pr.url, ws = ws, title = pr.title }
+  local function topic(what)
+    return events.topic("pr", repo:lower(), number, what)
+  end
   if pr.state ~= old.state or pr.isDraft ~= old.isDraft then
-    events.publish(events.topic("pr", repo, number, "state"),
-      vim.tbl_extend("force", about, { state = pr.state, draft = pr.isDraft, previous = old.state }))
+    events.publish(topic("state"), vim.tbl_extend("force", about, { state = pr.state, draft = pr.isDraft, previous = old.state }))
   end
   if pr.checks ~= old.checks then
-    events.publish(events.topic("pr", repo, number, "ci"), vim.tbl_extend("force", about, { checks = pr.checks, previous = old.checks }))
+    events.publish(topic("ci"), vim.tbl_extend("force", about, { checks = pr.checks, previous = old.checks }))
   end
   if pr.review ~= old.review then
-    events.publish(events.topic("pr", repo, number, "review"),
-      vim.tbl_extend("force", about, { review = pr.review, previous = old.review }))
+    events.publish(topic("review"), vim.tbl_extend("force", about, { review = pr.review, previous = old.review }))
   end
 end
 
@@ -167,7 +176,7 @@ function M.discover(ws, dir, branch, on_found)
   vim.system({ "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "url", "--limit", "1" }, { cwd = dir, text = true }, function(result)
     local ok, found = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
     local url = ok and type(found) == "table" and found[1] and found[1].url
-    if url and not vim.tbl_contains(store.prs(ws), url) then
+    if url and not vim.tbl_contains(store.prs(ws), url:lower()) then
       vim.schedule(function()
         store.add_pr(ws, url)
         on_found()
@@ -227,7 +236,11 @@ function M.groups(repo)
   local path = require("isovim.surfaces").dir(repo) .. "/prs.groups.json"
   local ok, lines = pcall(vim.fn.readfile, path)
   local decoded, value = pcall(vim.json.decode, ok and table.concat(lines, "\n") or "")
-  return decoded and type(value) == "table" and type(value.groups) == "table" and value.groups or {}
+  local groups = decoded and type(value) == "table" and type(value.groups) == "table" and value.groups or {}
+  for _, group in ipairs(groups) do
+    group.prs = vim.tbl_map(string.lower, group.prs or {})
+  end
+  return groups
 end
 
 -- Writes the repo's groups, through a temp file so a reader never sees half of them.

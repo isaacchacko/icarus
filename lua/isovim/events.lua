@@ -13,6 +13,8 @@
 --   agent.<scope>.<id>.promoted  its role changed              {addr, scope, id, role, previous}
 --   msg.<scope>.<id>             a message was typed into it   {addr, scope, from, kind, id, text}
 --   pr.<repo>.<n>.state|ci|review   a registered PR changed   {repo, number, url, ws, title, ..., previous}
+--                                repo is lowercase in the topic, GitHub's own in the details, and
+--                                its case doesn't matter in a pattern
 --   surface.<repo>.<name>.created|changed|removed   a surface in the repo's iso/ came, changed or
 --                                went                          {repo, name, type, file, title, error?}
 --   surface.<repo>.<name>.answered   a question was answered   {..., answer: {labels, other?, by, at}}
@@ -113,10 +115,16 @@ function M.publish_msg(ws, agent, details)
   M.publish(M.topic("msg", ws, agent), vim.tbl_extend("force", { addr = ws .. "/" .. agent, scope = ws }, details))
 end
 
+-- A pr.* topic's repo in lowercase, as GitHub's spelling in an older log line or a pattern may not be.
+local function folded(topic)
+  local repo, rest = topic:match("^pr%.([^.]+)(.*)$")
+  return repo and "pr." .. repo:lower() .. rest or topic
+end
+
 -- Whether a topic matches a pattern: parts split on ".", * is any one part, ** any number of them.
 function M.matches(pattern, topic)
-  local want = vim.split(pattern, ".", { plain = true })
-  local have = vim.split(topic, ".", { plain = true })
+  local want = vim.split(folded(pattern), ".", { plain = true })
+  local have = vim.split(folded(topic), ".", { plain = true })
   local function from(i, j)
     if i > #want then
       return j > #have

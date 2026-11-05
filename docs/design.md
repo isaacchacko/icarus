@@ -961,7 +961,7 @@ Every change is appended as a JSON line to `~/.isovim/events/events.jsonl`. Topi
 - `agent.<scope>.<id>.status|spawned|exited|promoted`
 - `msg.<scope>.<id>`
 - `surface.<repo>.<name>.created|changed|removed|answered|consumed`
-- `pr.<repo>.<n>.state|ci|review`
+- `pr.<repo>.<n>.state|ci|review` (the repo lowercase; its case doesn't matter in a pattern)
 - `root.<scope>.raised|decided`
 - `bug.<id>.filed|taken|issued`
 

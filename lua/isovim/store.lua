@@ -1062,14 +1062,29 @@ end
 -- PR URLs the workspace's agents registered with `iso pr`, oldest first.
 ---@return string[]
 function M.prs(ws)
-  return (read_meta(M.path(ws)) or {}).prs or {}
+  local urls, seen = {}, {}
+  for _, url in ipairs((read_meta(M.path(ws)) or {}).prs or {}) do
+    -- One spelling for a PR: GitHub's Owner/Repo and a repo key's owner/repo are the same PR.
+    url = url:lower()
+    if not seen[url] then
+      urls[#urls + 1], seen[url] = url, true
+    end
+  end
+  return urls
 end
 
 -- Who registered each of the workspace's PRs, and when: url -> {by?: "<ws>/<agent>", at: epoch}.
 -- Missing for one registered before isovim kept it, or found by itself (autopr, discover).
 ---@return table<string, {by?: string, at?: number}>
 function M.pr_info(ws)
-  return (read_meta(M.path(ws)) or {}).pr_info or {}
+  local info = {}
+  for url, each in pairs((read_meta(M.path(ws)) or {}).pr_info or {}) do
+    local known = info[url:lower()]
+    if not known or (each.at or 0) < (known.at or 0) then
+      info[url:lower()] = each
+    end
+  end
+  return info
 end
 
 -- Files and folders an agent pinned for you (`iso pin`), shown under the workspace.
@@ -1128,12 +1143,13 @@ end
 ---@return boolean added false when it was already there
 ---@param by? string the agent that registered it, "<ws>/<agent>"
 function M.add_pr(ws, url, by)
+  url = url:lower()
+  if vim.tbl_contains(M.prs(ws), url) then
+    return false
+  end
   local dir = M.path(ws)
   local meta = read_meta(dir) or {}
   meta.prs = meta.prs or {}
-  if vim.tbl_contains(meta.prs, url) then
-    return false
-  end
   meta.prs[#meta.prs + 1] = url
   meta.pr_info = meta.pr_info or {}
   meta.pr_info[url] = { by = by, at = os.time() }
