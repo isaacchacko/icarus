@@ -1021,8 +1021,17 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
 
 ## Lifecycle
 
-- **Read-only agents** (`--read-only`) run in `base-clone/`, fetched at start, and their write tools
-  are refused.
+- **Read-only agents** (`--read-only`) run in `base-clone/`, fetched at start. `ls` says which they
+  are, the sidebar puts a lock at the row's right edge, and each is told in its own prompt that it
+  is one and to hand output back as text rather than writing files by shell. What holds them depends
+  on the kind:
+  - **Claude:** the hook alone, as the agent runs with `bypassPermissions`. Edit, Write, MultiEdit,
+    NotebookEdit and mutating git commands are refused. Other shell writes aren't caught, on
+    purpose: a Bash hook can't tell a write from a read without guessing.
+  - **Codex:** over ACP (`iso spawn --kind codex`), Codex's own read-only sandbox, whatever the tool,
+    with the network off and no hook of isovim's involved. A write it asks approval for becomes a
+    question in the repo's Inbox, and approving it lets the write through. `iso agent --v2
+    --read-only` runs Codex in its TUI with the sandbox bypassed, and nothing holds that one.
 - **Worktrees:** an agent gets one with `wt`, or automatically on its first edit. `setup` runs the
   repo's setup script only when asked; `wt` says when the repo has one that hasn't run in the
   worktree. The scripts get Superset's variables, and `ISOVIM_WORKTREE_NAME` and

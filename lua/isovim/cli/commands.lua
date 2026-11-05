@@ -63,7 +63,8 @@ M.list = {
     flags = { ["--json"] = false },
     audience = "user",
     help = [=[
-       iso ls [--json]               list agents: ws/agent, status, role, workspace · agent, parent]=],
+       iso ls [--json]               list agents: ws/agent, status, role, workspace · agent,
+                                     read-only, parent]=],
   },
   { name = "worker", module = "roles",
     summary = "a worker's actions (iso worker help)",
@@ -104,9 +105,11 @@ M.list = {
                                      a router of its own for that one task or component, as many
                                      as it needs, reporting to it, which takes a task's threads
                                      until it's removed. --read-only runs it in the repo's base
-                                     clone, fetched first, and refuses its edits. A router's
-                                     spawn starts hidden (H in the sidebar shows it) unless
-                                     --shown]=],
+                                     clone, fetched first. A Claude one has Edit, Write and
+                                     mutating git refused, and other shell writes aren't
+                                     caught; a Codex one is held by Codex's read-only sandbox.
+                                     A router's spawn starts hidden (H in the sidebar shows
+                                     it) unless --shown]=],
   },
   { name = "new", module = "workspaces",
     retired = "iso spawn starts an agent, in a repo with --repo",

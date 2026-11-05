@@ -59,8 +59,8 @@ function commands.ls(args)
     return
   end
   for _, row in ipairs(rows) do
-    local label = ("%s · %s%s%s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
-      row.dedicated and (" (dedicated to " .. row.dedicated .. ")") or "",
+    local label = ("%s · %s%s%s%s%s%s"):format(row.workspace, row.agent, row.hidden and " (hidden)" or "",
+      row.read_only and " (read-only)" or "", row.dedicated and (" (dedicated to " .. row.dedicated .. ")") or "",
       row.parent and (" (parent " .. row.parent .. ")") or "", row.of and (" (script for " .. row.of .. ")") or "")
     out(("%-18s %-9s %-6s %s%s"):format(row.id, row.status, row.role, label, row.doing and ("  — " .. row.doing) or ""))
   end

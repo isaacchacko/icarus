@@ -176,8 +176,9 @@ local V0 = {
   work = "You start in your agent dir, aN/. In a repo, your first edit is refused once while isovim makes "
     .. "your worktree, aN/<repo>-aN (aN/w links to it), on a new branch $USER/<your name> off origin's "
     .. "default branch: cd to the path it gives (by that name, not w, so the scripts you run there see a "
-    .. "dir name of their own) and redo it there. A read-only agent works in the repo's base clone and "
-    .. "every edit is refused.",
+    .. "dir name of their own) and redo it there. A read-only agent works in the repo's base clone. A Claude "
+    .. "one has Edit, Write and mutating git commands refused, and other shell writes aren't caught; a Codex "
+    .. "one is held by Codex's read-only sandbox.",
   scripts = " `iso {role} wt [--from <branch|PR>]` makes the worktree up front, or from an existing branch "
     .. "or PR, and prints its path. `iso {role} setup`, `teardown` and `run [<action>]` run your repo's "
     .. "scripts in it, each in a pane of its own whose address they print (`peek` and `wait` take it), "
@@ -365,6 +366,18 @@ local function dedicated_text(dedicated)
       or "A thread comes to you when a router bypasses it to you (`iso router thread bypass <id> <you>`), and a thread you open is yours.")
 end
 
+-- What a read-only agent is told of itself. It's among the hashed files, as dedicated_text is, so
+-- one running now hears it on its next restart and no other agent gets a role message.
+local function read_only_text(agent)
+  local held = agent.kind ~= "codex"
+      and "Your Edit and Write tools and mutating git commands are refused. Other shell writes aren't caught, so nothing stops them but you."
+    or agent.acp and "Codex's read-only sandbox holds your writes, by any tool, and your network; what you ask approval for goes to your repo's Inbox."
+    or "You run outside Codex's sandbox, so nothing refuses your writes but you."
+  return ("# Read-only\n\nYou are a read-only agent, in your repo's base clone, which other agents share. %s Hand back what you "
+    .. "produce as text, in your reply or a message, rather than writing files by shell. For a change, ask whoever "
+    .. "started you for an agent with a worktree."):format(held)
+end
+
 -- ~/.isovim/instructions.md, if there is one, is added to what every agent is told, and then the
 -- prompt file config.json names for its role. A file that can't be read is left out. isovim seeds
 -- the role prompt files on the way (config.seed_prompts). A workspace agent is told the legacy
@@ -391,6 +404,9 @@ local function instruction_parts(agent, ws, before)
   end
   if agent.dedicated then
     files[#files + 1] = dedicated_text(agent.dedicated)
+  end
+  if v0 and agent.read_only then
+    files[#files + 1] = read_only_text(agent)
   end
   local plugin = config.prompt_plugin(agent.dedicated and "dedicated-router" or role)
   if plugin then

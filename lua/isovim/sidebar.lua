@@ -307,7 +307,7 @@ local KINDS = {
   },
   -- Under its repo's header with a status icon: the router and root by role, a worker by name
   -- with the size of its team (counted, not listed); the root pinned at the top. Anything not
-  -- running is dimmed; hidden agents have an eye at the right edge. In an Inbox the attention icon still marks a legacy
+  -- running is dimmed; hidden agents have an eye at the right edge, read-only ones a lock. In an Inbox the attention icon still marks a legacy
   -- agent that raised something, until the cutover.
   agent = {
     format = function(item)
@@ -331,6 +331,9 @@ local KINDS = {
       end
       if item.hidden then
         row[#row + 1] = { "\u{f0209}", "Comment", right = true } -- md-eye_off
+      end
+      if item.read_only then
+        row[#row + 1] = { "\u{f033e}", "Comment", right = true } -- md-lock
       end
       -- What it's on: the task title Claude gives its terminal, or the command a terminal runs.
       -- The ports it serves on first: the subtitle is often long enough to be cut off.
@@ -1344,6 +1347,7 @@ local function local_entries(workspaces)
         status = agent.status,
         running = agent.running,
         hidden = agent.hidden,
+        read_only = agent.read_only,
         tasks = agent.tasks,
         v2 = v2 or nil,
         repo = repo,
@@ -1392,6 +1396,7 @@ local function remote_entries(name, ssh, rows)
         status = agent.status,
         running = agent.running,
         hidden = agent.hidden,
+        read_only = row.read_only,
         tasks = agent.tasks,
         subtitle = agent.doing,
         v2 = v2 or nil,
