@@ -22,24 +22,54 @@ local function changed()
 end
 
 ---@return icarus.ChatRecord[]
-local function load()
-  if state.records then
-    return state.records
-  end
+local function read()
   local file = io.open(FILE, "r")
   local ok, decoded = pcall(vim.json.decode, file and file:read("*a") or "[]")
   if file then
     file:close()
   end
-  state.records = ok and type(decoded) == "table" and decoded or {}
+  return ok and type(decoded) == "table" and decoded or {}
+end
+
+---@return icarus.ChatRecord[] oldest first
+local function load()
+  state.records = state.records or read()
   return state.records
 end
 
-function M.save()
+-- Saves the list, with mine the chat this window changed. Another icarus window may have saved
+-- since this one read the file: its new chats are taken in, and for the rest the file's copy wins,
+-- but for mine. Written whole and renamed into place, so the other window never reads half of it.
+---@param mine? icarus.ChatRecord
+function M.save(mine)
+  local records, here, place = load(), {}, {}
+  for i, record in ipairs(records) do
+    here[record.id], place[record] = record, i
+  end
+  for _, saved in ipairs(read()) do
+    local record = here[saved.id]
+    if not record then
+      records[#records + 1] = saved
+      place[saved] = #records
+    elseif record ~= mine then
+      -- In place: an open chat holds this table.
+      for key, value in pairs(saved) do
+        record[key] = value
+      end
+    end
+  end
+  table.sort(records, function(a, b)
+    if a.created ~= b.created then
+      return a.created < b.created
+    end
+    return place[a] < place[b]
+  end)
   vim.fn.mkdir(vim.fs.dirname(FILE), "p")
-  local file = assert(io.open(FILE, "w"))
-  file:write(vim.json.encode(load()))
+  local tmp = ("%s.%d.tmp"):format(FILE, vim.uv.os_getpid())
+  local file = assert(io.open(tmp, "w"))
+  file:write(vim.json.encode(records))
   file:close()
+  assert(vim.uv.fs_rename(tmp, FILE))
   changed()
 end
 
@@ -62,7 +92,7 @@ function M.create(cwd)
   local now = os.time()
   local record = { id = ("%d-%06d"):format(now, vim.uv.hrtime() % 1000000), cwd = cwd, created = now }
   table.insert(load(), record)
-  M.save()
+  M.save(record)
   return record
 end
 

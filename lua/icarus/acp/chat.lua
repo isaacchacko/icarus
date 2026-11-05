@@ -775,7 +775,7 @@ local function send(chat)
   if not chat.record.title then
     local title = text:match("^[^\n]*")
     chat.record.title = vim.fn.strchars(title) > 60 and vim.fn.strcharpart(title, 0, 59) .. "…" or title
-    chats.save()
+    chats.save(chat.record)
   end
   chat.session:prompt(text)
   update_bar(chat)
@@ -834,7 +834,7 @@ M.hear = {
   session = function(chat, id)
     if chat.record.session ~= id then
       chat.record.session = id
-      chats.save()
+      chats.save(chat.record)
     end
   end,
   update = on_update,
