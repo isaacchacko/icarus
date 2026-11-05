@@ -335,8 +335,7 @@ host; General and Terminals have none, and starting one there says why.
   renames it, its title in the composer to edit (`<CR>` renames, `<C-c>` keeps it), as `r` on its
   row in the sidebar does and `iso router thread rename <id> "<title>"`; the banner, tab, row and
   jump picker show the new title. Routers rename unasked, for context over keywords, so your words
-  are kept: the first title stays shown under the banner (`✎ first titled`), as a question typed as a
-  title is often all of it, and each `renamed` entry says what it was renamed from, in the view and
+  are kept: a title given to `thread new` stays shown under the banner (`✎ first titled`), and each `renamed` entry says what it was renamed from, in the view and
   `thread show`.
 - **The router's replies:** its supervisor sees the tag on the prompt it delivers, marks that turn
   working in the thread, and when the turn ends posts its last message (what it said after its
@@ -359,7 +358,7 @@ host; General and Terminals have none, and starting one there says why.
   thread at it, `<leader>in` walks to it, root mode decides or raises it (`raised {qid, by, why}`)
   and `iso answer` answers it, as any question; the thread's row says `? waiting on you`.
 - **Starting one:** `t` on a repo's (or agent's) row in the sidebar, or `<leader>it` in the current repo: the
-  view opens with its composer asking for the title (`<CR>`), then your first post.
+  view opens with its composer asking for your first message (`<CR>` starts it, on nothing cancels).
 - **Tasks:** a task is its own thing with the traits of a Linear issue, and only you make or change one
   ("i am the only person who can create tasks", "tasks should be an entity with same traits as linear").
   `iso/threads/tasks.jsonl`, appended to (isovim.board_tasks): an id (`k1`), title, markdown
@@ -536,13 +535,11 @@ host; General and Terminals have none, and starting one there says why.
   `<Tab>` work on them, updating as those threads change. A `thread new` during a turn on a thread takes
   that thread's task: the turn is already marked in its file, so the command only has to look. `t` on a
   thread's conversation starts one beside it; `<leader>it` and `t` in the sidebar start one on no task.
-- **The title alone:** the UI asks for the title, then your first post, and only a post prompts
-  the router, so a thread you stopped at the title of used to sit. Now the title becomes your first
-  post 30s on, and goes to the router as one. A first post within that time means one prompt, not
-  two; so does one you're writing, as the composer's draft holds it off until 5 minutes after your
-  last keystroke (`run/<repo>/thread-draft-<id>`). This and the worker's wait are checked by the
-  router's supervisor (isovim.threads.listen), every 10s and soon after one of the repo's agents
-  changes state, so they run whether or not the TUI is open.
+- **Its first message:** every way you start a thread asks one thing, the message, multi-line and with images
+  as any post. It's the first post, and the thread is listed at once under a stand-in title cut from its first line
+  (`stand_in` on the header); `<CR>` on nothing drops the new thread. The prompt says the title is a stand-in till
+  someone renames it, so the agent that takes the turn names it, and as your words are the first post, no
+  `✎ first titled` line repeats them.
 
 ## Links
 

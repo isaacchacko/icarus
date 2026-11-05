@@ -302,7 +302,7 @@ M.KEYS = {
   { "D", "due", "its due date" },
   { "e", "estimate", "its estimate" },
   { "r", "rename", "rename it" },
-  { "n", "new_thread", "a new thread on it: its title, then your first post" },
+  { "n", "new_thread", "a new thread on it: your first message, and the agent titles it" },
   { "R", "relation", "add or remove a relation to another task" },
   { "K", "link", "link or unlink a PR or Linear ticket" },
 }

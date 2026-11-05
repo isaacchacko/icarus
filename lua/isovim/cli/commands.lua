@@ -849,8 +849,8 @@ M.role_actions = {
                                      <repo>#<id> "<title>"]: answer them as usual, and
                                      your turn's last message is posted to the thread
                                      for you (tool calls stay in your chat). A thread
-                                     the user stopped at the title of comes the same
-                                     way, the title as their first post
+                                     the user starts comes the same way, its first post
+                                     under a stand-in title for you to replace
        iso thread bypass <id> [<worker>|none]
                                      routers only: send the user's posts on a thread straight
                                      to a worker, for a thread that will go back and forth
@@ -902,7 +902,7 @@ M.role_actions = {
                                      it reattaches
        iso thread rename <id> <title...>
                                      a new title (posts already sent keep their tags). Do it
-                                     unasked, when you first answer one titled with a raw
+                                     unasked, when you first answer one titled with a stand-in, a raw
                                      question, a stub or keywords, and whenever what it's about
                                      shifts or it's settled: 4 to 8 words that read as a phrase
                                      and say what it's about, in context, like "Batching worker

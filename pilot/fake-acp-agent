@@ -266,7 +266,7 @@ def prompt(rid, params):
     text = text_of(params.get("prompt", []))
     # A post on a thread is the command it holds: its tag and a bypass's note aren't.
     if text.startswith("[thread "):
-        text = text[text.index("] ") + 2:].split("\n\n(This thread's bypass")[0]
+        text = text[text.index("] ") + 2:].split("\n\n(This thread's")[0]
     with state_lock:
         if running["prompt"] is not None:
             log({"overlap": True, "text": text, "running": running["prompt"]})

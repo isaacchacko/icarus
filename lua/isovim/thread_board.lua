@@ -789,7 +789,7 @@ M.help_keys = {
   { "H / L", "move the task a column left / right, the only thing that moves one. L into Done resolves its open threads, H out opens those again, prompting nobody; on the Backburner they leave the Inbox and stop nagging" },
   { "0-4", "the task's priority: none, urgent, high, medium, low" },
   { "C", "a new task: its title, with no thread on it" },
-  { "n", "a new thread on the task: its title, then your first post" },
+  { "n", "a new thread on the task: your first message, and the agent titles it" },
   { "s p a t", "the task's status, priority, assignee (a label, it tells nobody), labels (l is the column to the right)" },
   { "D e", "the task's due date, estimate" },
   { "r", "rename the task" },

@@ -5,7 +5,8 @@
 --
 -- A thread is iso/threads/<id>.jsonl in the repo's iso/ (ids t1, t2...), appended to, never
 -- rewritten, a JSON object a line:
---   {kind = "thread", id, title, created_by, at, status = "open"}    its header, first
+--   {kind = "thread", id, title, created_by, at, status = "open", stand_in?}    its header, first; stand_in:
+--                                                   its title is only cut from the first post, for the agent to replace
 --   {kind = "task", on = <task id>|"none", by, at}  the task it's on (isovim.board_tasks), one at most;
 --                                                   a thread made in a turn on it takes it (M.new's callers)
 --   {kind = "post", by = "user"|<agent address>, text, at, images?, no_reply?, keeps_wait?}
@@ -42,8 +43,10 @@
 -- itself, the mark standing for that post. Posts during a turn on the thread count when it ends.
 -- Waiting on a worker clears on the router's next post, unless that turn marked it too, or once that
 -- worker has finished or gone, and the router is told, when it's free to hear it; M.listen,
--- in the router's supervisor, sees to that, and gives the router a thread the user stopped at the
--- title of, the title as their first post.
+-- in the router's supervisor, sees to that.
+--
+-- The user starts a thread with its first message, which goes to the router as any post, under a stand-in title
+-- cut from it (stand_in on the header) till someone renames it, the prompt saying to.
 --
 -- A bypass lets a thread go back and forth with one worker at less cost, the router staying its owner.
 -- Only a router makes, replaces or deletes one, and a worker holds one at most. While it stands the
@@ -105,7 +108,7 @@ end
 -- posts, the last router post's seq, whether a turn on it runs.
 function M.summary(entries)
   local head = entries[1] or {}
-  local info = { id = head.id, title = head.title or head.id or "?", first_title = head.title, created_by = head.created_by, at = head.at,
+  local info = { id = head.id, title = head.title or head.id or "?", first_title = not head.stand_in and head.title or nil, stand_in = head.stand_in, created_by = head.created_by, at = head.at,
     status = head.status or "open", posts = 0, last_reply = 0, working = false, root_posts = 0 }
   local function waits(on, at)
     info.waiting_on, info.waiting_at = on, at
@@ -163,7 +166,7 @@ function M.summary(entries)
     elseif entry.kind == "ask" or entry.kind == "answered" or entry.kind == "raised" then
       info.root_answer = nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
-      info.title = entry.title
+      info.title, info.stand_in = entry.title, nil
     elseif entry.kind == "task" then
       info.task = entry.on ~= "none" and entry.on or nil
     elseif entry.kind == "bypass" then
@@ -276,10 +279,19 @@ local function append(repo, id, entry)
   return entry
 end
 
--- A new thread in repo, titled title, by (user or an agent's address), on task if given; its id, or
--- nil and why.
+-- A thread's title until it's given one: the first line of what started it, cut short.
+function M.stand_in(text)
+  local line = vim.trim((text or ""):gsub("%[Image #%d+%]", ""):match("[^\n]*%S[^\n]*") or ""):gsub("%s+", " ")
+  if line == "" then
+    return "An image"
+  end
+  return vim.fn.strchars(line) > 60 and (vim.fn.strcharpart(line, 0, 59) .. "…") or line
+end
+
+-- A new thread in repo, titled title, by (user or an agent's address), on task if given, its title only a
+-- stand-in if stand_in; its id, or nil and why.
 ---@return string? id, string? err
-function M.new(repo, title, by, task)
+function M.new(repo, title, by, task, stand_in)
   local why = M.refusal(repo)
   if why then
     return nil, why
@@ -301,7 +313,7 @@ function M.new(repo, title, by, task)
     fd = vim.uv.fs_open(M.file(repo, id), "wx", 420)
   until fd
   vim.uv.fs_close(fd)
-  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open" })
+  append(repo, id, { kind = "thread", id = id, title = title, created_by = by, status = "open", stand_in = stand_in or nil })
   if task then
     append(repo, id, { kind = "task", on = task, by = by })
     require("isovim.board_tasks").note_thread(repo, task, id, true, by)
@@ -654,12 +666,14 @@ local function shortcut(repo, id, text)
 end
 
 -- What the router is sent for a post of the user's. The tag names its task, if it's on one; the
--- supervisor's batching needs it to end in `"]`.
+-- supervisor's batching needs it to end in `"]`. A stand-in title is said to be one till it's replaced.
 function M.prompt(repo, id, title, text)
-  local task = M.summary(M.read(repo, id) or {}).task
-  local on = task and require("isovim.board_tasks").read(repo)[task]
-  return ("[thread %s#%s %q%s] %s"):format(repo, id, title, on and (" · task %s %q"):format(on.id, on.title) or "",
-    shortcut(repo, id, text) or text)
+  local info = M.summary(M.read(repo, id) or {})
+  local on = info.task and require("isovim.board_tasks").read(repo)[info.task]
+  local name = info.stand_in and ("\n\n(This thread's title is only a stand-in cut from the user's first words. Name it as you "
+    .. "answer: `iso <your role> thread rename %s \"<title>\"`.)"):format(id) or ""
+  return ("[thread %s#%s %q%s] %s%s"):format(repo, id, title, on and (" · task %s %q"):format(on.id, on.title) or "",
+    shortcut(repo, id, text) or text, name)
 end
 
 -- The thread a prompt is for, from its tag (anywhere on its first line, after a stamp): repo, id.
@@ -716,33 +730,9 @@ function M.dismiss(repo, id)
   return true
 end
 
--- How long a thread with only its title waits for a first post before the router gets the title, and
--- how long a draft in its composer holds that off, from its last keystroke. And how long a worker
--- that's a thread's wait gets to start: it's marked as it's messaged, often before it's working.
--- And how long a router's turn on a thread gets to show as its state: it's written just before.
-local TITLE_WAIT, DRAFT_WAIT, WORKER_START, TURN_START = 30, 300, 30, 15
-
-local function draft_file(repo, id)
-  return store.run_dir(repo) .. "/thread-draft-" .. id
-end
-
--- The user is writing a first post in the thread's composer, or isn't any more.
-function M.drafting(repo, id, typing)
-  if not typing then
-    os.remove(draft_file(repo, id))
-    return
-  end
-  vim.fn.mkdir(store.run_dir(repo), "p")
-  local file = io.open(draft_file(repo, id), "wb")
-  if file then
-    file:close()
-  end
-end
-
-local function drafted(repo, id)
-  local stat = vim.uv.fs_stat(draft_file(repo, id))
-  return stat ~= nil and os.time() - stat.mtime.sec < DRAFT_WAIT
-end
+-- How long a worker that's a thread's wait gets to start: it's marked as it's messaged, often before
+-- it's working. And how long a router's turn on a thread gets to show as its state: it's written just before.
+local WORKER_START, TURN_START = 30, 15
 
 -- Ends the turns nothing will end: a router's supervisor that dies mid-turn never writes the end, and
 -- until it's written the thread says working… and stays out of the Inbox. Run by that supervisor
@@ -906,16 +896,6 @@ function M.sweep(repo, say, busy)
         .. "again waits quietly until it does more."):format(info.id, info.title,
         worker, how, info.id))
     end
-    if info.posts == 0 and info.created_by == "user" and os.time() - (info.at or 0) >= TITLE_WAIT and not drafted(repo, info.id) then
-      append(repo, info.id, { kind = "post", by = "user", text = info.title })
-      M.drafting(repo, info.id, false)
-      local to, bypassed = M.recipient(repo, info.id)
-      if to == main then
-        say(M.prompt(repo, info.id, info.title, info.title))
-      else
-        send_to(to, M.prompt(repo, info.id, info.title, info.title) .. (bypassed and M.BYPASS_NOTE or ""))
-      end
-    end
   end
 end
 
@@ -1022,7 +1002,7 @@ function M.for_root(repo, grace, limit, handed_only)
     elseif not handed_only and M.root_may_answer(info) and not info.handed and info.last_reply > seen
       and now - (info.waiting_at or now) >= grace and info.root_posts < ROOT_ANSWERS and info.pending == 0
       and not info.working and not by_a_root(info.last_by) and not (task and task.column == "backburner")
-      and not drafted(repo, info.id) and not viewed(repo, info.id) then
+      and not viewed(repo, info.id) then
       due[#due + 1] = { info = info }
     end
   end

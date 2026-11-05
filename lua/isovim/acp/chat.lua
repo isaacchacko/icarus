@@ -1620,10 +1620,10 @@ function M.bar_parts(chat)
   local function add(text, hl)
     parts[#parts + 1] = { text, hl }
   end
-  if chat.pending_title or chat.thread then
-    if chat.pending_title then
+  if chat.pending_thread or chat.thread then
+    if chat.pending_thread then
       add(THREAD_GLYPH .. (chat.pending_task and (" a new thread on task " .. chat.pending_task) or (" a new thread in " .. chat.ws))
-        .. ": its title first", "IsovimAcpSpinner")
+        .. ": your first message; the agent titles it", "IsovimAcpSpinner")
     elseif chat.renaming then
       add("✎ its new title: <CR> renames it · <C-c> keeps " .. (chat.title or chat.thread), "IsovimAcpSpinner")
     elseif #chat.boxes > 0 then
@@ -1990,7 +1990,7 @@ local function toggle_all(chat)
 end
 
 local function cancel(chat)
-  if chat.thread or chat.pending_title then
+  if chat.thread or chat.pending_thread then
     return vim.notify("isovim: the router's turns run in its own chat (<leader>ir); <C-c> there stops one")
   end
   local ok, result = acp.call(chat.ws, chat.agent, "cancel")
@@ -2262,9 +2262,14 @@ function M.submit(buf)
   end
   local text = vim.trim(table.concat(draft(chat), "\n"))
   if text == "" then
+    -- A new thread with nothing said: it's dropped.
+    if chat.pending_thread then
+      vim.cmd.stopinsert()
+      pcall(Snacks.bufdelete, { buf = chat.buf, force = true })
+    end
     return
   end
-  if chat.thread or chat.pending_title then
+  if chat.thread or chat.pending_thread then
     return M.post_thread(chat, text)
   end
   if chat.rewind then
@@ -2429,10 +2434,6 @@ local function changed(chat, typing)
     record(chat)
   end
   decorate(chat)
-  -- A first post on its way holds off giving the router the title alone (isovim.threads.listen).
-  if chat.thread and (chat.thread_info and chat.thread_info.posts or 0) == 0 and not chat.resolved then
-    threads.drafting(chat.ws, chat.thread, vim.trim(table.concat(draft(chat), "\n")) ~= "")
-  end
 end
 
 -- Keys that start typing (see the top). One a plugin has mapped (LazyVim's s and S are flash's
@@ -2480,9 +2481,9 @@ local function map_keys(chat)
   local attach_task = "<Cmd>lua require('isovim.acp.chat').attach_thread_task()<CR>"
   for _, lhs in ipairs(TYPING) do
     -- A thread's R on the conversation renames it, its C makes a task of it and its A picks one.
-    local thread_rename = lhs == "R" and (chat.thread or chat.pending_title)
-    local thread_task = lhs == "C" and (chat.thread or chat.pending_title)
-    local thread_attach = lhs == "A" and (chat.thread or chat.pending_title)
+    local thread_rename = lhs == "R" and (chat.thread or chat.pending_thread)
+    local thread_task = lhs == "C" and (chat.thread or chat.pending_thread)
+    local thread_attach = lhs == "A" and (chat.thread or chat.pending_thread)
     if not taken[lhs] then
       map("n", lhs, function()
         if mine() then
@@ -2509,8 +2510,8 @@ local function map_keys(chat)
   local resolve = "<Cmd>lua require('isovim.acp.chat').resolve_thread()<CR>"
   local dismiss = "<Cmd>lua require('isovim.acp.chat').dismiss_thread()<CR>"
   for _, lhs in ipairs(EDITING) do
-    local thread_r = lhs == "r" and (chat.thread or chat.pending_title)
-    local thread_d = lhs == "D" and (chat.thread or chat.pending_title)
+    local thread_r = lhs == "r" and (chat.thread or chat.pending_thread)
+    local thread_d = lhs == "D" and (chat.thread or chat.pending_thread)
     map("n", lhs, function()
       return mine() and lhs or (thread_r and resolve or thread_d and dismiss or refuse)
     end, thread_r and "resolve the thread, or open it again (in the composer: replace a character)"
@@ -2617,7 +2618,7 @@ local function map_keys(chat)
       return mine() and "gr" or "<Cmd>lua require('isovim.acp.chat').hand_thread()<CR>"
     end, "hand the thread to the root, now (in the composer: vim's gr)", { expr = true })
   end
-  if chat.thread or chat.pending_title then
+  if chat.thread or chat.pending_thread then
     map("n", "t", function()
       return mine() and "t" or "<Cmd>lua require('isovim.acp.chat').sibling_thread()<CR>"
     end, "a new thread beside this one, on its task (in the composer: vim's t)", { expr = true, nowait = false })
@@ -2732,8 +2733,8 @@ local COMPOSER = vim.api.nvim_create_namespace("isovim_acp_composer")
 local RULE_LINE = { { RULE, "IsovimAcpRule" } }
 
 local function composer_hint(chat)
-  if chat.pending_title then
-    return "  <CR> starts the thread with this title · then your first post · <C-h> the sidebar"
+  if chat.pending_thread then
+    return "  <CR> starts the thread · <S-CR> new line · <C-v> image · <CR> on nothing cancels · <C-h> the sidebar"
   elseif chat.thread and #chat.boxes > 0 then
     return "  its number (or an option's name) and <CR> answers · anything else posts · <CR> on an option above"
   elseif chat.thread then
@@ -2769,8 +2770,8 @@ decorate = function(chat)
   end
   vim.api.nvim_buf_set_extmark(buf, COMPOSER, count - 1, 0,
     { virt_lines = { RULE_LINE, { { composer_hint(chat), "IsovimAcpHint" } } }, virt_lines_leftcol = true })
-  if count - first == 1 and vim.api.nvim_buf_get_lines(buf, first, count, false)[1] == "" and chat.pending_title then
-    vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { "The thread's title…", "IsovimAcpHint" } },
+  if count - first == 1 and vim.api.nvim_buf_get_lines(buf, first, count, false)[1] == "" and chat.pending_thread then
+    vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { "Your first message; the agent titles the thread…", "IsovimAcpHint" } },
       virt_text_pos = "overlay" })
   elseif count - first == 1 and vim.api.nvim_buf_get_lines(buf, first, count, false)[1] == "" and chat.thread then
     vim.api.nvim_buf_set_extmark(buf, COMPOSER, first, 0, { virt_text = { { ("Post in %s…"):format(chat.title or chat.thread),
@@ -2832,8 +2833,8 @@ local function new_chat(ws, agent, buf, lines)
   local chat = { ws = ws, agent = agent, buf = buf, tools = {}, queue = {}, history = {}, history_images = {}, seq = 0,
     fresh = true, busy = false, handover = false, marks = {}, boxes = {}, options = {}, kind = spec.kind or "claude",
     lines = 1, last = "", undo = { states = { lines }, at = 1 } }
-  chat.thread, chat.pending_title = thread_of(agent)
-  chat.pending_title = chat.pending_title or nil
+  chat.thread, chat.pending_thread = thread_of(agent)
+  chat.pending_thread = chat.pending_thread or nil
   for _, ns in ipairs({ NS, TOOLS, MESSAGES, MINE, MD, BOXES, OPTIONS, COMPOSER }) do
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   end
@@ -3013,7 +3014,7 @@ end
 -- the supervisor is subscribed to once it's swapped in.
 local function follow(chat, from)
   local ws, agent = chat.ws, chat.agent
-  if chat.pending_title then
+  if chat.pending_thread then
     chat.stop, chat.drain, chat.journal_at = function()
       chat.dead = true
     end, function() end, function()
@@ -3206,7 +3207,7 @@ end
 -- edit; sending it rewinds there (isovim.acp.host's rewind).
 function M.rewind_at_cursor()
   local chat, row = here()
-  if chat and (chat.thread or chat.pending_title) then
+  if chat and (chat.thread or chat.pending_thread) then
     return say("rewind: a thread is a view of its router's chat; rewind there")
   elseif not chat then
     return say("rewind: put the cursor on one of your prompts in an ACP agent's chat")
@@ -3225,7 +3226,7 @@ end
 -- <leader>if: a fork of the agent at the message under the cursor (in the composer, all of it).
 function M.fork_at_cursor()
   local chat, row = here()
-  if chat and (chat.thread or chat.pending_title) then
+  if chat and (chat.thread or chat.pending_thread) then
     return say("fork: a thread is a view of its router's chat; fork that")
   elseif not chat then
     return say("fork: open an ACP agent's chat first")
@@ -3488,7 +3489,7 @@ function M.rebind(redraw)
       broken[#broken + 1] = { old = old, composer = composer, win = vim.fn.bufwinid(old.buf) }
     elseif composer then
       remake(old)
-    elseif not redraw or old.thread or old.pending_title then
+    elseif not redraw or old.thread or old.pending_thread then
       local from = old.journal_at and old.journal_at()
       pcall(old.stop)
       old.dead = nil
@@ -3559,7 +3560,7 @@ function M.toggle_read(chat)
       return vim.api.nvim_echo({ { "it's resolved: r opens it again", "Comment" } }, false, {})
     end
     require("isovim.surfaces").toggle_read(entry)
-  elseif chat and not chat.pending_title then
+  elseif chat and not chat.pending_thread then
     require("isovim.status").toggle_read(chat.ws, chat.agent)
     require("isovim.sidebar").refresh()
   end
@@ -3638,7 +3639,7 @@ function M.open_thread(repo, id, qid)
   return chat
 end
 
--- A new thread in repo, on task if given: its view opens with the composer asking for its title first.
+-- A new thread in repo, on task if given: its view opens with the composer asking for its first message.
 function M.new_thread(repo, task)
   local why = threads.refusal(repo)
   if why then
@@ -3660,7 +3661,7 @@ function M.sibling_thread()
   if chat and chat.thread then
     return M.new_thread(chat.ws, (threads.related(chat.ws, chat.thread)))
   end
-  say("give this thread its title first")
+  say("send its first message first")
 end
 
 -- C on a thread's conversation: a task made of it, its title filled in to accept or edit, and the thread
@@ -3669,7 +3670,7 @@ end
 function M.task_from_thread()
   local chat = by_buf(vim.api.nvim_get_current_buf())
   if not (chat and chat.thread) then
-    return say("give this thread its title first")
+    return say("send its first message first")
   end
   vim.ui.input({ prompt = "New task: ", default = chat.title or chat.thread }, function(title)
     local tasks = require("isovim.board_tasks")
@@ -3689,13 +3690,40 @@ function M.attach_thread_task()
   local chat = by_buf(vim.api.nvim_get_current_buf())
   local entry = chat and chat.thread and require("isovim.surfaces").thread_rows(chat.ws)[chat.thread]
   if not entry then
-    return say("give this thread its title first")
+    return say("send its first message first")
   end
   require("isovim.task_view").actions.thread_task(chat.ws, entry)
 end
 
--- <CR> in a thread's composer: its title (a new thread), else a post, sent to the router as a
--- prompt tagged with the thread (its supervisor posts the turn's last message back).
+-- Posts in the thread and sends it to who takes the thread, as a prompt tagged with it (its supervisor
+-- posts the turn's last message back).
+local function send_post(chat, text, attached)
+  local post, err = threads.post(chat.ws, chat.thread, "user", text, attached)
+  if not post then
+    return say("could not post: " .. tostring(err), vim.log.levels.ERROR)
+  end
+  chat.recall = nil
+  M.set_draft(chat, { "" })
+  to_bottom(chat)
+  -- To its bypass's worker, if it has one, else the router.
+  local router, bypassed = threads.recipient(chat.ws, chat.thread)
+  if not router then
+    return say(chat.ws .. " has no router to send it to; it's kept in the thread", vim.log.levels.WARN)
+  end
+  local cmd = { require("isovim.panes").bin, "send", router }
+  for _, image in ipairs(attached or {}) do
+    vim.list_extend(cmd, { "--image", image.path })
+  end
+  cmd[#cmd + 1] = threads.prompt(chat.ws, chat.thread, chat.title or chat.thread, text) .. (bypassed and threads.BYPASS_NOTE or "")
+  vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
+    if result.code ~= 0 then
+      say(("posted, but %s wasn't told: %s"):format(router, vim.trim(result.stderr or "")), vim.log.levels.WARN)
+    end
+  end))
+end
+
+-- <CR> in a thread's composer: a post. In a new thread's, its first post, which starts it under a stand-in
+-- title for the agent to replace.
 function M.post_thread(chat, text)
   if chat.renaming then
     local title, err = threads.rename(chat.ws, chat.thread, "user", text)
@@ -3706,8 +3734,11 @@ function M.post_thread(chat, text)
     chat.renaming = nil
     M.set_draft(chat, before)
     return update_bar(chat)
-  elseif chat.pending_title then
-    local id, err = threads.new(chat.ws, text, "user", chat.pending_task)
+  elseif chat.pending_thread then
+    local attached
+    text, attached = images.collect(chat.buf, text)
+    local title = threads.stand_in(text)
+    local id, err = threads.new(chat.ws, title, "user", chat.pending_task, true)
     if not id then
       return say("no thread: " .. tostring(err), vim.log.levels.WARN)
     end
@@ -3716,14 +3747,15 @@ function M.post_thread(chat, text)
     pcall(chat.stop)
     chats[key(chat.ws, chat.agent)] = nil
     unbind(chat)
-    chat.agent, chat.thread, chat.pending_title, chat.pending_task, chat.dead = "thread:" .. id, id, nil, nil, nil
+    chat.agent, chat.thread, chat.pending_thread, chat.pending_task, chat.dead = "thread:" .. id, id, nil, nil, nil
+    chat.title = title
     chats[key(chat.ws, chat.agent)] = chat
     pcall(vim.api.nvim_buf_set_name, chat.buf, ("isovim-thread://%s/%s"):format(chat.ws, id))
     vim.b[chat.buf].isovim_surface = chat.ws .. "/" .. id
     bind(chat)
     follow(chat)
     update_bar(chat)
-    return
+    return send_post(chat, text, attached)
   elseif chat.resolved then
     return say("this thread is resolved: r on it opens it again", vim.log.levels.WARN)
   end
@@ -3755,29 +3787,7 @@ function M.post_thread(chat, text)
   end
   local attached
   text, attached = images.collect(chat.buf, text)
-  local post, err = threads.post(chat.ws, chat.thread, "user", text, attached)
-  if not post then
-    return say("could not post: " .. tostring(err), vim.log.levels.ERROR)
-  end
-  threads.drafting(chat.ws, chat.thread, false)
-  chat.recall = nil
-  M.set_draft(chat, { "" })
-  to_bottom(chat)
-  -- To its bypass's worker, if it has one, else the router.
-  local router, bypassed = threads.recipient(chat.ws, chat.thread)
-  if not router then
-    return say(chat.ws .. " has no router to send it to; it's kept in the thread", vim.log.levels.WARN)
-  end
-  local cmd = { require("isovim.panes").bin, "send", router }
-  for _, image in ipairs(attached or {}) do
-    vim.list_extend(cmd, { "--image", image.path })
-  end
-  cmd[#cmd + 1] = threads.prompt(chat.ws, chat.thread, chat.title or chat.thread, text) .. (bypassed and threads.BYPASS_NOTE or "")
-  vim.system(cmd, { text = true }, vim.schedule_wrap(function(result)
-    if result.code ~= 0 then
-      say(("posted, but %s wasn't told: %s"):format(router, vim.trim(result.stderr or "")), vim.log.levels.WARN)
-    end
-  end))
+  send_post(chat, text, attached)
 end
 
 -- R on a thread's conversation (or :IsovimThreadRename): its title in the composer to edit, <CR>
