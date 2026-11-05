@@ -19,6 +19,7 @@
 --                                went                          {repo, name, type, file, title, error?}
 --   surface.<repo>.<name>.answered   a question was answered   {..., answer: {labels, other?, by, at}}
 --   surface.<repo>.<name>.consumed   the user opened a chat or consumable surface (isovim.surfaces)
+--   thread.<repo>.<id>.posted    a post on a thread            {repo, id, by}
 --   bug.<id>.filed|taken|issued   a report about isovim was filed (iso bug), its worker spawned, its
 --                                issue opened (isovim.bugs)   {id, reporter?, scope?, worker?, url?}
 --   root.<scope>.raised|decided   a root left a question to the user (iso root answer
@@ -59,6 +60,7 @@ M.topics = {
   { "bug.*.taken", "a bug report's worker was spawned" },
   { "bug.*.issued", "a bug report's GitHub issue was opened" },
   { "thread.*.*.handed", "the user handed a thread to its root" },
+  { "thread.*.*.posted", "a post on a thread" },
   { "root.*.raised", "a root left a question to the user" },
   { "root.*.decided", "a root answered a question itself" },
   { "**", "everything" },

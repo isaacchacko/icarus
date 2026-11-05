@@ -1,4 +1,5 @@
--- Messages moving on the agent graph (isovim.agent_graph): when one goes between two agents, a couple of lit cells
+-- Messages moving on the agent graph (isovim.agent_graph): when one goes between two agents, or a post between a
+-- thread and its agent, a couple of lit cells
 -- travel from sender to receiver along the graph's lines, through their common ancestor when they aren't parent and
 -- child, blue going down, green going up, purple across. Timing's loose: they come from the msg.* events, which is
 -- when a message reached its agent, so a pulse may start late. Agents with no line between them (two top ones,
@@ -12,7 +13,6 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_agent_pulses")
 local TICK, MAX_PULSES, FLASH_TICKS, LONGEST_TICKS = 90, 8, 6, 60
-local BOX_HEIGHT = 4
 local COLORS = { down = "DiagnosticInfo", up = "DiagnosticOk", across = "DiagnosticHint" }
 
 -- In _G, so a hot reload keeps the watcher and what's moving.
@@ -68,7 +68,7 @@ local function segment(parent, child)
   if not bus then
     return cells
   end
-  for y = parent.y + BOX_HEIGHT - 1, bus do
+  for y = parent.y + parent.h - 1, bus do
     cells[#cells + 1] = { y, trunk }
   end
   for x = trunk + 1, child.x + 2 do
@@ -140,13 +140,12 @@ end
 
 -- The box's border, as cells to light for a moment.
 local function border(node)
-  local state = graph_state()
-  local width, cells = state.box_w or 28, {}
+  local width, cells = node.w, {}
   for x = node.x, node.x + width - 1 do
     cells[#cells + 1] = { node.y, x }
-    cells[#cells + 1] = { node.y + BOX_HEIGHT - 1, x }
+    cells[#cells + 1] = { node.y + node.h - 1, x }
   end
-  for y = node.y + 1, node.y + BOX_HEIGHT - 2 do
+  for y = node.y + 1, node.y + node.h - 2 do
     cells[#cells + 1] = { y, node.x }
     cells[#cells + 1] = { y, node.x + width - 1 }
   end
@@ -271,6 +270,34 @@ function M.message(from, to)
     sender = sender, receiver = receiver })
 end
 
+-- A post on a thread: yours moves from the thread to the agent that has it, flashing the thread as you post it, and
+-- an agent's from it to the thread. You aren't a box of your own.
+function M.post(repo, id, by)
+  local state = graph_state()
+  if not (state and state.flat) then
+    return
+  end
+  local thread = find(repo .. "#" .. id)
+  if not thread then
+    return
+  end
+  local holder = thread.above
+  while holder and holder.group do
+    holder = holder.above
+  end
+  if by == "user" then
+    flash(shown(thread), "down")
+    if holder then
+      M.message(thread.key, holder.key)
+    end
+  else
+    local sender = find(by) or holder
+    if sender then
+      M.message(sender.key, thread.key)
+    end
+  end
+end
+
 -- The graph drew: what's moving goes on along wherever its boxes are now.
 function M.after_draw()
   if #pulses.list == 0 then
@@ -297,8 +324,14 @@ function M.start()
     return
   end
   pulses.stop_watch = require("isovim.events").watch(function(_, event)
+    local wrap = require("isovim.safe").wrap
     if event.topic:match("^msg%.") then
-      require("isovim.safe").wrap("the agent graph's pulses", require("isovim.agent_pulses").message)(event.from, event.addr)
+      -- A post on a thread reaching its agent moves by the post's own event.
+      if not require("isovim.threads").tagged(event.text) then
+        wrap("the agent graph's pulses", require("isovim.agent_pulses").message)(event.from, event.addr)
+      end
+    elseif event.topic:match("^thread%..*%.posted$") then
+      wrap("the agent graph's pulses", require("isovim.agent_pulses").post)(event.repo, event.id, event.by)
     end
   end)
 end

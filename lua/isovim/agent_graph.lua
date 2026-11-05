@@ -1,6 +1,9 @@
 -- The agents as a graph: one tab, one buffer, every project on this host and the other hosts' as the sidebar
 -- knows them, each agent a box joined to whoever started it by box-drawing lines (the parent link, no message
--- edges). <leader>iG, or <CR> on Agents in the sidebar.
+-- edges). <leader>iG, or <CR> on Agents in the sidebar. The repo's root is at the top, what has no parent hanging off
+-- it, with its root mode shown. Each open thread is a small square box on the agent that has it now: the worker it
+-- waits on or is bypassed to, the root if it's answering, else its router. An agent with more than a few gets one
+-- box for them all, folded, saying how many are yours.
 --
 -- A box's children hang off a trunk under its left side, in rows along buses, as many to a row as the window
 -- holds, so a repo of 20 stays readable and a narrow window just stacks them. Lines never wrap; what's wider
@@ -21,7 +24,8 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("isovim_agent_graph")
 local BOX_WIDTH, BOX_HEIGHT, INDENT, GAP, MIN_WIDTH = 28, 4, 4, 2, 16
-local RANK = { root = 1, router = 2, dedicated = 3, worker = 4, script = 5 }
+local THREAD_WIDTH, THREAD_HEIGHT, THREADS_SHOWN = 30, 3, 3
+local RANK = { root = 1, router = 2, dedicated = 3, worker = 4, script = 5, thread = 6, threads = 6 }
 local ROLE_HL = { root = "Special", router = "DiagnosticInfo", dedicated = "DiagnosticHint", worker = "Normal", script = "Comment" }
 local TICK, READ_EVERY = 150, 5000
 
@@ -45,6 +49,57 @@ local function waits_of(repo)
   return waits
 end
 
+-- Each thread's summary by its file, kept as long as its size and mtime stay, so a read is mostly stats.
+state.thread_cache = state.thread_cache or {}
+
+local function thread_infos(repo)
+  local threads = require("isovim.threads")
+  local infos, dir = {}, threads.dir(repo)
+  if vim.fn.isdirectory(dir) == 0 then
+    return infos
+  end
+  for base in vim.fs.dir(dir) do
+    local id = base:match("^(t%d+)%.jsonl$")
+    local stat = id and vim.uv.fs_stat(dir .. "/" .. base)
+    if stat then
+      local path = dir .. "/" .. base
+      local cached = state.thread_cache[path]
+      if not (cached and cached.size == stat.size and cached.mtime == stat.mtime.sec) then
+        local info = threads.summary(threads.read(repo, id) or {})
+        info.id = id
+        cached = { size = stat.size, mtime = stat.mtime.sec, info = info }
+        state.thread_cache[path] = cached
+      end
+      if cached.info.status == "open" then
+        infos[#infos + 1] = cached.info
+      end
+    end
+  end
+  return infos
+end
+
+-- The repo's open threads as nodes, each hanging off the agent that has it now.
+local function thread_nodes(repo, tasks)
+  local threads = require("isovim.threads")
+  local infos = thread_infos(repo)
+  if #infos == 0 then
+    return {}
+  end
+  local routers, seen, nodes = threads.routers(repo), threads.seen(repo), {}
+  local root = require("isovim.rootmode").route(repo)
+  for _, info in ipairs(infos) do
+    local waits_on = info.waiting_on ~= "user" and info.waiting_on or nil
+    local answering = root and (info.working_by == root or info.handed ~= nil or (info.root_posts or 0) > 0)
+    local holder = waits_on or info.bypass or (answering and root) or threads.router_of(repo, info, routers)
+    local task = info.task and tasks[info.task]
+    nodes[#nodes + 1] = { key = repo .. "#" .. info.id, ws = repo, id = info.id, thread = true, role = "thread", name = info.title or info.id,
+      status = info.working and "working" or "idle", parent = holder, yours = info.waiting_on == "user" or (info.pending or 0) > 0,
+      question = (info.pending or 0) > 0, unread = (info.last_reply or 0) > (seen[info.id] or 0), task = task and task.id or nil,
+      parked = task and task.column == "backburner" or nil, waits = 0 }
+  end
+  return nodes
+end
+
 -- This host's agents and the others', as the sidebar has them, by section: {key, title, hl, host?, nodes}.
 local function read_sections()
   local panes, scope = require("isovim.panes"), require("isovim.scope")
@@ -61,6 +116,7 @@ local function read_sections()
         local running = sessions[ws.id] and sessions[ws.id][agent.id] ~= nil
         nodes[#nodes + 1] = { key = address, ws = ws.id, id = agent.id, name = agent.name or agent.id, kind = agent.kind,
           role = script and "script" or store.shown_role(agent), hidden = agent.hidden, running = running, script = script,
+          mode = store.role(agent) == "root" and not store.is_pseudo(ws.id) and require("isovim.rootmode").mode(ws.id) or nil,
           status = running and (status.get(ws.id, agent.id) or "idle") or "stopped",
           doing = running and panes.subtitle(agent.kind, titles[address]) or nil, waits = waits[address] or 0,
           parent = agent.parent or (agent.of and (ws.id .. "/" .. agent.of)) or nil }
@@ -68,6 +124,9 @@ local function read_sections()
     end
     if #nodes > 0 then
       local style = ws.repo and repos.style(ws.repo)
+      if not store.is_pseudo(ws.id) then
+        vim.list_extend(nodes, thread_nodes(ws.id, (require("isovim.board_tasks").read(ws.id))))
+      end
       sections[#sections + 1] = { key = ws.id, title = ws.name or ws.id, nodes = nodes, repo = ws.id,
         glyph = style and style.glyph, hl = style and style.color and repos.highlight(style.color) or "Title" }
     end
@@ -110,7 +169,8 @@ local function read_sections()
 end
 
 -- Each section's nodes as trees: a node's parent in its section, else it's a top one, the roots and routers
--- first. A cycle written by hand comes out as top ones.
+-- first. With a root, it's the one top, the rest hanging off it. A cycle written by hand comes out as top ones. An
+-- agent with more than a few threads gets a box for them.
 local function build_trees(sections)
   local function before(a, b)
     if (RANK[a.role] or 9) ~= (RANK[b.role] or 9) then
@@ -142,6 +202,36 @@ local function build_trees(sections)
       end
     end
     table.sort(section.tops, before)
+    local root = section.tops[1] and section.tops[1].role == "root" and section.tops[1] or nil
+    if root then
+      for i = 2, #section.tops do
+        section.tops[i].above = root
+        table.insert(root.children, section.tops[i])
+      end
+      section.tops = { root }
+    end
+    for _, node in ipairs(vim.list_slice(section.nodes)) do
+      local threads = vim.tbl_filter(function(child)
+        return child.thread
+      end, node.children)
+      if not node.thread and #threads > THREADS_SHOWN then
+        local yours = #vim.tbl_filter(function(each)
+          return each.yours
+        end, threads)
+        local group = { key = node.key .. "#threads", role = "threads", id = "threads", group = true, status = "idle", waits = 0, above = node,
+          name = ("%d threads"):format(#threads), yours = yours > 0, yours_count = yours, unread = vim.iter(threads):any(function(each)
+            return each.unread
+          end), children = threads }
+        node.children = vim.tbl_filter(function(child)
+          return not child.thread
+        end, node.children)
+        table.insert(node.children, group)
+        for _, thread in ipairs(threads) do
+          thread.above = group
+        end
+        table.insert(section.nodes, group)
+      end
+    end
     for _, node in ipairs(section.nodes) do
       table.sort(node.children, before)
       node.section = section
@@ -149,7 +239,13 @@ local function build_trees(sections)
   end
 end
 
+-- What's shown under a node: a threads box is folded until opened, anything else open until folded.
+state.opened = state.opened or {}
+
 local function kids_of(node)
+  if node.group then
+    return state.opened[node.key] and node.children or {}
+  end
   return state.folded[node.key] and {} or node.children
 end
 
@@ -164,8 +260,11 @@ end
 -- Packs blocks into rows no wider than width: {items, w, h}.
 local function pack(items, width)
   local rows, row = {}, nil
-  for _, item in ipairs(items) do
-    if not row or (row.w + GAP + item.block_w > width and #row.items > 0) then
+  for i, item in ipairs(items) do
+    -- Threads on a row of their own, under the agents.
+    local turning = item.role == "thread" or item.role == "threads"
+    turning = turning and items[i - 1] and items[i - 1].role ~= "thread" and items[i - 1].role ~= "threads"
+    if not row or turning or (row.w + GAP + item.block_w > width and #row.items > 0) then
       row = { items = {}, w = -GAP, h = 0 }
       rows[#rows + 1] = row
     end
@@ -178,7 +277,10 @@ end
 -- How much room a node and all under it take, in rows that fit width.
 local function measure(node, width, box_w)
   local kids = kids_of(node)
-  node.block_w, node.block_h, node.rows = box_w, BOX_HEIGHT, nil
+  local small = node.thread or node.group
+  node.w = small and (box_w >= BOX_WIDTH and THREAD_WIDTH or box_w) or box_w
+  node.h = small and THREAD_HEIGHT or BOX_HEIGHT
+  node.block_w, node.block_h, node.rows = node.w, node.h, nil
   if #kids == 0 then
     return
   end
@@ -196,7 +298,7 @@ end
 -- Where a node and all under it go: x and y, 0-based cells.
 local function place(node, x, y)
   node.x, node.y = x, y
-  local at = y + BOX_HEIGHT
+  local at = y + node.h
   for _, row in ipairs(node.rows or {}) do
     row.bus = at
     local cell = x + INDENT
@@ -255,12 +357,71 @@ local function role_word(node)
   return node.role
 end
 
+-- A thread's box, or the box for an agent's threads: small and square, so it reads apart from the agents.
+local function draw_thread(canvas, node, focused)
+  local moving = node.status == "working"
+  local lively = moving or node.yours or node.unread
+  local border = focused and "IsovimBoardFocus" or (node.parked and "NonText") or (node.yours and "DiagnosticWarn")
+    or (moving and "DiagnosticInfo") or (node.unread and "DiagnosticOk") or "NonText"
+  local inner, x, y = node.w - 2, node.x, node.y
+  put(canvas, y, x, "┌" .. ("─"):rep(inner) .. "┐", border)
+  put(canvas, y + 2, x, "└" .. ("─"):rep(inner) .. "┘", border)
+  put(canvas, y + 1, x, "│", border)
+  put(canvas, y + 1, x + inner + 1, "│", border)
+  put(canvas, y + 1, x + 1, (" "):rep(inner))
+  local tail, tail_w = {}, 0
+  local function mark(text, hl)
+    tail[#tail + 1] = { text, hl }
+    tail_w = tail_w + vim.fn.strdisplaywidth(text) + 1
+  end
+  if node.group then
+    if (node.yours_count or 0) > 0 then
+      mark(("%d yours"):format(node.yours_count), "DiagnosticWarn")
+    end
+    if node.unread then
+      mark("●", "DiagnosticOk")
+    end
+    mark(state.opened[node.key] and "▾" or "▸", "Special")
+  else
+    if node.task then
+      mark(node.task, "Comment")
+    end
+    if node.unread then
+      mark("●", "DiagnosticOk")
+    end
+    if node.question then
+      mark("?", "DiagnosticWarn")
+    elseif node.yours then
+      mark("\u{f0a4}", "DiagnosticWarn") -- fa-hand_o_right: over to you
+    end
+  end
+  local lead = 2
+  if moving then
+    local icon, icon_hl = status.icon("working")
+    put(canvas, y + 1, x + 1, icon, icon_hl)
+  else
+    put(canvas, y + 1, x + 1, "\u{f086}", lively and "Special" or "Comment")
+  end
+  local room = math.max(1, inner - lead - tail_w)
+  local text = node.group and node.name or (node.id .. " " .. node.name)
+  put(canvas, y + 1, x + 3, cut(text, room), focused and "Bold" or (lively and "Normal" or "Comment"))
+  local at = x + inner + 1 - tail_w
+  for _, each in ipairs(tail) do
+    put(canvas, y + 1, at, each[1], each[2])
+    at = at + vim.fn.strdisplaywidth(each[1]) + 1
+  end
+end
+
 local function draw_box(canvas, node, width, focused)
+  if node.thread or node.group then
+    return draw_thread(canvas, node, focused)
+  end
   local moving = node.status == "working"
   local unread = node.status == "unread" or node.status == "attention"
-  local lively = moving or unread or node.waits > 0
+  -- A root in root mode is on watch, and shows it, moving or not.
+  local lively = moving or unread or node.waits > 0 or node.mode ~= nil
   local text_hl = lively and "Normal" or "Comment"
-  local border = focused and "IsovimBoardFocus" or (moving and ROLE_HL[node.role]) or (unread and "DiagnosticWarn") or "NonText"
+  local border = focused and "IsovimBoardFocus" or ((moving or node.mode) and ROLE_HL[node.role]) or (unread and "DiagnosticWarn") or "NonText"
   if border == "Normal" then
     border = "DiagnosticInfo"
   end
@@ -306,6 +467,9 @@ local function draw_box(canvas, node, width, focused)
     at = at + vim.fn.strdisplaywidth(each[1]) + 1
   end
   local under = role_word(node)
+  if node.mode then
+    under = under .. " · " .. node.mode
+  end
   if node.status == "stopped" then
     under = under .. " · stopped"
   elseif node.doing and node.doing ~= "" then
@@ -326,9 +490,9 @@ local function draw_edges(canvas, node)
     return
   end
   local trunk = node.x + 2
-  put(canvas, node.y + BOX_HEIGHT - 1, trunk, "┬", hl)
+  put(canvas, node.y + node.h - 1, trunk, "┬", hl)
   local last = node.rows[#node.rows].bus
-  for y = node.y + BOX_HEIGHT, last - 1 do
+  for y = node.y + node.h, last - 1 do
     put(canvas, y, trunk, "│", hl)
   end
   for i, row in ipairs(node.rows) do
@@ -463,14 +627,20 @@ function M.draw(move_cursor)
   end
   local canvas = new_canvas(math.max(height, 1))
   for _, section in ipairs(state.sections) do
-    local count, working = #section.nodes, 0
+    local count, working, thread_count = 0, 0, 0
     for _, node in ipairs(section.nodes) do
-      working = working + (node.status == "working" and 1 or 0)
+      if node.thread then
+        thread_count = thread_count + 1
+      elseif not node.group then
+        count = count + 1
+        working = working + (node.status == "working" and 1 or 0)
+      end
     end
     local head = (section.glyph and (section.glyph .. " ") or "") .. section.title
     put(canvas, section.y, 1, head, section.hl)
     put(canvas, section.y, vim.fn.strdisplaywidth(head) + 2,
-      ("%d %s%s"):format(count, count == 1 and "agent" or "agents", working > 0 and (" · %d working"):format(working) or ""), "Comment")
+      ("%d %s%s%s"):format(count, count == 1 and "agent" or "agents", working > 0 and (" · %d working"):format(working) or "",
+        thread_count > 0 and (" · %d %s"):format(thread_count, thread_count == 1 and "thread" or "threads") or ""), "Comment")
     for _, top in ipairs(section.tops) do
       draw_edges(canvas, top)
     end
@@ -485,7 +655,7 @@ function M.draw(move_cursor)
   end
   for _, node in ipairs(flat) do
     if node.rows then
-      put(canvas, node.y + BOX_HEIGHT - 1, node.x + 2, "┬", node == focused and "IsovimBoardFocus" or "NonText")
+      put(canvas, node.y + node.h - 1, node.x + 2, "┬", node == focused and "IsovimBoardFocus" or "NonText")
     end
   end
   local lines, marks, cell_bytes = to_lines(canvas)
@@ -629,6 +799,10 @@ function M.open_focused()
   local node = focus_node()
   if not node then
     return
+  elseif node.group then
+    return M.fold()
+  elseif node.thread then
+    return require("isovim.acp.chat").open_thread(node.ws, node.id)
   elseif node.host then
     return require("isovim").open_remote(node.host, require("isovim.remote").host_of(node.host), node.remote_id:gsub("^[^:]+:", ""),
       node.host .. ":" .. node.workspace, node.name)
@@ -640,6 +814,9 @@ function M.fold()
   local node = focus_node()
   if not node then
     return
+  elseif node.group then
+    state.opened[node.key] = not state.opened[node.key] or nil
+    return M.draw(true)
   elseif #node.children == 0 then
     return vim.notify("isovim: " .. node.name .. " started nothing to fold", vim.log.levels.INFO)
   end
@@ -687,7 +864,7 @@ function M.cursor_moved()
   end
   local line, cell = vim.api.nvim_win_get_cursor(win)[1] - 1, vim.fn.virtcol(".") - 1
   local inside = function(each)
-    return line >= each.y and line < each.y + BOX_HEIGHT and cell >= each.x and cell < each.x + (state.box_w or BOX_WIDTH)
+    return line >= each.y and line < each.y + each.h and cell >= each.x and cell < each.x + each.w
   end
   if node and inside(node) then
     return
@@ -713,8 +890,8 @@ end
 M.help_keys = {
   { "h / l", "the box beside it, left / right, among those with the same parent" },
   { "j / k", "the first it started, else what comes after it / whoever started it" },
-  { "<CR>", "open that agent's chat" },
-  { "z", "fold or unfold all it started" },
+  { "<CR>", "open that agent's chat or that thread; on an agent's box of threads, open or close it" },
+  { "z", "fold or unfold all it started and holds" },
   { "[ / ]", "the previous / next project" },
   { "<C-d> <C-u> gg G, the wheel", "scroll: the focus goes to the box under the cursor" },
   { "?", "these keys" },
@@ -733,7 +910,7 @@ local function bind(buf)
   end
   on("<CR>", function()
     require("isovim.agent_graph").open_focused()
-  end, "open this agent's chat")
+  end, "open this agent's chat or this thread")
   on("z", function()
     require("isovim.agent_graph").fold()
   end, "fold all it started")

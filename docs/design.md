@@ -561,21 +561,30 @@ edges. A script pane hangs off the agent it runs for; a plain terminal isn't dra
 - **Shape:** the root and routers come first, then what each started, hanging off a trunk under its left side in rows
   along buses, as many to a row as the window holds, so 20 agents take a few rows, and a narrow window stacks them.
   Lines never wrap: what's wider than the window scrolls sideways with the cursor, and boxes shrink to 16 cells at least.
+- **Root:** with a root, it's the repo's one top box, everything without a parent hanging off it, the router first, and
+  its box says its root mode, `root · medic` or `root · sentry`, in its color even while idle.
+- **Threads:** each open thread is a small square box hanging off the agent that has it now: the worker it waits on or is
+  bypassed to, the root if it's answering (handed to it, or it's posted since your last word), else its router, which is a
+  task's dedicated router if it has one. It says its id, title, `●` unread, a hand or `?` when it's your turn or a question waits, and its
+  task. They take a row of their own under the agents. An agent with more than 3 gets one box for them, closed, saying how
+  many and how many are yours; `<CR>` or `z` opens it. `<CR>` on a thread opens it. A summary is kept per file, read
+  again only when its size or mtime changes. Resolved threads aren't drawn.
 - **A box:** a spinner while it works, its glyph and name, then at the right `●` for unread output, `⧗2` for threads
   waiting on it, an eye if it's hidden and `▸5` for a fold holding five; under that its role and what it's on, cut short.
   Role shows by glyph, word and, while it's moving, color. What's idle is dim, so what's moving stands out.
 - **Live:** it reads files and tmux as the sidebar refreshes and at least every 5s, and turns spinners every 150ms
   from that, only while it's on screen. Only the lines that changed are written, and the cursor stays put unless its
   box moved.
-- **Messages** (isovim.agent_pulses): when one goes between two agents, two lit cells travel slowly from sender to
-  receiver along the lines, through their common ancestor when they aren't parent and child, blue going down, green
-  going up, purple across, and the receiver's box lights as it arrives. It comes from the `msg.*` events, no journal polled, so
+- **Messages** (isovim.agent_pulses): when one goes between two agents, or a post between a thread and its agent, two lit
+  cells travel slowly from sender to receiver along the lines, through their common ancestor when they aren't parent and child, blue going down, green
+  going up, purple across, and the receiver's box lights as it arrives. A post of yours flashes its thread and moves to the agent
+  that has it, as you aren't a box of your own. It comes from the `msg.*` and `thread.*.*.posted` events, no journal polled, so
   timing's loose: an event is when the message reached its agent. Two agents with no line between them, or an end that
   isn't drawn (you, a shell), get a short flash on what's there; in a folded subtree a pulse stops at the fold. They're extmarks
   over the lines, so the buffer and cursor don't move. The events are watched only while the graph is on screen and the
   pulses' timer runs only while one moves. Eight move at once and the rest are dropped, so a burst can't lag the TUI.
 - **Keys:** `h` and `l` the boxes beside it, `k` whoever started it, `j` the first it started, else what comes after it,
-  `<CR>` its chat, also for a hidden one or another host's, `z` folds what it started, `[ ]` step the sidebar's project and
+  `<CR>` its chat, also for a hidden one or another host's, or the thread, `z` folds what it started and holds, `[ ]` step the sidebar's project and
   take the graph to that section, its scope with it. Scrolling any other way moves the focus to the box under the cursor.
 
 ## Links

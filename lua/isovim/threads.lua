@@ -399,6 +399,7 @@ function M.post(repo, id, by, text, images, no_reply)
   local post = append(repo, id, { kind = "post", by = by, text = text, images = images and images[1] and images or nil,
     no_reply = no_reply or nil, keeps_wait = marked_this_turn(M.summary(entries), by) or nil })
   publish_users_turn(repo, id)
+  require("isovim.events").publish(require("isovim.events").topic("thread", repo, id, "posted"), { repo = repo, id = id, by = by })
   return post
 end
 
@@ -1023,7 +1024,9 @@ function M.root_post(repo, id, by, text)
   if not entries then
     return nil, err
   end
-  return append(repo, id, { kind = "post", by = by, text = vim.trim(text), root = true })
+  local post = append(repo, id, { kind = "post", by = by, text = vim.trim(text), root = true })
+  require("isovim.events").publish(require("isovim.events").topic("thread", repo, id, "posted"), { repo = repo, id = id, by = by })
+  return post
 end
 
 -- The threads the root should hear of now, each marked told so it's told once: up to limit, what the
