@@ -5,6 +5,9 @@ local store = require("isovim.store")
 local M = {}
 
 local TTL = 60
+local CLOSED_TTL = 3600
+-- Each running gh holds two of the TUI's fds, and macOS gives it 256.
+local MOST_LOOKUPS = 8
 local fetching = {} ---@type table<string, boolean>
 
 ---@type fun(ws: string, pr: isovim.Pr, news: string)? set by the TUI to notify
@@ -85,14 +88,27 @@ local function publish_changes(ws, pr, old)
   end
 end
 
--- Looks every PR up in parallel and rewrites the cache; on_done runs on the main loop.
+-- Whether a fetch can leave this PR as it was: a merged one stays merged, and a closed one is rarely
+-- reopened.
+local function settled(pr)
+  return pr and (pr.state == "MERGED" or (pr.state == "CLOSED" and os.time() - (pr.looked or 0) < CLOSED_TTL))
+end
+
+-- Looks each PR up, MOST_LOOKUPS at a time, and rewrites the cache; on_done runs on the main loop. A
+-- PR that can't be looked up keeps what the cache had.
 local function fetch(ws, urls, on_done)
   if fetching[ws] then
     return
   end
   fetching[ws] = true
-  local prs, pending = {}, #urls
   local before = read_cache(ws).prs
+  local prs, todo = {}, {}
+  for _, url in ipairs(urls) do
+    prs[url] = before[url]
+    if not settled(before[url]) then
+      todo[#todo + 1] = url
+    end
+  end
   local function finish()
     fetching[ws] = nil
     -- News worth a notification: checks that finished, a PR merged.
@@ -111,22 +127,38 @@ local function fetch(ws, urls, on_done)
     vim.fn.writefile({ vim.json.encode({ fetched = os.time(), prs = prs }) }, cache_file(ws))
     on_done()
   end
-  for _, url in ipairs(urls) do
-    local fields = "number,title,state,isDraft,url,statusCheckRollup,reviewDecision,createdAt,mergedAt,closedAt"
-    vim.system({ "gh", "pr", "view", url, "--json", fields }, { text = true }, function(result)
-      local ok, pr = pcall(vim.json.decode, result.stdout or "")
-      if ok and type(pr) == "table" then
-        pr.checks, pr.approved = checks(pr.statusCheckRollup), pr.reviewDecision == "APPROVED" or nil
-        pr.review = pr.reviewDecision ~= "" and pr.reviewDecision or nil
-        pr.statusCheckRollup, pr.reviewDecision = nil, nil
-        prs[url] = pr
+  local fields = "number,title,state,isDraft,url,statusCheckRollup,reviewDecision,createdAt,mergedAt,closedAt"
+  local next_up, running = 1, 0
+  local function look_up()
+    while running < MOST_LOOKUPS and next_up <= #todo do
+      local url = todo[next_up]
+      next_up = next_up + 1
+      running = running + 1
+      -- Starting one can fail (out of fds): it counts as looked up, or the fetch would never end and
+      -- this workspace's PRs would freeze.
+      local started = pcall(vim.system, { "gh", "pr", "view", url, "--json", fields }, { text = true }, function(result)
+        local ok, pr = pcall(vim.json.decode, result.stdout or "")
+        if ok and type(pr) == "table" then
+          pr.checks, pr.approved = checks(pr.statusCheckRollup), pr.reviewDecision == "APPROVED" or nil
+          pr.review = pr.reviewDecision ~= "" and pr.reviewDecision or nil
+          pr.statusCheckRollup, pr.reviewDecision = nil, nil
+          pr.looked = os.time()
+          prs[url] = pr
+        end
+        vim.schedule(function()
+          running = running - 1
+          look_up()
+        end)
+      end)
+      if not started then
+        running = running - 1
       end
-      pending = pending - 1
-      if pending == 0 then
-        vim.schedule(finish)
-      end
-    end)
+    end
+    if running == 0 then
+      vim.schedule(finish)
+    end
   end
+  look_up()
 end
 
 -- A worktree workspace's PR is the one for its branch, found in the background
