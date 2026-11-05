@@ -9,7 +9,8 @@
 -- it. What's idle is dim, so what's moving stands out; hidden agents are here too, with an eye.
 --
 -- It's redrawn as states change: only the lines that changed are written, and the cursor stays put unless its
--- box moved. hjkl go along the graph (M.step). Any other motion (a scroll, the wheel, a click) moves the focus to
+-- box moved. Messages moving between agents show as pulses along the lines (isovim.agent_pulses). hjkl go along the
+-- graph (M.step). Any other motion (a scroll, the wheel, a click) moves the focus to
 -- the box under the cursor or nearest it, so the next key goes from where you're looking.
 local store = require("isovim.store")
 local boxes = require("isovim.boxes")
@@ -377,11 +378,12 @@ local function layout(sections, width)
   return flat, y, box_w
 end
 
--- The canvas as lines, and its highlights as {row, from, to, hl} in bytes.
+-- The canvas as lines, its highlights as {row, from, to, hl} in bytes, and each cell's bytes for the pulses.
 local function to_lines(canvas)
-  local lines, marks = {}, {}
+  local lines, marks, cell_bytes = {}, {}, {}
   for r, row in ipairs(canvas) do
     local parts, bytes, last = {}, 0, 0
+    cell_bytes[r] = {}
     for cell in pairs(row) do
       last = math.max(last, cell)
     end
@@ -396,6 +398,7 @@ local function to_lines(canvas)
         run_hl, run_from = hl, bytes
       end
       parts[#parts + 1] = char
+      cell_bytes[r][c] = { bytes, bytes + #char }
       bytes = bytes + #char
     end
     if run_hl then
@@ -403,7 +406,7 @@ local function to_lines(canvas)
     end
     lines[r] = table.concat(parts)
   end
-  return lines, marks
+  return lines, marks, cell_bytes
 end
 
 local function window()
@@ -485,7 +488,8 @@ function M.draw(move_cursor)
       put(canvas, node.y + BOX_HEIGHT - 1, node.x + 2, "┬", node == focused and "IsovimBoardFocus" or "NonText")
     end
   end
-  local lines, marks = to_lines(canvas)
+  local lines, marks, cell_bytes = to_lines(canvas)
+  state.cell_bytes = cell_bytes
   local buf = state.buf
   local before = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   vim.bo[buf].modifiable = true
@@ -517,6 +521,7 @@ function M.draw(move_cursor)
     end
     state.focus_at = where
   end
+  require("isovim.agent_pulses").after_draw()
 end
 
 -- What's so may have changed: read it again, if it's been a moment, and draw. As the sidebar refreshes.
@@ -542,6 +547,7 @@ local function start_timer()
   state.timer:start(TICK, TICK, require("isovim.safe").ticker("the agent graph", function()
     local graph = require("isovim.agent_graph")
     if window() == -1 then
+      require("isovim.agent_pulses").stop()
       return stop_timer()
     end
     if state.dirty or vim.uv.now() - (state.read_at or 0) >= READ_EVERY then
@@ -775,6 +781,7 @@ function M.shown()
   read()
   M.draw(true)
   start_timer()
+  require("isovim.agent_pulses").start()
 end
 
 -- Opens the graph as a tab of the current project, drawing everything.

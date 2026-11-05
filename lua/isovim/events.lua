@@ -154,8 +154,8 @@ function M.parse_since(text)
 end
 
 -- Calls on_event(line, event) for each event from now on, or from `since` (epoch seconds, read back
--- through the previous log too), from the event loop, and returns. Each change to the folder wakes
--- it once.
+-- through the previous log too), from the event loop, and returns a function that stops it. Each change
+-- to the folder wakes it once.
 ---@param on_event fun(line: string, event: table)
 ---@param since? number
 function M.watch(on_event, since)
@@ -227,6 +227,16 @@ function M.watch(on_event, since)
   end
   open(since ~= nil)
   drain()
+  return function()
+    if not watcher:is_closing() then
+      watcher:stop()
+      watcher:close()
+    end
+    if fd then
+      vim.uv.fs_close(fd)
+      fd = nil
+    end
+  end
 end
 
 -- M.watch, for a process that does nothing else (iso listen): it never returns.

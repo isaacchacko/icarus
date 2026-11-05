@@ -566,6 +566,13 @@ edges. A script pane hangs off the agent it runs for; a plain terminal isn't dra
 - **Live:** it reads files and tmux as the sidebar refreshes and at least every 5s, and turns spinners every 150ms
   from that, only while it's on screen. Only the lines that changed are written, and the cursor stays put unless its
   box moved.
+- **Messages** (isovim.agent_pulses): when one goes between two agents, two lit cells travel slowly from sender to
+  receiver along the lines, through their common ancestor when they aren't parent and child, blue going down, green
+  going up, purple across, and the receiver's box lights as it arrives. It comes from the `msg.*` events, no journal polled, so
+  timing's loose: an event is when the message reached its agent. Two agents with no line between them, or an end that
+  isn't drawn (you, a shell), get a short flash on what's there; in a folded subtree a pulse stops at the fold. They're extmarks
+  over the lines, so the buffer and cursor don't move. The events are watched only while the graph is on screen and the
+  pulses' timer runs only while one moves. Eight move at once and the rest are dropped, so a burst can't lag the TUI.
 - **Keys:** `h` and `l` the boxes beside it, `k` whoever started it, `j` the first it started, else what comes after it,
   `<CR>` its chat, also for a hidden one or another host's, `z` folds what it started, `[ ]` step the sidebar's project and
   take the graph to that section, its scope with it. Scrolling any other way moves the focus to the box under the cursor.
