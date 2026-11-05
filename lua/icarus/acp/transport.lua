@@ -9,20 +9,20 @@
 --   restriction, subject to the conditions in LICENSE.agentic beside this file: the above copyright
 --   notice and this permission notice shall be included in all copies or substantial portions of
 --   the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
--- isovim's changes: its own log (isovim.acp.log), isovim's code style, env entries set to false are
+-- icarus's changes: its own log (icarus.acp.log), icarus's code style, env entries set to false are
 -- removed, no reconnect (the supervisor owns restarts), a cwd, and the exit code passed on.
-local log = require("isovim.acp.log")
+local log = require("icarus.acp.log")
 local uv = vim.uv
 
 local M = {}
 
----@class isovim.acp.TransportConfig
+---@class icarus.acp.TransportConfig
 ---@field command string
 ---@field args? string[]
 ---@field env? table<string, string|false> added to the inherited env; false removes a name
 ---@field cwd? string
 
----@class isovim.acp.TransportCallbacks
+---@class icarus.acp.TransportCallbacks
 ---@field on_state_change fun(state: "connecting"|"connected"|"disconnected"|"error")
 ---@field on_message fun(message: table) called from a libuv callback: schedule anything heavier
 ---@field on_exit? fun(code: integer, signal: integer, stderr: string[])
@@ -110,8 +110,8 @@ function M.kill_descendants(found, own_pgid)
   signal(9)
 end
 
----@param config isovim.acp.TransportConfig
----@param callbacks isovim.acp.TransportCallbacks
+---@param config icarus.acp.TransportConfig
+---@param callbacks icarus.acp.TransportCallbacks
 function M.create_stdio_transport(config, callbacks)
   local transport = { stdin = nil, stdout = nil, process = nil, pid = nil } ---@type table
 

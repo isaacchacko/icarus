@@ -1,5 +1,5 @@
 -- The files your CLAUDE.md files import with @path, which claude-agent-acp doesn't expand (it loads
--- the CLAUDE.md files themselves), so an ACP agent's supervisor (isovim.acp.host) appends them to
+-- the CLAUDE.md files themselves), so an ACP agent's supervisor (icarus.acp.host) appends them to
 -- its session prompt. The CLAUDE.md files are Claude Code's: $CLAUDE_CONFIG_DIR/CLAUDE.md (else
 -- ~/.claude/CLAUDE.md), then CLAUDE.md, .claude/CLAUDE.md and CLAUDE.local.md in the agent's dir
 -- and every dir above it. As Claude Code reads them: an import is @ at the start of a line or after
@@ -85,13 +85,13 @@ local function resolve(ref, from)
   return vim.fs.dirname(from) .. "/" .. ref
 end
 
----@class isovim.acp.Import
+---@class icarus.acp.Import
 ---@field path string
 ---@field by string the file that imports it
 ---@field text string
 
 -- Every file the CLAUDE.md files of a session in dir import, each once, in the order found.
----@return isovim.acp.Import[]
+---@return icarus.acp.Import[]
 function M.collect(dir)
   local seen, imports = {}, {}
   local memory = M.memory_files(dir)
@@ -122,7 +122,7 @@ function M.collect(dir)
 end
 
 -- What the session prompt gets: the imported files' contents, or "" when there are none.
----@param imports isovim.acp.Import[]
+---@param imports icarus.acp.Import[]
 function M.prompt(imports)
   if #imports == 0 then
     return ""

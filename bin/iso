@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Opens isovim: a plain nvim with this checkout's init.lua, under its own NVIM_APPNAME, so its data
-# (chats, the ACP adapter, shada) is apart from your nvim's and from the isovim on main.
-repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
-NVIM_APPNAME=isovim-next exec nvim -u "$repo/init.lua" "$@"

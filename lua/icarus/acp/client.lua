@@ -1,7 +1,7 @@
 -- The JSON-RPC side of an ACP connection: request ids and their callbacks, sorting what arrives
 -- into requests, notifications and responses, answering an unknown request with -32601 (the agent
 -- waits on every id it sends), answering each request exactly once, and failing every pending
--- callback when the agent goes away. What ACP methods mean is the supervisor's (isovim.acp.host).
+-- callback when the agent goes away. What ACP methods mean is the supervisor's (icarus.acp.host).
 --
 -- Vendored from agentic.nvim (the JSON-RPC half of lua/agentic/acp/acp_client.lua at f0bef08), MIT:
 --   Copyright (c) 2025 Carlos Gomes
@@ -12,14 +12,14 @@
 --   the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 -- isovim's changes: its own log, isovim's code style, one handler for notifications and one for
 -- requests instead of per-session subscribers (a supervisor holds one session), and no UI types.
-local log = require("isovim.acp.log")
-local transport_module = require("isovim.acp.transport")
+local log = require("icarus.acp.log")
+local transport_module = require("icarus.acp.transport")
 
 -- JSON-RPC "Method not found", which the spec requires for a request naming an unknown method.
 local METHOD_NOT_FOUND = -32601
 local TRANSPORT_ERROR = -32000
 
----@class isovim.acp.Handlers
+---@class icarus.acp.Handlers
 ---@field on_notification fun(method: string, params: table)
 ---@field on_request? fun(method: string, params: table, answer: fun(result?: table, err?: {code: integer, message: string})): boolean
 ---  true when it took the request (and will answer it); false leaves it to -32601
@@ -29,8 +29,8 @@ local TRANSPORT_ERROR = -32000
 local Client = {}
 Client.__index = Client
 
----@param config isovim.acp.TransportConfig
----@param handlers isovim.acp.Handlers
+---@param config icarus.acp.TransportConfig
+---@param handlers icarus.acp.Handlers
 function Client.new(config, handlers)
   local client = setmetatable({ id_counter = 0, callbacks = {}, state = "disconnected", handlers = handlers }, Client)
   client.transport = transport_module.create_stdio_transport(config, {

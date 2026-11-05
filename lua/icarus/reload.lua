@@ -1,5 +1,5 @@
--- Watches isovim's own source, lua/isovim/ and the directories under it, and swaps in new code
--- without a restart: every isovim module is unloaded, this one included, and setup runs again with
+-- Watches icarus's own source, lua/icarus/ and the directories under it, and swaps in new code
+-- without a restart: every icarus module is unloaded, this one included, and setup runs again with
 -- reload = true, which binds the sidebar, home and open chats to the new code. A file that doesn't
 -- compile, or a setup that fails, keeps the old code, and the next change tries again. A save or a
 -- git pull fires many events: they're taken together, once git is done with its index. The watchers
@@ -11,8 +11,8 @@ local repo = vim.fs.dirname(vim.fs.dirname(lua_dir))
 -- libuv's recursive watch is macOS and Windows only; inotify watches one directory.
 local RECURSIVE = vim.fn.has("mac") == 1 or vim.fn.has("win32") == 1
 
-_G.isovim_reload = _G.isovim_reload or { watchers = {}, changed = {} }
-local state = _G.isovim_reload
+_G.icarus_reload = _G.icarus_reload or { watchers = {}, changed = {} }
+local state = _G.icarus_reload
 
 local function git_dir()
   local dot = repo .. "/.git"
@@ -28,33 +28,33 @@ local function git_dir()
   return dot
 end
 
-local function isovim_module(name)
-  return name == "isovim" or name:match("^isovim%.")
+local function icarus_module(name)
+  return name == "icarus" or name:match("^icarus%.")
 end
 
--- Unloads every isovim module and runs setup on the new code; on an error, the old code again.
+-- Unloads every icarus module and runs setup on the new code; on an error, the old code again.
 local function swap()
   local old = {}
   for name, mod in pairs(package.loaded) do
-    if isovim_module(name) then
+    if icarus_module(name) then
       old[name], package.loaded[name] = mod, nil
     end
   end
   local ok, err = pcall(function()
-    require("isovim").setup({ reload = true })
+    require("icarus").setup({ reload = true })
   end)
   if ok then
     return true
   end
   for name in pairs(package.loaded) do
-    if isovim_module(name) then
+    if icarus_module(name) then
       package.loaded[name] = nil
     end
   end
   for name, mod in pairs(old) do
     package.loaded[name] = mod
   end
-  pcall(old.isovim.setup, { reload = true })
+  pcall(old.icarus.setup, { reload = true })
   return false, err
 end
 
@@ -82,9 +82,9 @@ local function flush()
     ok, err = swap()
   end
   if ok then
-    vim.notify("isovim reloaded: " .. describe(files))
+    vim.notify("icarus reloaded: " .. describe(files))
   else
-    vim.notify("isovim reload failed, kept the old code:\n" .. tostring(err), vim.log.levels.ERROR)
+    vim.notify("icarus reload failed, kept the old code:\n" .. tostring(err), vim.log.levels.ERROR)
   end
 end
 

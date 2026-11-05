@@ -1,8 +1,8 @@
--- The ACP log, one file for every chat: stdpath("log")/isovim-acp.log. Only vim.uv and string work
+-- The ACP log, one file for every chat: stdpath("log")/icarus-acp.log. Only vim.uv and string work
 -- here, so it logs from libuv callbacks as well.
 local M = {}
 
-M.file = vim.fn.stdpath("log") .. "/isovim-acp.log"
+M.file = vim.fn.stdpath("log") .. "/icarus-acp.log"
 
 local function line(level, parts)
   local text = table.concat(vim.tbl_map(function(part)

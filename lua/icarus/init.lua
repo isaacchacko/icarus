@@ -1,16 +1,16 @@
--- isovim: the sidebar of your chats on the left, and beside it the main window, which shows home or
--- a chat (isovim.acp.chat). A new chat runs in the dir isovim was started in. Changing isovim's code
--- reloads it in place (isovim.reload), which runs setup({reload = true}) on the new code.
-local chats = require("isovim.chats")
-local chat = require("isovim.acp.chat")
-local sidebar = require("isovim.sidebar")
-local landing = require("isovim.landing")
+-- icarus: the sidebar of your chats on the left, and beside it the main window, which shows home or
+-- a chat (icarus.acp.chat). A new chat runs in the dir icarus was started in. Changing icarus's code
+-- reloads it in place (icarus.reload), which runs setup({reload = true}) on the new code.
+local chats = require("icarus.chats")
+local chat = require("icarus.acp.chat")
+local sidebar = require("icarus.sidebar")
+local landing = require("icarus.landing")
 
 local M = {}
 
 -- In _G, so a hot reload keeps them.
-_G.isovim_layout = _G.isovim_layout or {}
-local layout = _G.isovim_layout ---@type {current?: string, sidebar?: integer, main?: integer}
+_G.icarus_layout = _G.icarus_layout or {}
+local layout = _G.icarus_layout ---@type {current?: string, sidebar?: integer, main?: integer}
 
 -- The chat the main window shows.
 function M.current()
@@ -23,7 +23,7 @@ local function main_win()
     return layout.main
   end
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if win ~= layout.sidebar and not vim.w[win].isovim_composer_of then
+    if win ~= layout.sidebar and not vim.w[win].icarus_composer_of then
       layout.main = win
       return win
     end
@@ -41,7 +41,7 @@ function M.home()
   sidebar.refresh()
 end
 
----@param record isovim.ChatRecord
+---@param record icarus.ChatRecord
 function M.open(record)
   layout.current = record.id
   chat.show(chat.get(record), main_win())
@@ -55,12 +55,12 @@ end
 ---@param opts? {reload?: boolean}
 function M.setup(opts)
   vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = vim.api.nvim_create_augroup("isovim", { clear = true }),
+    group = vim.api.nvim_create_augroup("icarus", { clear = true }),
     callback = function()
-      require("isovim.acp.chat").stop_all()
+      require("icarus.acp.chat").stop_all()
     end,
   })
-  require("isovim.reload").watch()
+  require("icarus.reload").watch()
   if opts and opts.reload then
     sidebar.rebind()
     landing.buf()

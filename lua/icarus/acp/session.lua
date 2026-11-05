@@ -1,8 +1,8 @@
--- One chat's ACP connection, run inside isovim: it starts the adapter (isovim.acp.adapter) in the
+-- One chat's ACP connection, run inside icarus: it starts the adapter (icarus.acp.adapter) in the
 -- chat's dir, opens a new session or loads the chat's last one (the adapter replays its history as
 -- updates), and sets bypassPermissions, as isovim's agents always ran. One prompt is with the agent
 -- at a time; one sent while it works waits in the queue and goes when the turn ends. The adapter
--- stops with isovim, the chat's session kept for the next load.
+-- stops with icarus, the chat's session kept for the next load.
 --
 -- What it hears goes to its handlers:
 --   on_session(id)                 the session is open (new or loaded)
@@ -10,14 +10,14 @@
 --   on_prompt(text)                a prompt went to the agent
 --   on_turn("start"|"end", result) result: {stopReason?, error?}
 --   on_permission(params, answer)  session/request_permission; answer(optionId) or answer() to cancel
---   on_notice(text)                isovim's own words: errors, the adapter exiting
-local Client = require("isovim.acp.client")
-local adapter = require("isovim.acp.adapter")
-local imports = require("isovim.acp.imports")
+--   on_notice(text)                icarus's own words: errors, the adapter exiting
+local Client = require("icarus.acp.client")
+local adapter = require("icarus.acp.adapter")
+local imports = require("icarus.acp.imports")
 
 local M = {}
 
----@class isovim.acp.Session
+---@class icarus.acp.Session
 ---@field client? table
 ---@field id? string
 ---@field ready boolean
@@ -140,7 +140,7 @@ function Session:connect(cwd, id)
   end
   self.client:request("initialize", {
     protocolVersion = 1,
-    clientInfo = { name = "isovim", version = "1" },
+    clientInfo = { name = "icarus", version = "1" },
     clientCapabilities = { fs = { readTextFile = false, writeTextFile = false }, terminal = false,
       _meta = { terminal_output = true, terminal_output_delta = true } },
   }, function(init, init_err)
@@ -157,7 +157,7 @@ function M.adopt(session)
 end
 
 -- Starts a chat's session in cwd: id's, loaded, or a new one when id is nil.
----@return isovim.acp.Session
+---@return icarus.acp.Session
 function M.start(cwd, id, handlers)
   local self = setmetatable({ ready = false, busy = false, loading = false, queue = {}, handlers = handlers }, Session)
   adapter.ensure(function(err)

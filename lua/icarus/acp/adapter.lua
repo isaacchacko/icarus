@@ -1,5 +1,5 @@
 -- The ACP adapter a chat runs: claude-agent-acp at a pinned version, installed once with npm into
--- isovim's data dir (stdpath("data")/acp/claude-agent-acp@<version>) and run with node. A pinned
+-- icarus's data dir (stdpath("data")/acp/claude-agent-acp@<version>) and run with node. A pinned
 -- install, not npx: npx asks the registry on every start and fails offline, and a version that
 -- never changes under a chat is what keeps a reopened chat loading the same way.
 -- It runs the user's own claude (CLAUDE_CODE_EXECUTABLE), not the one bundled with its SDK, which
@@ -40,10 +40,10 @@ local function claude()
   return "claude"
 end
 
----@return isovim.acp.TransportConfig
+---@return icarus.acp.TransportConfig
 function M.command(cwd)
   return { command = "node", args = { M.entry }, cwd = cwd,
-    env = { CLAUDE_CODE_EXECUTABLE = claude(), CLAUDE_CODE_ENTRYPOINT = "isovim" } }
+    env = { CLAUDE_CODE_EXECUTABLE = claude(), CLAUDE_CODE_ENTRYPOINT = "icarus" } }
 end
 
 return M

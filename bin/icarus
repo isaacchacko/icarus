@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Opens icarus: a plain nvim with this checkout's init.lua, under its own NVIM_APPNAME, so its data
+# (chats, the ACP adapter, shada) is apart from your nvim's and from isovim.
+repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+NVIM_APPNAME=icarus exec nvim -u "$repo/init.lua" "$@"

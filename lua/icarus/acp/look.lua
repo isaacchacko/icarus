@@ -1,4 +1,4 @@
--- How an ACP agent's chat (isovim.acp.chat) looks, as Claude Code draws its own screen: the
+-- How an ACP agent's chat (icarus.acp.chat) looks, as Claude Code draws its own screen: the
 -- palette and highlight groups for dark and light backgrounds, a tool call's header (Claude's
 -- display name and its arguments: "Update(app.py)", "Bash(./count.sh)") and the rows under it (a
 -- read's line count, a diff with line numbers and word-level changes, a command's output and exit
@@ -60,45 +60,45 @@ M.palette = PALETTE
 function M.groups(background)
   local c = PALETTE[background == "light" and "light" or "dark"]
   return {
-    IsovimAcpPrompt = { fg = c.text, bg = c.prompt_bg },
-    IsovimAcpPromptGlyph = { fg = c.dim, bg = c.prompt_bg },
-    IsovimAcpMessage = { link = "Normal" },
-    IsovimAcpCode = { fg = c.code },
-    IsovimAcpBold = { bold = true },
-    IsovimAcpHeading = { bold = true, underline = false },
-    IsovimAcpThought = { fg = c.dim, italic = true },
-    IsovimAcpToolTitle = { bold = true },
-    IsovimAcpToolPending = { fg = c.dim },
-    IsovimAcpToolRunning = { fg = c.dim },
-    IsovimAcpToolDone = { fg = c.success },
-    IsovimAcpToolFailed = { fg = c.error },
-    IsovimAcpResult = { link = "Normal" },
-    IsovimAcpResultGlyph = { fg = c.dim },
-    IsovimAcpResultNote = { fg = c.dim },
-    IsovimAcpError = { fg = c.error },
-    IsovimAcpDiffAdd = { bg = c.add_bg },
-    IsovimAcpDiffDelete = { bg = c.del_bg },
-    IsovimAcpDiffAddWord = { bg = c.add_word },
-    IsovimAcpDiffDeleteWord = { bg = c.del_word },
-    IsovimAcpDiffAddNr = { fg = c.add_nr, bg = c.add_bg },
-    IsovimAcpDiffDeleteNr = { fg = c.del_nr, bg = c.del_bg },
-    IsovimAcpDiffNr = { fg = c.dim },
-    IsovimAcpNotice = { fg = c.dim },
-    IsovimAcpDenied = { fg = c.error },
-    IsovimAcpSpinner = { fg = c.accent },
-    IsovimAcpSpinnerVerb = { fg = c.accent },
-    IsovimAcpSpinnerNote = { fg = c.dim },
-    IsovimAcpIdle = { fg = c.dim },
-    IsovimAcpAsk = { fg = c.code },
-    IsovimAcpAskTitle = { fg = c.code, bold = true },
-    IsovimAcpAskRule = { fg = c.code },
-    IsovimAcpOptionNr = { fg = c.dim },
-    IsovimAcpPlanDone = { fg = c.dim, strikethrough = true },
-    IsovimAcpPlanActive = { bold = true },
-    IsovimAcpPlanPending = { link = "Normal" },
-    IsovimAcpRule = { fg = c.rule },
-    IsovimAcpHint = { fg = c.dim },
-    IsovimAcpTurnDone = { fg = c.dim },
+    IcarusAcpPrompt = { fg = c.text, bg = c.prompt_bg },
+    IcarusAcpPromptGlyph = { fg = c.dim, bg = c.prompt_bg },
+    IcarusAcpMessage = { link = "Normal" },
+    IcarusAcpCode = { fg = c.code },
+    IcarusAcpBold = { bold = true },
+    IcarusAcpHeading = { bold = true, underline = false },
+    IcarusAcpThought = { fg = c.dim, italic = true },
+    IcarusAcpToolTitle = { bold = true },
+    IcarusAcpToolPending = { fg = c.dim },
+    IcarusAcpToolRunning = { fg = c.dim },
+    IcarusAcpToolDone = { fg = c.success },
+    IcarusAcpToolFailed = { fg = c.error },
+    IcarusAcpResult = { link = "Normal" },
+    IcarusAcpResultGlyph = { fg = c.dim },
+    IcarusAcpResultNote = { fg = c.dim },
+    IcarusAcpError = { fg = c.error },
+    IcarusAcpDiffAdd = { bg = c.add_bg },
+    IcarusAcpDiffDelete = { bg = c.del_bg },
+    IcarusAcpDiffAddWord = { bg = c.add_word },
+    IcarusAcpDiffDeleteWord = { bg = c.del_word },
+    IcarusAcpDiffAddNr = { fg = c.add_nr, bg = c.add_bg },
+    IcarusAcpDiffDeleteNr = { fg = c.del_nr, bg = c.del_bg },
+    IcarusAcpDiffNr = { fg = c.dim },
+    IcarusAcpNotice = { fg = c.dim },
+    IcarusAcpDenied = { fg = c.error },
+    IcarusAcpSpinner = { fg = c.accent },
+    IcarusAcpSpinnerVerb = { fg = c.accent },
+    IcarusAcpSpinnerNote = { fg = c.dim },
+    IcarusAcpIdle = { fg = c.dim },
+    IcarusAcpAsk = { fg = c.code },
+    IcarusAcpAskTitle = { fg = c.code, bold = true },
+    IcarusAcpAskRule = { fg = c.code },
+    IcarusAcpOptionNr = { fg = c.dim },
+    IcarusAcpPlanDone = { fg = c.dim, strikethrough = true },
+    IcarusAcpPlanActive = { bold = true },
+    IcarusAcpPlanPending = { link = "Normal" },
+    IcarusAcpRule = { fg = c.rule },
+    IcarusAcpHint = { fg = c.dim },
+    IcarusAcpTurnDone = { fg = c.dim },
   }
 end
 
@@ -178,7 +178,7 @@ M.NAMES = {
   NotebookRead = "Read Notebook", TodoWrite = "Update Todos", KillShell = "Kill Shell", BashOutput = "Bash Output",
   ExitPlanMode = "Plan",
 }
--- Tools isovim draws another way: TodoWrite as its plan.
+-- Tools icarus draws another way: TodoWrite as its plan.
 M.HIDDEN = { TodoWrite = true }
 
 -- The tool's own name, from the adapter's _meta (claude-agent-acp), else read off its title.
@@ -313,7 +313,7 @@ local function bold_numbers(text)
     if not s then
       break
     end
-    spans[#spans + 1] = { s - 1, e, "IsovimAcpBold" }
+    spans[#spans + 1] = { s - 1, e, "IcarusAcpBold" }
     init = e + 1
   end
   return spans
@@ -408,7 +408,7 @@ function M.diff_rows(item, start, dirs)
     local rows = {}
     for i, line in ipairs(lines) do
       local prefix = ("%" .. width .. "d  "):format(i)
-      local spans = { { 0, #prefix, "IsovimAcpDiffNr" } }
+      local spans = { { 0, #prefix, "IcarusAcpDiffNr" } }
       for _, s in ipairs(hl[i] or {}) do
         spans[#spans + 1] = { s[1] + #prefix, s[2] + #prefix, s[3] }
       end
@@ -481,24 +481,24 @@ function M.diff_rows(item, start, dirs)
   local rows = {}
   for idx, r in ipairs(raw) do
     if r[1] == "…" then
-      rows[#rows + 1] = { (" "):rep(width - 1) .. "…", spans = { { 0, width, "IsovimAcpDiffNr" } } }
+      rows[#rows + 1] = { (" "):rep(width - 1) .. "…", spans = { { 0, width, "IcarusAcpDiffNr" } } }
     else
       local num = (r[1] == "-" and r[2] or r[3]) + start - 1
       local prefix = ("%" .. width .. "d %s"):format(num, r[1])
       local line = prefix .. r[4]
       local spans, hl = {}, nil
       if r[1] == "-" then
-        hl = "IsovimAcpDiffDelete"
-        spans[#spans + 1] = { 0, #prefix, "IsovimAcpDiffDeleteNr" }
+        hl = "IcarusAcpDiffDelete"
+        spans[#spans + 1] = { 0, #prefix, "IcarusAcpDiffDeleteNr" }
       elseif r[1] == "+" then
-        hl = "IsovimAcpDiffAdd"
-        spans[#spans + 1] = { 0, #prefix, "IsovimAcpDiffAddNr" }
+        hl = "IcarusAcpDiffAdd"
+        spans[#spans + 1] = { 0, #prefix, "IcarusAcpDiffAddNr" }
       else
-        spans[#spans + 1] = { 0, #prefix, "IsovimAcpDiffNr" }
+        spans[#spans + 1] = { 0, #prefix, "IcarusAcpDiffNr" }
       end
       if words[idx] then
         spans[#spans + 1] = { #prefix + words[idx][1], #prefix + words[idx][2],
-          r[1] == "-" and "IsovimAcpDiffDeleteWord" or "IsovimAcpDiffAddWord" }
+          r[1] == "-" and "IcarusAcpDiffDeleteWord" or "IcarusAcpDiffAddWord" }
       end
       local code_hl = r[1] == "-" and old_hl[r[2]] or new_hl[r[3]] or {}
       for _, s in ipairs(code_hl) do
@@ -545,7 +545,7 @@ function M.body(call, dirs)
   end
   local failed = call.status == "failed" or (call.exit and call.exit ~= 0)
   if call.exit and call.exit ~= 0 then
-    rows[#rows + 1] = { ("Error: Exit code %d"):format(call.exit), hl = "IsovimAcpError" }
+    rows[#rows + 1] = { ("Error: Exit code %d"):format(call.exit), hl = "IcarusAcpError" }
   end
   for _, item in ipairs(call.items or {}) do
     if item.type == "content" and type(item.content) == "table" and item.content.type == "text" then
@@ -592,17 +592,17 @@ function M.body(call, dirs)
     kind = "read"
   end
   if #rows == 0 and call.status == "completed" and (name == "Bash" or call.kind == "execute") then
-    rows[1] = { "(No content)", hl = "IsovimAcpResultNote" }
+    rows[1] = { "(No content)", hl = "IcarusAcpResultNote" }
   end
   if failed and kind == "output" then
     for _, row in ipairs(rows) do
-      row.hl = row.hl or "IsovimAcpError"
+      row.hl = row.hl or "IcarusAcpError"
     end
   end
   if #rows > M.MAX_BODY then
     local more = #rows - M.MAX_BODY
     rows = vim.list_slice(rows, 1, M.MAX_BODY)
-    rows[#rows + 1] = { ("… +%s"):format(plural(more, "line")), hl = "IsovimAcpResultNote" }
+    rows[#rows + 1] = { ("… +%s"):format(plural(more, "line")), hl = "IcarusAcpResultNote" }
   end
   return rows, kind
 end
@@ -634,7 +634,7 @@ local function inline(line, spans, conceal)
     end
     conceal[#conceal + 1] = { s - 1, s }
     conceal[#conceal + 1] = { e - 1, e }
-    spans[#spans + 1] = { s, e - 1, "IsovimAcpCode" }
+    spans[#spans + 1] = { s, e - 1, "IcarusAcpCode" }
     init = e + 1
   end
   init = 1
@@ -645,7 +645,7 @@ local function inline(line, spans, conceal)
     end
     conceal[#conceal + 1] = { s - 1, s + 1 }
     conceal[#conceal + 1] = { e - 2, e }
-    spans[#spans + 1] = { s + 1, e - 2, "IsovimAcpBold" }
+    spans[#spans + 1] = { s + 1, e - 2, "IcarusAcpBold" }
     init = e + 1
   end
   return spans, conceal
@@ -656,14 +656,14 @@ end
 function M.markdown(line)
   local spans, conceal = {}, {}
   if line:match("^%s*```") then
-    spans[#spans + 1] = { 0, #line, "IsovimAcpNotice" }
+    spans[#spans + 1] = { 0, #line, "IcarusAcpNotice" }
     return spans, conceal
   end
   local hs, he = line:find("^[%s●⏺]*#+ ")
   if hs then
     local glyph = line:match("^[●⏺] ") and #line:match("^[●⏺] ") or (line:match("^%s+") and #line:match("^%s+") or 0)
     conceal[#conceal + 1] = { glyph, he }
-    spans[#spans + 1] = { he, #line, "IsovimAcpHeading" }
+    spans[#spans + 1] = { he, #line, "IcarusAcpHeading" }
   end
   inline(line, spans, conceal)
   return spans, conceal
@@ -821,7 +821,7 @@ function M.table(rows, width)
     for col = 1, n do
       local text, spans = plain(row[col] or "")
       if r == 1 then
-        table.insert(spans, 1, { 0, #text, "IsovimAcpBold" })
+        table.insert(spans, 1, { 0, #text, "IcarusAcpBold" })
       end
       row[col] = { text = text, spans = spans }
     end
@@ -858,7 +858,7 @@ function M.table(rows, width)
       parts[col] = ("─"):rep(widths[col] + 2)
     end
     local line = left .. table.concat(parts, mid) .. right
-    spans[#spans + 1] = { #lines, 0, #line, "IsovimAcpRule" }
+    spans[#spans + 1] = { #lines, 0, #line, "IcarusAcpRule" }
     lines[#lines + 1] = line
   end
   local function row_lines(row)
@@ -869,7 +869,7 @@ function M.table(rows, width)
     end
     for i = 1, height do
       local line = "│"
-      spans[#spans + 1] = { #lines, 0, #line, "IsovimAcpRule" }
+      spans[#spans + 1] = { #lines, 0, #line, "IcarusAcpRule" }
       for col = 1, n do
         local cell, range = row[col], wrapped[col][i] or { 0, 0 }
         local text = cell.text:sub(range[1] + 1, range[2])
@@ -882,7 +882,7 @@ function M.table(rows, width)
             spans[#spans + 1] = { #lines, start + from - range[1], start + to - range[1], sp[3] }
           end
         end
-        spans[#spans + 1] = { #lines, #line, #line + #"│", "IsovimAcpRule" }
+        spans[#spans + 1] = { #lines, #line, #line + #"│", "IcarusAcpRule" }
         line = line .. "│"
       end
       lines[#lines + 1] = line

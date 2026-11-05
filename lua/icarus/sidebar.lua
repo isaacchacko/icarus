@@ -1,19 +1,19 @@
 -- The sidebar: your chats, newest first, each with its status. <CR> opens the chat under the cursor
 -- (home on the top line), n starts a new one.
-local chats = require("isovim.chats")
+local chats = require("icarus.chats")
 
 local M = {}
 
-local NS = vim.api.nvim_create_namespace("isovim_sidebar")
+local NS = vim.api.nvim_create_namespace("icarus_sidebar")
 local WIDTH = 34
 
 local STATUS = {
-  working = { "●", "IsovimAcpSpinner" },
-  idle = { "○", "IsovimAcpIdle" },
-  ["needs you"] = { "?", "IsovimAcpAsk" },
+  working = { "●", "IcarusAcpSpinner" },
+  idle = { "○", "IcarusAcpIdle" },
+  ["needs you"] = { "?", "IcarusAcpAsk" },
 }
 
-local NAME = "isovim://sidebar"
+local NAME = "icarus://sidebar"
 local rows = {} ---@type table<integer, string> row -> chat id
 
 local function title(record)
@@ -25,8 +25,8 @@ function M.refresh()
   if buf == -1 then
     return
   end
-  local current = require("isovim").current()
-  local lines, marks = { " ⌂ isovim", "" }, {}
+  local current = require("icarus").current()
+  local lines, marks = { " ⌂ icarus", "" }, {}
   rows = {}
   for _, record in ipairs(chats.list()) do
     local status = chats.status(record.id)
@@ -45,7 +45,7 @@ function M.refresh()
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
-  vim.api.nvim_buf_set_extmark(buf, NS, 0, 0, { end_col = #lines[1], hl_group = "IsovimAcpToolTitle" })
+  vim.api.nvim_buf_set_extmark(buf, NS, 0, 0, { end_col = #lines[1], hl_group = "IcarusAcpToolTitle" })
   for row, mark in pairs(marks) do
     vim.api.nvim_buf_set_extmark(buf, NS, row - 1, 1, { end_col = 1 + #mark.glyph, hl_group = mark.hl })
     if mark.status ~= "idle" then
@@ -61,9 +61,9 @@ local function enter()
   local row = vim.api.nvim_win_get_cursor(0)[1]
   local id = rows[row]
   if id then
-    require("isovim").open(chats.get(id))
+    require("icarus").open(chats.get(id))
   elseif row == 1 then
-    require("isovim").home()
+    require("icarus").home()
   end
 end
 
@@ -71,11 +71,11 @@ end
 function M.bind(buf)
   vim.keymap.set("n", "<CR>", enter, { buffer = buf, nowait = true })
   vim.keymap.set("n", "n", function()
-    require("isovim").new_chat()
+    require("icarus").new_chat()
   end, { buffer = buf, nowait = true })
   vim.api.nvim_create_autocmd("User", {
-    group = vim.api.nvim_create_augroup("isovim_sidebar", { clear = true }),
-    pattern = "IsovimChats",
+    group = vim.api.nvim_create_augroup("icarus_sidebar", { clear = true }),
+    pattern = "IcarusChats",
     callback = M.refresh,
   })
   M.refresh()
@@ -84,7 +84,7 @@ end
 -- Opens the sidebar as the leftmost window; returns it.
 function M.open()
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].filetype = "isovim_sidebar"
+  vim.bo[buf].filetype = "icarus_sidebar"
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_set_name(buf, NAME)
   local win = vim.api.nvim_open_win(buf, false, { split = "left", win = -1, width = WIDTH })

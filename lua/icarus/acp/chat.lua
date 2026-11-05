@@ -1,6 +1,6 @@
 -- A chat: the conversation in one read-only buffer, drawn as Claude Code draws its screen (the words,
--- colors and tool rows are isovim.acp.look's), and under it, in a window of its own, the composer,
--- where you type. Its session (isovim.acp.session) runs while isovim does.
+-- colors and tool rows are icarus.acp.look's), and under it, in a window of its own, the composer,
+-- where you type. Its session (icarus.acp.session) runs while icarus does.
 --
 --   ❯ your prompt          on Claude's gray band
 --   ⏺ the agent's text     streamed in place, its `code`, **bold** and tables drawn
@@ -16,20 +16,20 @@
 -- too, where <S-CR> is a new line), <C-c> interrupts the turn. A prompt sent while the agent works
 -- waits its turn. A window whose cursor is on the conversation's last line follows it as it grows.
 --
--- A hot reload (isovim.reload) keeps the open chats: they live in _G, what the session hears comes
+-- A hot reload (icarus.reload) keeps the open chats: they live in _G, what the session hears comes
 -- in through require (M.hear), so the new code draws it, and M.rebind maps their keys to it. What's
 -- drawn already stays as the old code drew it.
-local look = require("isovim.acp.look")
-local session = require("isovim.acp.session")
-local chats = require("isovim.chats")
+local look = require("icarus.acp.look")
+local session = require("icarus.acp.session")
+local chats = require("icarus.chats")
 
 local M = {}
 
-local NS = vim.api.nvim_create_namespace("isovim_chat")
-local TOOLS = vim.api.nvim_create_namespace("isovim_chat_tools")
-local MD = vim.api.nvim_create_namespace("isovim_chat_markdown")
-local BOXES = vim.api.nvim_create_namespace("isovim_chat_boxes")
-local OPTIONS = vim.api.nvim_create_namespace("isovim_chat_options")
+local NS = vim.api.nvim_create_namespace("icarus_chat")
+local TOOLS = vim.api.nvim_create_namespace("icarus_chat_tools")
+local MD = vim.api.nvim_create_namespace("icarus_chat_markdown")
+local BOXES = vim.api.nvim_create_namespace("icarus_chat_boxes")
+local OPTIONS = vim.api.nvim_create_namespace("icarus_chat_options")
 
 local DOT = look.DOT
 local GLYPH = { message = DOT, thought = "✻", prompt = "❯" }
@@ -37,13 +37,13 @@ local FIRST, REST = look.FIRST, look.REST
 local RULE = ("─"):rep(400)
 
 local STATUS_HL = {
-  pending = "IsovimAcpToolPending",
-  in_progress = "IsovimAcpToolRunning",
-  completed = "IsovimAcpToolDone",
-  failed = "IsovimAcpToolFailed",
+  pending = "IcarusAcpToolPending",
+  in_progress = "IcarusAcpToolRunning",
+  completed = "IcarusAcpToolDone",
+  failed = "IcarusAcpToolFailed",
 }
 
----@class isovim.ToolCall
+---@class icarus.ToolCall
 ---@field mark? integer its line, in TOOLS, extending over its output
 ---@field title string
 ---@field status string
@@ -63,33 +63,33 @@ local STATUS_HL = {
 ---@field started? number
 ---@field secs? number
 
----@class isovim.Box a permission waiting on you
+---@class icarus.Box a permission waiting on you
 ---@field mark integer its first line in BOXES, extending to its last
 ---@field options {optionId: string, name: string, kind: string}[]
 ---@field answer fun(option?: string)
 ---@field tool string what it asks to run
 
----@class isovim.Chat
----@field record isovim.ChatRecord
+---@class icarus.Chat
+---@field record icarus.ChatRecord
 ---@field buf integer the conversation
 ---@field input integer the composer
----@field session isovim.acp.Session
+---@field session icarus.acp.Session
 ---@field fresh boolean nothing drawn yet: the buffer's one line is empty
 ---@field block? "agent"|"thought"|"other"
 ---@field block_row? integer the streaming message's first row
 ---@field at_start? boolean the streaming message has no text yet
 ---@field table_scan? integer where the streaming message's next table may start
----@field thought? isovim.ToolCall the thought streaming in
----@field tools table<string, isovim.ToolCall>
----@field boxes isovim.Box[]
----@field options table<integer, {box: isovim.Box, n: integer}> by extmark (OPTIONS)
+---@field thought? icarus.ToolCall the thought streaming in
+---@field tools table<string, icarus.ToolCall>
+---@field boxes icarus.Box[]
+---@field options table<integer, {box: icarus.Box, n: integer}> by extmark (OPTIONS)
 ---@field busy boolean
 ---@field since? number
 ---@field verb? string
 ---@field turn_chars integer
 
-_G.isovim_open_chats = _G.isovim_open_chats or {}
-local open_chats = _G.isovim_open_chats ---@type table<string, isovim.Chat>
+_G.icarus_open_chats = _G.icarus_open_chats or {}
+local open_chats = _G.icarus_open_chats ---@type table<string, icarus.Chat>
 
 local function now()
   local sec, usec = vim.uv.gettimeofday()
@@ -186,7 +186,7 @@ local function draw_tables(chat, whole)
       vim.api.nvim_buf_clear_namespace(buf, MD, row, row + n - 1)
       vim.api.nvim_buf_set_lines(buf, row, row + n - 1, false, drawn)
       if first ~= "  " then
-        span(buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
+        span(buf, row, 0, #GLYPH.message, "IcarusAcpMessage")
       end
       for _, s in ipairs(spans) do
         local lead = #(s[1] == 0 and first or "  ")
@@ -247,7 +247,7 @@ end
 local function add_text(chat, text)
   if chat.block ~= "agent" then
     local row = add_block(chat, { GLYPH.message .. " " })
-    span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
+    span(chat.buf, row, 0, #GLYPH.message, "IcarusAcpMessage")
     chat.block, chat.block_row, chat.at_start, chat.table_scan = "agent", row, true, row
   end
   if chat.at_start then
@@ -287,7 +287,7 @@ local function thought_rows(call)
   local text = vim.trim(call.text or "")
   if text ~= "" then
     for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-      rows[#rows + 1] = { line, hl = "IsovimAcpThought" }
+      rows[#rows + 1] = { line, hl = "IcarusAcpThought" }
     end
   end
   return rows
@@ -295,7 +295,7 @@ end
 
 -- Draws a tool call's (or a thought's) line and what's under it in place: all of it when it's
 -- open, else what shows collapsed and a line saying how much more there is.
----@param call isovim.ToolCall
+---@param call icarus.ToolCall
 local function draw_tool(chat, call)
   local row = vim.api.nvim_buf_get_extmark_by_id(chat.buf, TOOLS, call.mark, {})[1]
   if not row then
@@ -304,13 +304,13 @@ local function draw_tool(chat, call)
   local header, spans, rows, kind
   if call.thought then
     header = GLYPH.thought .. " " .. (call.secs and ("Thought for " .. look.duration(call.secs)) or "Thinking…")
-    spans = { { 0, #header, "IsovimAcpThought" } }
+    spans = { { 0, #header, "IcarusAcpThought" } }
     rows, kind = thought_rows(call), "thought"
   else
     local name, args = look.header(call, dirs(chat))
     header = GLYPH.message .. " " .. name .. (args and ("(" .. args .. ")") or "")
-    spans = { { 0, #GLYPH.message, STATUS_HL[call.status] or "IsovimAcpToolPending" },
-      { #GLYPH.message + 1, #GLYPH.message + 1 + #name, "IsovimAcpToolTitle" } }
+    spans = { { 0, #GLYPH.message, STATUS_HL[call.status] or "IcarusAcpToolPending" },
+      { #GLYPH.message + 1, #GLYPH.message + 1 + #name, "IcarusAcpToolTitle" } }
     rows, kind = look.body(call, dirs(chat))
   end
   local shown, more = rows, 0
@@ -320,7 +320,7 @@ local function draw_tool(chat, call)
       shown, more = vim.list_slice(rows, 1, count), #rows - count
       -- A read says its count already; the rest say how many lines are left out.
       if kind ~= "read" and kind ~= "thought" then
-        shown[#shown + 1] = { ("… +%s (za to expand)"):format(look.plural(more, "line")), hl = "IsovimAcpResultNote" }
+        shown[#shown + 1] = { ("… +%s (za to expand)"):format(look.plural(more, "line")), hl = "IcarusAcpResultNote" }
       end
     end
   end
@@ -338,18 +338,18 @@ local function draw_tool(chat, call)
     end
     if more > 0 and (kind == "read" or kind == "thought") then
       vim.api.nvim_buf_set_extmark(buf, NS, kind == "thought" and row or row + 1, 0,
-        { virt_text = { { "  (za to expand)", "IsovimAcpNotice" } } })
+        { virt_text = { { "  (za to expand)", "IcarusAcpNotice" } } })
     end
     for i, r in ipairs(shown) do
       local at, line = row + i, lines[i + 1]
       local pre = indent and #indent or #(i == 1 and FIRST or REST)
       if not indent and i == 1 then
-        span(buf, at, 0, pre, "IsovimAcpResultGlyph")
+        span(buf, at, 0, pre, "IcarusAcpResultGlyph")
       end
-      if r.hl == "IsovimAcpDiffAdd" or r.hl == "IsovimAcpDiffDelete" then
+      if r.hl == "IcarusAcpDiffAdd" or r.hl == "IcarusAcpDiffDelete" then
         eol_hl(buf, at, pre, r.hl)
       else
-        span(buf, at, pre, #line, r.hl or "IsovimAcpResult", not r.hl and 90 or nil)
+        span(buf, at, pre, #line, r.hl or "IcarusAcpResult", not r.hl and 90 or nil)
       end
       for _, s in ipairs(r.spans or {}) do
         span(buf, at, pre + s[1], math.min(pre + s[2], #line), s[3], s.syntax and 4200 or 150)
@@ -432,7 +432,7 @@ local function end_thought(chat)
 end
 
 local PLAN_MARK = { completed = "☒", in_progress = "☐", pending = "☐" }
-local PLAN_HL = { completed = "IsovimAcpPlanDone", in_progress = "IsovimAcpPlanActive", pending = "IsovimAcpPlanPending" }
+local PLAN_HL = { completed = "IcarusAcpPlanDone", in_progress = "IcarusAcpPlanActive", pending = "IcarusAcpPlanPending" }
 
 local function plan(chat, update)
   local lines = { GLYPH.message .. " Update Todos" }
@@ -441,16 +441,16 @@ local function plan(chat, update)
     lines[#lines + 1] = (i == 1 and FIRST or REST) .. (PLAN_MARK[entry.status] or "☐") .. " " .. (entry.content or "")
   end
   local row = add_block(chat, lines)
-  span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpToolDone")
-  span(chat.buf, row, #GLYPH.message + 1, #lines[1], "IsovimAcpToolTitle")
+  span(chat.buf, row, 0, #GLYPH.message, "IcarusAcpToolDone")
+  span(chat.buf, row, #GLYPH.message + 1, #lines[1], "IcarusAcpToolTitle")
   for i, entry in ipairs(entries) do
     local pre = #(i == 1 and FIRST or REST)
     if i == 1 then
-      span(chat.buf, row + i, 0, pre, "IsovimAcpResultGlyph")
+      span(chat.buf, row + i, 0, pre, "IcarusAcpResultGlyph")
     end
     local mark = #(PLAN_MARK[entry.status] or "☐") + 1
-    span(chat.buf, row + i, pre, pre + mark, entry.status == "completed" and "IsovimAcpNotice" or "IsovimAcpResult")
-    span(chat.buf, row + i, pre + mark, #lines[i + 1], PLAN_HL[entry.status] or "IsovimAcpResult")
+    span(chat.buf, row + i, pre, pre + mark, entry.status == "completed" and "IcarusAcpNotice" or "IcarusAcpResult")
+    span(chat.buf, row + i, pre + mark, #lines[i + 1], PLAN_HL[entry.status] or "IcarusAcpResult")
   end
 end
 
@@ -460,15 +460,15 @@ local function draw_prompt(chat, text)
     lines[i] = (i == 1 and GLYPH.prompt .. " " or "  ") .. line
   end
   local row = add_block(chat, lines)
-  span(chat.buf, row, 0, #GLYPH.prompt + 1, "IsovimAcpPromptGlyph")
-  span(chat.buf, row, #GLYPH.prompt + 1, #lines[1], "IsovimAcpPrompt")
+  span(chat.buf, row, 0, #GLYPH.prompt + 1, "IcarusAcpPromptGlyph")
+  span(chat.buf, row, #GLYPH.prompt + 1, #lines[1], "IcarusAcpPrompt")
   for i = 2, #lines do
-    span(chat.buf, row + i - 1, 0, #lines[i], "IsovimAcpPrompt")
+    span(chat.buf, row + i - 1, 0, #lines[i], "IcarusAcpPrompt")
   end
 end
 
 local function notice(chat, text, hl)
-  add_block(chat, { "[" .. text .. "]" }, hl or "IsovimAcpNotice")
+  add_block(chat, { "[" .. text .. "]" }, hl or "IcarusAcpNotice")
 end
 
 -- Status and the bar
@@ -487,11 +487,11 @@ local function bar_parts(chat)
     parts[#parts + 1] = { text, hl }
   end
   if #chat.boxes > 0 then
-    add("? waiting for your permission", "IsovimAcpAsk")
-    add(" (type its number and <CR>)", "IsovimAcpSpinnerNote")
+    add("? waiting for your permission", "IcarusAcpAsk")
+    add(" (type its number and <CR>)", "IcarusAcpSpinnerNote")
   elseif chat.busy then
-    add(FRAMES[frame] .. " ", "IsovimAcpSpinner")
-    add((chat.verb or "Working") .. "…", "IsovimAcpSpinnerVerb")
+    add(FRAMES[frame] .. " ", "IcarusAcpSpinner")
+    add((chat.verb or "Working") .. "…", "IcarusAcpSpinnerVerb")
     local notes = { look.duration(now() - (chat.since or now())) }
     local tokens = math.floor((chat.turn_chars + 3) / 4)
     if chat.block == "thought" then
@@ -500,12 +500,12 @@ local function bar_parts(chat)
       notes[#notes + 1] = "↓ " .. look.count(tokens) .. " tokens"
     end
     notes[#notes + 1] = "<C-c> to interrupt"
-    add(" (" .. table.concat(notes, " · ") .. ")", "IsovimAcpSpinnerNote")
+    add(" (" .. table.concat(notes, " · ") .. ")", "IcarusAcpSpinnerNote")
   else
-    add(GLYPH.prompt .. " " .. (chat.record.title or "new chat"), "IsovimAcpIdle")
+    add(GLYPH.prompt .. " " .. (chat.record.title or "new chat"), "IcarusAcpIdle")
   end
   if #chat.session.queue > 0 then
-    add((" · %d queued"):format(#chat.session.queue), "IsovimAcpSpinnerNote")
+    add((" · %d queued"):format(#chat.session.queue), "IcarusAcpSpinnerNote")
   end
   return parts
 end
@@ -514,12 +514,12 @@ local update_bar
 
 -- In _G, ticking through require: one timer however many reloads, running the code of the last.
 local function spin()
-  if _G.isovim_chat_spinner then
+  if _G.icarus_chat_spinner then
     return
   end
-  _G.isovim_chat_spinner = vim.uv.new_timer()
-  _G.isovim_chat_spinner:start(100, 100, vim.schedule_wrap(function()
-    require("isovim.acp.chat").tick()
+  _G.icarus_chat_spinner = vim.uv.new_timer()
+  _G.icarus_chat_spinner:start(100, 100, vim.schedule_wrap(function()
+    require("icarus.acp.chat").tick()
   end))
 end
 
@@ -532,10 +532,10 @@ function M.tick()
       update_bar(chat)
     end
   end
-  local spinner = _G.isovim_chat_spinner
+  local spinner = _G.icarus_chat_spinner
   if not busy and spinner then
     spinner:close()
-    _G.isovim_chat_spinner = nil
+    _G.icarus_chat_spinner = nil
   end
 end
 
@@ -566,20 +566,20 @@ local function permission_rows(chat, call)
       body[#body + 1] = { "   " .. line }
     end
     if input.description then
-      body[#body + 1] = { "   " .. input.description, "IsovimAcpNotice" }
+      body[#body + 1] = { "   " .. input.description, "IcarusAcpNotice" }
     end
   elseif name == "Edit" or name == "MultiEdit" or name == "Write" then
     local new = name == "Write" and path and not vim.uv.fs_stat(input.file_path)
     path = path or "the file"
     title = new and "Create file" or "Edit file"
     question = new and ("Do you want to create %s?"):format(path) or ("Do you want to make this edit to %s?"):format(path)
-    body = { { " " .. path, "IsovimAcpNotice" } }
+    body = { { " " .. path, "IcarusAcpNotice" } }
   else
     local tool_name, args = look.header(call, dirs(chat))
     title, question = "Tool use", "Do you want to proceed?"
     body = { { "   " .. tool_name .. (args and ("(" .. args .. ")") or "") } }
   end
-  local rows = { { " " .. title, "IsovimAcpAskTitle" } }
+  local rows = { { " " .. title, "IcarusAcpAskTitle" } }
   vim.list_extend(rows, body)
   rows[#rows + 1] = { "" }
   rows[#rows + 1] = { " " .. question }
@@ -592,15 +592,15 @@ local function ask_permission(chat, params, answer)
   local rows = permission_rows(chat, call)
   for n, option in ipairs(box.options) do
     rows[#rows + 1] = { ("   %d. %s"):format(n, option.name or option.optionId), option = n,
-      spans = { { 3, 3 + #tostring(n) + 1, "IsovimAcpOptionNr" } } }
+      spans = { { 3, 3 + #tostring(n) + 1, "IcarusAcpOptionNr" } } }
   end
   rows[#rows + 1] = { "" }
-  rows[#rows + 1] = { " its number and <CR> in the composer, or <CR> on an option", "IsovimAcpHint" }
+  rows[#rows + 1] = { " its number and <CR> in the composer, or <CR> on an option", "IcarusAcpHint" }
   local row = add_block(chat, vim.tbl_map(function(r)
     return r[1]
   end, rows))
   local buf = chat.buf
-  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, { virt_lines = { { { RULE, "IsovimAcpAskRule" } } }, virt_lines_above = true })
+  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, { virt_lines = { { { RULE, "IcarusAcpAskRule" } } }, virt_lines_above = true })
   for i, r in ipairs(rows) do
     if r[2] then
       span(buf, row + i - 1, 0, #r[1], r[2])
@@ -652,14 +652,14 @@ end
 local function answer_box(chat, box, n)
   local option = box.options[n]
   if not option then
-    return vim.notify(("isovim: no option %d"):format(n), vim.log.levels.WARN)
+    return vim.notify(("icarus: no option %d"):format(n), vim.log.levels.WARN)
   end
   box.answer(option.optionId)
   if (option.kind or ""):match("^allow") then
     -- As on Claude's screen: once allowed, the tool just runs.
     replace_box(chat, box, {})
   else
-    replace_box(chat, box, { ("  ⎿  Denied · %s won't run"):format(box.tool) }, "IsovimAcpDenied")
+    replace_box(chat, box, { ("  ⎿  Denied · %s won't run"):format(box.tool) }, "IcarusAcpDenied")
   end
 end
 
@@ -667,7 +667,7 @@ end
 local function drop_boxes(chat)
   for _, box in ipairs(vim.list_slice(chat.boxes, 1)) do
     box.answer()
-    replace_box(chat, box, { "  ⎿  No longer waiting on an answer" }, "IsovimAcpNotice")
+    replace_box(chat, box, { "  ⎿  No longer waiting on an answer" }, "IcarusAcpNotice")
   end
 end
 
@@ -708,14 +708,14 @@ local function on_turn(chat, state, result)
     drop_boxes(chat)
     local reason = result.error or result.stopReason
     if reason == "cancelled" then
-      add_lines(chat, { "  ⎿  Interrupted · What should Claude do instead?" }, "IsovimAcpNotice")
+      add_lines(chat, { "  ⎿  Interrupted · What should Claude do instead?" }, "IcarusAcpNotice")
     elseif reason and reason ~= "end_turn" then
-      add_lines(chat, { ("  ⎿  Error: the turn ended: %s"):format(reason) }, "IsovimAcpError")
+      add_lines(chat, { ("  ⎿  Error: the turn ended: %s"):format(reason) }, "IcarusAcpError")
     end
     if reason ~= "cancelled" and chat.since then
       local _, past = look.verb(chat.since)
       local row = add_block(chat, { ("%s %s for %s"):format(GLYPH.thought, past, look.duration(now() - chat.since)) })
-      span(chat.buf, row, 0, #vim.api.nvim_buf_get_lines(chat.buf, row, row + 1, false)[1], "IsovimAcpTurnDone")
+      span(chat.buf, row, 0, #vim.api.nvim_buf_get_lines(chat.buf, row, row + 1, false)[1], "IcarusAcpTurnDone")
     end
     chat.since = nil
   end
@@ -850,22 +850,22 @@ M.hear = {
   end,
 }
 
----@param record isovim.ChatRecord
----@return isovim.Chat
+---@param record icarus.ChatRecord
+---@return icarus.Chat
 function M.get(record)
   local chat = open_chats[record.id]
   if chat then
     return chat
   end
   chat = { record = record, fresh = true, tools = {}, boxes = {}, options = {}, busy = false, turn_chars = 0 }
-  chat.buf = scratch("isovim://chat/" .. record.id, "isovim_chat")
+  chat.buf = scratch("icarus://chat/" .. record.id, "icarus_chat")
   vim.bo[chat.buf].modifiable = false
-  chat.input = scratch("isovim://composer/" .. record.id, "isovim_composer")
+  chat.input = scratch("icarus://composer/" .. record.id, "icarus_composer")
   open_chats[record.id] = chat
   map_keys(chat)
   local function hear(name)
     return function(...)
-      require("isovim.acp.chat").hear[name](chat, ...)
+      require("icarus.acp.chat").hear[name](chat, ...)
     end
   end
   chat.session = session.start(record.cwd, record.session, {
@@ -889,11 +889,11 @@ function M.show(chat, win)
     vim.wo[win][0][name] = value
   end
   vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(chat.buf), 0 })
-  local input = vim.w[win].isovim_composer
+  local input = vim.w[win].icarus_composer
   if not (input and vim.api.nvim_win_is_valid(input)) then
     input = vim.api.nvim_open_win(chat.input, false, { split = "below", win = win, height = 4 })
-    vim.w[win].isovim_composer = input
-    vim.w[input].isovim_composer_of = win
+    vim.w[win].icarus_composer = input
+    vim.w[input].icarus_composer_of = win
   end
   vim.api.nvim_win_set_buf(input, chat.input)
   vim.wo[input][0].winfixheight = true
@@ -906,11 +906,11 @@ end
 
 -- The composer under win, closed: win is about to show something that isn't a chat.
 function M.hide_composer(win)
-  local input = vim.w[win].isovim_composer
+  local input = vim.w[win].icarus_composer
   if input and vim.api.nvim_win_is_valid(input) then
     vim.api.nvim_win_close(input, true)
   end
-  vim.w[win].isovim_composer = nil
+  vim.w[win].icarus_composer = nil
 end
 
 -- After a hot reload: the open chats' keys and sessions run the new code.
@@ -930,7 +930,7 @@ end
 
 look.highlights()
 vim.api.nvim_create_autocmd("ColorScheme", {
-  group = vim.api.nvim_create_augroup("isovim_chat_hl", { clear = true }),
+  group = vim.api.nvim_create_augroup("icarus_chat_hl", { clear = true }),
   callback = look.highlights,
 })
 
