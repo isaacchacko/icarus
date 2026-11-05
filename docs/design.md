@@ -541,6 +541,26 @@ host; General and Terminals have none, and starting one there says why.
   someone renames it, so the agent that takes the turn names it, and as your words are the first post, no
   `✎ first titled` line repeats them.
 
+## The agent graph
+
+`<leader>iG`, or `<CR>` on Agents in the sidebar (`<Tab>` still folds it), opens one tab, one buffer
+(isovim.agent_graph): every project on this host, then the other hosts' from the `iso ls` the sidebar already
+fetches, each agent a box joined to whoever started it by box-drawing lines. It's the parent link only, no message
+edges. A script pane hangs off the agent it runs for; a plain terminal isn't drawn.
+
+- **Shape:** the root and routers come first, then what each started, hanging off a trunk under its left side in rows
+  along buses, as many to a row as the window holds, so 20 agents take a few rows, and a narrow window stacks them.
+  Lines never wrap: what's wider than the window scrolls sideways with the cursor, and boxes shrink to 16 cells at least.
+- **A box:** a spinner while it works, its glyph and name, then at the right `●` for unread output, `⧗2` for threads
+  waiting on it, an eye if it's hidden and `▸5` for a fold holding five; under that its role and what it's on, cut short.
+  Role shows by glyph, word and, while it's moving, color. What's idle is dim, so what's moving stands out.
+- **Live:** it reads files and tmux as the sidebar refreshes and at least every 5s, and turns spinners every 150ms
+  from that, only while it's on screen. Only the lines that changed are written, and the cursor stays put unless its
+  box moved.
+- **Keys:** `h` and `l` the boxes beside it, `k` whoever started it, `j` the first it started, else what comes after it,
+  `<CR>` its chat, also for a hidden one or another host's, `z` folds what it started, `[ ]` step the sidebar's project and
+  take the graph to that section, its scope with it. Scrolling any other way moves the focus to the box under the cursor.
+
 ## Links
 
 A link is a one-line pointer to anything in isovim, written as an address in text, so an agent's

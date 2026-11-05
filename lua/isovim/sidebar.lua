@@ -235,6 +235,11 @@ local KINDS = {
         M.surfaces().open(board)
         return M.refresh()
       end
+      -- Agents opens their graph (isovim.agent_graph), as Threads does its board.
+      if item.section == "Agents" then
+        require("isovim.agent_graph").open()
+        return M.refresh()
+      end
       M.set_section_folded(item.host, item.repo_key, item.section, not item.collapsed)
       M.refresh()
     end,
@@ -2044,6 +2049,7 @@ function M.help()
   section("Composer (the chat's last lines, where you type)", acp_keys.composer)
   section("A page (comments on its lines)", require("isovim.pages").help_keys)
   section("A thread (a chat with the router about one thing)", acp_keys.thread)
+  section("The agent graph (<CR> on Agents, <leader>iG)", require("isovim.agent_graph").help_keys)
   section("The board (<CR> on Threads, <leader>iO)", require("isovim.thread_board").help_keys)
   section("A task, in the board's buffer (<CR> on its card, <leader><leader>)", require("isovim.task_view").help_keys())
   section("A surface's view (markdown, a page, the PRs, a question)", {

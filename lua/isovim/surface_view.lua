@@ -1146,6 +1146,9 @@ vim.api.nvim_create_autocmd("WinResized", {
 -- The PRs surfaces and decision logs open, drawn again from what they read: run as the sidebar
 -- refreshes, which it does as a fetch lands, a PR is registered, a pr.* event comes or a root answers.
 function M.refresh_boards()
+  if package.loaded["isovim.agent_graph"] then
+    require("isovim.agent_graph").refresh()
+  end
   for _, view in pairs(M.views) do
     -- A board reads every thread: it goes by M.threads_changed, and its window's width here.
     if view.kind == "threads" and vim.api.nvim_buf_is_valid(view.buf) then

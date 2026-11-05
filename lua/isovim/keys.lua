@@ -939,6 +939,9 @@ M.GROUP = {
     end
     require("isovim.surfaces").open(board)
   end, "the project's board" },
+  { "G", function()
+    require("isovim.agent_graph").open()
+  end, "the agents as a graph, every project" },
   { "/", function()
     require("isovim.board_find").open()
   end, "fuzzy search tasks and threads, in every project" },

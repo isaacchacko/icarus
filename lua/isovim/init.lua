@@ -1003,6 +1003,7 @@ function M.setup(opts)
     end
     if next(_G.isovim_surface_views or {}) then
       require("isovim.surface_view").rebind()
+      require("isovim.agent_graph").rebind()
     end
     sidebar.reopen()
     return
