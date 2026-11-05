@@ -114,6 +114,7 @@ local S = {
   thread_jobs = {}, ---@type table<string, {repo: string, id: string}> tool calls made in a turn on a thread
   work_since = nil, ---@type integer? when a restart first found background work in its way
   shells = false, -- that restart's last look found background shells (work_waits)
+  awake = nil, ---@type vim.SystemObj? the caffeinate holding off idle sleep (keep_awake)
   code = {}, ---@type table<string, string> each isovim file it runs, as it was when it started on it (code_stat)
   code_due = false, -- a restart onto changed code waits its turn (check_code)
   broken = nil, ---@type string? the changed file that doesn't compile, said once
@@ -1015,6 +1016,23 @@ local function work_waits()
   end
   S.work_since = S.work_since or os.time()
   return os.time() - S.work_since < BACKGROUND_WAIT
+end
+
+-- Idle sleep freezes a turn and what it runs in the background until someone wakes the Mac, so a
+-- supervisor holds it off while it has either; closing the lid still sleeps. The hold isn't renewed
+-- before the work ends, so a hung turn can't keep the Mac up for good.
+local AWAKE_LIMIT = 4 * 3600
+local function keep_awake()
+  local working = S.busy or (S.awake ~= nil and #background_work() > 0)
+  if working and not S.awake and vim.fn.executable("caffeinate") == 1 then
+    S.awake = vim.system({ "caffeinate", "-i", "-t", tostring(AWAKE_LIMIT), "-w", tostring(vim.uv.os_getpid()) },
+      { stdout = false, stderr = false })
+  elseif not working and S.awake then
+    if not S.awake:is_closing() then
+      S.awake:kill("sigterm")
+    end
+    S.awake = nil
+  end
 end
 
 -- A restart that's been asked for goes once the turn ends and any background work does.
@@ -2152,6 +2170,7 @@ function M.run(addr)
   math.randomseed(vim.uv.hrtime() + vim.uv.os_getpid())
   changed_code()
   vim.uv.new_timer():start(30000, 30000, vim.schedule_wrap(function()
+    pcall(keep_awake)
     if restart_due() then
       return restart_now()
     end

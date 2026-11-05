@@ -76,6 +76,8 @@ lifetimes, so agents outlive the TUI).
 - It always drains the adapter's output, writes every update to the journal, and publishes status and
   messages to the event bus.
 - It serves an nvim RPC socket. The TUI, `iso attach` and the CLI all talk to the agent through it.
+- On a Mac, it holds off idle sleep with `caffeinate -i` while a turn or its background shells run, up
+  to 4 hours per stretch of work, as sleep freezes them. Closing the lid still sleeps.
 
 **Prompts and messages.**
 - A prompt sent while the agent is busy is **queued** and delivered when its turn ends. This covers
