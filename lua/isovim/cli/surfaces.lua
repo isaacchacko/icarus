@@ -45,7 +45,7 @@ local function my_repo(given)
   end
   local named = given and repo_key(given)
   if mine and named and named ~= mine then
-    fail(("a router's surfaces are its own repo's, %s, not %s"):format(mine, named))
+    fail(("an agent's surfaces are its own repo's, %s, not %s"):format(mine, named))
   end
   return mine or named or require("isovim.repos").of(vim.uv.cwd())
     or fail("which repo? run it from the router's pane, or pass --repo owner/repo")
@@ -731,7 +731,7 @@ M.__surfaces = function(args)
 end
 
 
--- A PR as a router names it: a URL, owner/repo#n, or #n / n in its own repo.
+-- A PR as a router or root names it: a URL, owner/repo#n, or #n / n in its own repo.
 local function pr_url(repo, ref)
   local prs = require("isovim.prs")
   local number = ref:match("^#?(%d+)$")
@@ -741,7 +741,7 @@ local function pr_url(repo, ref)
   return prs.normalize(ref) or fail(("%s isn't a PR: a URL, owner/repo#n, or #n in %s"):format(ref, repo))
 end
 
--- iso <role> pr group|ungroup|groups: the router's groups of its repo's PRs, in iso/prs.groups.json,
+-- iso <role> pr group|ungroup|groups: the groups of a repo's PRs, a router's or a root's, in iso/prs.groups.json,
 -- which the PRs surface draws in their order (isovim.prs.groups). A PR is in one group at most:
 -- grouping it again moves it. A PR grouped that isn't registered yet is registered too.
 function M.pr_grouping(args)

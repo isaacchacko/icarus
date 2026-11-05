@@ -787,7 +787,8 @@ folder or a link, which have no view of their own.
   and `N` replace it with the next or previous question waiting on you in the Inbox's order (round
   past the end; one a root is deciding isn't waiting on you). An
   agent's permission request (Allow / Deny) is one of these too.
-- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. A router can
+- PRs appear only when an agent registers them (`iso <role> pr`), in the PRs surface. A router registers PRs and
+  groups them, unless the root's been put in charge of the list; both write the same file, with no lock. They
   curate it: `iso <role> pr group "<name>" <pr>... [--note "<one line>"]` makes or fills a group (a PR
   is in one at most; grouping it again moves it, and registers it if it wasn't), `pr group --rm` and
   `--order` drop and order them, `pr ungroup` takes PRs out, `pr groups` lists them; they live in the

@@ -327,7 +327,9 @@ local V0 = {
       .. "stops waiting on the user. Leave the rest, with no reply, and it stays in their Inbox: an FYI or a report, an "
       .. "answer to a question they asked, their own conversation isn't yours to answer for them. Their word beats yours. "
       .. "What's permanently off stays off: `iso root thread post <id> \"<why, and what you'd pick>\"` raises it. "
-      .. "Root mode's --task, "
+      .. "If the user puts you in charge of the repo's PR list, it's yours rather than the router's: `iso root pr <owner/repo> "
+      .. "<url|owner/repo#n>` registers one, `iso root pr group \"<name>\" <pr>... --note \"...\"` groups them, and `pr groups`, "
+      .. "`pr ungroup` and `pr group --rm|--order` tidy them. You both write the same file, with no lock. Root mode's --task, "
       .. "if it was given one, is your first message: guidance you narrow yourself by, raising what's "
       .. "outside it. `iso task`, `iso pin` and `iso ask` are retired: raise what the user must decide, and "
       .. "anything else for them goes through the repo's router.",

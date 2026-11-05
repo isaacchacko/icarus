@@ -166,7 +166,7 @@ function commands.archive(args)
 end
 
 function commands.pr(args)
-  -- The router's groups of its PRs (isovim.cli.surfaces.pr_grouping).
+  -- The groups of a repo's PRs, a router's or a root's (isovim.cli.surfaces.pr_grouping).
   if args[1] == "group" or args[1] == "ungroup" or args[1] == "groups" then
     return require("isovim.cli.surfaces").pr_grouping(args)
   end
