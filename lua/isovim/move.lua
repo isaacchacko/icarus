@@ -748,17 +748,26 @@ function M.send_agent(key, agent, host, opts)
 end
 
 -- Moves every agent of the new-layout key (a repo, or general) to host, each as M.send_agent moves
--- one; its terminals and script panes stay. Each is checked first (M.refusal), and the other host
+-- one; its terminals and script panes stay, and so do its root and dedicated routers, which belong to
+-- their host and are said to be staying. Each is checked first (M.refusal), and the other host
 -- asked that it answers and that a running agent's claude or codex is logged in there, so a refusal
 -- leaves all of them here as they were. Parents go before their children, which keep them there.
 -- A failure partway (a copy, say) stops it there: what went is said, and the rest stay here.
 ---@return boolean ok, string message what moved, or why not
 function M.send_repo(key, host)
-  local agents = vim.tbl_filter(function(agent)
-    return not agent.of and (agent.kind == "claude" or agent.kind == "codex")
-  end, store.agents(key))
+  local agents, staying = {}, {}
+  for _, agent in ipairs(store.agents(key)) do
+    if not agent.of and (agent.kind == "claude" or agent.kind == "codex") then
+      if agent.dedicated or store.role(agent) == "root" then
+        staying[#staying + 1] = ("%s/%s (%s)"):format(key, agent.id, agent.dedicated and "a dedicated router" or "a root")
+      else
+        agents[#agents + 1] = agent
+      end
+    end
+  end
+  local stay = #staying > 0 and ("; staying here: " .. table.concat(staying, ", ")) or ""
   if #agents == 0 then
-    return false, key .. " has no agents that move"
+    return false, key .. " has no agents that move" .. stay
   end
   for _, agent in ipairs(agents) do
     local refused = M.refusal(key, agent)
@@ -818,7 +827,7 @@ function M.send_repo(key, host)
     there[key .. "/" .. agent.id] = message
     moved[#moved + 1] = ("%s/%s as %s"):format(key, agent.id, message)
   end
-  return true, table.concat(moved, ", ")
+  return true, table.concat(moved, ", ") .. stay
 end
 
 -- This host's base clone of repo, made from origin's url when there's no checkout here to make it

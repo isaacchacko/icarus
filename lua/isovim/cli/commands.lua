@@ -174,7 +174,8 @@ M.list = {
                                      address
        iso move <owner>/<repo> <host> --all
                                      move every agent of the repo (or general), each as above,
-                                     parents first; its terminals stay. All are checked first,
+                                     parents first; its terminals, root and dedicated routers
+                                     stay, and it says which. All are checked first,
                                      and the host asked, so a refusal moves none of them]=],
   },
   { name = "agent", module = "agents",
