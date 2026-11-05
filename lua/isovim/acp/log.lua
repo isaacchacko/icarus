@@ -1,9 +1,8 @@
--- The ACP supervisor's log: debug lines go to a file (run/<scope>/<aN>.acp.log, set by
--- isovim.acp.host), and warnings to the pane's stderr too, so a look at the pane shows them. Only
--- vim.uv and string work here, so it logs from libuv callbacks as well.
+-- The ACP log, one file for every chat: stdpath("log")/isovim-acp.log. Only vim.uv and string work
+-- here, so it logs from libuv callbacks as well.
 local M = {}
 
-M.file = nil ---@type string?
+M.file = vim.fn.stdpath("log") .. "/isovim-acp.log"
 
 local function line(level, parts)
   local text = table.concat(vim.tbl_map(function(part)
@@ -28,9 +27,7 @@ function M.debug(...)
 end
 
 function M.warn(...)
-  local text = line("warn", { ... })
-  append(text)
-  io.stderr:write(text)
+  append(line("warn", { ... }))
 end
 
 return M

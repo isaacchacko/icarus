@@ -48,9 +48,8 @@ end
 
 -- Every process below pid now, as {pid, pgid}, and pid's own process group. Claude runs an agent's
 -- background shells (run_in_background) in process groups of their own, so stopping the adapter's
--- group leaves them running; whoever tears an agent down asks for these first, while they're
--- still below it (once their parent is gone they belong to init, and nothing finds them).
--- Plain Lua and libuv only (io.popen, uv.sleep), as a signal handler's fast context allows.
+-- group leaves them running; stop() asks for these first, while they're still below it (once their
+-- parent is gone they belong to init, and nothing finds them).
 ---@return {pid: integer, pgid: integer}[] found, integer? own_pgid
 function M.descendants(pid)
   local ps = io.popen("ps -A -o pid= -o ppid= -o pgid= 2>/dev/null")
@@ -77,31 +76,6 @@ function M.descendants(pid)
     end
   end
   return found, groups[pid]
-end
-
--- What's running in process groups of their own below pid, a line each: an adapter's claude and
--- its stdio MCP servers are in the adapter's group, and Claude puts each Bash (run_in_background, a
--- Monitor) in one of its own. A Bash reads as what it was asked to run, not the wrapper Claude runs it in.
----@return string[]
-function M.background_shells(pid)
-  local below, own_pgid = M.descendants(pid)
-  local seen, shells = {}, {}
-  for _, proc in ipairs(below) do
-    if proc.pgid ~= own_pgid and not seen[proc.pgid] then
-      local ps = io.popen(("ps -o stat= -o command= -p %d 2>/dev/null"):format(proc.pid))
-      local stat, command = (ps and ps:read("*a") or ""):match("^%s*(%S+)%s+(.-)%s*$")
-      if ps then
-        ps:close()
-      end
-      -- A zombie has only to be reaped.
-      if stat and not stat:find("Z", 1, true) then
-        seen[proc.pgid] = true
-        local asked = (command:match("eval '(.-)'") or command):gsub("%s+", " "):gsub("^cd [^&]-&& ", "")
-        shells[#shells + 1] = #asked > 60 and asked:sub(1, 57) .. "..." or asked
-      end
-    end
-  end
-  return shells
 end
 
 -- Stops every process below pid (descendants), each process group of theirs that isn't pid's own
@@ -262,8 +236,9 @@ function M.create_stdio_transport(config, callbacks)
     if self.process and not self.process:is_closing() then
       local process, pid = self.process, self.pid
       self.process, self.pid = nil, nil
-      -- The whole group, so a wrapper's children go too.
+      -- The whole group, so a wrapper's children go too, and the background shells in groups of their own.
       if pid then
+        pcall(M.kill_descendants, M.descendants(pid))
         pcall(uv.kill, -pid, 15)
         pcall(uv.kill, -pid, 9)
       end
