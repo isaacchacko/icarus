@@ -181,6 +181,18 @@ local KINDS = {
     end,
     id = { "host", "repo_key", "name" },
   },
+  -- Under the host's Inbox: open threads with only an unread post. They don't need you, so they're apart
+  -- from it and not counted as it is; folded till you open it, and gone when there are none.
+  host_unread = {
+    format = function(item)
+      return { { item.collapsed and "▸ " or "▾ ", "Comment" }, { "Unread", "Title" }, { " " .. item.count, "Comment" } }
+    end,
+    open = function(item)
+      M.set_collapsed(item.host, "unread_open", nil, item.collapsed)
+      M.refresh()
+    end,
+    id = { "host" },
+  },
   -- A repo's own Inbox: its surfaces, the count those waiting on you.
   repo_inbox = {
     format = function(item)
@@ -363,6 +375,8 @@ local KINDS = {
     id = { "ws", "path" },
   },
 }
+-- A row under Unread, drawn as the Inbox's are.
+KINDS.unread = KINDS.waiting
 KINDS.task.open = KINDS.agent.open
 KINDS.waiting.open = KINDS.surface.open
 
@@ -951,7 +965,7 @@ local function group_sections(items, base, host, key, opts)
       end
     elseif kind == "thread" and opts.threads then
       threads[#threads + 1] = entry
-      if entry.waiting_on == "user" then
+      if entry.needs_you then
         inbox[#inbox + 1] = entry
       end
     elseif entry.needs_you then
@@ -1155,38 +1169,49 @@ local function host_rows(host, ssh, entries, surfaces_by_key, extra, terminals)
   local rootmode = not host and require("isovim.rootmode") or nil
   if surfaces_by_key then
     -- Exactly what needs you (needs_you: a question a root is still deciding has none), a row each,
-    -- in the order <leader>in walks them (isovim.waiting_surfaces); all of them are in the root's and
-    -- each repo's own Inbox in the list too.
-    local waiting_on = {}
+    -- in the order <leader>in walks them (isovim.waiting_surfaces), as each repo's own Inbox has them
+    -- too; then Unread, the open threads with only a post you haven't read.
+    local waiting_on, unread = {}, {}
     for key, list in pairs(surfaces_by_key) do
       for i, entry in ipairs(list) do
-        if entry.needs_you then
-          waiting_on[#waiting_on + 1] = { key = key, entry = entry, at = vim.list_extend(isovim.inbox_place(entry), { i }) }
+        local into = entry.needs_you and waiting_on or entry.new_reply and unread
+        if into then
+          into[#into + 1] = { key = key, entry = entry, at = vim.list_extend(isovim.inbox_place(entry), { i }) }
         end
       end
     end
-    table.sort(waiting_on, function(a, b)
+    local function by_place(a, b)
       for i = 1, 4 do
         if a.at[i] ~= b.at[i] then
           return a.at[i] < b.at[i]
         end
       end
       return false
-    end)
+    end
+    local function add_rows(kind, list)
+      for i, w in ipairs(list) do
+        local key = w.key
+        local mark = key == GENERAL_KEY and { icons.get("general") } or nil
+        inbox[#inbox + 1] = vim.tbl_extend("force", base_host, {
+          kind = kind,
+          guide = i == #list and "└─ " or "├─ ",
+          surface = w.entry,
+          name = w.entry.name,
+          repo_key = key,
+          label = store.is_pseudo(key) and key or key:match("[^/]+$"),
+          mark = mark and { glyph = mark[1], hl = mark[2] } or repo_mark(repos.style(key)),
+        })
+      end
+    end
+    table.sort(waiting_on, by_place)
+    table.sort(unread, by_place)
     local collapsed = is_collapsed(host, "inbox")
     inbox[1] = vim.tbl_extend("force", base_host, { kind = "host_inbox", count = #waiting_on, collapsed = collapsed })
-    for i, w in ipairs(collapsed and {} or waiting_on) do
-      local key = w.key
-      local mark = key == GENERAL_KEY and { icons.get("general") } or nil
-      inbox[#inbox + 1] = vim.tbl_extend("force", base_host, {
-        kind = "waiting",
-        guide = i == #waiting_on and "└─ " or "├─ ",
-        surface = w.entry,
-        name = w.entry.name,
-        repo_key = key,
-        label = store.is_pseudo(key) and key or key:match("[^/]+$"),
-        mark = mark and { glyph = mark[1], hl = mark[2] } or repo_mark(repos.style(key)),
-      })
+    add_rows("waiting", collapsed and {} or waiting_on)
+    if #unread > 0 then
+      local unread_open = is_collapsed(host, "unread_open")
+      inbox[#inbox + 1] = vim.tbl_extend("force", base_host, { kind = "host_unread", count = #unread, collapsed = not unread_open })
+      add_rows("unread", unread_open and unread or {})
     end
   end
   -- The projects, and how many besides the one shown have something that needs you.
@@ -2683,6 +2708,9 @@ M.actions = {
     if item.kind == "host_inbox" or item.kind == "waiting" then
       set_collapsed(host, "inbox", nil, item.kind ~= "host_inbox" or not item.collapsed)
       keep = { kind = "host_inbox", host = host }
+    elseif item.kind == "host_unread" or item.kind == "unread" then
+      set_collapsed(host, "unread_open", nil, item.kind == "host_unread" and item.collapsed)
+      keep = { kind = "host_unread", host = host }
     elseif item.kind == "terminals" or item.kind == "terminal" then
       set_collapsed(host, "terminals", nil, item.kind ~= "terminals" or not item.collapsed)
       keep = { kind = "terminals", host = host }

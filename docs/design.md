@@ -455,7 +455,10 @@ host; General and Terminals have none, and starting one there says why.
   repo's old `iso/tasks.md` moved once to `iso/archive/tasks-<date>.md`, out of what's scanned, kept.
 - **Listed** as plain rows under the repo, newest first, with the thread glyph, title and how many
   posts (`working…` while the router's turn on it runs). One with a router post you haven't read
-  waits on you: it's in the host's Inbox (`new reply`) until you open it. Threads always shows for
+  says `new reply` on its row until you open it. That alone doesn't need you, with or without root
+  mode: it isn't in any Inbox or count, or walked by `<leader>in`. It's under Unread below the host's
+  Inbox, one row folded till you open it, and a task's row shows its `●` mark, with its title dimmed
+  as nothing there needs you. Threads always shows for
   a repo, even empty, with its last 5 resolved under the open ones, dimmed, each with its outcome
   (`thread ls --all` shows the rest); its count is the open ones.
 - **Whose turn:** apart from what you've read. After any agent's post it's your turn: the thread's
@@ -820,6 +823,7 @@ S (7) - swarming            ← style meter: live agents on this host
 Inbox 2                     ← the shown host's: every surface that needs you
 ├─  app - ? a0 asks: merge? ← its repo's glyph and name, then the surface
 └─  isovim - ? mini-animate …
+▸ Unread 16                 ← open threads with only an unread post: not counted, folded at first
 ▾ ‹  isovim › +2 need you  2 ← the project switcher ([ ]): the current project, how many others
                                have something that needs you, how many of its agents run
   ⏺ 󰑩 router                ← its router, whatever's folded, hidden or not; none, no row

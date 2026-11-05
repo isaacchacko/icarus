@@ -32,7 +32,7 @@
 -- message there when it ends, so the router just answers. Posts on one thread that wait in its queue
 -- go together, as one prompt and one turn. It posts more with iso router thread
 -- post. What the user has read (the last line seen, per thread) is run/<repo>/threads.json: a
--- router post past it makes the thread wait on them (needs_you) until they open it.
+-- router post past it marks the thread unread (new_reply) until they open it.
 --
 -- Whose turn it is is apart from what's been read. After an agent's post it's the user's turn, opened
 -- or not, so they never miss one: the thread is in the Inbox until they post, it's resolved or they

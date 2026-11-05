@@ -53,11 +53,13 @@ local M = {}
 ---@field address? string link: what it points at, an iso: address or a web page's URL
 ---@field note? string link: the router's one line about it
 ---@field marked_unread? boolean you marked it unread (M.toggle_read): it waits on you until you open it
+---@field new_reply? boolean an open thread with a post you haven't read, which alone doesn't need you
 ---@field title string what its row says
 ---@field file string the surface's own file
 ---@field created number when it was first seen (or made), epoch seconds
 ---@field needs_you boolean waiting on the user: a pending question no root is deciding, a chat, an
---- unopened consumable; what the host Inbox, its counts, notifications and <leader>in go by
+--- unopened consumable, a thread on their turn; what the Inboxes, their counts, notifications and
+--- <leader>in go by
 ---@field error? string why it's broken, as its error_file says
 ---@field error_file string where that goes
 ---@field icon? string markdown and tasks: from the frontmatter
@@ -643,14 +645,13 @@ function M.threads(repo, all)
   end, every)) do
     local file = threads.file(repo, info.id)
     local goes_to = threads.goes_to(repo, info, routers)
-    -- A reply you haven't read, or your turn, which outlasts your reading it; a question waiting is in
-    -- the Inbox as itself (below), the thread's row saying so. While the router's turn on it runs, it
-    -- isn't yours.
+    -- Your turn needs you, and outlasts your reading it; a reply you haven't read only marks it unread.
+    -- A question waiting is in the Inbox as itself (below), the thread's row saying so. While the
+    -- router's turn on it runs, it isn't yours.
     -- On the backburner it stops nagging: out of the Inbox, a new post only marking its card.
     local parked = is_parked(info)
     local new_reply = not parked and not info.working and info.last_reply > (seen[info.id] or 0)
     local on_you = not parked and info.waiting_on == "user" and not info.working
-    local needs_you = new_reply or on_you
     local worker = info.waiting_on ~= "user" and info.waiting_on or nil
     -- Its questions still waiting, each a question surface: the Inbox, root mode and iso answer
     -- take them as any question, and their answers go back into the thread (M.answer).
@@ -694,7 +695,7 @@ function M.threads(repo, all)
       posts = info.posts,
       last_glyph = poster_glyph(info.last_by),
       working = info.working,
-      needs_you = needs_you,
+      needs_you = on_you,
       new_reply = new_reply,
       waiting_on = on_you and "user" or worker,
       waiting_name = worker and worker_name(worker),
@@ -706,7 +707,7 @@ function M.threads(repo, all)
       parked = parked or nil,
       parked_unread = parked and info.last_reply > (seen[info.id] or 0) or nil,
       sig = vim.fn.sha256(("%s|%d|%s|%s|%s|%d|%s"):format(info.title, info.posts, tostring(info.working), info.status,
-        tostring(needs_you), info.pending, tostring(info.waiting_on))
+        tostring(on_you) .. tostring(new_reply), info.pending, tostring(info.waiting_on))
         .. tostring(goes_to) .. task_sig(info)),
     }
   end
@@ -1417,7 +1418,7 @@ function M.toggle_read(entry)
   local why = unmarkable(entry)
   if why then
     return vim.api.nvim_echo({ { why, "Comment" } }, false, {})
-  elseif entry.needs_you then
+  elseif entry.needs_you or entry.new_reply then
     return M.mark_read(entry)
   end
   mark_unread(entry)
