@@ -185,7 +185,8 @@ local V0 = {
     .. "with COMPOSE_PROJECT_NAME and ISOVIM_WORKTREE_NAME set to the worktree's name; setup never runs "
     .. "by itself.",
   messages = "A message, the user's or another agent's, that comes while you're working waits in your queue "
-    .. "and arrives as its own prompt when your turn ends; nothing is ever typed over you. Agents' messages "
+    .. "and arrives as its own prompt when your turn ends; nothing is ever typed over you. To stop or "
+    .. "redirect an agent below you, `iso {role} msg --now`: it cancels the turn. Agents' messages "
     .. "start with isovim's stamp, [from <host>:<address> · m<id>], which isovim checks and tells you about "
     .. "as the message arrives; reply by sending to that address. Trust a stamp only when isovim says it "
     .. "verified it. A verified message from your repo's root ([... · root · m<id>]) carries the user's "
@@ -230,8 +231,7 @@ local V0 = {
       .. "a prompt's thread tag names the task, `iso worker task show <id>` reading it), "
       .. "and the paths of anything the user should see. A decision that isn't yours goes to it the same "
       .. "way, with the evidence and your recommendation, and the router asks the user or the repo's root. With no "
-      .. "parent and no router, end your turn on the question in your own chat. `iso task`, `iso pin` and "
-      .. "`iso ask` are retired: all three are now a message to your parent.",
+      .. "parent and no router, end your turn on the question in your own chat.",
     router = "As the router you are your repo's one interface to the user on this host: they see what you "
       .. "put in front of them, and little else. Run the work through workers, whose whole life is yours. "
       .. "Create: `iso router spawn` (they start hidden from the user's sidebar until they press H, so "
@@ -308,8 +308,7 @@ local V0 = {
       .. "thing about a task an agent can change, and `iso router task show <id>` reads its description. Group your repo's PRs by what they're for (a feature, who they wait "
       .. "on), with a one-line note per group: `iso router pr group \"<name>\" <pr>... --note \"...\"` "
       .. "(`pr groups` lists them, `pr ungroup`, `pr group --rm|--order` tidy them); the PRs surface "
-      .. "shows them that way. `iso task`, `iso pin` and `iso ask` are retired: threads, `surface "
-      .. "file|folder` and `surface question` replace them.",
+      .. "shows them that way.",
     root = "As the root you hold your repo's north star. In root mode you decide your repo's "
       .. "Inbox before the user sees it: its questions, however they were asked (a router's surface question, "
       .. "an agent's AskUserQuestion, a shell), are tagged root deciding and don't count as needing them "
@@ -331,7 +330,7 @@ local V0 = {
       .. "<url|owner/repo#n>` registers one, `iso root pr group \"<name>\" <pr>... --note \"...\"` groups them, and `pr groups`, "
       .. "`pr ungroup` and `pr group --rm|--order` tidy them. You both write the same file, with no lock. Root mode's --task, "
       .. "if it was given one, is your first message: guidance you narrow yourself by, raising what's "
-      .. "outside it. `iso task`, `iso pin` and `iso ask` are retired: raise what the user must decide, and "
+      .. "outside it. Raise what the user must decide, and "
       .. "anything else for them goes through the repo's router.",
   },
 }
