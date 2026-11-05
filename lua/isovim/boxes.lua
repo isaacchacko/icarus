@@ -53,7 +53,7 @@ function M.cat(...)
   local out = { text = "", marks = {} }
   for _, part in ipairs({ ... }) do
     for _, mark in ipairs(part.marks) do
-      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3], mark[4] }
+      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3], mark[4], mark[5] }
     end
     out.text = out.text .. part.text
   end
@@ -77,7 +77,7 @@ function M.fit(line, width)
   local out = { text = text .. "…", marks = {} }
   for _, mark in ipairs(line.marks) do
     if mark[1] < #text then
-      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3], mark[4] }
+      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3], mark[4], mark[5] }
     end
   end
   return out
@@ -110,25 +110,26 @@ end
 -- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them.
 function M.markdown(text, width)
   local look = require("isovim.acp.look")
-  -- Its iso: addresses as chips in their place (isovim.links), joined by no-break spaces so the
-  -- wrapping keeps each whole; found again in the lines below to mark them with their address.
+  -- Its links as chips in their place (isovim.links), joined by no-break spaces so the wrapping
+  -- keeps each whole, one wider than the lines shortened to fit; found again in the lines below to
+  -- mark them with their address. A table's are look.table's to place.
   local links = require("isovim.links")
   local chips = {}
-  text = text or ""
-  local pieces, at = {}, 1
-  for _, link in ipairs(links.scan(text)) do
-    local parts = links.parts(link[3], links.NBSP)
-    local chip = table.concat(vim.tbl_map(function(part)
-      return part[1]
-    end, parts))
-    chips[#chips + 1] = { chip = chip, addr = link[3], parts = parts }
-    pieces[#pieces + 1] = text:sub(at, link[1])
-    pieces[#pieces + 1] = chip
-    at = link[2] + 1
+  local function chipped(line)
+    local pieces, at = {}, 1
+    for _, link in ipairs(links.labelled(line, links.scan(line))) do
+      local shape = { label = link[4], most = width }
+      local parts = links.parts(link[3], links.NBSP, shape)
+      local chip = links.chip(link[3], links.NBSP, shape)
+      chips[#chips + 1] = { chip = chip, addr = link[3], parts = parts, shape = shape }
+      pieces[#pieces + 1] = line:sub(at, link[1])
+      pieces[#pieces + 1] = chip
+      at = link[2] + 1
+    end
+    pieces[#pieces + 1] = line:sub(at)
+    return table.concat(pieces)
   end
-  pieces[#pieces + 1] = text:sub(at)
-  text = table.concat(pieces)
-  local body = vim.split(vim.trim(text:gsub("\r", "")), "\n", { plain = true })
+  local body = vim.split(vim.trim((text or ""):gsub("\r", "")), "\n", { plain = true })
   local out, fenced, i = {}, false, 1
   local function wrapped(line, base)
     local plain, spans = look.plain(line)
@@ -153,7 +154,7 @@ function M.markdown(text, width)
       out[#out + 1] = M.seg(line, "IsovimPrDim")
       i = i + 1
     elseif fenced then
-      out[#out + 1] = M.seg(line, "IsovimAcpCode")
+      out[#out + 1] = M.seg(chipped(line), "IsovimAcpCode")
       i = i + 1
     elseif look.table_row(line) and body[i + 1] and look.table_alignments(body[i + 1]) then
       local rows = {}
@@ -161,12 +162,22 @@ function M.markdown(text, width)
         rows[#rows + 1] = body[i]
         i = i + 1
       end
-      local drawn, spans = look.table(rows, width)
+      local drawn, spans, cell_chips = look.table(rows, width)
       for r, text_ in ipairs(drawn) do
-        out[#out + 1] = { text = text_, marks = {} }
+        out[#out + 1] = { text = text_, marks = {}, placed = true }
         for _, span in ipairs(spans) do
           if span[1] == r - 1 then
             table.insert(out[#out].marks, { span[2], span[3], span[4] == "IsovimAcpRule" and "IsovimPrBorder" or span[4] })
+          end
+        end
+        for _, chip in ipairs(cell_chips) do
+          if chip[1] == r - 1 then
+            local at = chip[2]
+            for _, part in ipairs(chip[5]) do
+              table.insert(out[#out].marks, { at, at + #part[1], part[2] })
+              at = at + #part[1]
+            end
+            table.insert(out[#out].marks, { chip[2], chip[3], nil, chip[4], chip[6] })
           end
         end
       end
@@ -180,7 +191,7 @@ function M.markdown(text, width)
       end
       local rest = vim.trim((line:gsub("!%[[^%]]*%]%([^%)]*%)", ""):gsub("<img[^>]*>", "")))
       if rest ~= "" then
-        wrapped(rest)
+        wrapped(chipped(rest))
       end
       i = i + 1
     else
@@ -188,18 +199,18 @@ function M.markdown(text, width)
       if line == "" then
         out[#out + 1] = M.seg("")
       else
-        wrapped(heading or line, heading and "IsovimAcpHeading" or nil)
+        wrapped(chipped(heading or line), heading and "IsovimAcpHeading" or nil)
       end
       i = i + 1
     end
   end
   -- Each chip's parts highlighted, and the whole of it marked with its address (mark[4]). They come
   -- in the text's order, so each is the next one found: several can read the same (one host's long
-  -- URLs), or one begin as another does. One that didn't survive (cut in a table) is passed over.
+  -- URLs), or one begin as another does. A table's are marked already.
   local upto = 1
   for _, line in ipairs(out) do
     local from = 1
-    while true do
+    while not line.placed do
       local index, s, e
       for k = upto, #chips do
         s, e = line.text:find(chips[k].chip, from, true)
@@ -216,7 +227,7 @@ function M.markdown(text, width)
         line.marks[#line.marks + 1] = { at, at + #part[1], part[2] }
         at = at + #part[1]
       end
-      line.marks[#line.marks + 1] = { s - 1, e, nil, each.addr }
+      line.marks[#line.marks + 1] = { s - 1, e, nil, each.addr, each.shape }
       upto, from = index + 1, e + 1
     end
   end

@@ -128,7 +128,7 @@ local function render(view, data, width)
     levels[#lines] = level or "1"
     rows[#lines] = row
     for _, mark in ipairs(line.marks) do
-      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3], mark[4] }
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3], mark[4], mark[5] }
     end
   end
   width = math.max(48, width - 1)
@@ -344,7 +344,7 @@ local function draw(view)
   for _, mark in ipairs(marks) do
     if mark[5] then
       -- A link's chip (isovim.boxes put it there): which address it is, for <Tab> (isovim.links).
-      require("isovim.links").register(view.buf, mark[1], mark[2], mark[3], mark[5], {})
+      require("isovim.links").register(view.buf, mark[1], mark[2], mark[3], mark[5], {}, mark[6])
     elseif mark[4] then
       pcall(vim.api.nvim_buf_set_extmark, view.buf, NS, mark[1], mark[2], { end_col = mark[3], hl_group = mark[4] })
     end

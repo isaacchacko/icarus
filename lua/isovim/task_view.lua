@@ -378,7 +378,7 @@ local function layout(repo, id, width)
       rows[#lines] = { description = true }
       for _, mark in ipairs(seg.marks) do
         if mark[4] then
-          chips[#chips + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[4] }
+          chips[#chips + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[4], mark[5] }
         elseif mark[3] then
           marks[#marks + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[3] }
         end
@@ -546,7 +546,7 @@ function M.draw(view)
   require("isovim.surface_view").set_lines(view.buf, laid.lines, laid.marks)
   links.substitute(view.buf)
   for _, chip in ipairs(laid.chips) do
-    links.register(view.buf, chip[1], chip[2], chip[3], chip[4], {})
+    links.register(view.buf, chip[1], chip[2], chip[3], chip[4], {}, chip[5])
   end
   dress(view)
 end

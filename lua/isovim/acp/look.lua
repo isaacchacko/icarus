@@ -686,7 +686,8 @@ end
 -- **bold** are drawn as highlights with their marks taken out, not concealed (nvim wraps a line by
 -- its concealed text too, which would break the columns), and a wide glyph counts as two cells. A
 -- table wider than width narrows its widest columns, and their cells wrap onto more lines of the
--- row.
+-- row. A link in a cell (isovim.links) is one thing: its chip counts as its width, is shortened to
+-- fit its column rather than cut, and M.table says where each landed.
 
 -- A table row's cells: split on | outside `code` (\| is a pipe in the cell), the outer pipes
 -- optional, each trimmed.
@@ -814,9 +815,71 @@ local function pad(width, shown, align)
   return 0, gap
 end
 
+-- A cell's text as it draws: its links as chips, each no wider than its cap. Its highlights and each
+-- chip's place follow.
+---@return string text, table[] spans, table[] chips
+local function chip_cell(cell)
+  local links = require("isovim.links")
+  local text, chips, at = "", {}, 0
+  local moves = {}
+  for _, link in ipairs(cell.links) do
+    text = text .. cell.raw:sub(at + 1, link[1])
+    local parts = links.parts(link[3], links.NBSP, { label = link[4], most = link.cap })
+    local chip = table.concat(vim.tbl_map(function(part)
+      return part[1]
+    end, parts))
+    local shape = { label = link[4], width = vim.fn.strdisplaywidth(chip) }
+    chips[#chips + 1] = { from = #text, to = #text + #chip, addr = link[3], parts = parts, shape = shape, link = link }
+    moves[#moves + 1] = { link[1], link[2], #text, #text + #chip }
+    text = text .. chip
+    at = link[2]
+  end
+  text = text .. cell.raw:sub(at + 1)
+  local function moved(col)
+    local by = 0
+    for _, move in ipairs(moves) do
+      if col >= move[2] then
+        by = move[4] - move[2]
+      elseif col > move[1] then
+        return move[4]
+      end
+    end
+    return col + by
+  end
+  return text, vim.tbl_map(function(span)
+    return { moved(span[1]), moved(span[2]), span[3] }
+  end, cell.raw_spans), chips
+end
+
+-- The cell's chips cut down until each word holding one fits width, so wrapping never cuts one.
+local function fit_chips(cell, width)
+  for _ = 1, #cell.links > 0 and 8 or 0 do
+    cell.text, cell.spans, cell.chips = chip_cell(cell)
+    local changed = false
+    for from, to in cell.text:gmatch("()%S+()") do
+      local over = vim.fn.strdisplaywidth(cell.text:sub(from, to - 1)) - width
+      local widest
+      for _, chip in ipairs(cell.chips) do
+        if over > 0 and chip.from >= from - 1 and chip.to <= to - 1 and (not widest or chip.shape.width > widest.shape.width) then
+          widest = chip
+        end
+      end
+      if widest and widest.shape.width > 3 then
+        widest.link.cap = math.max(3, widest.shape.width - over)
+        changed = true
+        break
+      end
+    end
+    if not changed then
+      return
+    end
+  end
+end
+
 -- The table's lines (header, alignment row, body rows, as the agent wrote them) drawn no wider
--- than width where it can be, and their highlights {row, col, end_col, hl} (rows 0-based).
----@return string[] lines, table[] spans
+-- than width where it can be, their highlights {row, col, end_col, hl} (rows 0-based), and each
+-- link's chip {row, col, end_col, address, parts, shape}, for isovim.links.register.
+---@return string[] lines, table[] spans, table[] chips
 function M.table(rows, width)
   local aligns = M.table_alignments(rows[2]) or {}
   local grid = { cells(rows[1]) }
@@ -834,7 +897,16 @@ function M.table(rows, width)
       if r == 1 then
         table.insert(spans, 1, { 0, #text, "IsovimAcpBold" })
       end
-      row[col] = { text = text, spans = spans }
+      local links = require("isovim.links")
+      -- Not one written as `code`: that's the address itself, shown.
+      local found = vim.tbl_filter(function(link)
+        return not vim.iter(spans):any(function(span)
+          return span[3] == "IsovimAcpCode" and span[1] <= link[1] and link[2] <= span[2]
+        end)
+      end, links.labelled(text, links.find(text)))
+      local cell = { raw = text, raw_spans = spans, links = found }
+      cell.text, cell.spans, cell.chips = chip_cell(cell)
+      row[col] = cell
     end
   end
   local widths = {}
@@ -862,7 +934,7 @@ function M.table(rows, width)
     end
     widths[widest], total = widths[widest] - 1, total - 1
   end
-  local lines, spans = {}, {}
+  local lines, spans, chips = {}, {}, {}
   local function rule(left, mid, right)
     local parts = {}
     for col = 1, n do
@@ -875,6 +947,7 @@ function M.table(rows, width)
   local function row_lines(row)
     local wrapped, height = {}, 1
     for col = 1, n do
+      fit_chips(row[col], widths[col])
       wrapped[col] = wrap(row[col].text, widths[col])
       height = math.max(height, #wrapped[col])
     end
@@ -893,6 +966,11 @@ function M.table(rows, width)
             spans[#spans + 1] = { #lines, start + from - range[1], start + to - range[1], sp[3] }
           end
         end
+        for _, chip in ipairs(cell.chips) do
+          if chip.from >= range[1] and chip.to <= range[2] then
+            chips[#chips + 1] = { #lines, start + chip.from - range[1], start + chip.to - range[1], chip.addr, chip.parts, chip.shape }
+          end
+        end
         spans[#spans + 1] = { #lines, #line, #line + #"│", "IsovimAcpRule" }
         line = line .. "│"
       end
@@ -906,7 +984,7 @@ function M.table(rows, width)
     row_lines(grid[i])
   end
   rule("└", "┴", "┘")
-  return lines, spans
+  return lines, spans, chips
 end
 
 

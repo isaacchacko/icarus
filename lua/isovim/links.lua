@@ -77,6 +77,25 @@ function M.find(line)
   end, M.scan(line))
 end
 
+-- Links as text holds them, found (M.scan's or M.find's) and taken with a markdown link's
+-- [label](...) around one, whose label the chip then shows: {from, to, address, label?}. An image's
+-- source, ![alt](...) or <img src="...">, isn't a link: it's left as written, for isovim.image.
+function M.labelled(text, found)
+  local out = {}
+  for _, link in ipairs(found) do
+    local before = text:sub(1, link[1])
+    local open, label = before:match("()%[([^%[%]]*)%]%($")
+    if open and text:sub(link[2] + 1, link[2] + 1) == ")" then
+      if text:sub(open - 1, open - 1) ~= "!" then
+        out[#out + 1] = { open - 1, link[2] + 1, link[3], label ~= "" and label or nil }
+      end
+    elseif not before:match("src=[\"']$") then
+      out[#out + 1] = link
+    end
+  end
+  return out
+end
+
 -- An address's parts: kind and the rest, as {kind, repo?, id?, path?, fragment?}; nil if it isn't one.
 function M.parse(addr)
   local scheme, host, path = (addr or ""):match("^(https?)://([^/?#]+)(.*)$")
@@ -151,7 +170,7 @@ function M.resolve(addr)
     end
     local glyph, hl = require("isovim.icons").get(spec.kind or "claude")
     local state = require("isovim.status").get(p.ws, p.id)
-    return { glyph = glyph, hl = hl, label = spec.name or p.id, status = state,
+    return { glyph = glyph, hl = hl, label = spec.name or p.id, id = p.id, status = state,
       status_hl = state == "working" and "DiagnosticInfo" or state == "attention" and "DiagnosticWarn" or "Comment",
       open = function()
         require("isovim").open(p.ws, p.id)
@@ -163,7 +182,7 @@ function M.resolve(addr)
       return nil, ("%s has no thread %s"):format(p.repo, p.id)
     end
     local info = threads.summary(entries)
-    return { glyph = "\u{f086}", hl = "Special", label = info.title, status = info.status,
+    return { glyph = "\u{f086}", hl = "Special", label = info.title, id = p.id, status = info.status,
       status_hl = info.status == "open" and "DiagnosticOk" or "Comment",
       open = function()
         require("isovim.acp.chat").open_thread(p.repo, p.id)
@@ -311,25 +330,57 @@ end
 
 -- A chip's parts, {text, hl}: the target's glyph, its label, how it is; an address that leads
 -- nowhere, a broken link's glyph, the word and the address, on a colored ground. sep joins them (a no-break space keeps a box's
--- wrapping from cutting one).
-function M.parts(addr, sep)
-  sep = sep or " "
+-- wrapping from cutting one). shape: label says what it's called in place of the target's own (a
+-- markdown link's), most keeps it to that many cells, and width makes it exactly that many (drawn
+-- again in a table's cell, its padding the rest): the title gives way first, after its id, then the state.
+function M.parts(addr, sep, shape)
+  sep, shape = sep or " ", shape or {}
   local target = M.resolve(addr)
-  if not target then
-    return { { "\u{f127}" .. sep .. "broken" .. sep, "IsovimLinkBroken" }, { (addr:gsub("^iso:", "")), "IsovimLinkBroken" } }
+  local head, label, tail
+  if target then
+    head = { target.glyph .. sep, target.hl or "Special" }
+    label = { ((shape.label or target.label):gsub(" ", sep)), "IsovimLink" }
+    if target.status then
+      tail = { sep .. "·" .. sep .. target.status:gsub(" ", sep), target.status_hl or "Comment" }
+    end
+  else
+    head = { "\u{f127}" .. sep .. "broken" .. sep, "IsovimLinkBroken" }
+    label = { (addr:gsub("^iso:", "")), "IsovimLinkBroken" }
   end
-  local label = target.label:gsub(" ", sep)
-  local parts = { { target.glyph .. sep, target.hl or "Special" }, { label, "IsovimLink" } }
-  if target.status then
-    parts[#parts + 1] = { sep .. "·" .. sep .. target.status:gsub(" ", sep), target.status_hl or "Comment" }
+  local wide = shape.width or shape.most
+  if not wide then
+    return { head, label, tail }
+  end
+  local cells = vim.fn.strdisplaywidth
+  local room = wide - cells(head[1]) - (tail and cells(tail[1]) or 0)
+  if cells(label[1]) > room then
+    local id = target and not shape.label and target.id
+    if tail and room < math.max(id and cells(id) or 0, 4) then
+      room, tail = room + cells(tail[1]), nil
+    end
+    if id and cells(label[1]) > room then
+      label[1] = room < cells(id) + 3 and id or id .. sep .. label[1]
+    end
+    if cells(label[1]) > room then
+      local count = vim.fn.strchars(label[1])
+      while count > 0 and cells(vim.fn.strcharpart(label[1], 0, count)) > room - 1 do
+        count = count - 1
+      end
+      label[1] = vim.fn.strcharpart(label[1], 0, count):gsub(sep .. "$", "") .. "…"
+    end
+  end
+  local parts = { head, label, tail }
+  local left = wide - cells(head[1]) - cells(label[1]) - (tail and cells(tail[1]) or 0)
+  if shape.width and left > 0 then
+    parts[#parts + 1] = { (" "):rep(left) }
   end
   return parts
 end
 
-function M.chip(addr, sep)
+function M.chip(addr, sep, shape)
   return table.concat(vim.tbl_map(function(part)
     return part[1]
-  end, M.parts(addr, sep)))
+  end, M.parts(addr, sep, shape)))
 end
 
 vim.api.nvim_set_hl(0, "IsovimLink", { default = true, link = "Underlined" })
@@ -338,13 +389,19 @@ vim.api.nvim_set_hl(0, "IsovimLinkBroken", { default = true, link = "DiagnosticV
 -- The side table: which address each chip drawn in a buffer is, by its extmark.
 _G.isovim_links = _G.isovim_links or {}
 local drawn = _G.isovim_links
+-- How a chip is drawn, where that isn't just its address (M.parts' shape), by the same extmark, so
+-- drawing it again keeps it to its cell and its label.
+_G.isovim_link_shapes = _G.isovim_link_shapes or {}
+local shapes = _G.isovim_link_shapes
 
 -- Notes that the chip at row, col..end_col of buf is addr (its parts' highlights drawn there too).
-function M.register(buf, row, col, end_col, addr, parts)
+function M.register(buf, row, col, end_col, addr, parts, shape)
   drawn[buf] = drawn[buf] or {}
   local id = vim.api.nvim_buf_set_extmark(buf, NS, row, col, { end_col = end_col, right_gravity = false,
     end_right_gravity = true })
   drawn[buf][id] = addr
+  shapes[buf] = shapes[buf] or {}
+  shapes[buf][id] = shape
   local at = col
   for _, part in ipairs(parts or M.parts(addr)) do
     pcall(vim.api.nvim_buf_set_extmark, buf, NS, row, at, { end_col = math.min(at + #part[1], end_col), hl_group = part[2],
@@ -360,6 +417,9 @@ function M.forget(buf, from, to)
     if drawn[buf] then
       drawn[buf][mark[1]] = nil
     end
+    if shapes[buf] then
+      shapes[buf][mark[1]] = nil
+    end
   end
   vim.api.nvim_buf_clear_namespace(buf, NS, from, to)
 end
@@ -374,6 +434,7 @@ function M.move(from, to)
     vim.api.nvim_buf_set_extmark(to, NS, mark[2], mark[3], opts)
   end
   drawn[to], drawn[from] = drawn[from], nil
+  shapes[to], shapes[from] = shapes[from], nil
 end
 
 -- Writes into buf with fn: the buffer made modifiable meanwhile (the chat passes its own writer,
@@ -399,21 +460,22 @@ function M.substitute(buf, from, to, write)
   -- The whole buffer drawn again (a view's redraw): its old chips went with its old lines.
   if from == 0 and (to or -1) == -1 then
     vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
-    drawn[buf] = nil
+    drawn[buf], shapes[buf] = nil, nil
   end
   local lines = vim.api.nvim_buf_get_lines(buf, from, to or -1, false)
   for i, line in ipairs(lines) do
-    local found = line:find("iso:", 1, true) and M.find(line) or {}
+    local found = line:find("iso:", 1, true) and M.labelled(line, M.find(line)) or {}
     for j = #found, 1, -1 do
       local link, row = found[j], from + i - 1
-      local parts = M.parts(link[3])
+      local shape = link[4] and { label = link[4] } or nil
+      local parts = M.parts(link[3], nil, shape)
       local text = table.concat(vim.tbl_map(function(part)
         return part[1]
       end, parts))
       write(function()
         vim.api.nvim_buf_set_text(buf, row, link[1], row, link[2], { text })
       end)
-      M.register(buf, row, link[1], link[1] + #text, link[3], parts)
+      M.register(buf, row, link[1], link[1] + #text, link[3], parts, shape)
     end
   end
 end
@@ -440,7 +502,8 @@ function M.refresh(buf, write)
       local row, col, end_col = mark[1], mark[2], mark[3].end_col or mark[2]
       local now = vim.api.nvim_buf_get_text(buf, row, col, row, end_col, {})[1] or ""
       local sep = now:find("\194\160", 1, true) and "\194\160" or " "
-      local parts = M.parts(addr, sep)
+      local shape = (shapes[buf] or {})[id]
+      local parts = M.parts(addr, sep, shape)
       local text = table.concat(vim.tbl_map(function(part)
         return part[1]
       end, parts))
@@ -464,7 +527,7 @@ function M.refresh(buf, write)
             vim.api.nvim_buf_set_text(buf, row, pad_from - 1, row, pad_from - 1 + spaces, { (" "):rep(keep) })
           end
         end)
-        M.register(buf, row, col, col + #text, addr, parts)
+        M.register(buf, row, col, col + #text, addr, parts, shape)
       end
     end
   end
@@ -684,7 +747,7 @@ function M.attach(buf, write, opts)
     group = group,
     buffer = buf,
     callback = function()
-      drawn[buf] = nil
+      drawn[buf], shapes[buf] = nil, nil
     end,
   })
 end

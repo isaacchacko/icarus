@@ -567,7 +567,14 @@ gives back the address. A chip whose target changed is drawn again, its line wit
 back to the buffer. In the chat a line's addresses become chips once the line has all come (one
 still streaming may be cut by a chunk); in a box (a thread's post, a PR's description) the chip's
 words are joined by no-break spaces so the box's wrapping keeps it whole; a page's comments quote
-and find their lines by the page's own text, addresses and all. `<Tab>` in normal mode with the
+and find their lines by the page's own text, addresses and all. `[label](address)` is the same link
+with that label on its chip, no brackets, wherever chips draw; an image's `![alt](...)` stays an
+image. In a table (the chat's and a box's alike) a link is one thing in its cell: it counts as its
+chip's width, the table narrows around it, and a chip that still doesn't fit is shortened to one line,
+its title giving way first with an ellipsis, then its state, a thread or agent keeping its id. It
+keeps those cells when it's drawn again, so a change of state never moves the table's edges. The
+chat draws a table's chips as it draws the table, once its rows have all come. An address written as
+`code` in a cell stays code. `<Tab>` in normal mode with the
 cursor on one opens its target as a tab, `gf` too (`<Tab>` on an `[Image #n]`, that image); anywhere
 else `<Tab>` is vim's own (`<C-i>`, the jump forward). `o` on a link to a PR opens the PR's view here,
 the only link with a second way to open, whether or not the PR is registered; on anything else `o`

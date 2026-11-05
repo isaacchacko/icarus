@@ -461,15 +461,24 @@ end
 -- Adds whole lines at the end of the conversation; returns the first one's row.
 local draw_tables
 
+-- The agent's message up to row, not yet looked at for links: its addresses as chips. Runs inside edit.
+local function draw_links(chat, row)
+  local from = chat.links_from or chat.block_row
+  if from < row then
+    require("isovim.links").substitute(chat.buf, from, row, function(write)
+      write()
+    end)
+    chat.links_from = row
+  end
+end
+
 local function add_lines(chat, lines, hl)
   local row
   edit(chat, function(buf)
     -- The agent's message ends here: a table it ended on is whole, its last line's links too.
     if chat.block == "agent" then
       draw_tables(chat, true)
-      require("isovim.links").substitute(buf, body_end(chat) - 1, body_end(chat), function(write)
-        write()
-      end)
+      draw_links(chat, body_end(chat))
     end
     row = chat.fresh and 0 or body_end(chat)
     vim.api.nvim_buf_set_lines(buf, row, chat.fresh and 1 or row, false, lines)
@@ -579,7 +588,7 @@ draw_tables = function(chat, whole)
       for i = 1, n - 1 do
         rows[i] = text(i)
       end
-      local drawn, spans = look.table(rows, table_width(chat))
+      local drawn, spans, chips = look.table(rows, table_width(chat))
       local first = prefix(lines[1])
       for i, line in ipairs(drawn) do
         drawn[i] = (i == 1 and first or "  ") .. line
@@ -593,6 +602,10 @@ draw_tables = function(chat, whole)
       -- Its cells' markdown is drawn by look.table, its marks taken out: markup has none to find.
       for _, s in ipairs(spans) do
         span(buf, row + s[1], #(s[1] == 0 and first or "  ") + s[2], #(s[1] == 0 and first or "  ") + s[3], s[4], 120)
+      end
+      for _, chip in ipairs(chips) do
+        local lead = #(chip[1] == 0 and first or "  ")
+        require("isovim.links").register(buf, row + chip[1], lead + chip[2], lead + chip[3], chip[4], chip[5], chip[6])
       end
       last = last + #drawn - (n - 1)
       row = row + #drawn
@@ -608,7 +621,7 @@ local function add_text(chat, text)
     local row = add_block(chat, { GLYPH.message .. " " })
     span(chat.buf, row, 0, #GLYPH.message, "IsovimAcpMessage")
     mark_message(chat, row, false)
-    chat.block, chat.block_row, chat.at_start, chat.table_scan = "agent", row, true, row
+    chat.block, chat.block_row, chat.at_start, chat.table_scan, chat.links_from = "agent", row, true, row, row
   end
   if chat.at_start then
     text = text:gsub("^\n+", "")
@@ -632,10 +645,9 @@ local function add_text(chat, text)
     if #parts > 1 then
       draw_tables(chat, false)
       -- Its lines that have all come: their iso: addresses as chips (isovim.links). The one still
-      -- streaming waits, an address in it maybe cut by a chunk.
-      require("isovim.links").substitute(buf, from, body_end(chat) - 1, function(write)
-        write()
-      end)
+      -- streaming waits, an address in it maybe cut by a chunk, and so does a table still coming,
+      -- which look.table draws its chips into as a whole.
+      draw_links(chat, math.min(body_end(chat) - 1, chat.table_scan))
     end
   end)
 end
@@ -1317,7 +1329,7 @@ local function draw_box(chat, title, body, border, tint, mine)
     for _, mark in ipairs(line.marks) do
       if mark[4] then
         -- A link's chip (isovim.boxes put it there): which address it is, for <Tab>.
-        require("isovim.links").register(chat.buf, row + i - 1, mark[1], mark[2], mark[4], {})
+        require("isovim.links").register(chat.buf, row + i - 1, mark[1], mark[2], mark[4], {}, mark[5])
       elseif mark[3] then
         span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
       end

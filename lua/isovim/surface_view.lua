@@ -274,7 +274,7 @@ local function decisions_board(entry, width)
   local function add(line, decision)
     lines[#lines + 1] = line.text
     for _, mark in ipairs(line.marks) do
-      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3] }
+      marks[#marks + 1] = { #lines - 1, mark[1], mark[2], mark[3], addr = mark[4], shape = mark[5] }
     end
     rows[#lines] = decision
   end
@@ -380,6 +380,16 @@ local function draw_surface(view, entry)
   local lines, marks, rows = M.render(entry, view.width)
   view.line_items = rows
   set_lines(view.buf, lines, marks)
+  if view.kind == "decisions" then
+    -- Its chips (isovim.boxes put them there): which address each is, for <Tab>.
+    local links = require("isovim.links")
+    links.forget(view.buf, 0, vim.api.nvim_buf_line_count(view.buf))
+    for _, mark in ipairs(marks) do
+      if mark.addr then
+        links.register(view.buf, mark[1], mark[2], mark[3], mark.addr, {}, mark.shape)
+      end
+    end
+  end
   if view.kind == "page" then
     view.page_offset = (entry.body_line or 1) - 1 - (entry.error and 1 or 0)
     view.source_lines = lines
@@ -845,7 +855,7 @@ local function bind(view)
     end
   end
   -- Its links open with <Tab> and o, in a view that draws them as they're written.
-  if view.kind == "markdown" or view.kind == "question" or view.kind == "threads" then
+  if view.kind == "markdown" or view.kind == "question" or view.kind == "threads" or view.kind == "decisions" then
     require("isovim.links").attach(view.buf)
   end
   -- u: marked read if it's holding your attention, else unread until it's opened again; what someone's
