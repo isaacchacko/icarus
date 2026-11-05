@@ -202,7 +202,8 @@ M.list = {
                                      set it too), or --parent. --v2 (trying out the new layout)
                                      makes it <owner>/<repo>/aN in ~/.iso/<owner>/<repo>/aN, for
                                      <ws> given as owner/repo or a dir in that repo (_ outside
-                                     one); --read-only starts it in the repo's base clone]=],
+                                     one); --read-only starts it in the repo's base clone, and
+                                     is refused for codex (iso spawn --read-only --kind codex)]=],
   },
   { name = "role", module = "agents",
     audience = "user",

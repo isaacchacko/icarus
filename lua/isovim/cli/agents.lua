@@ -152,6 +152,8 @@ function commands.agent(args)
   end
   if read_only and not store.v2(ws.id) then
     fail("--read-only is for a new-layout agent: add --v2")
+  elseif read_only and kind == "codex" then
+    fail("iso agent runs Codex in its TUI without its sandbox, so it can't be read-only: iso spawn --read-only --kind codex starts one over ACP, in the sandbox")
   end
   if kind == "command" and not cmd then
     fail("a command agent needs --cmd")

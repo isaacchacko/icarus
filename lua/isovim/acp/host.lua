@@ -1594,6 +1594,15 @@ local function subscribe_threads()
   end)
 end
 
+-- A read-only Codex agent is held by its mode, so a read-only agent doesn't run without its mode.
+local function mode_failed(mode, err)
+  if S.spec.read_only then
+    notice(("could not set %s mode, and a read-only agent stops without it: %s"):format(mode, tostring(err.message)))
+    return M.shutdown(1)
+  end
+  notice(("could not set %s mode: %s"):format(mode, tostring(err.message)))
+end
+
 -- The session is up: bypass mode, then ready, then what was waiting. extra goes in its session
 -- entry. resumed: it carries an earlier session's system prompt (resume, load, fork); "restart" for
 -- the agent's own session reopened as its supervisor starts.
@@ -1608,7 +1617,7 @@ local function session_ready(how, fresh, extra, resumed)
   local mode = adapter.mode(S.spec)
   S.client:request("session/set_mode", { sessionId = S.session, modeId = mode }, function(_, err)
     if err then
-      notice(("could not set %s mode: %s"):format(mode, tostring(err.message)))
+      mode_failed(mode, err)
     else
       append("mode", { modeId = mode })
     end
@@ -1704,7 +1713,11 @@ reload = function()
         if err then
           return done(tostring(err.message))
         end
-        S.client:request("session/set_mode", { sessionId = S.session, modeId = adapter.mode(S.spec) }, function()
+        local mode = adapter.mode(S.spec)
+        S.client:request("session/set_mode", { sessionId = S.session, modeId = mode }, function(_, mode_err)
+          if mode_err then
+            mode_failed(mode, mode_err)
+          end
           done()
         end)
       end)

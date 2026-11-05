@@ -1032,7 +1032,10 @@ time, isovim's sha and the host; images copied to `~/.isovim/bugs/<id>/`), publi
   - **Codex:** over ACP (`iso spawn --kind codex`), Codex's own read-only sandbox, whatever the tool,
     with the network off and no hook of isovim's involved. A write it asks approval for becomes a
     question in the repo's Inbox, and approving it lets the write through. `iso agent --v2
-    --read-only` runs Codex in its TUI with the sandbox bypassed, and nothing holds that one.
+    --read-only` refuses Codex, whose TUI isovim runs with the sandbox bypassed.
+
+  A read-only agent of either kind whose `session/set_mode` fails stops, with a notice in its chat,
+  rather than run in whatever mode its session opened with.
 - **Worktrees:** an agent gets one with `wt`, or automatically on its first edit. `setup` runs the
   repo's setup script only when asked; `wt` says when the repo has one that hasn't run in the
   worktree. The scripts get Superset's variables, and `ISOVIM_WORKTREE_NAME` and

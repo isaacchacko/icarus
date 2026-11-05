@@ -371,10 +371,9 @@ end
 -- What a read-only agent is told of itself. It's among the hashed files, as dedicated_text is, so
 -- one running now hears it on its next restart and no other agent gets a role message.
 local function read_only_text(agent)
-  local held = agent.kind ~= "codex"
-      and "Your Edit and Write tools and mutating git commands are refused. Other shell writes aren't caught, so nothing stops them but you."
-    or agent.acp and "Codex's read-only sandbox holds your writes, by any tool, and your network; what you ask approval for goes to your repo's Inbox."
-    or "You run outside Codex's sandbox, so nothing refuses your writes but you."
+  local held = agent.kind == "codex"
+      and "Codex's read-only sandbox holds your writes, by any tool, and your network; what you ask approval for goes to your repo's Inbox."
+    or "Your Edit and Write tools and mutating git commands are refused. Other shell writes aren't caught, so nothing stops them but you."
   return ("# Read-only\n\nYou are a read-only agent, in your repo's base clone, which other agents share. %s Hand back what you "
     .. "produce as text, in your reply or a message, rather than writing files by shell. For a change, ask whoever "
     .. "started you for an agent with a worktree."):format(held)
