@@ -1,8 +1,8 @@
--- The home page, the whole screen: one line in its middle saying n opens a new chat, which it does.
+-- The home page, the whole screen: one line in its middle saying n opens a new chat and t a new task.
 local M = {}
 
 local NAME = "icarus://home"
-local TEXT = "press n for a new chat"
+local TEXT = "press n for a new chat, t for a new task"
 local NS = vim.api.nvim_create_namespace("icarus_home")
 
 -- Its buffer, made the first time; its key set each time, so after a hot reload it runs the new code.
@@ -16,7 +16,10 @@ function M.buf()
   end
   vim.keymap.set("n", "n", function()
     require("icarus").new_chat()
-  end, { buffer = buf, nowait = true })
+  end, { buffer = buf, nowait = true, desc = "New chat" })
+  vim.keymap.set("n", "t", function()
+    require("icarus").new_task()
+  end, { buffer = buf, nowait = true, desc = "New task" })
   vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
     group = vim.api.nvim_create_augroup("icarus_home", { clear = true }),
     callback = function()

@@ -99,6 +99,7 @@ function M.groups(background)
     IcarusAcpRule = { fg = c.rule },
     IcarusAcpHint = { fg = c.dim },
     IcarusAcpTurnDone = { fg = c.dim },
+    IcarusAcpImage = { link = "Special" },
   }
 end
 

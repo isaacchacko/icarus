@@ -19,6 +19,7 @@
 -- A hot reload (icarus.reload) keeps the open chats: they live in _G, what the session hears comes
 -- in through require (M.hear), so the new code draws it, and M.rebind maps their keys to it. What's
 -- drawn already stays as the old code drew it.
+local images = require("icarus.acp.images")
 local look = require("icarus.acp.look")
 local session = require("icarus.acp.session")
 local chats = require("icarus.chats")
@@ -767,6 +768,8 @@ local function send(chat)
   if text == "" then
     return
   end
+  local attached
+  text, attached = images.collect(chat.input, text)
   vim.api.nvim_buf_set_lines(chat.input, 0, -1, false, { "" })
   local n = tonumber(text:match("^(%d+)$"))
   if chat.boxes[1] and n then
@@ -777,7 +780,7 @@ local function send(chat)
     chat.record.title = vim.fn.strchars(title) > 60 and vim.fn.strcharpart(title, 0, 59) .. "…" or title
     chats.save(chat.record)
   end
-  chat.session:prompt(text)
+  chat.session:prompt(text, attached)
   update_bar(chat)
 end
 
@@ -792,8 +795,8 @@ local function enter_on_conversation(chat)
   end
 end
 
-local function map(buf, modes, lhs, fn)
-  vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true })
+local function map(buf, modes, lhs, fn, desc)
+  vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true, desc = desc })
 end
 
 local function map_keys(chat)
@@ -802,23 +805,24 @@ local function map_keys(chat)
   end
   map(chat.buf, "n", "<CR>", function()
     enter_on_conversation(chat)
-  end)
+  end, "Answer the option here, else type in the composer")
   map(chat.buf, "n", "za", function()
     toggle(chat)
-  end)
+  end, "Open or close the tool call or thought")
   for _, key in ipairs({ "i", "a", "o", "I", "A", "O" }) do
     map(chat.buf, "n", key, function()
       focus_composer(chat)
-    end)
+    end, "Type in the composer")
   end
-  map(chat.buf, "n", "<C-c>", cancel)
+  map(chat.buf, "n", "<C-c>", cancel, "Interrupt Claude")
   map(chat.input, { "n", "i" }, "<CR>", function()
     send(chat)
-  end)
+  end, "Send")
   for _, key in ipairs({ "<S-CR>", "<M-CR>" }) do
-    map(chat.input, "i", key, "<CR>")
+    map(chat.input, "i", key, "<CR>", "New line")
   end
-  map(chat.input, { "n", "i" }, "<C-c>", cancel)
+  map(chat.input, { "n", "i" }, "<C-c>", cancel, "Interrupt Claude")
+  images.setup(chat.input)
 end
 
 local function scratch(name, filetype)

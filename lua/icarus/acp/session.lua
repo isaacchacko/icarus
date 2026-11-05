@@ -14,6 +14,7 @@
 local Client = require("icarus.acp.client")
 local adapter = require("icarus.acp.adapter")
 local imports = require("icarus.acp.imports")
+local images = require("icarus.acp.images")
 
 local M = {}
 
@@ -36,26 +37,33 @@ local function with_instructions(params, cwd)
   return params
 end
 
-function Session:deliver(text)
+-- A queued prompt is {text, images}; a string is one queued before images, by code before a hot reload.
+function Session:deliver(prompt)
+  if type(prompt) == "string" then
+    prompt = { text = prompt }
+  end
   self.busy = true
-  self.handlers.on_prompt(text)
+  self.handlers.on_prompt(prompt.text)
   self.handlers.on_turn("start")
-  self.client:request("session/prompt", { sessionId = self.id, prompt = { { type = "text", text = text } } },
+  self.client:request("session/prompt",
+    { sessionId = self.id, prompt = images.blocks(prompt.text, prompt.images, self.takes_images ~= false) },
     function(result, err)
       self.busy = false
       self.handlers.on_turn("end", { stopReason = result and result.stopReason, error = err and err.message })
-      local next_text = table.remove(self.queue, 1)
-      if next_text then
-        self:deliver(next_text)
+      local next_prompt = table.remove(self.queue, 1)
+      if next_prompt then
+        self:deliver(next_prompt)
       end
     end)
 end
 
-function Session:prompt(text)
+---@param attached? icarus.acp.Image[]
+function Session:prompt(text, attached)
+  local prompt = { text = text, images = attached }
   if self.busy or not self.ready then
-    self.queue[#self.queue + 1] = text
+    self.queue[#self.queue + 1] = prompt
   else
-    self:deliver(text)
+    self:deliver(prompt)
   end
 end
 
@@ -96,6 +104,7 @@ function Session:new_session(cwd)
 end
 
 function Session:open(cwd, id, caps)
+  self.takes_images = (caps.promptCapabilities or {}).image == true
   if not (id and caps.loadSession) then
     return self:new_session(cwd)
   end

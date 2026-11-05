@@ -1,4 +1,4 @@
--- Your chats: each a record {id, cwd, created, title?, session?} kept in stdpath("data")/chats.json,
+-- Your chats: each a record {id, cwd, created, task?, title?, session?} kept in stdpath("data")/chats.json,
 -- and a status while it's open: working, idle, or needs you (a permission waits on you). Every
 -- change fires User IcarusChats.
 local M = {}
@@ -9,6 +9,7 @@ local FILE = vim.fn.stdpath("data") .. "/chats.json"
 ---@field id string
 ---@field cwd string
 ---@field created integer
+---@field task? string the slug of the task it's on (icarus.tasks); none is the sentinel, "(no task)"
 ---@field title? string its first prompt's first line
 ---@field session? string its ACP session, loaded when it's opened again
 
@@ -87,10 +88,20 @@ function M.get(id)
   end
 end
 
+---@return icarus.ChatRecord[] the chats on task slug, newest first
+function M.on_task(slug)
+  local sentinel = require("icarus.tasks").SENTINEL
+  return vim.tbl_filter(function(record)
+    return (record.task or sentinel) == slug
+  end, M.list())
+end
+
+---@param task? string the task's slug; none puts it on "(no task)"
 ---@return icarus.ChatRecord
-function M.create(cwd)
+function M.create(cwd, task)
   local now = os.time()
-  local record = { id = ("%d-%06d"):format(now, vim.uv.hrtime() % 1000000), cwd = cwd, created = now }
+  local record = { id = ("%d-%06d"):format(now, vim.uv.hrtime() % 1000000), cwd = cwd, created = now,
+    task = task or require("icarus.tasks").SENTINEL }
   table.insert(load(), record)
   M.save(record)
   return record
