@@ -12,7 +12,8 @@
 --                                                   no_reply: it needs nothing from the user (below);
 --                                                   keeps_wait: the turn that made it also marked a worker
 --   {kind = "resolved", by, outcome?, tell?, at}, {kind = "reopened", by, at}   tell: an agent resolved
---                                                   it, so it's unread until the user opens it
+--                                                   it, so it's unread until the user opens it; not
+--                                                   on a root's answer, which the decision log takes
 --   {kind = "renamed", by, title, from?, at}        its title from then on, and what it was (posts keep
 --                                                   their tags); the header keeps the first, which stays shown
 --   {kind = "ask", qid, question, options, multi, other, by, at}   a question the router asks in it
@@ -122,6 +123,7 @@ function M.summary(entries)
     if entry.kind == "post" then
       info.posts = info.posts + 1
       info.last_by = entry.by
+      info.root_answer = entry.root and entry or nil
       if entry.by == "user" then
         info.root_posts, info.handed = 0, nil
       end
@@ -152,7 +154,9 @@ function M.summary(entries)
         info.bypass = nil
       end
     elseif entry.kind == "reopened" then
-      info.status, info.outcome, info.resolved_seq = "open", nil, nil
+      info.status, info.outcome, info.resolved_seq, info.root_answer = "open", nil, nil, nil
+    elseif entry.kind == "ask" or entry.kind == "answered" or entry.kind == "raised" then
+      info.root_answer = nil
     elseif entry.kind == "renamed" and type(entry.title) == "string" then
       info.title = entry.title
     elseif entry.kind == "task" then
@@ -390,18 +394,23 @@ function M.resolve(repo, id, by, outcome, reopen)
   if not entries then
     return nil, err
   end
-  local status = M.summary(entries).status
+  local info = M.summary(entries)
   if reopen then
-    if status == "open" then
+    if info.status == "open" then
       return nil, id .. " is open"
     end
     append(repo, id, { kind = "reopened", by = by })
     return "open"
-  elseif status == "resolved" then
+  elseif info.status == "resolved" then
     return nil, id .. " is resolved already"
   end
   outcome = outcome and vim.trim(outcome) ~= "" and vim.trim(outcome) or nil
-  append(repo, id, { kind = "resolved", by = by, outcome = outcome, tell = by ~= "user" or nil })
+  -- An agent resolving on a root's answer: nothing is left for the user, and the Root log holds it.
+  local decided = by ~= "user" and info.root_answer
+  if decided then
+    require("isovim.surfaces").log_thread_decision(repo, id, info.title, decided, outcome)
+  end
+  append(repo, id, { kind = "resolved", by = by, outcome = outcome, tell = by ~= "user" and not decided or nil })
   return "resolved"
 end
 

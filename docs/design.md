@@ -488,7 +488,11 @@ host; General and Terminals have none, and starting one there says why.
   Threads, even past the last 5, its row `● resolved: <outcome>`; opening it, `U` or `D` clears it,
   and it joins the resolved list. It isn't your turn, as you needn't reply. Opening any resolved
   thread lands in normal mode on its outcome's box. One you resolved isn't marked, and the router
-  isn't told of any of this. Threads resolved before this have no `tell`, so aren't marked.
+  isn't told of any of this. Threads resolved before this have no `tell`, so aren't marked. Nor is one
+  an agent resolves when a root's answer is the last word: its last post is the root's, with no
+  question or reopening since. The root took that decision off you, so it goes to the decision log
+  instead (see Surfaces) and joins the resolved list. An agent's post after the answer, yours, or
+  a resolve with no root answer keeps `tell`.
 - **Bypass:** so a thread that goes back and forth with one worker has less overhead, a router can send
   it straight there: `iso router thread bypass <id> <worker>`, on any open thread however old, a wait on
   that worker replaced, needing nothing of a thread but its entries, nor of either's system prompt, as `bypass {on: <worker address>|none, by,
@@ -790,7 +794,10 @@ folder or a link, which have no view of their own.
 - The decision log is isovim's own view of what a root decided: `iso/decisions.jsonl` of the
   root's repo, append-only, a line a decision (when,
   who, the question, the answer, why), written as `surfaces.answer` takes a root's answer, since the
-  event log ages out and an asker removes its question once it has the answer. It holds only roots'
+  event log ages out and an asker removes its question once it has the answer. A thread an agent
+  resolves on a root's answer (Resolved by an agent, above) is written as it's resolved: the thread's
+  id and title as the question, its outcome as the answer, the root's post as the why. A root's
+  answer on a thread that goes on isn't logged. It holds only roots'
   decisions, not the ones you answered yourself, and it's a plain surface that's never in an Inbox:
   nothing in it needs you. A root gives its why with `iso <role> answer <question> <answer...> --why
   "..."`; a decision sent by `msg` leaves no answer, so it isn't logged. It opens as a tab, a box a

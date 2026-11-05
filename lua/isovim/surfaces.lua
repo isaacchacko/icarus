@@ -1203,6 +1203,13 @@ local function log_decision(question, answer, why)
   end
 end
 
+-- A root's answer a thread was resolved on, in the log as a question's is: the thread as the question,
+-- its outcome as the answer, and the root's post as the why.
+function M.log_thread_decision(repo, id, title, post, outcome)
+  log_decision({ repo = repo, name = repo .. "#" .. id, question = ("%s: %s"):format(id, title) },
+    { at = post.at, by = post.by, other = outcome or "resolved" }, post.text)
+end
+
 -- The decision log as a surface: nil for a scope with no decisions, unless empty (the sidebar's row
 -- under a root that hasn't decided anything yet).
 ---@param empty? boolean
