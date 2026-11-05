@@ -705,6 +705,15 @@ function M.setup(opts)
   -- LazyVim's keys, so they replace them.
   require("isovim.keys").setup()
   local group = vim.api.nvim_create_augroup("isovim", { clear = true })
+  -- isovim's own filetypes have no treesitter parser, and LazyVim's code text objects raise an error
+  -- without one.
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    pattern = "isovim_*",
+    callback = function(ev)
+      vim.b[ev.buf].miniai_config = { custom_textobjects = { o = false, f = false, c = false } }
+    end,
+  })
   -- isovim's own buffers (chats, surfaces, the landing, placeholders) are never files. One unloaded
   -- (its tab closed with :bd) and shown again was read as a file: its scratch options gone, it got a
   -- swap file, and when another nvim held one (a TUI that died or was left frozen) E325 kept the chat

@@ -2819,8 +2819,6 @@ local function setup_buffer(ws, agent, name, buf)
   -- guides.
   vim.b[buf].snacks_scroll, vim.b[buf].snacks_indent = false, false
   vim.b[buf].minianimate_disable = true
-  -- A chat has no treesitter parser, and LazyVim's code text objects raise an error without one.
-  vim.b[buf].miniai_config = { custom_textobjects = { o = false, f = false, c = false } }
   -- No completion menu, whose keys would take <Up>, <Down> and <CR> (blink.cmp reads this).
   vim.b[buf].completion = false
   -- No undo of nvim's: the composer keeps its own (see the top).
