@@ -15,6 +15,10 @@
 -- The composer's winbar is Claude's spinner line while the agent works. <CR> sends (in insert mode
 -- too, where <S-CR> is a new line), <C-c> interrupts the turn. A prompt sent while the agent works
 -- waits its turn. A window whose cursor is on the conversation's last line follows it as it grows.
+--
+-- A hot reload (isovim.reload) keeps the open chats: they live in _G, what the session hears comes
+-- in through require (M.hear), so the new code draws it, and M.rebind maps their keys to it. What's
+-- drawn already stays as the old code drew it.
 local look = require("isovim.acp.look")
 local session = require("isovim.acp.session")
 local chats = require("isovim.chats")
@@ -84,7 +88,8 @@ local STATUS_HL = {
 ---@field verb? string
 ---@field turn_chars integer
 
-local open_chats = {} ---@type table<string, isovim.Chat>
+_G.isovim_open_chats = _G.isovim_open_chats or {}
+local open_chats = _G.isovim_open_chats ---@type table<string, isovim.Chat>
 
 local function now()
   local sec, usec = vim.uv.gettimeofday()
@@ -474,7 +479,6 @@ end
 
 local FRAMES = { "·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢" }
 local frame = 1
-local spinner ---@type uv.uv_timer_t?
 
 -- What the composer's winbar says, as {text, hl} parts: while the agent works, Claude's spinner line.
 local function bar_parts(chat)
@@ -508,25 +512,31 @@ end
 
 local update_bar
 
+-- In _G, ticking through require: one timer however many reloads, running the code of the last.
 local function spin()
-  if spinner then
+  if _G.isovim_chat_spinner then
     return
   end
-  spinner = vim.uv.new_timer()
-  spinner:start(100, 100, vim.schedule_wrap(function()
-    frame = frame % #FRAMES + 1
-    local busy = false
-    for _, chat in pairs(open_chats) do
-      if chat.busy then
-        busy = true
-        update_bar(chat)
-      end
-    end
-    if not busy and spinner then
-      spinner:close()
-      spinner = nil
-    end
+  _G.isovim_chat_spinner = vim.uv.new_timer()
+  _G.isovim_chat_spinner:start(100, 100, vim.schedule_wrap(function()
+    require("isovim.acp.chat").tick()
   end))
+end
+
+function M.tick()
+  frame = frame % #FRAMES + 1
+  local busy = false
+  for _, chat in pairs(open_chats) do
+    if chat.busy then
+      busy = true
+      update_bar(chat)
+    end
+  end
+  local spinner = _G.isovim_chat_spinner
+  if not busy and spinner then
+    spinner:close()
+    _G.isovim_chat_spinner = nil
+  end
 end
 
 update_bar = function(chat)
@@ -819,6 +829,27 @@ local function scratch(name, filetype)
   return buf
 end
 
+-- What a chat's session says, drawn.
+M.hear = {
+  session = function(chat, id)
+    if chat.record.session ~= id then
+      chat.record.session = id
+      chats.save()
+    end
+  end,
+  update = on_update,
+  prompt = draw_prompt,
+  turn = on_turn,
+  permission = ask_permission,
+  notice = function(chat, text)
+    chat.busy = false
+    drop_boxes(chat)
+    notice(chat, text)
+    update_status(chat)
+    update_bar(chat)
+  end,
+}
+
 ---@param record isovim.ChatRecord
 ---@return isovim.Chat
 function M.get(record)
@@ -832,32 +863,18 @@ function M.get(record)
   chat.input = scratch("isovim://composer/" .. record.id, "isovim_composer")
   open_chats[record.id] = chat
   map_keys(chat)
+  local function hear(name)
+    return function(...)
+      require("isovim.acp.chat").hear[name](chat, ...)
+    end
+  end
   chat.session = session.start(record.cwd, record.session, {
-    on_session = function(id)
-      if record.session ~= id then
-        record.session = id
-        chats.save()
-      end
-    end,
-    on_update = function(update, loading)
-      on_update(chat, update, loading)
-    end,
-    on_prompt = function(text)
-      draw_prompt(chat, text)
-    end,
-    on_turn = function(state, result)
-      on_turn(chat, state, result)
-    end,
-    on_permission = function(params, answer)
-      ask_permission(chat, params, answer)
-    end,
-    on_notice = function(text)
-      chat.busy = false
-      drop_boxes(chat)
-      notice(chat, text)
-      update_status(chat)
-      update_bar(chat)
-    end,
+    on_session = hear("session"),
+    on_update = hear("update"),
+    on_prompt = hear("prompt"),
+    on_turn = hear("turn"),
+    on_permission = hear("permission"),
+    on_notice = hear("notice"),
   })
   return chat
 end
@@ -894,6 +911,15 @@ function M.hide_composer(win)
     vim.api.nvim_win_close(input, true)
   end
   vim.w[win].isovim_composer = nil
+end
+
+-- After a hot reload: the open chats' keys and sessions run the new code.
+function M.rebind()
+  for _, chat in pairs(open_chats) do
+    map_keys(chat)
+    session.adopt(chat.session)
+    update_bar(chat)
+  end
 end
 
 function M.stop_all()

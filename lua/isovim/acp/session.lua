@@ -151,6 +151,11 @@ function Session:connect(cwd, id)
   end)
 end
 
+-- A session the code before a hot reload started, given this code's methods.
+function M.adopt(session)
+  setmetatable(session, Session)
+end
+
 -- Starts a chat's session in cwd: id's, loaded, or a new one when id is nil.
 ---@return isovim.acp.Session
 function M.start(cwd, id, handlers)

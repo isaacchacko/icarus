@@ -13,7 +13,7 @@ local STATUS = {
   ["needs you"] = { "?", "IsovimAcpAsk" },
 }
 
-local buf ---@type integer?
+local NAME = "isovim://sidebar"
 local rows = {} ---@type table<integer, string> row -> chat id
 
 local function title(record)
@@ -21,10 +21,11 @@ local function title(record)
 end
 
 function M.refresh()
-  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+  local buf = vim.fn.bufnr("^" .. NAME .. "$")
+  if buf == -1 then
     return
   end
-  local current = require("isovim").current
+  local current = require("isovim").current()
   local lines, marks = { " ⌂ isovim", "" }, {}
   rows = {}
   for _, record in ipairs(chats.list()) do
@@ -66,28 +67,41 @@ local function enter()
   end
 end
 
--- Opens the sidebar as the leftmost window; returns it.
-function M.open()
-  buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].filetype = "isovim_sidebar"
-  vim.bo[buf].modifiable = false
-  pcall(vim.api.nvim_buf_set_name, buf, "isovim://sidebar")
+-- Its keys and its redraw, on its buffer: the new one, or after a hot reload the one already open.
+function M.bind(buf)
   vim.keymap.set("n", "<CR>", enter, { buffer = buf, nowait = true })
   vim.keymap.set("n", "n", function()
     require("isovim").new_chat()
   end, { buffer = buf, nowait = true })
-  local win = vim.api.nvim_open_win(buf, false, { split = "left", win = -1, width = WIDTH })
-  for name, value in pairs({ winfixwidth = true, number = false, relativenumber = false, signcolumn = "no",
-    wrap = false, cursorline = false, list = false }) do
-    vim.wo[win][0][name] = value
-  end
   vim.api.nvim_create_autocmd("User", {
     group = vim.api.nvim_create_augroup("isovim_sidebar", { clear = true }),
     pattern = "IsovimChats",
     callback = M.refresh,
   })
   M.refresh()
+end
+
+-- Opens the sidebar as the leftmost window; returns it.
+function M.open()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].filetype = "isovim_sidebar"
+  vim.bo[buf].modifiable = false
+  vim.api.nvim_buf_set_name(buf, NAME)
+  local win = vim.api.nvim_open_win(buf, false, { split = "left", win = -1, width = WIDTH })
+  for name, value in pairs({ winfixwidth = true, number = false, relativenumber = false, signcolumn = "no",
+    wrap = false, cursorline = false, list = false }) do
+    vim.wo[win][0][name] = value
+  end
+  M.bind(buf)
   return win
+end
+
+-- After a hot reload: the sidebar already open, on this code.
+function M.rebind()
+  local buf = vim.fn.bufnr("^" .. NAME .. "$")
+  if buf ~= -1 then
+    M.bind(buf)
+  end
 end
 
 return M

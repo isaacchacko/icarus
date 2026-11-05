@@ -1,16 +1,17 @@
 -- The home page: empty, but for n, which opens a new chat.
 local M = {}
 
-local buf ---@type integer?
+local NAME = "isovim://home"
 
+-- Its buffer, made the first time; its key set each time, so after a hot reload it runs the new code.
 function M.buf()
-  if buf and vim.api.nvim_buf_is_valid(buf) then
-    return buf
+  local buf = vim.fn.bufnr("^" .. NAME .. "$")
+  if buf == -1 then
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].filetype = "isovim_home"
+    vim.bo[buf].modifiable = false
+    vim.api.nvim_buf_set_name(buf, NAME)
   end
-  buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].filetype = "isovim_home"
-  vim.bo[buf].modifiable = false
-  pcall(vim.api.nvim_buf_set_name, buf, "isovim://home")
   vim.keymap.set("n", "n", function()
     require("isovim").new_chat()
   end, { buffer = buf, nowait = true })

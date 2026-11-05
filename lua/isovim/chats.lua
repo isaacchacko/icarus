@@ -12,25 +12,27 @@ local FILE = vim.fn.stdpath("data") .. "/chats.json"
 ---@field title? string its first prompt's first line
 ---@field session? string its ACP session, loaded when it's opened again
 
----@type isovim.ChatRecord[]
-local records
-local statuses = {} ---@type table<string, "working"|"idle"|"needs you">
+-- In _G, so a hot reload keeps them.
+_G.isovim_chats = _G.isovim_chats or { statuses = {} }
+local state = _G.isovim_chats
+local statuses = state.statuses ---@type table<string, "working"|"idle"|"needs you">
 
 local function changed()
   vim.api.nvim_exec_autocmds("User", { pattern = "IsovimChats", modeline = false })
 end
 
+---@return isovim.ChatRecord[]
 local function load()
-  if records then
-    return records
+  if state.records then
+    return state.records
   end
   local file = io.open(FILE, "r")
   local ok, decoded = pcall(vim.json.decode, file and file:read("*a") or "[]")
   if file then
     file:close()
   end
-  records = ok and type(decoded) == "table" and decoded or {}
-  return records
+  state.records = ok and type(decoded) == "table" and decoded or {}
+  return state.records
 end
 
 function M.save()
