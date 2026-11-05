@@ -178,7 +178,8 @@ goes back first in the queue, which holds. It reaches the session once:
   input + output + cache read + cache write) with nothing queued, no question or permission waiting
   and no restart or session switch pending, the supervisor sends it `/compact <what to keep>` right
   then, while the cache is warm. It keeps the open threads and where they stand, the running workers
-  and standing owners, what's waiting on the user and today's decisions; thread files
+  and standing owners, what's waiting on the user, what it's promised or meant to check later and
+  hasn't done, and today's decisions; thread files
   and transcripts stay on disk. A compact turn isn't the user's: no prompt or turn in the journal, no
   state change (so no "finished" and no unread mark), no thread post, the adapter's updates for it
   dropped, and the chat shows one dim line (`compacted 212k → 18k`, a `compact` journal entry).

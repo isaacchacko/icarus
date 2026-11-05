@@ -880,8 +880,8 @@ end
 -- adapter (codex-acp 2.5.0) has no compact command and reports no context size.
 local COMPACTED = { router = true, root = true }
 local COMPACT = "/compact Keep what you need to go on running this repo: the open threads and where each stands; the "
-  .. "running workers and standing owners, by address, and what each is on; what's waiting on the user; and the "
-  .. "decisions the user made today, in their words. Thread files and transcripts stay on disk: "
+  .. "running workers and standing owners, by address, and what each is on; what's waiting on the user; what "
+  .. "you've promised or meant to check later and haven't done; and the decisions the user made today, in their words. Thread files and transcripts stay on disk: "
   .. "name where the details are rather than copying them."
 
 -- Each compact, one JSON line in ~/.isovim/compactions.log, to judge compact_at by.
