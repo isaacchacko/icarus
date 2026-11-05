@@ -149,7 +149,7 @@ try:
     commit(orphan, {"orphan": "x"}, "orphan work")
     orphan_head = git("rev-parse", "HEAD", cwd=orphan)
 
-    # Pins (isovim's and clu's older key), PRs, tasks, a second agent, the old root pointer.
+    # Pins (isovim's and an older tool's key), PRs, tasks, a second agent, the old root pointer.
     set_meta(own, pinned=[{"path": "~/notes.md", "label": "notes"}], pins=[{"path": "~/old.md", "auto": True}],
              prs=["https://github.com/acme/app/pull/7"],
              agents=[{"id": "main", "name": "main", "kind": "claude",

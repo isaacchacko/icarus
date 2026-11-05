@@ -1,14 +1,11 @@
 """The cutover's safety on a failed or repeated run, and enforcement on the legacy paths (the final
-review's items 4-6, and the clu-system preflight).
+review's items 4-6).
 
 - Enforcement on (ISOVIM_ENFORCE=1): iso spawn --legacy, iso agent into a legacy workspace and
   iso agent --hidden are refused; in the TUI so are a new workspace (a, <leader>an), a workspace's
   new agent (A, <leader>aa) and unarchive.
 - The dry run preflights seeding: with every worktree clean and origin unreachable, the plan is
   BLOCKED on the seed, and --yes stops no agent.
-- The dry run greps clu-system's bin, skills and hooks (not discs) for commands enforcement will
-  refuse, listing them as warnings that don't block, and shows the lines clu's enforce check guards
-  as legacy-only.
 - A step 4 that fails partway still repairs and locks the worktrees it moved, so git worktree prune
   can't break the backup; the rerun goes on into the same backup, and repairs worktrees an earlier
   run moved without repairing.
@@ -57,8 +54,6 @@ iso = Iso("cutover_safe", agent_delay=0.2)
 iso.env["ISOVIM_SELF"] = "pilothost"
 iso.env["ISOVIM_BRANCH_PREFIX"] = "isaac/"
 iso.env["CLAUDE_CONFIG_DIR"] = str(iso.tmp / "claude-config")
-CLU = iso.tmp / "clu-system"
-iso.env["ISOVIM_CLU_SYSTEM"] = str(CLU)
 HOME = iso.tmp / "home"
 TODAY = time.strftime("%Y-%m-%d")
 BACKUP = HOME / f"legacy-backup-{TODAY}"
@@ -109,84 +104,7 @@ def section(plan, start, end=None):
     return text.split(end, 1)[0] if end and end in text else text
 
 
-# A clu-system laid out as the real one is: a Python bin/clu whose legacy paths sit behind its
-# enforce check (an early return, a conditional call, a negated if), skills whose legacy lines say
-# so, a shell hook, and discs, which aren't scanned.
-CLU_BIN = '''#!/usr/bin/env python3
-"""clu, as iso ask did before."""
-import json
-import os
-import subprocess
-
-
-def iso(*args, check=True):
-    return subprocess.run(["iso", *args], capture_output=True, text=True).stdout.strip()
-
-
-def enforced():
-    return os.environ.get("ISOVIM_ENFORCE") == "1"
-
-
-# Before the cutover: the dreams workspace.
-def dream_workspace():
-    if subprocess.run(["iso", "dir", "x"], capture_output=True).returncode == 0:
-        return "x"
-    return iso("new", "dreams", "--dir", "/tmp")
-
-
-def dream():
-    v0 = enforced()
-    ws = None if v0 else dream_workspace()
-    if v0:
-        iso("rm", "general/a0", check=False)
-        return iso("spawn", "--repo", "general", "--name", "dream")
-    iso("rm", f"{ws}/dream", check=False)
-    return iso("agent", ws, "claude", "--name", "dream", "--hidden", "--prompt", "p")
-
-
-def tidy():
-    if not enforced():
-        iso("hide", "x/y")
-    iso("archive", "x")
-    iso("worker", "transcript", "x")
-    iso("__surfaces", "root")
-    iso("ls")
-'''
-CLU_SKILL = '''# A skill
-
-Run `iso pin x notes.md` when you finish.
-
-Then, if you run in a legacy workspace (before isovim's cutover):
-
-```sh
-iso unpin x notes.md
-```
-
-Unpin journals older than the last three (`iso unpin`).
-
-Otherwise you are a new-layout agent:
-
-- Fork with `iso "${ISOVIM_ROLE:-worker}" fork --name x`.
-  - A legacy workspace agent keeps it hidden instead: `iso agent "$ISOVIM_WS" claude --name o --hidden --prompt "b"`.
-- Follow it with `iso status x` and `iso worker peek x`.
-- Ask with `clu inbox --question`, as `iso ask` was before.
-'''
-CLU_HOOK = '''#!/bin/sh
-iso new hooked --dir /tmp
-exec iso version
-'''
-
-
-def line_of(text, needle):
-    return next(i for i, line in enumerate(text.splitlines(), 1) if needle in line)
-
-
 try:
-    for rel, text in (("bin/clu", CLU_BIN), ("skills/x/SKILL.md", CLU_SKILL), ("hooks/idle", CLU_HOOK),
-                      ("discs/me.md", "Use `iso pin a b` and `iso new c`.\n")):
-        (CLU / rel).parent.mkdir(parents=True, exist_ok=True)
-        (CLU / rel).write_text(text)
-
     remotes = iso.tmp / "remotes" / "acme"
     remote = remotes / "app.git"
     remote.mkdir(parents=True)
@@ -271,32 +189,9 @@ try:
     check(f"isovim-{own}-main" in tmux_sessions(), "no agent was stopped", tmux_sessions())
     away.rename(remote)
 
-    print("\n# the clu-system preflight")
+    print("\n# with origin back")
     rc, plan, err = run("cutover", "--dry-run")
-    check(rc == 0 and "BLOCKED" not in plan, "with origin back the plan is clear: the clu-system warnings don't block", plan[:1500])
-    print(plan)
-    clu = section(plan, "clu-system", "\n\n")
-    refused = section(clu, "refused once enforcement is on", "legacy-only")
-    guarded = section(clu, "legacy-only, guarded", "named, not run")
-    named = section(clu, "named, not run")
-    def at(rel, text, needle, word):
-        return f"{rel}:{line_of(text, needle)}: iso {word}"
-
-    want_refused = [at("bin/clu", CLU_BIN, 'iso("archive"', "archive"), at("skills/x/SKILL.md", CLU_SKILL, "iso pin x", "pin"),
-                    at("skills/x/SKILL.md", CLU_SKILL, "iso status x", "status"), at("hooks/idle", CLU_HOOK, "iso new", "new")]
-    want_guarded = [at("bin/clu", CLU_BIN, '"iso", "dir"', "dir"), at("bin/clu", CLU_BIN, 'iso("new"', "new"),
-                    at("bin/clu", CLU_BIN, 'iso("agent"', "agent"), at("bin/clu", CLU_BIN, 'iso("hide"', "hide"),
-                    at("skills/x/SKILL.md", CLU_SKILL, "iso unpin x", "unpin"),
-                    at("skills/x/SKILL.md", CLU_SKILL, "(`iso unpin`)", "unpin"),
-                    at("skills/x/SKILL.md", CLU_SKILL, "iso agent", "agent")]
-    check(all(w in refused for w in want_refused), "the commands enforcement will refuse are listed as warnings",
-          [w for w in want_refused if w not in refused])
-    check(all(w in guarded for w in want_guarded) and not any(w in refused for w in want_guarded),
-          "the lines behind clu's enforce check are legacy-only, guarded", [w for w in want_guarded if w not in guarded])
-    check(at("skills/x/SKILL.md", CLU_SKILL, "as `iso ask`", "ask") in named, "a command named as what it replaced isn't run", named)
-    listed = re.findall(r"^ +(\S+:\d+): (iso [^:]+):", clu, re.M)
-    check(len(listed) == len(want_refused) + len(want_guarded) + 1, "nothing else is listed: not iso rm, spawn, ls or version, "
-          "a role's actions, plumbing, discs or a docstring", listed)
+    check(rc == 0 and "BLOCKED" not in plan, "the plan is clear", plan[:1500])
 
     print("\n# a step 4 that fails partway")
     # The legacy runs move after the worktrees; a run dir that can't be renamed stops the step there.
@@ -347,7 +242,7 @@ try:
     check(root_session in tmux_sessions(), "root/a0 is still running", tmux_sessions())
     design = (REPO / "docs" / "design.md").read_text()
     words = " ".join(design.split()).lower()
-    check("every legacy agent, including clu's root on cleopatra, starts cold" in words and "`root/an` among them" in words,
+    check("every legacy agent starts cold" in words,
           "docs/design.md says so",
           design[design.find("## Cutover"):][:900])
 

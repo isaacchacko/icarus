@@ -37,7 +37,6 @@ def check(ok, what, detail=""):
 iso = Iso("fixes_f", agent_delay=0.2)
 iso.env["ISOVIM_SELF"] = "pilothost"
 iso.env["CLAUDE_CONFIG_DIR"] = str(iso.tmp / "claude-config")
-iso.env["ISOVIM_CLU_SYSTEM"] = str(iso.tmp / "no-clu")
 HOME = iso.tmp / "home"
 WORK = iso.tmp / "work"
 TODAY = time.strftime("%Y-%m-%d")

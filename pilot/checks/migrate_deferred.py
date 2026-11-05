@@ -191,8 +191,8 @@ try:
     iso.wait(lambda: idle("_/a0") and idle("_/a1"), "both old agents ready", 60)
     old("send", "_/a1", "first words to the worker")
     iso.wait(lambda: idle("_/a1") and any(e["kind"] == "update" for e in journal("_/a1")), "the worker answered", 30)
-    # The old `iso root` file, naming an agent on another host (as clu's was).
-    (HOME / "root").write_text("cluhost:clu/a0\n")
+    # The old `iso root` file, naming an agent on another host.
+    (HOME / "root").write_text("otherhost:other/a0\n")
     mode = json.loads((HOME / "rootmode.json").read_text())
     check(mode["host"]["agent"] == "_/a0", "the old rootmode.json names _/a0", mode)
 
