@@ -53,7 +53,7 @@ function M.cat(...)
   local out = { text = "", marks = {} }
   for _, part in ipairs({ ... }) do
     for _, mark in ipairs(part.marks) do
-      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3], mark[4], mark[5] }
+      out.marks[#out.marks + 1] = { mark[1] + #out.text, mark[2] + #out.text, mark[3], mark[4], mark[5], mark[6] }
     end
     out.text = out.text .. part.text
   end
@@ -77,7 +77,7 @@ function M.fit(line, width)
   local out = { text = text .. "…", marks = {} }
   for _, mark in ipairs(line.marks) do
     if mark[1] < #text then
-      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3], mark[4], mark[5] }
+      out.marks[#out.marks + 1] = { mark[1], math.min(mark[2], #text), mark[3], mark[4], mark[5], mark[6] }
     end
   end
   return out
@@ -106,8 +106,35 @@ function M.side(width, content, border)
   return M.cat(M.seg("│ ", border), M.fit(content, width - 4), M.seg(" │", border))
 end
 
+-- A line of code as rows no wider than width, each a bit of it, broken after a space if one's near: nothing's
+-- cut, and rows after the first say they go on.
+local function code_rows(line, width)
+  local rows, rest = {}, line:gsub("\t", "  ")
+  local room = math.max(4, width)
+  while vim.fn.strdisplaywidth(rest) > room do
+    local chars = vim.fn.strchars(rest)
+    local count = 0
+    while count < chars and vim.fn.strdisplaywidth(vim.fn.strcharpart(rest, 0, count + 1)) <= room do
+      count = count + 1
+    end
+    local head = vim.fn.strcharpart(rest, 0, count)
+    local space = head:match("^.*() %S*$")
+    if space and space * 2 > #head then
+      head = head:sub(1, space)
+      count = vim.fn.strchars(head)
+    end
+    rows[#rows + 1] = head
+    rest = vim.fn.strcharpart(rest, count)
+    room = math.max(4, width - 2)
+  end
+  rows[#rows + 1] = rest
+  return rows
+end
+
 -- text (markdown) as lines no wider than width: `code`, **bold** and # headings drawn, their marks
--- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them.
+-- taken out so the box's right edge stays put, a ``` fence dimmed; tables as the chat boxes them. A fenced line too
+-- long for width wraps, and each of its rows carries what a yank of it gives (mark[6], isovim.links.note_source): the
+-- line whole, as written.
 function M.markdown(text, width)
   local look = require("isovim.acp.look")
   -- Its links as chips in their place (isovim.links), joined by no-break spaces so the wrapping
@@ -151,10 +178,17 @@ function M.markdown(text, width)
     local line = body[i]
     if line:match("^%s*```") then
       fenced = not fenced
-      out[#out + 1] = M.seg(line, "IsovimPrDim")
+      local part = M.seg(line, "IsovimPrDim")
+      part.marks[#part.marks + 1] = { 0, #part.text, nil, nil, nil, { text = line } }
+      out[#out + 1] = part
       i = i + 1
     elseif fenced then
-      out[#out + 1] = M.seg(chipped(line), "IsovimAcpCode")
+      local source = { text = line }
+      for n, piece in ipairs(code_rows(chipped(line), width)) do
+        local part = n == 1 and M.seg(piece, "IsovimAcpCode") or M.cat(M.seg("↪ ", "IsovimPrDim"), M.seg(piece, "IsovimAcpCode"))
+        part.marks[#part.marks + 1] = { 0, #part.text, nil, nil, nil, source }
+        out[#out + 1] = part
+      end
       i = i + 1
     elseif look.table_row(line) and body[i + 1] and look.table_alignments(body[i + 1]) then
       local rows = {}

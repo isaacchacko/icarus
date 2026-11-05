@@ -1338,6 +1338,8 @@ local function draw_box(chat, title, body, border, tint, mine)
       if mark[4] then
         -- A link's chip (isovim.boxes put it there): which address it is, for <Tab>.
         require("isovim.links").register(chat.buf, row + i - 1, mark[1], mark[2], mark[4], {}, mark[5])
+      elseif mark[6] then
+        require("isovim.links").note_source(chat.buf, row + i - 1, mark[6])
       elseif mark[3] then
         span(chat.buf, row + i - 1, mark[1], mark[2], mark[3], 150)
       end

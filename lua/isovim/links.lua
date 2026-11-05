@@ -433,6 +433,7 @@ function M.move(from, to)
     opts.ns_id, opts.id = nil, mark[1]
     vim.api.nvim_buf_set_extmark(to, NS, mark[2], mark[3], opts)
   end
+  require("isovim.links").move_sources(from, to)
   drawn[to], drawn[from] = drawn[from], nil
   shapes[to], shapes[from] = shapes[from], nil
 end
@@ -641,16 +642,71 @@ function M.secondary()
   return true
 end
 
--- A yank over chips gives their addresses: each chip on the yanked lines, its text replaced.
+-- Rows of a box drawn from a line of text, a long code line wrapped over several: what a whole-line yank of them gives
+-- is that line, as written, with no border and once.
+local SOURCES = vim.api.nvim_create_namespace("isovim_link_sources")
+_G.isovim_link_sources = _G.isovim_link_sources or {}
+local sources = _G.isovim_link_sources
+
+-- Notes that row of buf was drawn from source, {text}: the same table on each row of one line.
+function M.note_source(buf, row, source)
+  sources[buf] = sources[buf] or {}
+  sources[buf][vim.api.nvim_buf_set_extmark(buf, SOURCES, row, 0, {})] = source
+end
+
+-- They go with the chips when a chat's drawn again in a buffer of its own (M.move).
+function M.move_sources(from, to)
+  M.forget_sources(to)
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(from, SOURCES, 0, -1, {})) do
+    vim.api.nvim_buf_set_extmark(to, SOURCES, mark[2], mark[3], { id = mark[1] })
+  end
+  sources[to], sources[from] = sources[from], nil
+end
+
+-- Forgets them on rows from..to, about to be written over; all with no rows given.
+function M.forget_sources(buf, from, to)
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, SOURCES, { from or 0, 0 }, to and { to - 1, -1 } or -1, {})) do
+    if sources[buf] then
+      sources[buf][mark[1]] = nil
+    end
+  end
+  vim.api.nvim_buf_clear_namespace(buf, SOURCES, from or 0, to or -1)
+end
+
+-- The yanked rows with those drawn from a line given as that line. A piece of one row stays as it is.
+local function from_sources(buf, first, contents, event)
+  if not sources[buf] or event.regtype:sub(1, 1) == "\22" or (event.regtype == "v" and #contents == 1) then
+    return contents, false
+  end
+  local out, changed, last_source = {}, false, nil
+  for i, text in ipairs(contents) do
+    local row = first + i - 1
+    local marks = vim.api.nvim_buf_get_extmarks(buf, SOURCES, { row, 0 }, { row, -1 }, {})
+    local source = marks[1] and sources[buf][marks[1][1]]
+    if source then
+      changed = true
+      if source ~= last_source then
+        out[#out + 1] = source.text
+      end
+    else
+      out[#out + 1] = text
+    end
+    last_source = source
+  end
+  return out, changed
+end
+
+-- A yank over chips gives their addresses: each chip on the yanked lines, its text replaced. Code drawn in a box gives
+-- the lines it was drawn from.
 local function yanked(buf)
   local event = vim.v.event
-  if event.operator ~= "y" or not drawn[buf] then
+  if event.operator ~= "y" or not (drawn[buf] or sources[buf]) then
     return
   end
   local first, last = vim.fn.line("'[") - 1, vim.fn.line("']") - 1
   local contents = vim.deepcopy(event.regcontents)
   local changed = false
-  for row = first, last do
+  for row = first, drawn[buf] and last or first - 1 do
     local i = row - first + 1
     for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, NS, { row, 0 }, { row, -1 }, { details = true })) do
       local addr = drawn[buf][mark[1]]
@@ -664,8 +720,13 @@ local function yanked(buf)
       end
     end
   end
-  if changed then
-    vim.fn.setreg(event.regname ~= "" and event.regname or '"', contents, event.regtype)
+  local whole, any = from_sources(buf, first, contents, event)
+  if changed or any then
+    -- Where this yank went: with clipboard=unnamedplus that's the clipboard, already written, not the unnamed register.
+    local clipboard = vim.o.clipboard
+    local target = event.regname ~= "" and event.regname or (clipboard:find("unnamedplus", 1, true) and "+")
+      or (clipboard:find("unnamed", 1, true) and "*") or '"'
+    vim.fn.setreg(target, whole, event.regtype)
   end
 end
 
@@ -748,6 +809,7 @@ function M.attach(buf, write, opts)
     buffer = buf,
     callback = function()
       drawn[buf], shapes[buf] = nil, nil
+      sources[buf] = nil
     end,
   })
 end

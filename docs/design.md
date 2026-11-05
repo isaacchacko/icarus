@@ -545,6 +545,9 @@ host; General and Terminals have none, and starting one there says why.
   `<Tab>` work on them, updating as those threads change. A `thread new` during a turn on a thread takes
   that thread's task: the turn is already marked in its file, so the command only has to look. `t` on a
   thread's conversation starts one beside it; `<leader>it` and `t` in the sidebar start one on no task.
+- **Code in a post:** a fenced line too long for its box wraps, its later rows starting `↪`, rather than being cut. A
+  whole-line yank of any of its rows gives the line whole, as written, with no border; the same in a PR's view and a
+  task's description. A piece of one row yanks as that piece. Pages and agents' chats draw code as it is, wrapped by the window.
 - **Its first message:** every way you start a thread asks one thing, the message, multi-line and with images
   as any post. It's the first post, and the thread is listed at once under a stand-in title cut from its first line
   (`stand_in` on the header); `<CR>` on nothing drops the new thread. The prompt says the title is a stand-in till

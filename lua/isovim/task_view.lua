@@ -347,7 +347,7 @@ local function layout(repo, id, width)
     return nil
   end
   local board = require("isovim.thread_board")
-  local lines, marks, rows, addresses, chips = {}, {}, {}, {}, {}
+  local lines, marks, rows, addresses, chips, sources = {}, {}, {}, {}, {}, {}
   local function add(chunks, item)
     local text = ""
     for _, chunk in ipairs(chunks) do
@@ -373,11 +373,13 @@ local function layout(repo, id, width)
     add({ { " No description: i writes one.", "Comment" } }, { description = true })
   else
     -- Markdown as isovim draws it, in the board's own buffer, a space in from the edge.
-    for _, seg in ipairs(require("isovim.boxes").markdown(task.description, math.max(10, width - 2))) do
+    for _, seg in ipairs(require("isovim.boxes").markdown(task.description, math.max(10, width - 7))) do
       lines[#lines + 1] = " " .. seg.text
       rows[#lines] = { description = true }
       for _, mark in ipairs(seg.marks) do
-        if mark[4] then
+        if mark[6] then
+          sources[#lines - 1] = mark[6]
+        elseif mark[4] then
           chips[#chips + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[4], mark[5] }
         elseif mark[3] then
           marks[#marks + 1] = { #lines - 1, mark[1] + 1, mark[2] + 1, mark[3] }
@@ -496,7 +498,7 @@ local function layout(repo, id, width)
     add({ { "  " .. os.date("%m-%d %H:%M", each.at) .. "  ", "Comment" },
       { (each.by == "user" and "you" or tasks.assignee_name(each.by) or each.by) .. " ", "Comment" }, { each.what, "Comment" } })
   end
-  return { lines = lines, marks = marks, rows = rows, addresses = addresses, chips = chips, task = task }
+  return { lines = lines, marks = marks, rows = rows, addresses = addresses, chips = chips, sources = sources, task = task }
 end
 
 -- The view's text, for a preview.
@@ -547,6 +549,10 @@ function M.draw(view)
   links.substitute(view.buf)
   for _, chip in ipairs(laid.chips) do
     links.register(view.buf, chip[1], chip[2], chip[3], chip[4], {}, chip[5])
+  end
+  links.forget_sources(view.buf)
+  for row, source in pairs(laid.sources) do
+    links.note_source(view.buf, row, source)
   end
   dress(view)
 end
