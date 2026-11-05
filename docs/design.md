@@ -295,13 +295,12 @@ host; General and Terminals have none, and starting one there says why.
 
 - **The root is on top of them,** in root mode, for whichever root decides that repo; off when root mode's
   off. Its supervisor looks once a minute (`isovim.threads.for_root`). A thread is due when an agent's
-  post has sat on your turn for the mode's grace, with no draft in its composer (from its last
-  keystroke, 5 minutes at most),
+  post has sat on your turn for the mode's grace, with no text in its composer,
   not open and focused in front of you, not on a Backburner task, with no question of its own pending,
   and the last post not a root's. The grace is one number with two names, in the repo's `rootmode.json`
   entry: medic is `thread_root_grace` minutes (default 5), and an entry with no mode reads as it;
   sentry is 0. With no grace it doesn't wait for the look: `thread.<repo>.<id>.users_turn`, published
-  as a thread lands on your turn, wakes it, as does its own turn ending. In both, a thread open in
+  as a thread lands on your turn, wakes it, as does its own turn ending. In both, a draft or a thread open in
   front of you stops holding it back once it's sat for `thread_root_grace` with no key pressed since
   the post landed, in case you've walked away. A hold ending is noticed at the next look. One message per
   grace at most, only when the root is free (no turn running and nothing queued), which is all that

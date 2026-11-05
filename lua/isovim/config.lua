@@ -22,8 +22,9 @@
 --   browser_tab_idle  seconds a tab in isovim's Chrome may go unused, its owner not working, before
 --              it's closed (isovim.browser); default 3600, 0 closes only tabs whose owner is gone
 --   thread_root_grace  minutes a thread sits on your turn before root mode's root is told (and at
---              least this long between those messages), in medic mode; in either, how long one
---              open in front of you holds the root back with no key pressed; default 5
+--              least this long between those messages), in medic mode; in either, how long a
+--              draft or a thread open in front of you holds the root back with no key pressed;
+--              default 5
 --   compact_at the context size, in tokens, past which a router's or root's session is
 --              compacted when a turn ends (isovim.acp.host); default 250000, 0 turns it off
 local store = require("isovim.store")

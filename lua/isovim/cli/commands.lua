@@ -401,8 +401,8 @@ M.list = {
                                      new one, and turning it on lists those waiting. The
                                      modes differ only in threads on your turn: medic tells
                                      the root after thread_root_grace minutes (default 5),
-                                     sentry at once; on is medic. Both hold off while you're
-                                     drafting in it or have it open, an open one only until
+                                     sentry at once; on is medic. Both hold off while there's
+                                     text in its composer or you have it open, but only until
                                      it's sat for thread_root_grace with no key pressed.
                                      Turning it on spawns a worker over ACP
                                      and promotes it to root, or uses the agent holding that

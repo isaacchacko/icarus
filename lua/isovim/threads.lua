@@ -747,14 +747,13 @@ end
 
 -- How long a worker that's a thread's wait gets to start: it's marked as it's messaged, often before
 -- it's working. And how long a router's turn on a thread gets to show as its state: it's written just before.
--- And how long a draft in its composer holds root mode's root off, from its last keystroke.
-local WORKER_START, TURN_START, DRAFT_WAIT = 30, 15, 300
+local WORKER_START, TURN_START = 30, 15
 
 local function draft_file(repo, id)
   return store.run_dir(repo) .. "/thread-draft-" .. id
 end
 
--- The user is writing a post in the thread's composer, or isn't any more.
+-- There's text in the thread's composer as of now, from a key the user pressed, or there isn't any more.
 function M.drafting(repo, id, typing)
   if not typing then
     os.remove(draft_file(repo, id))
@@ -765,11 +764,6 @@ function M.drafting(repo, id, typing)
   if file then
     file:close()
   end
-end
-
-local function drafted(repo, id)
-  local stat = vim.uv.fs_stat(draft_file(repo, id))
-  return stat ~= nil and os.time() - stat.mtime.sec < DRAFT_WAIT
 end
 
 -- Ends the turns nothing will end: a router's supervisor that dies mid-turn never writes the end, and
@@ -974,8 +968,17 @@ function M.viewing(repo, id, last_key)
   vim.fn.writefile({ tostring(last_key) }, store.run_dir(repo) .. "/thread-view-" .. id)
 end
 
--- Whether it being in front of the user holds the root back: not, in case they've walked away, once
+-- What holds the root back from a thread the user may be at stops, in case they've walked away, once
 -- it's sat for thread_root_grace with no key pressed since the post landed.
+local function not_walked_away(last_key, info)
+  return os.time() - math.max(last_key, info.waiting_at or 0) < require("isovim.config").thread_root_grace() * 60
+end
+
+local function drafted(repo, info)
+  local stat = vim.uv.fs_stat(draft_file(repo, info.id))
+  return stat ~= nil and not_walked_away(stat.mtime.sec, info)
+end
+
 local function viewed(repo, info)
   local file = store.run_dir(repo) .. "/thread-view-" .. info.id
   local stat = vim.uv.fs_stat(file)
@@ -983,8 +986,7 @@ local function viewed(repo, info)
     return false
   end
   local ok, lines = pcall(vim.fn.readfile, file)
-  local last_key = ok and tonumber(lines[1]) or 0
-  return os.time() - math.max(last_key, info.waiting_at or 0) < require("isovim.config").thread_root_grace() * 60
+  return not_walked_away(ok and tonumber(lines[1]) or 0, info)
 end
 
 local function by_a_root(address)
@@ -1049,7 +1051,7 @@ function M.for_root(repo, grace, limit, handed_only)
     elseif not handed_only and M.root_may_answer(info) and not info.handed and info.last_reply > seen
       and now - (info.waiting_at or now) >= grace and info.root_posts < ROOT_ANSWERS and info.pending == 0
       and not info.working and not by_a_root(info.last_by) and not (task and task.column == "backburner")
-      and not drafted(repo, info.id) and not viewed(repo, info) then
+      and not drafted(repo, info) and not viewed(repo, info) then
       due[#due + 1] = { info = info }
     end
   end
