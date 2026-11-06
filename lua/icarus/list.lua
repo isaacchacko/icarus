@@ -9,6 +9,7 @@
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
 -- overview on the right: links, status, agents, history.
 local tasks = require("icarus.tasks")
+local T = require("icarus.theme")
 
 local M = {}
 
@@ -20,6 +21,8 @@ local UNDO_MAX = 50
 local FIELD_MS = 90
 local STALE_AFTER = 24 * 60 * 60
 local UNITS = { m = 60, h = 60 * 60, d = 24 * 60 * 60 }
+-- Each status's glyph colour, as Linear has them.
+local COLORS = { spec = T.mute, todo = T.ash, building = T.sun, review = T.leaf, blocked = T.coral, merged = T.violet }
 
 -- In _G, so a hot reload keeps the task picked and the undo history.
 _G.icarus_list = _G.icarus_list or { row = 1, undo = {} }
@@ -33,6 +36,9 @@ local function highlights()
   vim.api.nvim_set_hl(0, "IcarusListDone", { link = "Comment", default = true })
   vim.api.nvim_set_hl(0, "IcarusListSelected", { link = "CursorLine", default = true })
   vim.api.nvim_set_hl(0, "IcarusListField", { link = "Comment", default = true })
+  for status, color in pairs(COLORS) do
+    vim.api.nvim_set_hl(0, "IcarusListStatus_" .. status, { fg = color, default = true })
+  end
 end
 highlights()
 
@@ -185,6 +191,12 @@ local function paint(b, all, picking)
     if group then
       vim.api.nvim_buf_set_extmark(b, NS, i - 1, 0, { line_hl_group = group })
     end
+    local status = row.header or row.task.status
+    if COLORS[status] then
+      local col = row.header and 0 or 2
+      vim.api.nvim_buf_set_extmark(b, NS, i - 1, col, { end_col = col + #tasks.GLYPHS[status],
+        hl_group = "IcarusListStatus_" .. status, priority = 300 })
+    end
   end
 end
 
@@ -268,15 +280,31 @@ local function paint_field(b, win)
   local info = vim.fn.getwininfo(win)[1]
   local cols, height = info.width - info.textoff, info.height
   vim.api.nvim_buf_clear_namespace(b, FIELD_NS, 0, -1)
-  local field = require("icarus.landing").render(cols, height, state.field_frame or 0)
+  local field, runs = require("icarus.landing").render(cols, height, state.field_frame or 0)
   for r, line in ipairs(vim.api.nvim_buf_get_lines(b, 0, height, false)) do
     local text = line:gsub("%s+$", "")
     local from = text == "" and 0 or vim.fn.strdisplaywidth(text) + 2
     local chars = vim.fn.split(field[r] or "", "\\zs")
     if from < cols and #chars > from then
+      -- Its colours, as home has them: each run is a level over bytes, and a braille cell is 3 bytes.
+      local level = {}
+      for _, run in ipairs(runs[r] or {}) do
+        for c = run[1] / 3 + 1, run[2] / 3 do
+          level[c] = run[3]
+        end
+      end
+      local chunks = {}
+      for x = from + 1, math.min(#chars, cols) do
+        local group = level[x] and "IcarusHomeLevel" .. level[x] or "IcarusListField"
+        local last = chunks[#chunks]
+        if last and last[2] == group then
+          last[1] = last[1] .. chars[x]
+        else
+          chunks[#chunks + 1] = { chars[x], group }
+        end
+      end
       vim.api.nvim_buf_set_extmark(b, FIELD_NS, r - 1, #text == 0 and 0 or math.min(#line, #text + 2), {
-        virt_text = { { table.concat(chars, "", from + 1, math.min(#chars, cols)), "IcarusListField" } },
-        virt_text_pos = "overlay", hl_mode = "combine" })
+        virt_text = chunks, virt_text_pos = "overlay", hl_mode = "combine" })
     end
   end
 end

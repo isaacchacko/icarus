@@ -12,6 +12,7 @@ M.ember = "#d19a66" -- the router
 M.coral = "#e06c75" -- auto mode, closed PRs, removals
 M.teal = "#56b6c2" -- democracy, and your own comments
 M.mute = "#7f848e" -- drafts, hints, and what has no state
+M.ash = "#abb2bf" -- to do: ready, not started
 
 M.asked = "#2c4a6e" -- a line the agent asked about
 M.removed = "#5c2b2b" -- a proposed deletion

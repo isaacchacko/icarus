@@ -15,6 +15,7 @@ before using it anywhere else.
 - **coral** `#e06c75`: auto mode, closed PRs, removals.
 - **teal** `#56b6c2`: democracy, and your own comments.
 - **mute** `#7f848e`: drafts, hints, anything without a state.
+- **ash** `#abb2bf`: a task ready to start.
 - **field**: the home screen's ramp from deep sky to warm sun. The brand's one gradient.
 
 Why: the home field runs sky to sun, so the warm end is the accent and the name's story is the colour.
