@@ -21,8 +21,9 @@ local UNDO_MAX = 50
 local FIELD_MS = 90
 local STALE_AFTER = 24 * 60 * 60
 local UNITS = { m = 60, h = 60 * 60, d = 24 * 60 * 60 }
--- Each status's glyph colour, as Linear has them.
-local COLORS = { spec = T.mute, todo = T.ash, building = T.sun, review = T.leaf, blocked = T.coral, merged = T.violet }
+-- Each status's colour, as Linear has them: on its glyph, and tinting its rows.
+local COLORS = { spec = T.mute, todo = T.ash, building = T.sun, review = T.leaf, blocked = T.coral, merged = T.sky }
+local TINT, PICKED_TINT = 0.14, 0.34
 
 -- In _G, so a hot reload keeps the task picked and the undo history.
 _G.icarus_list = _G.icarus_list or { row = 1, undo = {} }
@@ -33,11 +34,21 @@ local cached
 
 local function highlights()
   vim.api.nvim_set_hl(0, "IcarusListHeader", { bold = true, default = true })
-  vim.api.nvim_set_hl(0, "IcarusListDone", { link = "Comment", default = true })
-  vim.api.nvim_set_hl(0, "IcarusListSelected", { link = "CursorLine", default = true })
   vim.api.nvim_set_hl(0, "IcarusListField", { link = "Comment", default = true })
+  local bg = vim.api.nvim_get_hl(0, { name = "Normal" }).bg or 0x1e1e1e
+  -- A row's background: the status's colour, t of the way from the window's.
+  local function tint(color, t)
+    local out = 0
+    for _, shift in ipairs({ 65536, 256, 1 }) do
+      local from, to = math.floor(bg / shift) % 256, math.floor(tonumber(color:sub(2), 16) / shift) % 256
+      out = out + math.floor(from + (to - from) * t + 0.5) * shift
+    end
+    return out
+  end
   for status, color in pairs(COLORS) do
     vim.api.nvim_set_hl(0, "IcarusListStatus_" .. status, { fg = color, default = true })
+    vim.api.nvim_set_hl(0, "IcarusListRow_" .. status, { bg = tint(color, TINT) })
+    vim.api.nvim_set_hl(0, "IcarusListPicked_" .. status, { bg = tint(color, PICKED_TINT), bold = true })
   end
 end
 highlights()
@@ -141,6 +152,9 @@ local function buf()
   vim.api.nvim_create_autocmd("BufWinLeave", { buffer = b, callback = function()
     require("icarus.list").close_overview()
   end })
+  -- The rows' tints are worked out from the window's background.
+  vim.api.nvim_create_autocmd("ColorScheme", { group = vim.api.nvim_create_augroup("icarus_list_colors", { clear = true }),
+    callback = highlights })
   -- Its rows and its field are as wide and as high as the window.
   vim.api.nvim_create_autocmd("WinResized", { group = vim.api.nvim_create_augroup("icarus_list_size", { clear = true }),
     callback = vim.schedule_wrap(function()
@@ -184,9 +198,9 @@ local function paint(b, all, picking)
     if row.header then
       group = "IcarusListHeader"
     elseif row.task == picking then
-      group = "IcarusListSelected"
-    elseif row.task.status == "merged" then
-      group = "IcarusListDone"
+      group = "IcarusListPicked_" .. row.task.status
+    else
+      group = "IcarusListRow_" .. row.task.status
     end
     if group then
       vim.api.nvim_buf_set_extmark(b, NS, i - 1, 0, { line_hl_group = group })
