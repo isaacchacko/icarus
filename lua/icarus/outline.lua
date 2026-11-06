@@ -65,7 +65,9 @@ function ROWS.task(task, waiting)
   if vim.fn.filereadable(task.file) == 0 then
     return {}
   end
-  return { { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], open = function()
+  return { { key = "header", text = "header", open = function()
+    require("icarus.task_page").show(task, { header = true })
+  end }, { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], open = function()
     require("icarus.task_page").show(task, { file = task.file, line = waiting.files[task.file] })
   end } }
 end
@@ -181,6 +183,7 @@ end
 local function here()
   local view = require("icarus").view() or {}
   return view.chat and "chat:" .. view.chat or view.file and "file:" .. view.file or view.visual and "visual:" .. view.visual
+    or view.header and "header"
 end
 
 -- What's on each line of the list.

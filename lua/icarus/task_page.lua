@@ -21,7 +21,7 @@ function M.new_agent(task)
   return record
 end
 
--- How you left a task's screen, kept in its .file: what main shows ("file", "chat" or "visual"), the
+-- How you left a task's screen, kept in its .file: what main shows ("file", "chat", "visual" or "header"), the
 -- file and its cursor, the agent and the visual it last showed.
 ---@return {shows?: string, path?: string, cursor?: integer[], chat?: string, visual?: integer}
 local function kept(slug)
@@ -82,9 +82,10 @@ local function show_file(main, path)
   escape_to_list(vim.api.nvim_win_get_buf(main))
 end
 
--- What main shows next on task: a {chat = id}, a {visual = i}, or a {file = path, line?, cursor?}.
+-- What main shows next on task: a {chat = id}, a {visual = i}, {header = true}, or a
+-- {file = path, line?, cursor?}.
 ---@param task icarus.Task
----@param what {chat?: string, visual?: integer, file?: string, line?: integer, cursor?: integer[]}
+---@param what {chat?: string, visual?: integer, header?: boolean, file?: string, line?: integer, cursor?: integer[]}
 function M.show(task, what)
   local icarus = require("icarus")
   local main = icarus.main()
@@ -103,7 +104,15 @@ function M.show(task, what)
   else
     require("icarus.acp.chat").leave(main)
     vim.api.nvim_set_current_win(main)
-    if what.visual then
+    if what.header then
+      vim.api.nvim_win_set_buf(main, require("icarus.head").buffer(task))
+      for option, value in pairs({ number = false, relativenumber = false, signcolumn = "no", wrap = true }) do
+        vim.wo[main][0][option] = value
+      end
+      escape_to_list(vim.api.nvim_win_get_buf(main))
+      view.header = true
+      M.keep(task.slug, { shows = "header" })
+    elseif what.visual then
       local i = require("icarus.visual").show(task.slug, what.visual)
       escape_to_list(vim.api.nvim_win_get_buf(main))
       view.visual = i
@@ -129,6 +138,9 @@ local function arrival(task)
   local left = kept(task.slug)
   if left.shows == "chat" and left.chat and chats.get(left.chat) then
     return { chat = left.chat }
+  end
+  if left.shows == "header" and vim.fn.filereadable(task.file) == 1 then
+    return { header = true }
   end
   if left.shows == "visual" and require("icarus.visual").list(task.slug)[left.visual] then
     return { visual = left.visual }

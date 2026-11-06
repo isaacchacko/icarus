@@ -19,6 +19,7 @@ local layout = _G.icarus_layout ---@type {current?: string, main?: integer, view
 ---@field chat? string the chat main shows
 ---@field file? string the file main shows
 ---@field visual? integer the visual main shows
+---@field header? boolean main shows the task's header
 
 ---@return icarus.View?
 function M.view()
@@ -107,7 +108,8 @@ function M.view_name(view)
   if task and layout.view and view.kind == "task" and view.task == layout.view.task then
     local record = view.chat and chats.get(view.chat)
     local visual = view.visual and require("icarus.visual").list(view.task)[view.visual]
-    return record and (record.title or "new chat") or visual and visual.title or view.file and vim.fs.basename(view.file) or task.title
+    return record and (record.title or "new chat") or visual and visual.title or view.file and vim.fs.basename(view.file)
+      or view.header and "header" or task.title
   end
   return task and (view.kind == "graph" and "graph: " .. task.title or task.title)
 end
@@ -185,7 +187,7 @@ function M.statusline()
     local buf = vim.api.nvim_win_get_buf(side)
     local name = vim.api.nvim_buf_get_name(buf)
     local dir = task and require("icarus.tasks").dir(record.task or require("icarus.tasks").SENTINEL) .. "/"
-    local shown = name:match("^icarus://visual/") and "visuals"
+    local shown = name:match("^icarus://visual/") and "visuals" or name:match("^icarus://head/") and "header"
       or dir and vim.startswith(name, dir) and name:sub(#dir + 1) or vim.fn.fnamemodify(name, ":~")
     local cursor = vim.api.nvim_win_get_cursor(side)
     right[#right + 1] = { shown ~= "" and shown or "[no name]", "IcarusStatusTask" }
