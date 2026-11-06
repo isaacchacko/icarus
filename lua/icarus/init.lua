@@ -471,6 +471,14 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>t", function()
     require("icarus").new_task()
   end, { desc = "New task" })
+  vim.keymap.set("n", "<leader>`", function()
+    local task = require("icarus.tasks").pinned()
+    if task then
+      M.open_task(require("icarus.tasks").read(task.slug) or task)
+    else
+      vim.notify("No pinned task", vim.log.levels.WARN)
+    end
+  end, { desc = "The pinned task" })
   vim.keymap.set("n", "<leader>f", function()
     require("icarus").pick_task()
   end, { desc = "Find a task" })

@@ -300,6 +300,16 @@ function M.sentinel()
   return assert(M.read(M.SENTINEL))
 end
 
+-- The pinned task (pinned: true), the one that lives outside the board, if there is one.
+---@return icarus.Task?
+function M.pinned()
+  for _, task in ipairs(M.list()) do
+    if task.pinned then
+      return task
+    end
+  end
+end
+
 ---@return icarus.Task[] the sentinel first, then newest first
 function M.list()
   ensure_sentinel()
