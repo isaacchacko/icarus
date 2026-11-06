@@ -105,7 +105,8 @@ function M.sync()
       state.win = vim.api.nvim_open_win(buf, false, { split = "above", win = -1, height = 1, style = "minimal" })
       vim.w[state.win].icarus_drawer = true
       vim.wo[state.win].winfixheight = true
-      vim.wo[state.win].winhighlight = "Normal:IcarusTopBar,NormalNC:IcarusTopBar,EndOfBuffer:IcarusTopBar"
+      vim.wo[state.win].fillchars = "horiz: ,horizdown: ,horizup: ,vertleft: ,vertright: ,verthoriz: "
+      vim.wo[state.win].winhighlight = "Normal:IcarusTopBar,NormalNC:IcarusTopBar,EndOfBuffer:IcarusTopBar,WinSeparator:IcarusTopBar"
     end
     draw(vim.api.nvim_win_get_buf(state.win), view)
     if not state.timer then
