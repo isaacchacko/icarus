@@ -64,8 +64,8 @@ M.remember = remember
 -- buffers, so it wins over the global Escape there.
 local function escape_to_board(buf)
   vim.keymap.set("n", "<Esc>", function()
-    require("icarus.board").open()
-  end, { buffer = buf, nowait = true, desc = "Back to the board" })
+    require("icarus.list").open()
+  end, { buffer = buf, nowait = true, desc = "Back to the list" })
 end
 
 ---@param task icarus.Task

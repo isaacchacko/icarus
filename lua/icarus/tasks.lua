@@ -31,7 +31,12 @@
 local M = {}
 
 M.ROOT = vim.env.ICARUS_HOME or (vim.env.HOME .. "/.icarus")
-M.STATUSES = { "spec", "building", "review", "merged", "cancelled" }
+M.STATUSES = { "spec", "todo", "building", "review", "blocked", "merged", "cancelled" }
+-- What each status is called and drawn as, in the list (Linear's names and glyphs). The ids are what
+-- task.json and ica status use, so they stay as they are.
+M.LABELS = { spec = "Backlog", todo = "Todo", building = "In Progress", review = "Review", blocked = "Blocked",
+  merged = "Done", cancelled = "Cancelled" }
+M.GLYPHS = { spec = "◌", todo = "○", building = "◐", review = "◉", blocked = "⊘", merged = "✓", cancelled = "" }
 M.SENTINEL = "no-task"
 
 -- The header's keys in this order, the rest after them by name.
@@ -270,7 +275,7 @@ function M.read(slug)
   seen[slug] = { title = attrs.title, status = attrs.status, orchestration = attrs.orchestration, auto = attrs.auto == true }
   return { slug = slug, dir = dir, file = dir .. "/task.md", title = attrs.title, status = attrs.status,
     created = attrs.created, links = attrs.links, sentinel = attrs.sentinel == true, pinned = attrs.pinned == true,
-    attrs = attrs }
+    today = attrs.today == true, high = attrs.high == true, attrs = attrs }
 end
 
 -- slug's title and status as last read, read now if they never were; nil for a task that's gone.

@@ -237,8 +237,8 @@ local function show_view(view)
   local record = view.chat and chats.get(view.chat)
   if view.kind == "home" then
     M.home()
-  elseif view.kind == "board" then
-    require("icarus.board").open()
+  elseif view.kind == "list" or view.kind == "board" then
+    require("icarus.list").open()
   elseif view.kind == "task" or view.kind == "graph" then
     local task = require("icarus.tasks").read(view.task)
     if not task then
@@ -484,9 +484,6 @@ function M.setup(opts)
   for _, key in ipairs({ "h", "j", "k", "l" }) do
     vim.keymap.set("n", "<C-" .. key .. ">", "<C-w>" .. key, { desc = "Go to the window " .. ({ h = "left", j = "below", k = "above", l = "right" })[key] })
   end
-  vim.keymap.set("n", "<leader>t", function()
-    require("icarus").new_task()
-  end, { desc = "New task" })
   vim.keymap.set("n", "<leader>`", function()
     M.toggle_pinned()
   end, { desc = "The pinned task, or back from it" })
@@ -567,8 +564,8 @@ function M.setup(opts)
     chat.toggle_fork(record)
   end, { desc = "Fork mode: the next message goes to a fork of this agent" })
   vim.keymap.set("n", "<leader>m", function()
-    require("icarus.board").open()
-  end, { desc = "Board: every task, by status" })
+    require("icarus.list").open()
+  end, { desc = "The list: every open task, by status" })
   vim.keymap.set("n", "<leader>g", function()
     require("icarus.graph").open()
   end, { desc = "Graph of this task's agents" })
