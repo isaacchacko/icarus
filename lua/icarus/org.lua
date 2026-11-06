@@ -118,7 +118,7 @@ local function last_said(open)
   if not (buf and vim.api.nvim_buf_is_valid(buf)) then
     return nil
   end
-  local count = vim.api.nvim_buf_line_count(buf)
+  local count = require("icarus.acp.compose").start(buf)
   local lines = vim.api.nvim_buf_get_lines(buf, math.max(0, count - 40), count, false)
   for i = #lines, 1, -1 do
     local line = vim.trim(lines[i])

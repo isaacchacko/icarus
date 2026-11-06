@@ -75,7 +75,7 @@ function M.open(task, record)
   record = record or chats.on_task(task.slug)[1] or M.new_agent(task)
   require("icarus").open(record)
   local chat = require("icarus.acp.chat").get(record)
-  for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat), chat.input }) do
+  for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat) }) do
     escape_to_list(buf)
   end
   require("icarus").set_view({ kind = "task", task = task.slug, chat = record.id })

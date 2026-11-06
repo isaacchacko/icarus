@@ -1,6 +1,7 @@
 -- Tables in a chat or its thread, drawn to fit the window showing them (icarus.acp.look draws one).
 -- Each keeps the rows the agent wrote, so it's drawn again when the window's width changes, or when
 -- a chat that was out of sight shows. Both of a chat's buffers fit the same width, whichever shows.
+local compose = require("icarus.acp.compose")
 local look = require("icarus.acp.look")
 
 local M = {}
@@ -100,30 +101,25 @@ function M.fit(chat)
     if not vim.api.nvim_buf_is_valid(buf) then
       chat.tables[buf] = nil
     else
-      local count = vim.api.nvim_buf_line_count(buf)
-      local follow = vim.tbl_filter(function(win)
-        return vim.api.nvim_win_get_cursor(win)[1] == count
-      end, vim.fn.win_findbuf(buf))
-      local modifiable = vim.bo[buf].modifiable
-      vim.bo[buf].modifiable = true
-      for _, table_ in ipairs(tables) do
-        if table_.width ~= width then
-          local row = vim.api.nvim_buf_get_extmark_by_id(buf, MARK, table_.mark, {})[1]
-          local height = table_.height
-          put(buf, row, height, table_, width)
-          -- What counts rows in a message still streaming, below the table.
-          local grew = table_.height - height
-          if buf == chat.buf then
-            chat.block_row = chat.block_row and chat.block_row > row and chat.block_row + grew or chat.block_row
-            chat.table_scan = chat.table_scan and chat.table_scan > row and chat.table_scan + grew or chat.table_scan
-          elseif chat.thread_scan and chat.thread_scan > row then
-            chat.thread_scan = chat.thread_scan + grew
+      local stale = vim.tbl_filter(function(table_)
+        return table_.width ~= width
+      end, tables)
+      if #stale > 0 then
+        compose.write(buf, function()
+          for _, table_ in ipairs(stale) do
+            local row = vim.api.nvim_buf_get_extmark_by_id(buf, MARK, table_.mark, {})[1]
+            local height = table_.height
+            put(buf, row, height, table_, width)
+            -- What counts rows in a message still streaming, below the table.
+            local grew = table_.height - height
+            if buf == chat.buf then
+              chat.block_row = chat.block_row and chat.block_row > row and chat.block_row + grew or chat.block_row
+              chat.table_scan = chat.table_scan and chat.table_scan > row and chat.table_scan + grew or chat.table_scan
+            elseif chat.thread_scan and chat.thread_scan > row then
+              chat.thread_scan = chat.thread_scan + grew
+            end
           end
-        end
-      end
-      vim.bo[buf].modifiable = modifiable
-      for _, win in ipairs(follow) do
-        vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
+        end)
       end
     end
   end

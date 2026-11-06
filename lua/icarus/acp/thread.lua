@@ -5,11 +5,13 @@
 -- the options are, and goes back to its thread once you've answered.
 --
 -- The thread is a buffer of its own (icarus://thread/<chat id>) fed alongside the conversation's
--- (icarus.acp.chat calls M.prompt, M.text and M.pause). A chat that was already going when its
+-- (icarus.acp.chat calls M.prompt, M.text and M.pause), and like it ends in the composer
+-- (icarus.acp.compose). A chat that was already going when its
 -- thread was made (open from before threads, across a hot reload) has its thread read back from
 -- Claude's transcript of its session, ~/.claude/projects/<its dir>/<session>.jsonl.
 local M = {}
 
+local compose = require("icarus.acp.compose")
 local tables = require("icarus.acp.tables")
 
 local NS = vim.api.nvim_create_namespace("icarus_thread")
@@ -115,8 +117,9 @@ function M.buf(chat)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
   chat.thread_fresh = true
   vim.bo[buf].modifiable = false
+  compose.init(chat, buf)
   -- Made over a conversation that's already going: what came before, from the transcript.
-  local before = vim.api.nvim_buf_line_count(chat.buf) > 1 or (vim.api.nvim_buf_get_lines(chat.buf, 0, 1, false)[1] or "") ~= ""
+  local before = compose.start(chat.buf) > 1 or (vim.api.nvim_buf_get_lines(chat.buf, 0, 1, false)[1] or "") ~= ""
   if before then
     local said = transcript(chat)
     if said and #said > 0 then
@@ -131,9 +134,9 @@ function M.buf(chat)
       end
       M.pause(chat)
     else
-      vim.bo[buf].modifiable = true
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "(earlier messages are in this chat's details: <leader>d)" })
-      vim.bo[buf].modifiable = false
+      compose.write(buf, function()
+        vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "(earlier messages are in this chat's details: <leader>d)" })
+      end)
       vim.api.nvim_buf_set_extmark(buf, NS, 0, 0, { end_col = #vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1], hl_group = "IcarusAcpNotice" })
       chat.thread_fresh = false
     end
@@ -149,9 +152,17 @@ function M.rebuild()
       chat.thread = nil
       pcall(vim.api.nvim_buf_set_name, old, "")
       local fresh = M.buf(chat)
-      for _, win in ipairs(vim.fn.win_findbuf(old)) do
+      local wins = vim.fn.win_findbuf(old)
+      local at = {}
+      for _, win in ipairs(wins) do
+        at[win] = compose.cursor(win)
+      end
+      if compose.holder(chat) == old then
+        compose.carry(chat, fresh)
+      end
+      for _, win in ipairs(wins) do
         vim.api.nvim_win_set_buf(win, fresh)
-        vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(fresh), 0 })
+        compose.place(win, at[win])
       end
       pcall(vim.api.nvim_buf_delete, old, { force = true })
     end
@@ -160,31 +171,23 @@ function M.rebuild()
   require("icarus.acp.chat").rebind()
 end
 
--- Changes the thread with fn; windows whose cursor was on its last line stay on it.
+-- Changes the thread with fn.
 local function edit(chat, fn)
-  local buf = M.buf(chat)
-  local last = vim.api.nvim_buf_line_count(buf)
-  local follow = vim.tbl_filter(function(win)
-    return vim.api.nvim_win_get_cursor(win)[1] == last
-  end, vim.fn.win_findbuf(buf))
-  vim.bo[buf].modifiable = true
-  pcall(fn, buf)
-  vim.bo[buf].modifiable = false
-  for _, win in ipairs(follow) do
-    vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
-  end
+  pcall(compose.write, M.buf(chat), fn)
 end
 
--- New lines at the end, after a blank one unless the thread is empty; returns their first row.
+-- New lines at the conversation's end, after a blank one unless the thread is empty; returns their
+-- first row.
 local function block(chat, lines)
   local row
   edit(chat, function(buf)
+    local stop = compose.start(buf)
     if chat.thread_fresh then
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.api.nvim_buf_set_lines(buf, 0, stop, false, lines)
       row = 0
     else
-      row = vim.api.nvim_buf_line_count(buf) + 1
-      vim.api.nvim_buf_set_lines(buf, -1, -1, false, vim.list_extend({ "" }, lines))
+      row = stop + 1
+      vim.api.nvim_buf_set_lines(buf, stop, stop, false, vim.list_extend({ "" }, lines))
     end
   end)
   chat.thread_fresh = false
@@ -208,7 +211,7 @@ end
 
 -- Draws the tables in what the agent has said so far. Runs inside edit.
 local function draw_tables(chat, buf, whole)
-  local last = vim.api.nvim_buf_line_count(buf) - (whole and 1 or 2)
+  local last = compose.start(buf) - (whole and 1 or 2)
   chat.thread_scan = tables.scan(chat, buf, chat.thread_scan or 0, last, whole, function()
     return ""
   end, "")
@@ -226,7 +229,7 @@ function M.text(chat, text)
   end
   local parts = vim.split(text, "\n", { plain = true })
   edit(chat, function(buf)
-    local row = vim.api.nvim_buf_line_count(buf) - 1
+    local row = compose.start(buf) - 1
     local col = #vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
     vim.api.nvim_buf_set_text(buf, row, col, row, col, parts)
     if #parts > 1 then
@@ -261,14 +264,26 @@ function M.windows(chat)
   end, vim.api.nvim_tabpage_list_wins(0))
 end
 
--- Each window showing chat shows what it should, its cursor at the end.
+-- Each window showing chat shows what it should, the draft going with it: a cursor in the composer
+-- stays where it was in it, and one in the conversation goes to the composer.
 function M.sync(chat)
   local want = M.wanted(chat)
-  for _, win in ipairs(M.windows(chat)) do
-    if vim.api.nvim_win_get_buf(win) ~= want then
-      vim.api.nvim_win_set_buf(win, want)
-      vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(want), 0 })
-    end
+  local moving = vim.tbl_filter(function(win)
+    return vim.api.nvim_win_get_buf(win) ~= want
+  end, M.windows(chat))
+  local at = {}
+  for _, win in ipairs(moving) do
+    at[win] = compose.cursor(win)
+  end
+  if #moving > 0 then
+    compose.carry(chat, want)
+  end
+  for _, win in ipairs(moving) do
+    -- A buffer shown in this window before brings back the winbar it had then.
+    local bar = vim.wo[win].winbar
+    vim.api.nvim_win_set_buf(win, want)
+    vim.wo[win].winbar = bar
+    compose.place(win, at[win])
   end
   tables.fit(chat)
 end

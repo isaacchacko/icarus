@@ -178,7 +178,7 @@ function M.open(id)
   end, { buffer = buf, nowait = true, desc = "Back to its agent" })
   redraw(child)
   local win = require("icarus").main()
-  require("icarus.acp.chat").hide_composer(win)
+  require("icarus.acp.chat").leave(win)
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win][0].wrap, vim.wo[win][0].linebreak = true, true
   vim.api.nvim_set_current_win(win)

@@ -1,6 +1,6 @@
--- A chat: the conversation in one read-only buffer, drawn as Claude Code draws its screen (the words,
--- colors and tool rows are icarus.acp.look's), and under it, in a window of its own, the composer,
--- where you type. Its session (icarus.acp.session) runs while icarus does.
+-- A chat: the conversation in one buffer, drawn as Claude Code draws its screen (the words, colors and
+-- tool rows are icarus.acp.look's), and under it in the same buffer the composer, where you type
+-- (icarus.acp.compose). Its session (icarus.acp.session) runs while icarus does.
 --
 --   ❯ your prompt          on Claude's gray band
 --   ⏺ the agent's text     streamed in place, its `code`, **bold** and tables drawn
@@ -12,13 +12,15 @@
 --      1. Allow            in the composer, or <CR> on an option, answers it
 --   ✻ Brewed for 8s        the turn's summary
 --
--- The composer's winbar is Claude's spinner line while the agent works. <CR> sends (in insert mode
+-- The window's winbar is Claude's spinner line while the agent works. <CR> sends (in insert mode
 -- too, where <S-CR> is a new line), <C-c> interrupts the turn. A prompt sent while the agent works
--- waits its turn. A window whose cursor is on the conversation's last line follows it as it grows.
+-- waits its turn. A cursor in the composer goes down with it as the conversation grows; one in the
+-- conversation stays where you left it.
 --
 -- A hot reload (icarus.reload) keeps the open chats: they live in _G, what the session hears comes
 -- in through require (M.hear), so the new code draws it, and M.rebind maps their keys to it. What's
 -- drawn already stays as the old code drew it.
+local compose = require("icarus.acp.compose")
 local images = require("icarus.acp.images")
 local look = require("icarus.acp.look")
 local tables = require("icarus.acp.tables")
@@ -75,7 +77,7 @@ local STATUS_HL = {
 ---@class icarus.Chat
 ---@field record icarus.ChatRecord
 ---@field buf integer the conversation
----@field input integer the composer
+---@field draft table what's typed in the composer: its buffer and its history (icarus.acp.compose)
 ---@field session icarus.acp.Session
 ---@field fresh boolean nothing drawn yet: the buffer's one line is empty
 ---@field block? "agent"|"thought"|"other"
@@ -104,22 +106,9 @@ local function dirs(chat)
   return { cwd, vim.uv.fs_realpath(cwd) or cwd }
 end
 
--- Changes the conversation with fn; windows whose cursor was on its last line stay on it.
+-- Changes the conversation with fn.
 local function edit(chat, fn)
-  local buf = chat.buf
-  local last = vim.api.nvim_buf_line_count(buf)
-  local follow = vim.tbl_filter(function(win)
-    return vim.api.nvim_win_get_cursor(win)[1] == last
-  end, vim.fn.win_findbuf(buf))
-  vim.bo[buf].modifiable = true
-  local ok, err = pcall(fn, buf)
-  vim.bo[buf].modifiable = false
-  for _, win in ipairs(follow) do
-    vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
-  end
-  if not ok then
-    error(err, 0)
-  end
+  compose.write(chat.buf, fn)
 end
 
 local function span(buf, row, col, end_col, hl, priority)
@@ -141,7 +130,7 @@ end
 -- Draws the tables in the streaming message whose lines have all come. Runs inside edit.
 local function draw_tables(chat, whole)
   local buf = chat.buf
-  local last = vim.api.nvim_buf_line_count(buf) - (whole and 1 or 2)
+  local last = compose.start(buf) - (whole and 1 or 2)
   local row = math.max(chat.table_scan or chat.block_row, chat.block_row)
   chat.table_scan = tables.scan(chat, buf, row, last, whole, function(line)
     return vim.startswith(line, GLYPH.message .. " ") and GLYPH.message .. " " or "  "
@@ -158,7 +147,7 @@ local function add_lines(chat, lines, hl)
     if chat.block == "agent" then
       draw_tables(chat, true)
     end
-    row = chat.fresh and 0 or vim.api.nvim_buf_line_count(buf)
+    row = chat.fresh and 0 or compose.start(buf)
     vim.api.nvim_buf_set_lines(buf, row, chat.fresh and 1 or row, false, lines)
     if hl then
       line_hl(buf, row, #lines, hl)
@@ -215,10 +204,10 @@ local function add_text(chat, text)
     parts[i] = "  " .. parts[i]
   end
   edit(chat, function(buf)
-    local row = vim.api.nvim_buf_line_count(buf) - 1
+    local row = compose.start(buf) - 1
     local col = #vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
     vim.api.nvim_buf_set_text(buf, row, col, row, col, parts)
-    markup(chat, row, vim.api.nvim_buf_line_count(buf) - 1)
+    markup(chat, row, compose.start(buf) - 1)
     if #parts > 1 then
       draw_tables(chat, false)
     end
@@ -435,7 +424,7 @@ end
 local FRAMES = { "·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢" }
 local frame = 1
 
--- What the composer's winbar says, as {text, hl} parts: while the agent works, Claude's spinner line.
+-- What the chat's winbar says, as {text, hl} parts: while the agent works, Claude's spinner line.
 local function bar_parts(chat)
   local parts = {}
   local function add(text, hl)
@@ -499,7 +488,7 @@ update_bar = function(chat)
   for _, part in ipairs(bar_parts(chat)) do
     bar = bar .. "%#" .. part[2] .. "#" .. part[1]:gsub("%%", "%%%%")
   end
-  for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
+  for _, win in ipairs(thread.windows(chat)) do
     vim.wo[win].winbar = bar
   end
   thread.sync(chat)
@@ -728,23 +717,34 @@ local function toggle(chat)
   draw_tool(chat, call)
 end
 
+-- The cursor to the end of the draft, typing.
 local function focus_composer(chat)
-  local win = vim.fn.win_findbuf(chat.input)[1]
+  local here = vim.api.nvim_get_current_win()
+  local win = vim.tbl_contains(thread.windows(chat), here) and here or thread.windows(chat)[1]
   if win then
     vim.api.nvim_set_current_win(win)
+    compose.place(win)
     vim.cmd.startinsert({ bang = true })
   end
 end
 
+-- i, a, o and the like in the conversation, by chat id.
+function M.focus(id)
+  local chat = open_chats[id]
+  if chat then
+    focus_composer(chat)
+  end
+end
+
 local function send(chat)
-  local lines = vim.api.nvim_buf_get_lines(chat.input, 0, -1, false)
-  local text = vim.trim(table.concat(lines, "\n"))
+  local buf = compose.holder(chat)
+  local text = vim.trim(table.concat(compose.lines(buf), "\n"))
   if text == "" then
     return
   end
   local attached
-  text, attached = images.collect(chat.input, text)
-  vim.api.nvim_buf_set_lines(chat.input, 0, -1, false, { "" })
+  text, attached = images.collect(buf, text)
+  compose.clear(chat)
   local n = tonumber(text:match("^(%d+)$"))
   if chat.boxes[1] and n then
     return answer_box(chat, chat.boxes[1], n)
@@ -823,13 +823,16 @@ function M.restart(record)
   if old and (old.busy or #old.session.queue > 0 or #old.boxes > 0) then
     return vim.notify("It's working: restart it once it's idle", vim.log.levels.WARN)
   end
-  local shown, typed = {}, {}
+  local shown, at, typed = {}, {}, nil
   if old then
     shown = thread.windows(old)
-    typed = vim.fn.win_findbuf(old.input)
+    for _, win in ipairs(shown) do
+      at[win] = compose.cursor(win)
+    end
+    typed = compose.lines(compose.holder(old))
     open_chats[record.id] = nil
     old.session:stop()
-    for _, buf in ipairs({ old.buf, old.input, old.thread }) do
+    for _, buf in ipairs({ old.buf, old.thread }) do
       if buf and vim.api.nvim_buf_is_valid(buf) then
         pcall(vim.api.nvim_buf_set_name, buf, "")
       end
@@ -837,14 +840,16 @@ function M.restart(record)
   end
   local fresh = M.get(record)
   local want = thread.wanted(fresh)
+  compose.carry(fresh, want)
+  if typed then
+    compose.set(fresh, typed)
+  end
   for _, win in ipairs(shown) do
     vim.api.nvim_win_set_buf(win, want)
-  end
-  for _, win in ipairs(typed) do
-    vim.api.nvim_win_set_buf(win, fresh.input)
+    compose.place(win, at[win])
   end
   if old then
-    for _, buf in ipairs({ old.buf, old.input, old.thread }) do
+    for _, buf in ipairs({ old.buf, old.thread }) do
       if buf and vim.api.nvim_buf_is_valid(buf) then
         pcall(vim.api.nvim_buf_delete, buf, { force = true })
       end
@@ -863,9 +868,14 @@ function M.toggle_fork(record)
   return chat.fork_next
 end
 
-local function enter_on_conversation(chat)
+-- <CR> in normal mode: in the composer it sends; on a permission's option it answers.
+local function enter(chat)
+  local buf = vim.api.nvim_get_current_buf()
   local row = vim.api.nvim_win_get_cursor(0)[1] - 1
-  local mark = vim.api.nvim_buf_get_extmarks(chat.buf, OPTIONS, { row, 0 }, { row, -1 }, { limit = 1 })[1]
+  if compose.inside(buf, row) then
+    return send(chat)
+  end
+  local mark = buf == chat.buf and vim.api.nvim_buf_get_extmarks(buf, OPTIONS, { row, 0 }, { row, -1 }, { limit = 1 })[1]
   local option = mark and chat.options[mark[1]]
   if option then
     answer_box(chat, option.box, option.n)
@@ -878,15 +888,15 @@ local function map(buf, modes, lhs, fn, desc)
   vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true, desc = desc })
 end
 
--- [[ and ]]: the cursor to your message before or after it, by the prompt glyph at a line's start;
--- ]] after your last one goes to the end of the chat.
+-- [[ and ]]: the cursor to your message before or after it, by the prompt glyph at a line's start,
+-- in the conversation only: a draft isn't a message yet. ]] after your last one goes to the composer.
 local function jump_prompt(chat, step)
   local buf = vim.api.nvim_get_current_buf()
-  local row = vim.api.nvim_win_get_cursor(0)[1]
-  local count = vim.api.nvim_buf_line_count(buf)
+  local stop = compose.start(buf)
+  local row = math.min(vim.api.nvim_win_get_cursor(0)[1], stop + 1)
   local mark = GLYPH.prompt .. " "
   row = row + step
-  while row >= 1 and row <= count do
+  while row >= 1 and row <= stop do
     if vim.startswith(vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or "", mark) then
       vim.api.nvim_win_set_cursor(0, { row, 0 })
       vim.cmd("normal! zz")
@@ -896,7 +906,7 @@ local function jump_prompt(chat, step)
   end
   -- Past your last message, ]] goes to the end, as G does.
   if step > 0 then
-    vim.api.nvim_win_set_cursor(0, { count, 0 })
+    vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(buf), 0 })
   end
 end
 
@@ -944,52 +954,41 @@ local function map_keys(chat)
   local function cancel()
     chat.session:cancel()
   end
-  for _, buf in ipairs({ chat.buf, thread.buf(chat), chat.input }) do
-    map(buf, "n", "<leader>M", function()
-      pick_model(chat)
-    end, "The model and effort this chat runs at")
-  end
-  map(chat.buf, "n", "<CR>", function()
-    enter_on_conversation(chat)
-  end, "Answer the option here, else type in the composer")
   map(chat.buf, "n", "za", function()
     toggle(chat)
   end, "Open or close the tool call or thought")
-  local thread_buf = thread.buf(chat)
-  for _, buf in ipairs({ chat.buf, thread_buf }) do
+  for _, buf in ipairs({ chat.buf, thread.buf(chat) }) do
+    compose.keys(buf, chat)
+    images.setup(buf, chat, chat.buf)
+    map(buf, "n", "<leader>M", function()
+      pick_model(chat)
+    end, "The model and effort this chat runs at")
+    map(buf, "n", "<CR>", function()
+      enter(chat)
+    end, "Send, answer the option here, or type in the composer")
     map(buf, "n", "[[", function()
       jump_prompt(chat, -1)
     end, "Your previous message")
     map(buf, "n", "]]", function()
       jump_prompt(chat, 1)
     end, "Your next message")
+    -- In the composer they're vim's own; in the conversation they go to the composer.
     for _, key in ipairs({ "i", "a", "o", "I", "A", "O" }) do
-      map(buf, "n", key, function()
-        focus_composer(chat)
-      end, "Type in the composer")
+      vim.keymap.set("n", key, function()
+        if compose.inside(buf) then
+          return key
+        end
+        return ("<Cmd>lua require('icarus.acp.chat').focus(%q)<CR>"):format(chat.record.id)
+      end, { buffer = buf, nowait = true, expr = true, desc = "Type in the composer" })
     end
-    map(buf, "n", "<C-c>", cancel, "Interrupt Claude")
-  end
-  map(thread_buf, "n", "<CR>", function()
-    focus_composer(chat)
-  end, "Type in the composer")
-  -- From the composer, up to your last message.
-  map(chat.input, "n", "[[", function()
-    local win = thread.windows(chat)[1]
-    if win then
-      vim.api.nvim_set_current_win(win)
-      vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)), 0 })
-      jump_prompt(chat, -1)
+    map(buf, "i", "<CR>", function()
+      send(chat)
+    end, "Send")
+    for _, key in ipairs({ "<S-CR>", "<M-CR>" }) do
+      map(buf, "i", key, "<CR>", "New line")
     end
-  end, "Your last message")
-  map(chat.input, { "n", "i" }, "<CR>", function()
-    send(chat)
-  end, "Send")
-  for _, key in ipairs({ "<S-CR>", "<M-CR>" }) do
-    map(chat.input, "i", key, "<CR>", "New line")
+    map(buf, { "n", "i" }, "<C-c>", cancel, "Interrupt Claude")
   end
-  map(chat.input, { "n", "i" }, "<C-c>", cancel, "Interrupt Claude")
-  images.setup(chat.input)
 end
 
 local function scratch(name, filetype)
@@ -1034,7 +1033,7 @@ function M.get(record)
   chat = { record = record, fresh = true, tools = {}, boxes = {}, options = {}, busy = false, turn_chars = 0 }
   chat.buf = scratch("icarus://chat/" .. record.id, "icarus_chat")
   vim.bo[chat.buf].modifiable = false
-  chat.input = scratch("icarus://composer/" .. record.id, "icarus_composer")
+  compose.init(chat, chat.buf)
   open_chats[record.id] = chat
   map_keys(chat)
   local function hear(name)
@@ -1058,84 +1057,77 @@ end
 local CHAT_WINDOW = { wrap = true, linebreak = true, breakindent = true, conceallevel = 2, concealcursor = "nc",
   smoothscroll = true, number = false, relativenumber = false, signcolumn = "no", list = false, cursorline = false }
 
--- Shows the chat in win, its composer in a window under it; the cursor goes to the composer.
+-- Shows the chat in win; the cursor goes to the composer.
 function M.show(chat, win)
   local buf = thread.wanted(chat)
+  compose.carry(chat, buf)
   vim.api.nvim_win_set_buf(win, buf)
   for name, value in pairs(CHAT_WINDOW) do
     vim.wo[win][0][name] = value
   end
-  vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
-  local input = vim.w[win].icarus_composer
-  if not (input and vim.api.nvim_win_is_valid(input)) then
-    input = vim.api.nvim_open_win(chat.input, false, { split = "below", win = win, height = 4 })
-    vim.w[win].icarus_composer = input
-    vim.w[input].icarus_composer_of = win
-  end
-  vim.api.nvim_win_set_buf(input, chat.input)
-  vim.wo[input][0].winfixheight = true
-  vim.wo[input][0].number = false
-  vim.wo[input][0].relativenumber = false
-  vim.wo[input][0].signcolumn = "no"
-  M.wire_composer(chat)
   update_bar(chat)
   tables.fit(chat)
+  vim.api.nvim_set_current_win(win)
   focus_composer(chat)
 end
 
--- The composer's text wraps, and its window grows with it: from 3 lines up to half of what it and
--- the conversation share, the rest scrolling. Its winbar takes a line of its own.
-local COMPOSER_MIN = 3
-
--- Its windows wrap, and it's fitted as you type and as windows resize.
-function M.wire_composer(chat)
-  for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
-    vim.wo[win][0].wrap, vim.wo[win][0].linebreak, vim.wo[win][0].breakindent = true, true, true
-  end
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "WinResized" }, {
-    group = vim.api.nvim_create_augroup("icarus_composer_" .. chat.input, { clear = true }),
-    buffer = chat.input,
-    callback = function()
-      require("icarus.acp.chat").fit_composer(chat)
-    end,
-  })
-  M.fit_composer(chat)
+-- What a chat left on win, gone: win is about to show something that isn't a chat.
+function M.leave(win)
+  require("icarus.acp.queue").hide(win)
+  vim.wo[win].winbar = ""
 end
 
-function M.fit_composer(chat)
-  for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
-    local above = vim.w[win].icarus_composer_of
-    local room = vim.api.nvim_win_get_height(win) + (above and vim.api.nvim_win_is_valid(above) and vim.api.nvim_win_get_height(above) or 0)
-    local lines = vim.api.nvim_win_text_height(win, {}).all
-    local height = math.max(COMPOSER_MIN, math.min(lines, math.floor(room / 2))) + 1
-    if vim.api.nvim_win_get_height(win) ~= height then
-      vim.api.nvim_win_set_height(win, height)
-      -- What's typed shows from its top while it fits.
-      if lines <= height - 1 then
-        vim.api.nvim_win_call(win, function()
-          vim.fn.winrestview({ topline = 1 })
-        end)
-      end
+-- A chat from before its composer was in its buffer (a hot reload of code that had the composer in a
+-- window of its own): its buffers get a composer, what was typed goes into it, and the window goes.
+local function migrate(chat)
+  local input = chat.input
+  if not input then
+    return
+  end
+  local alive = vim.api.nvim_buf_is_valid(input)
+  local typed = alive and vim.api.nvim_buf_get_lines(input, 0, -1, false) or { "" }
+  local boxes = alive and vim.fn.win_findbuf(input) or {}
+  local current = vim.api.nvim_get_current_win()
+  local typing = vim.tbl_contains(boxes, current)
+  local at
+  if typing then
+    local row, col = unpack(vim.api.nvim_win_get_cursor(current))
+    at = { row - 1, col }
+  end
+  local wins = thread.windows(chat)
+  local following = {}
+  for _, win in ipairs(wins) do
+    following[win] = vim.api.nvim_win_get_cursor(win)[1] == vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+    vim.w[win].icarus_composer = nil
+  end
+  compose.init(chat, chat.buf)
+  compose.init(chat, thread.buf(chat))
+  images.adopt(input, chat.buf)
+  compose.carry(chat, thread.wanted(chat))
+  compose.set(chat, typed)
+  for _, win in ipairs(boxes) do
+    pcall(vim.api.nvim_win_close, win, true)
+  end
+  for _, win in ipairs(wins) do
+    if vim.api.nvim_win_is_valid(win) and (following[win] or typing) then
+      compose.place(win, typing and at or nil)
     end
   end
-end
-
--- The composer under win, closed: win is about to show something that isn't a chat.
-function M.hide_composer(win)
-  require("icarus.acp.queue").hide(win)
-  local input = vim.w[win].icarus_composer
-  if input and vim.api.nvim_win_is_valid(input) then
-    vim.api.nvim_win_close(input, true)
+  if typing and wins[1] and vim.api.nvim_win_is_valid(wins[1]) then
+    vim.api.nvim_set_current_win(wins[1])
   end
-  vim.w[win].icarus_composer = nil
+  if alive then
+    pcall(vim.api.nvim_buf_delete, input, { force = true })
+  end
+  chat.input = nil
 end
 
 -- After a hot reload: the open chats' keys and sessions run the new code.
 function M.rebind()
   for _, chat in pairs(open_chats) do
+    migrate(chat)
     map_keys(chat)
     session.adopt(chat.session)
-    M.wire_composer(chat)
     update_bar(chat)
   end
 end
@@ -1147,7 +1139,7 @@ function M.stop(id)
     open_chats[id] = nil
     chat.session:stop()
     pcall(vim.api.nvim_buf_delete, chat.buf, { force = true })
-    pcall(vim.api.nvim_buf_delete, chat.input, { force = true })
+    pcall(vim.api.nvim_buf_delete, chat.thread, { force = true })
   end
 end
 
@@ -1161,6 +1153,15 @@ look.highlights()
 vim.api.nvim_create_autocmd("ColorScheme", {
   group = vim.api.nvim_create_augroup("icarus_chat_hl", { clear = true }),
   callback = look.highlights,
+})
+-- A window split from a chat's would start with its spinner line.
+vim.api.nvim_create_autocmd("WinNew", {
+  group = vim.api.nvim_create_augroup("icarus_chat_win", { clear = true }),
+  callback = function()
+    if vim.wo.winbar:find("IcarusAcp", 1, true) then
+      vim.wo.winbar = ""
+    end
+  end,
 })
 
 return M

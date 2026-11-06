@@ -5,6 +5,8 @@
 --
 -- Every image is a PNG under stdpath("data")/images. The session reads it into an ACP image block
 -- when the prompt goes, or names the file in the text for an adapter that takes no images.
+local compose = require("icarus.acp.compose")
+
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_acp_images")
@@ -17,7 +19,7 @@ local DIR = vim.fn.stdpath("data") .. "/images"
 ---@field path string
 ---@field mimeType string
 
--- Each composer's images by chip number; kept across a hot reload.
+-- Each composer's images by chip number, a chat's two buffers sharing theirs; kept across a hot reload.
 ---@type table<integer, {images: table<integer, icarus.acp.Image>, next: integer}>
 _G.icarus_acp_images = _G.icarus_acp_images or {}
 local boxes = _G.icarus_acp_images
@@ -127,19 +129,26 @@ end
 
 local function highlight(buf)
   local box = boxes[buf]
+  if not box then
+    return
+  end
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
-  for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  local start = compose.start(buf)
+  for row, line in ipairs(compose.lines(buf)) do
     for from, n, to in line:gmatch("()%[Image #(%d+)%]()") do
       if box.images[tonumber(n)] then
-        vim.api.nvim_buf_set_extmark(buf, NS, row - 1, from - 1, { end_col = to - 1, hl_group = "IcarusAcpImage" })
+        vim.api.nvim_buf_set_extmark(buf, NS, start + row - 1, from - 1, { end_col = to - 1, hl_group = "IcarusAcpImage" })
       end
     end
   end
 end
 
+M.refresh = highlight
+
 -- Attaches the clipboard's image at the cursor, read without blocking. With no image there, <C-v>
 -- is vim's own once it's known, if nothing was typed meanwhile.
-function M.paste_clipboard(buf)
+---@param chat table the chat the composer is on
+function M.paste_clipboard(buf, chat)
   vim.fn.mkdir(DIR, "p")
   local path = DIR .. "/" .. new_name()
   local row, col = unpack(vim.api.nvim_win_get_cursor(0))
@@ -163,14 +172,22 @@ function M.paste_clipboard(buf)
     local n = box.next
     box.images[n], box.next = { path = path, mimeType = "image/png" }, n + 1
     local chip = M.chip(n) .. " "
-    vim.api.nvim_buf_set_text(buf, at[1], at[2], at[1], at[2], { chip })
-    for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    -- The draft moved to the chat's other buffer while the image was read: it goes on the draft's end.
+    local holder = compose.holder(chat)
+    if holder ~= buf then
+      local row = vim.api.nvim_buf_line_count(holder) - 1
+      at = { row, #vim.api.nvim_buf_get_lines(holder, row, row + 1, false)[1] }
+    end
+    compose.edit(holder, function()
+      vim.api.nvim_buf_set_text(holder, at[1], at[2], at[1], at[2], { chip })
+    end)
+    for _, win in ipairs(vim.fn.win_findbuf(holder)) do
       local cursor = vim.api.nvim_win_get_cursor(win)
       if cursor[1] - 1 == at[1] and cursor[2] >= at[2] then
         vim.api.nvim_win_set_cursor(win, { cursor[1], cursor[2] + #chip })
       end
     end
-    highlight(buf)
+    highlight(holder)
   end)
 end
 
@@ -184,23 +201,26 @@ function M.collect(buf, text)
   return renumber(text, box.images)
 end
 
--- Makes buf a composer that takes images. Again (a hot reload's rebind) it maps <C-v> again and
--- keeps what's attached.
-function M.setup(buf)
+-- Makes buf a composer that takes images, sharing the images of the buffer shared with, if any.
+-- Again (a hot reload's rebind) it maps <C-v> again and keeps what's attached.
+---@param chat table the chat it's on
+---@param shared? integer
+function M.setup(buf, chat, shared)
   vim.keymap.set("i", "<C-v>", function()
-    M.paste_clipboard(buf)
+    M.paste_clipboard(buf, chat)
   end, { buffer = buf, desc = "Paste the clipboard's image (else insert a key literally)" })
   if boxes[buf] then
     return
   end
-  local box = { images = {}, next = 1 }
+  local box = shared and boxes[shared] or { images = {}, next = 1 }
   boxes[buf] = box
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
     group = GROUP,
     buffer = buf,
     callback = function()
       -- Emptied (sent, or cleared): the next image is #1 again.
-      if vim.api.nvim_buf_line_count(buf) == 1 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == "" then
+      local lines = compose.lines(buf)
+      if #lines == 1 and lines[1] == "" and compose.holder(chat) == buf then
         box.images, box.next = {}, 1
       end
       highlight(buf)
@@ -213,6 +233,11 @@ function M.setup(buf)
       boxes[buf] = nil
     end,
   })
+end
+
+-- A composer's images, handed to another buffer: a chat from before the composer was in its buffer.
+function M.adopt(from, to)
+  boxes[to] = boxes[from] or boxes[to]
 end
 
 return M

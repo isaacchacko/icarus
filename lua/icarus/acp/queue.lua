@@ -1,4 +1,4 @@
--- A chat's prompt queue, from isovim's: a window under the composer while prompts wait, titled
+-- A chat's prompt queue, from isovim's: a window under the chat while prompts wait, titled
 -- "queued · N", that opens as the first prompt queues and closes when the queue empties. q hides it
 -- until another prompt queues; <leader>q goes to it, opening it even when nothing waits, so you can
 -- add a line.
@@ -209,7 +209,7 @@ local function queue_of(chat)
   return q
 end
 
--- The queue window under the composer of the chat's window cwin, if it has one.
+-- The queue window under the chat's window cwin, if it has one.
 local function under(q, cwin)
   for _, win in ipairs(vim.fn.win_findbuf(q.buf)) do
     if vim.w[win].icarus_queue_of == cwin then
@@ -221,9 +221,8 @@ end
 local function close(win)
   if win == vim.api.nvim_get_current_win() then
     local cwin = vim.w[win].icarus_queue_of
-    local input = cwin and vim.api.nvim_win_is_valid(cwin) and vim.w[cwin].icarus_composer
-    if input and vim.api.nvim_win_is_valid(input) then
-      vim.api.nvim_set_current_win(input)
+    if cwin and vim.api.nvim_win_is_valid(cwin) then
+      vim.api.nvim_set_current_win(cwin)
     end
   end
   pcall(vim.api.nvim_win_close, win, false)
@@ -272,10 +271,10 @@ function M.refresh(chat, force)
   -- A narrow window cuts the help, not the count (%<).
   local bar = ("%%#IcarusAcpSpinnerNote# queued · %d %%<%%#IcarusAcpHint#  %s"):format(count, M.help)
   for _, cwin in ipairs(wins) do
-    local input = vim.w[cwin].icarus_composer
     local win = under(q, cwin)
-    if not win and input and vim.api.nvim_win_is_valid(input) then
-      win = vim.api.nvim_open_win(q.buf, false, { split = "below", win = input, height = 2 })
+    -- A float (zen) can't be split.
+    if not win and vim.api.nvim_win_get_config(cwin).relative == "" then
+      win = vim.api.nvim_open_win(q.buf, false, { split = "below", win = cwin, height = 2 })
       vim.w[win].icarus_queue_of = cwin
       setup_window(win)
     end
