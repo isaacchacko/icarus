@@ -49,9 +49,9 @@ function M.set_view(view)
     layout.last, layout.view = layout.view, view
   end
   remember_view(view)
-  -- Home is the whole screen; every other view has both bars.
-  local bars = view.kind ~= "home"
-  vim.o.laststatus, vim.o.showtabline = bars and 3 or 0, bars and 2 or 0
+  -- Home is the whole screen, and the list needs no status line; every other view has both bars.
+  vim.o.laststatus = (view.kind == "home" or view.kind == "list") and 0 or 3
+  vim.o.showtabline = view.kind == "home" and 0 or 2
   vim.cmd.redrawtabline()
   -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
   -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
