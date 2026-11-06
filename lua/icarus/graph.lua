@@ -371,7 +371,7 @@ function M.open(task)
   end
   state.task = task.slug
   local win = icarus.main()
-  require("icarus.acp.chat").hide_composer(win)
+  require("icarus.acp.chat").leave(win)
   vim.api.nvim_win_set_buf(win, buf())
   for option, value in pairs({ number = false, relativenumber = false, signcolumn = "no", wrap = false, cursorline = false }) do
     vim.wo[win][0][option] = value

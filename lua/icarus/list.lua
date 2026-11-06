@@ -413,7 +413,7 @@ function M.open()
   local icarus = require("icarus")
   local win = icarus.main()
   require("icarus.explorer").close()
-  require("icarus.acp.chat").hide_composer(win)
+  require("icarus.acp.chat").leave(win)
   vim.api.nvim_win_set_buf(win, buf())
   for option, value in pairs({ number = true, relativenumber = true, signcolumn = "no", wrap = false, cursorline = false,
     statuscolumn = "%!v:lua.require'icarus.list'.column()" }) do
