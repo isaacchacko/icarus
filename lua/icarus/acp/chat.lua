@@ -21,6 +21,7 @@
 -- drawn already stays as the old code drew it.
 local images = require("icarus.acp.images")
 local look = require("icarus.acp.look")
+local tables = require("icarus.acp.tables")
 local thread = require("icarus.acp.thread")
 local session = require("icarus.acp.session")
 local chats = require("icarus.chats")
@@ -137,68 +138,17 @@ local function eol_hl(buf, row, col, hl)
     priority = 100 })
 end
 
--- How wide a table may be drawn: the widest window showing the chat, less the message's indent.
-local function table_width(chat)
-  local width = 0
-  for _, win in ipairs(vim.fn.win_findbuf(chat.buf)) do
-    width = math.max(width, vim.api.nvim_win_get_width(win))
-  end
-  return (width > 0 and width or 102) - 2
-end
-
--- Draws the tables in the streaming message whose lines have all come: a table is whole once a line
--- that isn't one of its rows follows it, or the message ends (whole). Runs inside edit.
+-- Draws the tables in the streaming message whose lines have all come. Runs inside edit.
 local function draw_tables(chat, whole)
   local buf = chat.buf
   local last = vim.api.nvim_buf_line_count(buf) - (whole and 1 or 2)
   local row = math.max(chat.table_scan or chat.block_row, chat.block_row)
-  local function prefix(line)
+  chat.table_scan = tables.scan(chat, buf, row, last, whole, function(line)
     return vim.startswith(line, GLYPH.message .. " ") and GLYPH.message .. " " or "  "
-  end
-  while row <= last do
-    local lines = vim.api.nvim_buf_get_lines(buf, row, last + 1, false)
-    local function text(i)
-      local line = lines[i]
-      return line and line:sub(#prefix(line) + 1)
-    end
-    if not look.table_row(text(1)) then
-      row = row + 1
-    elseif not text(2) then
-      break
-    elseif not look.table_alignments(text(2)) then
-      row = row + 1
-    else
-      local n = 3
-      while text(n) and look.table_row(text(n)) do
-        n = n + 1
-      end
-      if not text(n) and not whole then
-        break
-      end
-      local rows = {}
-      for i = 1, n - 1 do
-        rows[i] = text(i)
-      end
-      local drawn, spans = look.table(rows, table_width(chat))
-      local first = prefix(lines[1])
-      for i, line in ipairs(drawn) do
-        drawn[i] = (i == 1 and first or "  ") .. line
-      end
-      vim.api.nvim_buf_clear_namespace(buf, NS, row, row + n - 1)
-      vim.api.nvim_buf_clear_namespace(buf, MD, row, row + n - 1)
-      vim.api.nvim_buf_set_lines(buf, row, row + n - 1, false, drawn)
-      if first ~= "  " then
-        span(buf, row, 0, #GLYPH.message, "IcarusAcpMessage")
-      end
-      for _, s in ipairs(spans) do
-        local lead = #(s[1] == 0 and first or "  ")
-        span(buf, row + s[1], lead + s[2], lead + s[3], s[4], 120)
-      end
-      last = last + #drawn - (n - 1)
-      row = row + #drawn
-    end
-  end
-  chat.table_scan = row
+  end, "  ", function(from, count)
+    vim.api.nvim_buf_clear_namespace(buf, NS, from, from + count)
+    vim.api.nvim_buf_clear_namespace(buf, MD, from, from + count)
+  end)
 end
 
 -- Adds whole lines at the end; returns the first one's row.
@@ -1076,6 +1026,7 @@ function M.show(chat, win)
   vim.wo[input][0].signcolumn = "no"
   M.wire_composer(chat)
   update_bar(chat)
+  tables.fit(chat)
   focus_composer(chat)
 end
 

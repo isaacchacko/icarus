@@ -10,6 +10,8 @@
 -- Claude's transcript of its session, ~/.claude/projects/<its dir>/<session>.jsonl.
 local M = {}
 
+local tables = require("icarus.acp.tables")
+
 local NS = vim.api.nvim_create_namespace("icarus_thread")
 local PROMPT = "❯"
 -- What an agent watching a file answers a diff that needs nothing (icarus.watch).
@@ -109,7 +111,7 @@ function M.buf(chat)
   vim.bo[buf].filetype = "icarus_thread"
   pcall(vim.api.nvim_buf_set_name, buf, "icarus://thread/" .. chat.record.id)
   pcall(vim.treesitter.start, buf, "markdown")
-  chat.thread, chat.thread_block = buf, nil
+  chat.thread, chat.thread_block, chat.thread_scan = buf, nil, nil
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
   chat.thread_fresh = true
   vim.bo[buf].modifiable = false
@@ -204,6 +206,14 @@ function M.prompt(chat, text)
   chat.thread_block = nil
 end
 
+-- Draws the tables in what the agent has said so far. Runs inside edit.
+local function draw_tables(chat, buf, whole)
+  local last = vim.api.nvim_buf_line_count(buf) - (whole and 1 or 2)
+  chat.thread_scan = tables.scan(chat, buf, chat.thread_scan or 0, last, whole, function()
+    return ""
+  end, "")
+end
+
 -- What the agent says, as it streams.
 function M.text(chat, text)
   if chat.thread_block ~= "agent" then
@@ -211,7 +221,7 @@ function M.text(chat, text)
     if text == "" or vim.trim(text) == QUIET then
       return
     end
-    block(chat, { "" })
+    chat.thread_scan = block(chat, { "" })
     chat.thread_block = "agent"
   end
   local parts = vim.split(text, "\n", { plain = true })
@@ -219,6 +229,9 @@ function M.text(chat, text)
     local row = vim.api.nvim_buf_line_count(buf) - 1
     local col = #vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
     vim.api.nvim_buf_set_text(buf, row, col, row, col, parts)
+    if #parts > 1 then
+      draw_tables(chat, buf, false)
+    end
   end)
 end
 
@@ -226,6 +239,9 @@ end
 function M.pause(chat)
   if chat.thread_block == "agent" then
     chat.thread_block = "paused"
+    edit(chat, function(buf)
+      draw_tables(chat, buf, true)
+    end)
   end
 end
 
@@ -254,6 +270,7 @@ function M.sync(chat)
       vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(want), 0 })
     end
   end
+  tables.fit(chat)
 end
 
 -- <leader>d: every chat to its details, or back to its thread.

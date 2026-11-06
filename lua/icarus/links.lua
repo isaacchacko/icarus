@@ -217,7 +217,8 @@ local function label(buf, top, bot)
   vim.api.nvim_buf_clear_namespace(buf, LABELS, top, bot + 1)
   for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, top, bot + 1, false)) do
     row = top + row - 1
-    if line:find("[/%]]") then
+    -- A label in a drawn table's row would push its columns out.
+    if line:find("[/%]]") and not line:find("│", 1, true) then
       for _, link in ipairs(M.find(line)) do
         local from, to, target = link[1] - 1, link[2], link[3]
         local mark, text = describe(target)
