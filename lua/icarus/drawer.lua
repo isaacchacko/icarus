@@ -2,7 +2,9 @@
 -- moves down rather than being covered. The bar keeps icarus's name and the views before and after;
 -- the drawer's line is the view's title: on a task its title, status and what's left of its expected
 -- duration as a bar that drains; on the list which tasks it shows.
--- It's a window across the whole screen, on the bar's background, and it can't be entered.
+-- A window across the whole screen makes the room. It's blank: nvim gives it a separator, and on the
+-- list a status line, that a float can cover and it can't colour, so the float holds the line and
+-- covers both. Neither can be entered.
 local tasks = require("icarus.tasks")
 
 local M = {}
@@ -11,7 +13,7 @@ local REFRESH_MS = 5000
 local CELLS = 16
 local NS = vim.api.nvim_create_namespace("icarus_drawer")
 
--- In _G, so a hot reload keeps it: whether it's open, its window, its timer.
+-- In _G, so a hot reload keeps it: whether it's open, its windows, its timer.
 _G.icarus_drawer = _G.icarus_drawer or {}
 local state = _G.icarus_drawer
 
@@ -82,15 +84,17 @@ end
 -- Closes the window, whatever state.open says.
 function M.close()
   stop()
-  if state.win and vim.api.nvim_win_is_valid(state.win) then
-    vim.api.nvim_win_close(state.win, true)
+  for _, win in pairs({ state.win, state.room }) do
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
   end
-  state.win = nil
+  state.win, state.room = nil, nil
 end
 
 -- Whether it's showing, so the bar leaves the title to it.
 function M.showing()
-  return state.win ~= nil and vim.api.nvim_win_is_valid(state.win)
+  return state.room ~= nil and vim.api.nvim_win_is_valid(state.room)
 end
 
 -- The drawer as it should be for the view on screen. It has to be made after any window that spans
@@ -101,14 +105,19 @@ function M.sync()
     M.close()
   else
     if not M.showing() then
+      local room = vim.api.nvim_create_buf(false, true)
+      vim.bo[room].bufhidden = "wipe"
+      state.room = vim.api.nvim_open_win(room, false, { split = "above", win = -1, height = 1, style = "minimal" })
+      vim.w[state.room].icarus_drawer = true
+      vim.wo[state.room].winfixheight = true
       local buf = vim.api.nvim_create_buf(false, true)
       vim.bo[buf].bufhidden = "wipe"
-      state.win = vim.api.nvim_open_win(buf, false, { split = "above", win = -1, height = 1, style = "minimal" })
+      state.win = vim.api.nvim_open_win(buf, false, { relative = "editor", row = 1, col = 0, width = vim.o.columns, height = 2,
+        style = "minimal", focusable = false, zindex = 10, noautocmd = true })
       vim.w[state.win].icarus_drawer = true
-      vim.wo[state.win].winfixheight = true
-      vim.wo[state.win].fillchars = "horiz: ,horizdown: ,horizup: ,vertleft: ,vertright: ,verthoriz: "
-      vim.wo[state.win].winhighlight = "Normal:IcarusTopBar,NormalNC:IcarusTopBar,EndOfBuffer:IcarusTopBar,WinSeparator:IcarusTopBar"
+      vim.wo[state.win].winhighlight = "NormalFloat:IcarusTopBar"
     end
+    vim.api.nvim_win_set_config(state.win, { relative = "editor", row = 1, col = 0, width = vim.o.columns })
     draw(vim.api.nvim_win_get_buf(state.win), view)
     if not state.timer then
       state.timer = assert(vim.uv.new_timer())
@@ -126,9 +135,13 @@ function M.toggle()
   M.sync()
 end
 
+local group = vim.api.nvim_create_augroup("icarus_drawer", { clear = true })
+vim.api.nvim_create_autocmd("VimResized", { group = group, callback = function()
+  require("icarus.drawer").sync()
+end })
 -- Anything that lands in it (<C-k>, a click) goes back to main.
 vim.api.nvim_create_autocmd("WinEnter", {
-  group = vim.api.nvim_create_augroup("icarus_drawer", { clear = true }),
+  group = group,
   callback = function()
     if vim.w.icarus_drawer then
       vim.schedule(function()
