@@ -15,7 +15,7 @@ _G.icarus_layout = _G.icarus_layout or {}
 local layout = _G.icarus_layout ---@type {current?: string, main?: integer, view?: icarus.View, last?: icarus.View, task_view?: icarus.View, last_task?: icarus.View}
 
 ---@class icarus.View
----@field kind "home"|"task"|"chat"|"graph"|"board" a task's screen, a chat alone, a task's graph, or the board
+---@field kind "home"|"task"|"chat"|"graph"|"list"|"board" a task's screen, a chat alone, a task's graph, or the board
 ---@field task? string the task's slug
 ---@field chat? string the chat's id
 

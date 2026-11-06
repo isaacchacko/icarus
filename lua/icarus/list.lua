@@ -1,8 +1,9 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
--- (p) and today (T) flags, whether an agent on it needs you, and how many links it has. f shows only
+-- (p) and today (T) flags, whether an agent on it needs you, how many links it has, stale when none
+-- of its agents has moved in a day, and overdue when it's past the duration set with e. f shows only
 -- today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
--- outside the list.
+-- outside the list. The home field moves behind the rows.
 --
 -- j and k go between tasks, <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
@@ -14,7 +15,11 @@ local M = {}
 local NAME = "icarus://list"
 local OVERVIEW = "icarus://overview"
 local NS = vim.api.nvim_create_namespace("icarus_list")
+local FIELD_NS = vim.api.nvim_create_namespace("icarus_list_field")
 local UNDO_MAX = 50
+local FIELD_MS = 90
+local STALE_AFTER = 24 * 60 * 60
+local UNITS = { m = 60, h = 60 * 60, d = 24 * 60 * 60 }
 
 -- In _G, so a hot reload keeps the task picked and the undo history.
 _G.icarus_list = _G.icarus_list or { row = 1, undo = {} }
@@ -27,6 +32,7 @@ local function highlights()
   vim.api.nvim_set_hl(0, "IcarusListHeader", { bold = true, default = true })
   vim.api.nvim_set_hl(0, "IcarusListDone", { link = "Comment", default = true })
   vim.api.nvim_set_hl(0, "IcarusListSelected", { link = "CursorLine", default = true })
+  vim.api.nvim_set_hl(0, "IcarusListField", { link = "Comment", default = true })
 end
 highlights()
 
@@ -129,6 +135,13 @@ local function buf()
   vim.api.nvim_create_autocmd("BufWinLeave", { buffer = b, callback = function()
     require("icarus.list").close_overview()
   end })
+  -- Its rows and its field are as wide and as high as the window.
+  vim.api.nvim_create_autocmd("WinResized", { group = vim.api.nvim_create_augroup("icarus_list_size", { clear = true }),
+    callback = vim.schedule_wrap(function()
+      if #vim.fn.win_findbuf(b) > 0 then
+        require("icarus.list").draw()
+      end
+    end) })
   -- An agent's state shows on its task, so the list follows it while it shows.
   vim.api.nvim_create_autocmd("User", { pattern = "IcarusChats",
     group = vim.api.nvim_create_augroup("icarus_list", { clear = true }), callback = vim.schedule_wrap(function()
@@ -150,6 +163,7 @@ local function buf()
   map("p", "toggle_high", "Toggle high priority")
   map("T", "toggle_today", "Toggle today")
   map("f", "toggle_filter", "Show only today's tasks, or all")
+  map("e", "expected", "How long it should take")
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
@@ -183,6 +197,11 @@ function M.cursor_moved()
     return
   end
   local line = vim.api.nvim_win_get_cursor(0)[1]
+  -- Below the rows is only the field.
+  if line > #all and #all > 0 then
+    line = #all
+    vim.api.nvim_win_set_cursor(0, { line, 2 })
+  end
   local row = all[line]
   if row and row.header then
     for i = line, #all do
@@ -199,14 +218,94 @@ function M.cursor_moved()
   M.draw_overview()
 end
 
+-- The seconds since any agent on the task last wrote to its transcript, nil if none has.
+local function idle_for(task)
+  local chats = require("icarus.chats")
+  local base = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude")
+  local latest
+  for _, record in ipairs(chats.on_task(task.slug)) do
+    if record.session then
+      local path = ("%s/projects/%s/%s.jsonl"):format(base, (record.cwd:gsub("[^%w]", "-")), record.session)
+      local stat = vim.uv.fs_stat(path)
+      latest = stat and math.max(latest or 0, stat.mtime.sec) or latest
+    end
+  end
+  return latest and os.time() - latest
+end
+
+-- The seconds in a duration like 90m, 4h or 2d, nil if it isn't one.
+local function seconds(duration)
+  local n, unit = tostring(duration):match("^%s*(%d+)%s*([mhd])%s*$")
+  return n and tonumber(n) * UNITS[unit]
+end
+
+-- Whether the task is past the duration set on it, counted from when it was made.
+local function overdue(task)
+  local want = seconds(task.attrs.expected)
+  local y, mo, d, h, mi, sec = tostring(task.created):match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+  if not (want and y) then
+    return false
+  end
+  return os.time() - os.time({ year = y, month = mo, day = d, hour = h, min = mi, sec = sec }) > want
+end
+
 -- What a task's row shows after its title.
 local function flags(task)
   local chats = require("icarus.chats")
   local needs = vim.iter(chats.on_task(task.slug)):any(function(record)
     return chats.status(record.id) == "needs you"
   end)
+  local live = task.status ~= "merged"
+  local idle = live and idle_for(task)
   return (task.high and "  !" or "") .. (needs and "  ◆ needs you" or "") .. (task.today and "  today" or "")
+    .. (live and overdue(task) and "  overdue" or "") .. (idle and idle > STALE_AFTER and "  stale" or "")
     .. (#task.links > 0 and ("  ↗ %d"):format(#task.links) or "")
+end
+
+-- The home field behind the list, in each line from just past its text to the window's edge, so it
+-- never breaks up a row.
+local function paint_field(b, win)
+  local info = vim.fn.getwininfo(win)[1]
+  local cols, height = info.width - info.textoff, info.height
+  vim.api.nvim_buf_clear_namespace(b, FIELD_NS, 0, -1)
+  local field = require("icarus.landing").render(cols, height, state.field_frame or 0)
+  for r, line in ipairs(vim.api.nvim_buf_get_lines(b, 0, height, false)) do
+    local text = line:gsub("%s+$", "")
+    local from = text == "" and 0 or vim.fn.strdisplaywidth(text) + 2
+    local chars = vim.fn.split(field[r] or "", "\\zs")
+    if from < cols and #chars > from then
+      vim.api.nvim_buf_set_extmark(b, FIELD_NS, r - 1, #text == 0 and 0 or math.min(#line, #text + 2), {
+        virt_text = { { table.concat(chars, "", from + 1, math.min(#chars, cols)), "IcarusListField" } },
+        virt_text_pos = "overlay", hl_mode = "combine" })
+    end
+  end
+end
+
+local function stop_field()
+  if state.field_timer then
+    state.field_timer:stop()
+    state.field_timer:close()
+    state.field_timer = nil
+  end
+end
+
+-- Each field frame while the list shows; it stops itself once it doesn't.
+function M.field_tick()
+  local b = state.field_buf
+  local win = b and vim.api.nvim_buf_is_valid(b) and vim.fn.win_findbuf(b)[1]
+  if not win then
+    return stop_field()
+  end
+  state.field_frame = (state.field_frame or 0) + 1
+  paint_field(b, win)
+end
+
+-- The list's own number column, blank on the lines below the rows.
+function M.column()
+  if vim.v.lnum > #(cached or {}) then
+    return ""
+  end
+  return "%=" .. (vim.v.relnum == 0 and vim.v.lnum or vim.v.relnum) .. " "
 end
 
 -- Draws the list into its buffer, the picked task highlighted.
@@ -225,18 +324,38 @@ function M.draw()
   if #lines == 0 then
     lines[1] = "  no tasks yet: n makes one"
   end
+  -- Blank to the window's edges, so the field covers all of it.
+  local win = vim.fn.win_findbuf(b)[1]
+  if win then
+    local info = vim.fn.getwininfo(win)[1]
+    for i, line in ipairs(lines) do
+      lines[i] = line .. (" "):rep(math.max(0, info.width - info.textoff - vim.fn.strdisplaywidth(line)))
+    end
+    while #lines < info.height do
+      lines[#lines + 1] = (" "):rep(info.width - info.textoff)
+    end
+  end
   vim.bo[b].modifiable = true
   vim.api.nvim_buf_set_lines(b, 0, -1, false, lines)
   vim.bo[b].modifiable = false
   cached = all
   paint(b, all, picking)
-  local win = vim.fn.win_findbuf(b)[1]
   for i, row in ipairs(all) do
     if picking and row.task == picking and win then
       pcall(vim.api.nvim_win_set_cursor, win, { i, 2 })
     end
   end
   M.draw_overview()
+  if win then
+    state.field_buf = b
+    paint_field(b, win)
+    if not state.field_timer then
+      state.field_timer = assert(vim.uv.new_timer())
+      state.field_timer:start(FIELD_MS, FIELD_MS, vim.schedule_wrap(function()
+        require("icarus.list").field_tick()
+      end))
+    end
+  end
 end
 
 -- <leader>m: the list, the whole screen, in the window the chat shows in.
@@ -246,7 +365,8 @@ function M.open()
   require("icarus.explorer").close()
   require("icarus.acp.chat").hide_composer(win)
   vim.api.nvim_win_set_buf(win, buf())
-  for option, value in pairs({ number = true, relativenumber = true, signcolumn = "no", wrap = false, cursorline = false }) do
+  for option, value in pairs({ number = true, relativenumber = true, signcolumn = "no", wrap = false, cursorline = false,
+    statuscolumn = "%!v:lua.require'icarus.list'.column()" }) do
     vim.wo[win][0][option] = value
   end
   vim.api.nvim_set_current_win(win)
@@ -331,6 +451,29 @@ function M.toggle_today()
     remember(("today of %s"):format(task.title), function()
       tasks.set(tasks.read(task.slug) or task, { today = before })
     end)
+  end)
+end
+
+-- e: how long the task should take, like 90m, 4h or 2d, counted from when it was made. Empty clears it.
+function M.expected()
+  local task = picked(rows())
+  if not task then
+    return
+  end
+  vim.ui.input({ prompt = "Expected duration (90m, 4h, 2d): ", default = task.attrs.expected }, function(text)
+    if text == nil then
+      return
+    end
+    text = vim.trim(text)
+    if text ~= "" and not seconds(text) then
+      return vim.notify("Not a duration: " .. text .. ". Try 90m, 4h or 2d", vim.log.levels.WARN)
+    end
+    local before = task.attrs.expected or ""
+    tasks.set(task, { expected = text })
+    remember(("expected duration of %s"):format(task.title), function()
+      tasks.set(tasks.read(task.slug) or task, { expected = before })
+    end)
+    M.draw()
   end)
 end
 

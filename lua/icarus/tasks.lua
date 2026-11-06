@@ -229,6 +229,9 @@ local function merge(slug, stored, edited)
       attrs[flag] = nil
     end
   end
+  if attrs.expected == "" then
+    attrs.expected = nil
+  end
   if type(attrs.links) == "string" and attrs.links ~= "" then
     attrs.links = { attrs.links }
   elseif type(attrs.links) ~= "table" then
