@@ -104,6 +104,8 @@ local function remember(label, undo)
   end
 end
 
+-- The list's buffer, made once. Its keys and autocmds are set on every call, so a buffer made by an
+-- older version of this module (a running icarus, after a hot reload) gets the current ones too.
 local function buf()
   local b
   for _, each in ipairs(vim.api.nvim_list_bufs()) do
@@ -111,13 +113,13 @@ local function buf()
       b = each
     end
   end
-  if b then
-    return b
+  if not b then
+    b = vim.api.nvim_create_buf(false, true)
+    vim.bo[b].filetype = "icarus_list"
+    vim.bo[b].modifiable = false
+    vim.api.nvim_buf_set_name(b, NAME)
   end
-  b = vim.api.nvim_create_buf(false, true)
-  vim.bo[b].filetype = "icarus_list"
-  vim.bo[b].modifiable = false
-  vim.api.nvim_buf_set_name(b, NAME)
+  vim.api.nvim_clear_autocmds({ buffer = b, event = "CursorMoved" })
   vim.api.nvim_create_autocmd("CursorMoved", { buffer = b, callback = function()
     require("icarus.list").cursor_moved()
   end })
