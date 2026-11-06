@@ -334,6 +334,7 @@ function M.delete_task(task)
   end
   local to = require("icarus.tasks").delete(task)
   vim.notify(("Deleted %s; its folder is in %s"):format(task.title, vim.fn.fnamemodify(to, ":~")))
+  return to
 end
 
 -- Cancels the task, or puts a cancelled one back to spec.
@@ -350,8 +351,8 @@ function M.pick_task()
   local tasks = require("icarus.tasks")
   local function on_task(fn)
     return function(picker, item)
-      if not item or item.task.sentinel then
-        return vim.notify("(no task) can't be cancelled or deleted", vim.log.levels.WARN)
+      if not item or item.task.sentinel or item.task.pinned then
+        return vim.notify(("%s can't be cancelled or deleted"):format(item and item.task.title or "(no task)"), vim.log.levels.WARN)
       end
       fn(picker, item.task)
     end

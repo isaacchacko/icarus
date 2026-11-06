@@ -1,7 +1,8 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
--- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task has a high priority flag
--- (p) and a today flag (T). Cancelled tasks are soft deleted, so they aren't listed; the pinned task
--- lives outside the list.
+-- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
+-- (p) and today (T) flags, whether an agent on it needs you, and how many links it has. f shows only
+-- today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
+-- outside the list.
 --
 -- j and k go between tasks, <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
@@ -44,7 +45,7 @@ local function by_status()
     by[status] = {}
   end
   for _, task in ipairs(tasks.recent()) do
-    if not task.sentinel and not task.pinned and by[task.status] then
+    if not task.sentinel and not task.pinned and by[task.status] and (task.today or not state.today_only) then
       table.insert(by[task.status], task)
     end
   end
@@ -123,6 +124,13 @@ local function buf()
   vim.api.nvim_create_autocmd("CursorMoved", { buffer = b, callback = function()
     require("icarus.list").cursor_moved()
   end })
+  -- An agent's state shows on its task, so the list follows it while it shows.
+  vim.api.nvim_create_autocmd("User", { pattern = "IcarusChats",
+    group = vim.api.nvim_create_augroup("icarus_list", { clear = true }), callback = vim.schedule_wrap(function()
+      if #vim.fn.win_findbuf(b) > 0 then
+        require("icarus.list").draw()
+      end
+    end) })
   local function map(lhs, fn, desc)
     vim.keymap.set("n", lhs, function()
       require("icarus.list")[fn]()
@@ -136,6 +144,7 @@ local function buf()
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
   map("T", "toggle_today", "Toggle today")
+  map("f", "toggle_filter", "Show only today's tasks, or all")
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
@@ -185,6 +194,16 @@ function M.cursor_moved()
   M.draw_overview()
 end
 
+-- What a task's row shows after its title.
+local function flags(task)
+  local chats = require("icarus.chats")
+  local needs = vim.iter(chats.on_task(task.slug)):any(function(record)
+    return chats.status(record.id) == "needs you"
+  end)
+  return (task.high and "  !" or "") .. (needs and "  ◆ needs you" or "") .. (task.today and "  today" or "")
+    .. (#task.links > 0 and ("  ↗ %d"):format(#task.links) or "")
+end
+
 -- Draws the list into its buffer, the picked task highlighted.
 function M.draw()
   local b = buf()
@@ -195,9 +214,7 @@ function M.draw()
     if row.header then
       lines[#lines + 1] = ("%s %s  %d"):format(tasks.GLYPHS[row.header], tasks.LABELS[row.header], row.count)
     else
-      local task = row.task
-      local flags = (task.high and "  !" or "") .. (task.today and "  today" or "")
-      lines[#lines + 1] = ("  %s %s%s"):format(tasks.GLYPHS[task.status] or "", task.title, flags)
+      lines[#lines + 1] = ("  %s %s%s"):format(tasks.GLYPHS[row.task.status] or "", row.task.title, flags(row.task))
     end
   end
   if #lines == 0 then
@@ -269,17 +286,25 @@ function M.new()
   require("icarus").new_task()
 end
 
+-- Deletes through icarus, so the task's agents stop with it. Its folder goes to trash, and u puts it back.
 function M.delete()
   local task = picked(rows())
   if not task then
     return
   end
   local answer = vim.fn.confirm(("Delete %s? Its folder goes to trash."):format(task.title), "&Delete\n&Cancel", 2)
-  if answer == 1 then
-    local trashed = tasks.delete(task)
-    remember("delete " .. task.title, function()
-      vim.uv.fs_rename(trashed, task.dir)
-    end)
+  if answer ~= 1 then
+    return
+  end
+  local icarus = require("icarus")
+  local trashed = icarus.delete_task(tasks.read(task.slug) or task)
+  remember("delete " .. task.title, function()
+    assert(vim.uv.fs_rename(trashed, task.dir))
+  end)
+  -- Deleting the task the chat showing was on goes home; the list stays.
+  if (icarus.view() or {}).kind ~= "list" then
+    M.open()
+  else
     M.draw()
   end
 end
@@ -304,27 +329,32 @@ function M.toggle_today()
   end)
 end
 
--- s: picks the task's status from the list's statuses, with the one it has marked.
+function M.toggle_filter()
+  state.today_only = not state.today_only or nil
+  M.draw()
+end
+
+-- s: picks the task's status from the list's statuses, the one it has marked.
 function M.status()
-  change(function(task)
-    local order = shown()
-    vim.ui.select(vim.tbl_map(function(status)
-      return tasks.LABELS[status]
-    end, order), { prompt = "Status of " .. task.title }, function(_, index)
-      local to = index and order[index]
-      if to and to ~= task.status then
-        local from = task.status
-        tasks.set_status(task, to)
-        remember(("status of %s to %s"):format(task.title, tasks.LABELS[from]), function()
-          local now = tasks.read(task.slug)
-          if now then
-            tasks.set_status(now, from)
-          end
-        end)
-        pick(task)
-        M.draw()
+  local task = picked(rows())
+  if not task then
+    return
+  end
+  vim.ui.select(shown(), { prompt = "Status of " .. task.title, format_item = function(status)
+    return (status == task.status and "● " or "  ") .. tasks.LABELS[status]
+  end }, function(to)
+    if not to or to == task.status then
+      return
+    end
+    local from = task.status
+    tasks.set_status(task, to)
+    remember(("status of %s"):format(task.title), function()
+      local now = tasks.read(task.slug)
+      if now then
+        tasks.set_status(now, from)
       end
     end)
+    M.draw()
   end)
 end
 

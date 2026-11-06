@@ -1043,6 +1043,19 @@ function M.reassign(from, to)
 end
 
 -- The agent chat_id stops watching whatever it watches.
+-- The agent's turn ended with nothing queued: a comment it answered with a proposal, or not at all,
+-- stops waiting, so its spinner and the timer behind it don't run forever.
+function M.turn_ended(chat_id)
+  for buf, items in pairs(comments) do
+    for _, item in ipairs(items) do
+      if item.pending and item.chat == chat_id and vim.api.nvim_buf_is_valid(buf) then
+        item.pending = nil
+        draw(buf, item)
+      end
+    end
+  end
+end
+
 function M.release(chat_id)
   for buf, watch in pairs(watched) do
     if watch.chat == chat_id then

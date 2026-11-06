@@ -690,6 +690,9 @@ local function on_turn(chat, state, result)
       span(chat.buf, row, 0, #vim.api.nvim_buf_get_lines(chat.buf, row, row + 1, false)[1], "IcarusAcpTurnDone")
     end
     chat.since = nil
+    if #chat.session.queue == 0 then
+      require("icarus.watch").turn_ended(chat.record.id)
+    end
   end
   update_status(chat)
   update_bar(chat)
