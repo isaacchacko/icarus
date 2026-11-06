@@ -1,11 +1,11 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
--- (p) and today (T) flags, whether an agent on it needs you, how many links it has, stale when none
--- of its agents has moved in a day, and overdue when it's past the duration set with e. f shows only
--- today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
+-- (p) and today (<leader>t) flags, whether an agent on it needs you, how many links it has, stale when none
+-- of its agents has moved in a day, and overdue when it's past the duration set with <leader>e.
+-- <leader>T shows only today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
 -- outside the list. The home field moves behind the rows.
 --
--- j and k go between tasks, <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
+-- Every motion is vim's own, counts included, and the task under the cursor is the one picked. <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
 -- overview on the right: links, status, agents, history.
 local tasks = require("icarus.tasks")
@@ -169,21 +169,23 @@ local function buf()
         require("icarus.list").draw()
       end
     end) })
+  -- Keys this list used to take from vim, on a buffer an older version made.
+  for _, lhs in ipairs({ "j", "k", "f", "e", "T" }) do
+    pcall(vim.keymap.del, "n", lhs, { buffer = b })
+  end
   local function map(lhs, fn, desc)
     vim.keymap.set("n", lhs, function()
       require("icarus.list")[fn]()
     end, { buffer = b, nowait = true, desc = desc })
   end
-  map("j", "move_down", "Task below")
-  map("k", "move_up", "Task above")
   map("<CR>", "enter", "Open the task")
   map("<Tab>", "overview", "The overview on the right")
   map("n", "new", "New task")
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
-  map("T", "toggle_today", "Toggle today")
-  map("f", "toggle_filter", "Show only today's tasks, or all")
-  map("e", "expected", "How long it should take")
+  map("<leader>t", "toggle_today", "Toggle today")
+  map("<leader>T", "toggle_filter", "Show only today's tasks, or all")
+  map("<leader>e", "expected", "How long it should take")
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
@@ -215,7 +217,7 @@ local function paint(b, all, picking)
 end
 
 -- The cursor moved, by any motion (Ctrl-D and Ctrl-U too): the task under it is the one picked, and
--- on a header the task below it. Only the highlight and the overview are drawn again, so the cursor
+-- on a header the nearest one. Only the highlight and the overview are drawn again, so the cursor
 -- stays where it is.
 function M.cursor_moved()
   local all = cached
@@ -229,18 +231,20 @@ function M.cursor_moved()
     vim.api.nvim_win_set_cursor(0, { line, 2 })
   end
   local row = all[line]
+  -- On a header, the nearest task: below it, or above it for a status with none after it.
   if row and row.header then
-    for i = line, #all do
-      if all[i].task then
-        row = all[i]
-        break
+    for _, range in ipairs({ { line, #all, 1 }, { line, 1, -1 } }) do
+      for i = range[1], range[2], range[3] do
+        if row.header and all[i].task then
+          row = all[i]
+        end
       end
     end
   end
   if row and row.task then
     pick(row.task)
   end
-  paint(buf(), all, picked(all))
+  paint(vim.api.nvim_get_current_buf(), all, picked(all))
   M.draw_overview()
 end
 
@@ -382,9 +386,13 @@ function M.draw()
   vim.bo[b].modifiable = false
   cached = all
   paint(b, all, picking)
+  -- The cursor follows the picked task if it moved, and otherwise stays exactly where it is.
+  local cursor = win and vim.api.nvim_win_get_cursor(win)
+  local under = cursor and all[cursor[1]]
+  local on_it = under and (under.header or under.task == picking)
   for i, row in ipairs(all) do
-    if picking and row.task == picking and win then
-      pcall(vim.api.nvim_win_set_cursor, win, { i, 2 })
+    if picking and row.task == picking and win and not on_it then
+      pcall(vim.api.nvim_win_set_cursor, win, { i, cursor[2] })
     end
   end
   M.draw_overview()
@@ -417,14 +425,6 @@ function M.open()
   M.draw()
 end
 
-local function move(step)
-  local all = rows()
-  local at = task_rows(all)
-  state.row = math.max(1, math.min(#at, state.row + step))
-  pick(all[at[state.row]] and all[at[state.row]].task)
-  M.draw()
-end
-
 -- Changes the picked task, then draws the list again.
 local function change(fn)
   local task = picked(rows())
@@ -432,14 +432,6 @@ local function change(fn)
     fn(task)
     M.draw()
   end
-end
-
-function M.move_down()
-  move(1)
-end
-
-function M.move_up()
-  move(-1)
 end
 
 function M.enter()
