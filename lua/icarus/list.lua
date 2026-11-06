@@ -124,6 +124,11 @@ local function buf()
   vim.api.nvim_create_autocmd("CursorMoved", { buffer = b, callback = function()
     require("icarus.list").cursor_moved()
   end })
+  -- The overview belongs to the list, so it goes when the list does.
+  vim.api.nvim_clear_autocmds({ buffer = b, event = "BufWinLeave" })
+  vim.api.nvim_create_autocmd("BufWinLeave", { buffer = b, callback = function()
+    require("icarus.list").close_overview()
+  end })
   -- An agent's state shows on its task, so the list follows it while it shows.
   vim.api.nvim_create_autocmd("User", { pattern = "IcarusChats",
     group = vim.api.nvim_create_augroup("icarus_list", { clear = true }), callback = vim.schedule_wrap(function()
@@ -425,12 +430,20 @@ function M.draw_overview()
   vim.bo[b].modifiable = false
 end
 
-function M.overview()
+function M.close_overview()
   local win = overview_win()
   if win then
-    return vim.api.nvim_win_close(win, true)
+    vim.api.nvim_win_close(win, true)
   end
+end
+
+function M.overview()
+  if overview_win() then
+    return M.close_overview()
+  end
+  -- Closing its window wipes the buffer, so the name is free when it opens again.
   local b = vim.api.nvim_create_buf(false, true)
+  vim.bo[b].bufhidden = "wipe"
   vim.bo[b].filetype = "markdown"
   vim.bo[b].modifiable = false
   vim.api.nvim_buf_set_name(b, OVERVIEW)
