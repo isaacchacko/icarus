@@ -123,7 +123,65 @@ local function tickets(pr)
   return found
 end
 
+-- A PR link's state, seen by any lookup: {state, draft, at}. In _G, so a hot reload keeps them.
+_G.icarus_pr_states = _G.icarus_pr_states or {}
+local states = _G.icarus_pr_states
+local GLYPHS = {
+  OPEN = { "\u{f407}", "IcarusPrOpen" },
+  DRAFT = { "\u{f4dd}", "IcarusPrDraft" },
+  MERGED = { "\u{f419}", "IcarusPrMerged" },
+  CLOSED = { "\u{f4dc}", "IcarusPrClosed" },
+}
+local MAX_LOOKUPS = 4
+local looking, waiting = 0, {}
+
+vim.api.nvim_set_hl(0, "IcarusPrOpen", { fg = "#98c379", default = true })
+vim.api.nvim_set_hl(0, "IcarusPrDraft", { fg = "#7f848e", default = true })
+vim.api.nvim_set_hl(0, "IcarusPrMerged", { fg = "#c678dd", default = true })
+vim.api.nvim_set_hl(0, "IcarusPrClosed", { fg = "#e06c75", default = true })
+
+local function remember(url, state, draft)
+  states[url] = { state = state, draft = draft, at = os.time() }
+end
+
+local function look_up()
+  while looking < MAX_LOOKUPS and #waiting > 0 do
+    local url = table.remove(waiting, 1)
+    looking = looking + 1
+    vim.system({ "gh", "pr", "view", url, "--json", "state,isDraft" }, { text = true, timeout = 30000 }, vim.schedule_wrap(function(result)
+      looking = looking - 1
+      local ok, pr = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
+      if ok and type(pr) == "table" and pr.state then
+        remember(url, pr.state, pr.isDraft)
+        require("icarus.links").relabel_all()
+      end
+      look_up()
+    end))
+  end
+end
+
+-- What a PR link starts with, {glyph, group}: its state's, or open's dimmed until it's known. Looks
+-- up one it doesn't know, or an open one gone stale, and the labels are drawn again when it's in.
+function M.glyph(url)
+  url = url:match("^https://github%.com/[^/]+/[^/]+/pull/%d+") or url
+  local known = states[url]
+  local final = known and (known.state == "MERGED" or known.state == "CLOSED")
+  if not final and (not known or os.time() - known.at >= FRESH) then
+    -- Asked once a while, found or not, as drawing asks often.
+    known = known or { at = 0 }
+    known.at = os.time()
+    states[url] = known
+    waiting[#waiting + 1] = url
+    look_up()
+  end
+  if not known.state then
+    return { GLYPHS.OPEN[1], "IcarusLinkMark" }
+  end
+  return GLYPHS[known.state == "OPEN" and known.draft and "DRAFT" or known.state] or GLYPHS.OPEN
+end
+
 local function shape(pr)
+  remember(pr.url, pr.state, pr.isDraft)
   return { number = pr.number, title = pr.title, url = pr.url, state = pr.state, draft = pr.isDraft,
     review = pr.reviewDecision ~= vim.NIL and pr.reviewDecision or "", checks = checks(pr.statusCheckRollup),
     branch = pr.headRefName, tickets = tickets(pr) }

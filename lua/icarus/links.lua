@@ -157,7 +157,7 @@ end
 
 -- How links look. In a file you edit (a buffer with a file), as typed, coloured and underlined. In
 -- what icarus draws (chats, threads, the PRs, floats: buffers without a file), rendered: a bare link
--- hidden behind a label (a PR as "⇄ app#123", a ticket as "◆ ABC-123", a task or an agent by its
+-- hidden behind a label (a PR as its state's glyph and "app#123", a ticket as "◆ ABC-123", a task or an agent by its
 -- title, a file by its short path, any other page by its site), and a markdown link as its text
 -- after the same mark. Labels are extmarks put on the lines in view after each redraw that finds
 -- them stale (inline text can't be drawn as it's drawn), so they follow the text as it streams.
@@ -169,11 +169,14 @@ local function short(text, n)
   return vim.fn.strchars(text) > n and vim.fn.strcharpart(text, 0, n - 1) .. "…" or text
 end
 
--- A link's mark and label: what it is, briefly.
+-- A link's mark and label: what it is, briefly, and the mark's group if it has its own (a PR's state).
 local function describe(target)
   local repo, kind, n = target:match("^https://github%.com/[%w%-%._]+/([%w%-%._]+)/(%a+)/(%d+)")
-  if repo and (kind == "pull" or kind == "issues") then
-    return kind == "pull" and "⇄" or "◇", ("%s#%s"):format(repo, n)
+  if repo and kind == "pull" then
+    local glyph = require("icarus.prs").glyph(target)
+    return glyph[1], ("%s#%s"):format(repo, n), glyph[2]
+  elseif repo and kind == "issues" then
+    return "◇", ("%s#%s"):format(repo, n)
   end
   local ticket = target:match("^https://linear%.app/[%w%-]+/issue/(%w+%-%d+)")
   if ticket then
@@ -221,12 +224,13 @@ local function label(buf, top, bot)
     if line:find("[/%]]") and not line:find("│", 1, true) then
       for _, link in ipairs(M.find(line)) do
         local from, to, target = link[1] - 1, link[2], link[3]
-        local mark, text = describe(target)
+        local mark, text, mark_hl = describe(target)
+        mark_hl = mark_hl or "IcarusLinkMark"
         local md_text_end = line:sub(from + 1, to):match("^%[(.-)%]%(") and (from + 1 + #line:sub(from + 1, to):match("^%[(.-)%]%("))
         if md_text_end then
           -- [text](target): "[" and "](target)" hidden, the mark before the text.
           vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { end_col = from + 1, conceal = "" })
-          vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { virt_text = { { mark .. " ", "IcarusLinkMark" } },
+          vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { virt_text = { { mark .. " ", mark_hl } },
             virt_text_pos = "inline" })
           vim.api.nvim_buf_set_extmark(buf, LABELS, row, from + 1, { end_col = md_text_end, hl_group = group(target) })
           vim.api.nvim_buf_set_extmark(buf, LABELS, row, md_text_end, { end_col = to, conceal = "" })
@@ -235,7 +239,7 @@ local function label(buf, top, bot)
           local lit = package.loaded["icarus.link_cursor"] and package.loaded["icarus.link_cursor"].lit()
           local hover = lit and lit.buf == buf and lit.row == row and lit.from == from
           vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { end_col = to, conceal = "" })
-          vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { virt_text = { { mark .. " ", "IcarusLinkMark" },
+          vim.api.nvim_buf_set_extmark(buf, LABELS, row, from, { virt_text = { { mark .. " ", mark_hl },
             { text, hover and "IcarusLinkHover" or group(target) } }, virt_text_pos = "inline" })
         end
       end
@@ -249,6 +253,12 @@ local labelled = {}
 -- Labels buf again on its next redraw (the link under the cursor changed).
 function M.relabel(buf)
   labelled[buf] = nil
+end
+
+-- Every buffer's labels drawn again: what they say has changed.
+function M.relabel_all()
+  labelled = {}
+  vim.cmd.redraw({ bang = true })
 end
 
 vim.api.nvim_set_decoration_provider(NS, {
