@@ -38,6 +38,7 @@ local M = {}
 local NS = vim.api.nvim_create_namespace("icarus_watch")
 local EVERY = 5000
 local READ_EVERY = 60000
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local EDITS = vim.fn.expand("~/.icarus/edits")
 local STORE = vim.fn.stdpath("data") .. "/comments"
 
@@ -164,8 +165,9 @@ local function draw(buf, item)
   end
   local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
   local opts = { id = item.mark, end_row = row, end_col = #line,
-    hl_group = item.who == "you" and "IcarusCommentYou" or "IcarusComment",
-    virt_text = { { item.pending and ("  %s is %s…"):format(short_name(item.chat), item.pending) or ("  ▸ za %s%s"):format(
+    hl_group = item.fresh and "IcarusAskedPulse" or item.who == "you" and "IcarusCommentYou" or "IcarusComment",
+    virt_text = { { item.pending and ("  %s is %s %s"):format(short_name(item.chat), item.pending, SPINNER[(state.spin or 0) % #SPINNER + 1])
+      or ("  ▸ za %s%s"):format(
       item.who == "you" and "you" or short_name(item.chat), item.thread and #item.thread > 1 and (" · " .. #item.thread) or ""),
       "IcarusCommentHint" } }, virt_text_pos = "eol", invalidate = false }
   item.mark = vim.api.nvim_buf_set_extmark(buf, NS, row, 0, opts)
@@ -222,11 +224,19 @@ local function req_range(r)
   end
 end
 
--- While the agent works on a request its highlight breathes between the background and blue.
+-- While the agent works on a request, or has a comment's reply not yet read, its highlight breathes
+-- between the background and blue.
 local function any_pending()
   for _, r in pairs(reqs) do
     if r.pending then
       return true
+    end
+  end
+  for _, items in pairs(comments) do
+    for _, item in ipairs(items) do
+      if item.pending or item.fresh then
+        return true
+      end
     end
   end
 end
@@ -250,9 +260,18 @@ function M.pulse_tick()
     return
   end
   state.phase = (state.phase or 0) + 1
+  state.spin = (state.spin or 0) + 1
   local t = (1 - math.cos(state.phase * math.pi / 10)) / 2
   local bg = vim.api.nvim_get_hl(0, { name = "Normal" }).bg or 0x1e1e1e
   vim.api.nvim_set_hl(0, "IcarusAskedPulse", { bg = blend(bg, T.pulse, 0.15 + 0.85 * t) })
+  -- The comments that are waiting or pulsing are drawn again, so their spinner and pulse move.
+  for buf, items in pairs(comments) do
+    for _, item in ipairs(items) do
+      if (item.pending or item.fresh) and vim.api.nvim_buf_is_valid(buf) then
+        draw(buf, item)
+      end
+    end
+  end
 end
 
 local function start_pulse()
@@ -628,6 +647,10 @@ function M.peek()
     return false
   end
   item.buf = buf
+  if item.fresh then
+    item.fresh = nil
+    draw(buf, item)
+  end
   local lines, marks = {}, {}
   for i, entry in ipairs(M.thread(item)) do
     if i > 1 then
@@ -692,6 +715,7 @@ local function tell(item, opening)
     vim.fn.strcharpart(last, 0, 60)))
   item.pending = "replying"
   draw(buf, item)
+  start_pulse()
 end
 
 -- <leader>c on a line with nothing on it, in a watched file: a comment of yours there.
@@ -723,6 +747,7 @@ function M.reply_comment(item)
     end
     item.thread = M.thread(item)
     table.insert(item.thread, { who = "you", text = text })
+    item.fresh = nil
     draw(item.buf, item)
     save(item.buf)
     tell(item, false)
@@ -1310,7 +1335,9 @@ function M.remote(cmd, args)
         item.thread = M.thread(item)
         table.insert(item.thread, { who = "claude", chat = args.chat, text = args.text })
         item.pending = nil
+        item.fresh = true
         draw(buf, item)
+        start_pulse()
         save(buf)
         return true, "", true
       end
