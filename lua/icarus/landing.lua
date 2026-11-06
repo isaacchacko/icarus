@@ -245,4 +245,7 @@ function M.draw(tick)
   end
 end
 
+-- The field for any window: rows of braille, cols wide, at frame f. The board draws it behind its cards.
+M.render = render
+
 return M

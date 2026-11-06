@@ -15,6 +15,8 @@ local M = {}
 local NAME = "icarus://board"
 local NS = vim.api.nvim_create_namespace("icarus_board")
 local REFRESH_MS = 1000
+local FIELD_MS = 90
+local FIELD_NS = vim.api.nvim_create_namespace("icarus_board_field")
 local CARD_LINES = 5
 local GAP = 2
 
@@ -28,6 +30,7 @@ local function highlights()
   vim.api.nvim_set_hl(0, "IcarusBoardCard", { link = "FloatBorder", default = true })
   vim.api.nvim_set_hl(0, "IcarusBoardSelected", { link = "DiagnosticInfo", default = true })
   vim.api.nvim_set_hl(0, "IcarusBoardDone", { link = "Comment", default = true })
+  vim.api.nvim_set_hl(0, "IcarusBoardField", { link = "Comment", default = true })
 end
 highlights()
 
@@ -122,10 +125,12 @@ local function buf()
 end
 
 local function stop()
-  if state.timer then
-    state.timer:stop()
-    state.timer:close()
-    state.timer = nil
+  for _, name in ipairs({ "timer", "field_timer" }) do
+    if state[name] then
+      state[name]:stop()
+      state[name]:close()
+      state[name] = nil
+    end
   end
 end
 
@@ -139,12 +144,57 @@ local function picked()
   return col[state.row]
 end
 
+-- The home field behind the board: its braille in the blank cells of every line, never over text,
+-- so the headers and cards stay on top.
+local function paint_field(b, win)
+  local width, height = vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win)
+  local field = {}
+  for r, line in ipairs(require("icarus.landing").render(width, height, state.field_frame or 0)) do
+    field[r] = vim.fn.split(line, "\\zs")
+  end
+  vim.api.nvim_buf_clear_namespace(b, FIELD_NS, 0, -1)
+  for r, line in ipairs(vim.api.nvim_buf_get_lines(b, 0, -1, false)) do
+    local starts = vim.str_utf_pos(line)
+    local x, start, text = 0, nil, {}
+    local function close()
+      if start then
+        vim.api.nvim_buf_set_extmark(b, FIELD_NS, r - 1, start, { virt_text = { { table.concat(text), "IcarusBoardField" } },
+          virt_text_pos = "overlay" })
+      end
+      start, text = nil, {}
+    end
+    for i, pos in ipairs(starts) do
+      x = x + 1
+      local char = line:sub(pos, (starts[i + 1] or #line + 1) - 1)
+      if char == " " and field[r] and field[r][x] then
+        start = start or pos - 1
+        table.insert(text, field[r][x])
+      else
+        close()
+      end
+    end
+    close()
+  end
+end
+
+-- Each field frame, behind the board, while it shows.
+function M.field_tick()
+  local b = state.field_buf
+  local win = b and vim.api.nvim_buf_is_valid(b) and vim.fn.win_findbuf(b)[1]
+  if not win then
+    return stop()
+  end
+  state.field_frame = (state.field_frame or 0) + 1
+  paint_field(b, win)
+end
+
 function M.draw()
   local b = buf()
   local win = vim.fn.win_findbuf(b)[1]
   if not win then
     return stop()
   end
+  state.field_buf = b
   local by = columns()
   state.by = by
   -- Following the picked task if it moved column.
@@ -222,6 +272,14 @@ function M.draw()
     lines[#lines + 1] = ""
     lines[#lines + 1] = "  no tasks yet: t makes one"
   end
+  -- Blank to the window's edges, so the field covers all of it.
+  local height = vim.api.nvim_win_get_height(win)
+  for i, line in ipairs(lines) do
+    lines[i] = line .. (" "):rep(math.max(0, width - vim.fn.strdisplaywidth(line)))
+  end
+  while #lines < height do
+    lines[#lines + 1] = (" "):rep(width)
+  end
   vim.bo[b].modifiable = true
   vim.api.nvim_buf_set_lines(b, 0, -1, false, lines)
   vim.bo[b].modifiable = false
@@ -236,10 +294,17 @@ function M.draw()
     local top = 3 + (state.row - 1) * CARD_LINES
     pcall(vim.api.nvim_win_set_cursor, win, { top + 1, starts[top + 1][state.col] + #"│ " })
   end
+  paint_field(b, win)
   if not state.timer then
     state.timer = assert(vim.uv.new_timer())
     state.timer:start(REFRESH_MS, REFRESH_MS, vim.schedule_wrap(function()
       require("icarus.board").draw()
+    end))
+  end
+  if not state.field_timer then
+    state.field_timer = assert(vim.uv.new_timer())
+    state.field_timer:start(FIELD_MS, FIELD_MS, vim.schedule_wrap(function()
+      require("icarus.board").field_tick()
     end))
   end
 end
