@@ -25,6 +25,8 @@
 -- A status is where the task sits in the loop: spec, building, review, merged, or cancelled. "(no
 -- task)" is the sentinel (sentinel: true): it always exists and is always listed, has no status
 -- (it's never finished) and can't be cancelled or deleted. A chat on no task is on it (icarus.chats).
+-- A pinned task (pinned: true) is the same, except it has no column on the board, so it lives
+-- outside the kanban: it has no status, and it can't be cancelled or deleted.
 -- A deleted task's folder goes to ~/.icarus/trash.
 local M = {}
 
@@ -33,7 +35,7 @@ M.STATUSES = { "spec", "building", "review", "merged", "cancelled" }
 M.SENTINEL = "no-task"
 
 -- The header's keys in this order, the rest after them by name.
-local ORDER = { "title", "status", "orchestration", "auto", "sentinel", "created", "links" }
+local ORDER = { "title", "status", "orchestration", "auto", "sentinel", "pinned", "created", "links" }
 local REQUIRED = { title = true, created = true }
 
 ---@class icarus.Task
@@ -45,6 +47,7 @@ local REQUIRED = { title = true, created = true }
 ---@field created string
 ---@field links string[]
 ---@field sentinel? boolean
+---@field pinned? boolean outside the board, with no status; can't be cancelled or deleted
 ---@field attrs table every attribute, as task.json has them
 
 function M.dir(slug)
@@ -210,6 +213,11 @@ local function merge(slug, stored, edited)
     attrs.status = (attrs.status ~= nil and attrs.status ~= "") and attrs.status or stored.status or "spec"
     attrs.sentinel = nil
   end
+  if attrs.pinned == true then
+    attrs.status = nil
+  else
+    attrs.pinned = nil
+  end
   if type(attrs.links) == "string" and attrs.links ~= "" then
     attrs.links = { attrs.links }
   elseif type(attrs.links) ~= "table" then
@@ -261,7 +269,8 @@ function M.read(slug)
   local attrs = M.sync(slug)
   seen[slug] = { title = attrs.title, status = attrs.status, orchestration = attrs.orchestration, auto = attrs.auto == true }
   return { slug = slug, dir = dir, file = dir .. "/task.md", title = attrs.title, status = attrs.status,
-    created = attrs.created, links = attrs.links, sentinel = attrs.sentinel == true, attrs = attrs }
+    created = attrs.created, links = attrs.links, sentinel = attrs.sentinel == true, pinned = attrs.pinned == true,
+    attrs = attrs }
 end
 
 -- slug's title and status as last read, read now if they never were; nil for a task that's gone.
@@ -324,6 +333,7 @@ end
 ---@param task icarus.Task
 function M.set_status(task, status)
   assert(not task.sentinel, "(no task) has no status")
+  assert(not task.pinned, task.title .. " is pinned: it has no status")
   assert(vim.tbl_contains(M.STATUSES, status), "no status " .. status)
   M.set(task, { status = status })
 end
@@ -333,6 +343,7 @@ end
 ---@return string where it went
 function M.delete(task)
   assert(not task.sentinel, "(no task) can't be deleted")
+  assert(not task.pinned, task.title .. " is pinned and can't be deleted")
   local trash = M.ROOT .. "/trash"
   vim.fn.mkdir(trash, "p")
   local to = ("%s/%s-%s"):format(trash, task.slug, os.date("%Y%m%d-%H%M%S"))

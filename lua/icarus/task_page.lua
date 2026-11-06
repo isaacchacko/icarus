@@ -60,12 +60,24 @@ vim.api.nvim_create_autocmd({ "BufEnter", "WinLeave", "VimLeavePre" }, {
 })
 M.remember = remember
 
+-- Escape in normal mode on a task's screen goes back to the board. It's bound on the task's own
+-- buffers, so it wins over the global Escape there.
+local function escape_to_board(buf)
+  vim.keymap.set("n", "<Esc>", function()
+    require("icarus.board").open()
+  end, { buffer = buf, nowait = true, desc = "Back to the board" })
+end
+
 ---@param task icarus.Task
 ---@param record? icarus.ChatRecord the agent to show; the task's newest by default
 function M.open(task, record)
   tasks.touch(task.slug)
   record = record or chats.on_task(task.slug)[1] or M.new_agent(task)
   require("icarus").open(record)
+  local chat = require("icarus.acp.chat").get(record)
+  for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat), chat.input }) do
+    escape_to_board(buf)
+  end
   require("icarus").set_view({ kind = "task", task = task.slug, chat = record.id })
   local left = kept(task.slug)
   local path = type(left.path) == "string" and vim.fn.filereadable(left.path) == 1 and left.path or task.file
@@ -74,6 +86,7 @@ function M.open(task, record)
   local ok, file = pcall(explorer.open_file, path)
   M.opening = false
   file = assert(ok and file, file)
+  escape_to_board(vim.api.nvim_win_get_buf(file))
   if left.explorer == false then
     explorer.hide()
   else
