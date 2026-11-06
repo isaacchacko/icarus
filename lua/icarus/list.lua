@@ -134,6 +134,9 @@ local function buf()
   vim.bo[b].filetype = "icarus_list"
   vim.bo[b].modifiable = false
   vim.api.nvim_buf_set_name(b, NAME)
+  vim.api.nvim_create_autocmd("CursorMoved", { buffer = b, callback = function()
+    require("icarus.list").cursor_moved()
+  end })
   local function map(lhs, fn, desc)
     vim.keymap.set("n", lhs, function()
       require("icarus.list")[fn]()
@@ -158,29 +161,63 @@ local function buf()
   return b
 end
 
+-- The rows as last drawn, so the cursor can move without reading the tasks again.
+local cached
+
+-- Highlights each row: the picked task, the grabbed one, and the done ones.
+local function paint(b, all, picking)
+  vim.api.nvim_buf_clear_namespace(b, NS, 0, -1)
+  for i, row in ipairs(all) do
+    local group
+    if row.header then
+      group = "IcarusListHeader"
+    elseif row.task == picking then
+      group = row.task.slug == state.grab and "IcarusListGrab" or "IcarusListSelected"
+    elseif row.task.status == "merged" then
+      group = "IcarusListDone"
+    end
+    if group then
+      vim.api.nvim_buf_set_extmark(b, NS, i - 1, 0, { line_hl_group = group })
+    end
+  end
+end
+
+-- The cursor moved, by any motion (Ctrl-D and Ctrl-U too): the task under it is the one picked, and
+-- on a header the task below it. Only the highlight is drawn again, so the cursor stays where it is.
+function M.cursor_moved()
+  local all = cached
+  if not all then
+    return
+  end
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local row = all[line]
+  if row and row.header then
+    for i = line, #all do
+      if all[i].task then
+        row = all[i]
+        break
+      end
+    end
+  end
+  if row and row.task then
+    pick(row.task)
+  end
+  paint(buf(), all, picked(all))
+end
+
 -- Draws the list into its buffer, the picked task highlighted and the grabbed one marked.
 function M.draw()
   local b = buf()
   local all = rows()
   local picking = picked(all)
-  local grabbed = state.grab
-  local lines, marks = {}, {}
+  local lines = {}
   for _, row in ipairs(all) do
     if row.header then
-      local glyph = tasks.GLYPHS[row.header]
-      lines[#lines + 1] = ("%s %s  %d"):format(glyph, tasks.LABELS[row.header], row.count)
-      marks[#marks + 1] = { line = #lines - 1, group = "IcarusListHeader" }
+      lines[#lines + 1] = ("%s %s  %d"):format(tasks.GLYPHS[row.header], tasks.LABELS[row.header], row.count)
     else
       local task = row.task
-      local glyph = tasks.GLYPHS[task.status] or ""
       local flags = (task.high and "  !" or "") .. (task.today and "  today" or "")
-      lines[#lines + 1] = ("  %s %s%s"):format(glyph, task.title, flags)
-      if task.status == "merged" then
-        marks[#marks + 1] = { line = #lines - 1, group = "IcarusListDone" }
-      end
-      if task == picking then
-        marks[#marks + 1] = { line = #lines - 1, group = task.slug == grabbed and "IcarusListGrab" or "IcarusListSelected" }
-      end
+      lines[#lines + 1] = ("  %s %s%s"):format(tasks.GLYPHS[task.status] or "", task.title, flags)
     end
   end
   if #lines == 0 then
@@ -189,10 +226,8 @@ function M.draw()
   vim.bo[b].modifiable = true
   vim.api.nvim_buf_set_lines(b, 0, -1, false, lines)
   vim.bo[b].modifiable = false
-  vim.api.nvim_buf_clear_namespace(b, NS, 0, -1)
-  for _, mark in ipairs(marks) do
-    vim.api.nvim_buf_set_extmark(b, NS, mark.line, 0, { line_hl_group = mark.group })
-  end
+  cached = all
+  paint(b, all, picking)
   local win = vim.fn.win_findbuf(b)[1]
   for i, row in ipairs(all) do
     if picking and row.task == picking and win then
