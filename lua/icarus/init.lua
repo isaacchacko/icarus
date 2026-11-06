@@ -317,6 +317,18 @@ function M.last_view()
   end
 end
 
+-- Escape on the list: the task you were last on, wherever it is in the history; a task that's gone is
+-- skipped.
+function M.previous_task()
+  local history = layout.history or {}
+  for at = (layout.at or #history) - 1, 1, -1 do
+    local view = history[at]
+    if view.kind == "task" and require("icarus.tasks").seen(view.task) and show_view(view) then
+      return
+    end
+  end
+end
+
 -- <D-[> and <D-]>: back and forward through the views, from wherever you are: out of zen, a float
 -- or insert mode first, past any view that's gone.
 function M.step_view(by)

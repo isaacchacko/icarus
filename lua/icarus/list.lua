@@ -188,6 +188,7 @@ local function buf()
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
+  map("<Esc>", "back_to_task", "Back to the task you were on")
   return b
 end
 
@@ -641,6 +642,10 @@ end
 
 function M.back()
   require("icarus").last_view()
+end
+
+function M.back_to_task()
+  require("icarus").previous_task()
 end
 
 return M
