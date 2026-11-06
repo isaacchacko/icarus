@@ -1154,22 +1154,21 @@ function M.start(buf, chat_id, asked)
   mark_windows(buf)
 end
 
--- The file you mean: this window's, or from the agent's window, the right column's.
+-- The file you mean: this window's, or from the outline, main's.
 local function target()
   local buf = vim.api.nvim_get_current_buf()
   if vim.bo[buf].buftype == "" and vim.api.nvim_buf_get_name(buf) ~= "" then
     return buf
   end
-  local side = require("icarus.explorer").win()
-  buf = side and vim.api.nvim_win_get_buf(side)
-  return buf and vim.bo[buf].buftype == "" and buf or nil
+  buf = vim.api.nvim_win_get_buf(require("icarus").main())
+  return vim.bo[buf].buftype == "" and buf or nil
 end
 
--- <leader>w: watches the file, with the agent showing on the left, or stops.
+-- <leader>w: watches the file, with the agent you're on, or stops.
 function M.toggle()
   local buf = target()
   if not buf then
-    return vim.notify("No file to watch: open one in the right column", vim.log.levels.WARN)
+    return vim.notify("No file to watch: open one", vim.log.levels.WARN)
   end
   local chat_id = require("icarus").current()
   if watched[buf] and watched[buf].chat ~= chat_id and chat_id then

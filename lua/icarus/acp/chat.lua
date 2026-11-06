@@ -318,7 +318,7 @@ local function tool(chat, update)
   end
   call.title = update.title or call.title
   call.status = update.status or call.status
-  -- What it's doing now, for the agent sidebar (icarus.org).
+  -- What it's doing now, for the agent tree (icarus.org).
   chat.last_tool = call
   call.kind = update.kind or call.kind
   call.tool = call.tool or claude.toolName

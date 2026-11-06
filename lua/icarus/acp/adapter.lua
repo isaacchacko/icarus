@@ -42,7 +42,7 @@ end
 
 ---@return icarus.acp.TransportConfig
 -- ICARUS_CHAT is the chat's id, which ica bug files its reports under, ICARUS_TASK the slug of the
--- task it's on (its agent sidebar is that task's org/), and ICARUS_SERVER this icarus's socket,
+-- task it's on (its agent tree is that task's org/), and ICARUS_SERVER this icarus's socket,
 -- which ica comment and propose reach it by.
 ---@param chat? string
 function M.command(cwd, chat)

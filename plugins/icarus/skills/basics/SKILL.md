@@ -31,5 +31,5 @@ You talk to the user in files, not in chat. Chat is for what a file can't hold.
 
 ## Visuals and bugs
 
-- A visual for the user: write the file, then `ica show <file> --title <title>`. It opens in the visual pane (`<leader>v`).
+- A visual for the user: write the file, then `ica show <file> --title <title>`. It shows on the task's outline.
 - A bug in icarus itself: `ica bug [--image <file>] <what happened>`. Carry on with your work after filing it.

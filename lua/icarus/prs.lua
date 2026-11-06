@@ -3,7 +3,7 @@
 -- task.md's links, and the PRs its agents opened (gh pr create, in their transcripts); each looked
 -- up with gh for its state, draft, review, checks and body. A ticket is an id like ABC-123 in the
 -- PR's branch, title or body, or a linear.app link in its body. Fetched in the background and kept
--- for a few minutes; shown under task.md's header (icarus.head) and in the board's <Tab>.
+-- for a few minutes; shown in the outline, the drawer (icarus.head) and the board's <Tab>.
 local tasks = require("icarus.tasks")
 
 local T = require("icarus.theme")

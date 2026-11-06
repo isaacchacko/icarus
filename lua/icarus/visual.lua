@@ -1,9 +1,8 @@
 -- Visuals: what an agent shows the user, one scratch buffer per task. The agent writes a file (a
 -- diagram, a table, a chart drawn in text) and runs ica show <file> [--title <title>]: it's added to
--- its task's visuals (kept in the task's .visuals.json), and until you've looked, the right half of
--- the statusline nags "◆ new visual". <leader>v turns the right column over to the task's visual
--- buffer, showing the newest, and back to the file it had. In it [ and ] step through older and
--- newer ones, and a visual shown again (the same file) is read again.
+-- its task's visuals (kept in the task's .visuals.json), and until you've looked, its row in the
+-- outline has a ◆. <CR> there shows it in main, in the task's visual buffer. In it [ and ] step
+-- through older and newer ones, q goes back, and a visual shown again (the same file) is read again.
 --
 -- A visual that's an image (png, jpg, gif, webp) is drawn as one (snacks.image, over the terminal's
 -- graphics protocol: Ghostty, kitty). One that's a page (html) is first drawn by headless Chrome,
@@ -24,8 +23,8 @@ local M = {}
 ---@field at integer
 ---@field seen? boolean
 
--- In _G, so a hot reload keeps them: per task, the visual showing and the file the column had.
-_G.icarus_visual = _G.icarus_visual or { showing = {}, before = {} }
+-- In _G, so a hot reload keeps them: per task, the visual showing.
+_G.icarus_visual = _G.icarus_visual or { showing = {} }
 local state = _G.icarus_visual
 
 local function store(slug)
@@ -52,16 +51,6 @@ local function save(slug, list)
   end
 end
 
--- The newest visual of slug not looked at yet.
-function M.unseen(slug)
-  local list = M.list(slug)
-  for i = #list, 1, -1 do
-    if not list[i].seen then
-      return list[i]
-    end
-  end
-end
-
 local function buf_of(slug)
   local name = "icarus://visual/" .. slug
   local buf
@@ -82,7 +71,9 @@ local function buf_of(slug)
   end
   map("[", "older", "Older visual")
   map("]", "newer", "Newer visual")
-  map("q", "toggle", "Back to the file")
+  vim.keymap.set("n", "q", function()
+    require("icarus").last_view()
+  end, { buffer = buf, nowait = true, desc = "Back to what main showed" })
   return buf
 end
 
@@ -268,7 +259,7 @@ local function draw(slug, i)
     end
     state.showing[slug] = i
     for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-      vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · <leader>v back"
+      vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · q back"
     end
     vim.cmd.redrawstatus()
     if IMAGES[ext] then
@@ -316,7 +307,7 @@ local function draw(slug, i)
   vim.bo[buf].modifiable = false
   vim.bo[buf].modified = false
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · <leader>v back"
+    vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · q back"
   end
   vim.cmd.redrawstatus()
   return buf
@@ -328,41 +319,28 @@ local function current()
   return view and view.task
 end
 
--- <leader>v: the right column shows the task's visuals, or goes back to the file it had.
-function M.toggle(slug)
-  slug = slug or current()
-  local side = require("icarus.explorer").win()
-  if not (slug and side) then
-    return vim.notify("Visuals show on a task's screen", vim.log.levels.WARN)
-  end
-  local buf = buf_of(slug)
-  if vim.api.nvim_win_get_buf(side) == buf then
-    local before = state.before[slug]
-    if before and vim.api.nvim_buf_is_valid(before) then
-      vim.api.nvim_win_set_buf(side, before)
-    else
-      vim.api.nvim_win_call(side, function()
-        vim.cmd.edit(vim.fn.fnameescape(tasks.dir(slug) .. "/task.md"))
-      end)
-    end
-    vim.cmd.redrawstatus()
-    return
-  end
-  state.before[slug] = vim.api.nvim_win_get_buf(side)
-  vim.api.nvim_win_set_buf(side, buf)
+-- Shows visual i of slug in main; returns the i it showed.
+---@return integer
+function M.show(slug, i)
+  local main = require("icarus").main()
+  vim.api.nvim_win_set_buf(main, buf_of(slug))
   for option, value in pairs({ number = false, relativenumber = false, wrap = false }) do
-    vim.wo[side][0][option] = value
+    vim.wo[main][0][option] = value
   end
-  draw(slug)
-  vim.api.nvim_set_current_win(side)
+  draw(slug, i)
+  return state.showing[slug]
+end
+
+local function step(slug, by)
+  require("icarus.task_page").show(tasks.read(slug), { visual = math.max(1, math.min(#M.list(slug), state.showing[slug] + by)) })
 end
 
 function M.older(slug)
-  draw(slug, (state.showing[slug] or #M.list(slug)) - 1)
+  step(slug, -1)
 end
 
 function M.newer(slug)
-  draw(slug, (state.showing[slug] or #M.list(slug)) + 1)
+  step(slug, 1)
 end
 
 -- ica show: adds path to the visuals of the task the agent with chat is on (or the screen's), shown

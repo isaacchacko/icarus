@@ -4,7 +4,7 @@
 -- does on a session of its own. Each chat keeps its subagents (chat.subagents), each with a log of
 -- what it said and the tools it ran; the parent's chat notes when one starts and ends.
 --
--- They show in the graph under their agent, and in the agent sidebar as a file beside their
+-- They show in the graph under their agent, and in the agent tree as a file beside their
 -- agent's (`subagent: <its session>` on its first line), which <CR> opens: the subagent's log,
 -- read only, in the window chats show in, q going back to its agent.
 local M = {}
@@ -64,7 +64,7 @@ local function redraw(child)
   vim.bo[buf].modifiable = false
 end
 
--- The agent sidebar's file for child, beside its agent's.
+-- The agent tree's file for child, beside its agent's.
 local function sidebar_file(chat, child)
   local tasks = require("icarus.tasks")
   local task = tasks.read(chat.record.task or tasks.SENTINEL)
@@ -94,7 +94,7 @@ local function sidebar_file(chat, child)
   vim.fn.writefile({ "subagent: " .. child.id, "of: " .. chat.record.id }, path)
 end
 
--- The subagent session a sidebar file names, if it's a subagent's.
+-- The subagent session a tree file names, if it's a subagent's.
 function M.of_file(path)
   local first = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path, "", 1)[1] or ""
   return first:match("^%s*subagent:%s*(%S+)")

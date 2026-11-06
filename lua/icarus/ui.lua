@@ -1,4 +1,4 @@
--- snacks, LazyVim's pickers, inputs and explorer, which icarus shows its lists and questions in.
+-- snacks, LazyVim's pickers and inputs, which icarus shows its lists and questions in.
 local M = {}
 
 -- snacks, set up the first time; a start package isn't on the runtimepath while init.lua runs.
@@ -44,13 +44,6 @@ local function toggles(snacks)
   if ok then
     wk.add({ { "<leader>u", group = "ui" } })
   end
-end
-
--- A snacks explorer with opts. Not Snacks.explorer, which closes the one open instead of opening a
--- second: icarus has two, the right column's and the agent sidebar.
-function M.explorer(opts)
-  M.snacks()
-  return require("snacks.picker.core.picker").new(vim.tbl_extend("force", { source = "explorer" }, opts))
 end
 
 -- vim.ui.select and vim.ui.input open snacks' modals, and <leader>u's toggles are mapped.

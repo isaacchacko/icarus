@@ -18,7 +18,7 @@
 --     close a cycle is refused. Its agent talks it out with the cycle's others; after two turns each
 --     it yields. A deadlock never reaches the user
 --   every voter must answer; silence never counts. A first objection sends the proposal back for one
---     revision, a second goes to the user (<leader>i, icarus.inbox)
+--     revision, a second goes to the user (the outline's ◆, icarus.inbox)
 --
 -- Pressure, on a timer: an edge unused for 10 turns of either end or 30 minutes is put to both ends and
 -- dropped only if neither needs it; a node blocked on a needs edge is nudged to spawn help or merge.
@@ -110,7 +110,7 @@ end
 
 -- decisions.md, for the user to read.
 local function render(slug, graph)
-  local lines = { "# decisions", "", "Written by icarus from the peers' `ica propose-to-peers`. Your calls on disputed ones go through <leader>i.", "" }
+  local lines = { "# decisions", "", "Written by icarus from the peers' `ica propose-to-peers`. Your calls on disputed ones are on the outline.", "" }
   for i = #graph.decisions, 1, -1 do
     local d = graph.decisions[i]
     lines[#lines + 1] = ("## %s · %s · by %s"):format(d.id, d.status, agent(d.by))

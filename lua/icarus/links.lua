@@ -6,7 +6,7 @@
 --   icarus://task/<slug>/<file>      the task's screen with that file (under the task's folder) open
 --   icarus://agent/<chat id>         that agent's chat, on its task's screen
 --   /an/absolute/path[:line]         a file that exists: on its task's screen if it's in one, else
---                                    in the right column
+--                                    in main
 --   [text](any of the above)         the same, from anywhere on the text or the target
 local T = require("icarus.theme")
 
@@ -98,16 +98,15 @@ local function open_in_task(slug, file, line)
   if not task then
     return vim.notify("No task " .. slug, vim.log.levels.WARN)
   end
-  -- The agent you're on stays on screen when the task is its own; else the task's newest.
+  -- The agent you're on stays the one you're on when the task is its own.
   local current = require("icarus").current()
   local record = current and require("icarus.chats").get(current)
-  require("icarus.task_page").open(task, record and record.task == slug and record or nil)
+  local page = require("icarus.task_page")
   if file and file ~= "" then
-    local win = require("icarus.explorer").open_file(task.dir .. "/" .. file)
-    vim.api.nvim_set_current_win(win)
-    if line then
-      pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
-    end
+    page.enter(task, record and record.task == slug and record or nil)
+    page.show(task, { file = task.dir .. "/" .. file, line = line })
+  else
+    page.open(task)
   end
 end
 
@@ -141,12 +140,12 @@ function M.open(target)
     if in_task then
       return open_in_task(in_task, rest, line)
     end
-    local win = require("icarus.explorer").open_file(path)
-    vim.api.nvim_set_current_win(win)
-    if line then
-      pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
-    end
-    return
+    local tasks = require("icarus.tasks")
+    local view = require("icarus").view()
+    local task = view and view.task and tasks.read(view.task) or tasks.sentinel()
+    local page = require("icarus.task_page")
+    page.enter(task)
+    return page.show(task, { file = path, line = line })
   end
   vim.notify("Can't open " .. target, vim.log.levels.WARN)
 end

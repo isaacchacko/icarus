@@ -1,22 +1,24 @@
--- A task.md in the right column shows as two windows: its YAML header in a small one on top, a
--- buffer of its own (icarus://head/<slug>) drawn with the keys dim and the values bright, and
--- under it task.md itself with the header's lines hidden, so the file window holds what you write:
--- its cursor and its top line are kept below them, so you can't scroll or move onto them, and an
--- edit made there that reaches them (backspacing into them, dk, dgg) is put back: the header is
--- edited in its own window.
--- Both are task.md: what you type in the header goes into task.md's header as you type, :w in
--- either window writes task.md (and so task.json, icarus.tasks), and a header changed another way
--- (cancelling it, the board's s) shows in the header window. <C-k> from the file goes up into it.
--- Under the header, a window of its own: the task's PRs and their Linear tickets (icarus.prs), each
--- a link (<Tab> or <CR> opens the PR on the line).
+-- A task's YAML header and its PRs, in a drawer over main that <leader>k opens and closes on any of
+-- the task's buffers, so task.md itself shows only what you write: its header's lines are hidden, its
+-- cursor and its top line are kept below them, so you can't scroll or move onto them, and an edit
+-- that reaches them (backspacing into them, dk, dgg) is put back.
+-- The drawer's top window is a buffer of its own (icarus://head/<slug>) drawn with the keys dim and
+-- the values bright. It is task.md's header: what you type there goes into task.md as you type, :w
+-- in it writes task.md (and so task.json, icarus.tasks), and a header changed another way (cancelling
+-- it, the board's s) shows there. <C-k> from main goes up into it.
+-- Under it, a window of its own: the task's PRs and their Linear tickets (icarus.prs), each a link
+-- (<Tab> or <CR> opens the PR on the line).
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_head")
 local HIDE = vim.api.nvim_create_namespace("icarus_head_hide")
 
--- In _G, so a hot reload keeps them: per head buffer, the task.md buffer it belongs to.
+-- In _G, so a hot reload keeps them: per head buffer, the task.md buffer it belongs to, and whether
+-- the drawer is open.
 _G.icarus_head = _G.icarus_head or { of = {} }
 local state = _G.icarus_head
+-- task.md buffers with this code's autocmds.
+local guarded = {}
 
 local function highlights()
   vim.api.nvim_set_hl(0, "IcarusHeadKey", { link = "Comment", default = true })
@@ -222,8 +224,9 @@ function M.show_prs(file_win, slug, prs)
   vim.api.nvim_win_set_height(win, math.min(6, #lines) + 1)
 end
 
-local function fit(win, head)
-  if vim.api.nvim_win_is_valid(win) then
+local function fit(head)
+  local win = vim.fn.win_findbuf(head)[1]
+  if win then
     local height = math.max(1, math.min(12, vim.api.nvim_buf_line_count(head)))
     if vim.api.nvim_win_get_height(win) ~= height then
       vim.api.nvim_win_set_height(win, height)
@@ -231,34 +234,23 @@ local function fit(win, head)
   end
 end
 
--- Puts the header window over file_win, which shows a task.md.
-function M.attach(file_win)
-  local file = vim.api.nvim_win_get_buf(file_win)
+-- task.md shows only what you write: the header's lines hidden and out of reach, kept in step with
+-- its head buffer.
+local function guard(file)
   local head = head_of(file)
   M.pull(file, head)
-  vim.wo[file_win][0].conceallevel = 2
-  local win = head_win(file_win)
-  if not win then
-    win = vim.api.nvim_open_win(head, false, { split = "above", win = file_win, height = 1 })
-    vim.w[win].icarus_head_of = file_win
+  for _, win in ipairs(vim.fn.win_findbuf(file)) do
+    vim.wo[win][0].conceallevel = 2
+    clamp(win, file)
   end
-  vim.api.nvim_win_set_buf(win, head)
-  for option, value in pairs({ number = false, relativenumber = false, signcolumn = "no", winfixheight = true,
-    wrap = true, winbar = "", statuscolumn = "", foldcolumn = "0" }) do
-    vim.wo[win][0][option] = value
+  if guarded[file] then
+    return
   end
-  fit(win, head)
-  -- The task's PRs in a window under the header, once they're looked up.
-  local slug = vim.fs.basename(vim.fs.dirname(vim.api.nvim_buf_get_name(file)))
-  require("icarus.prs").get(slug, function(prs)
-    if vim.api.nvim_win_is_valid(file_win) and vim.api.nvim_win_is_valid(win) then
-      M.show_prs(file_win, slug, prs)
-    end
-  end)
+  guarded[file] = true
   local group = vim.api.nvim_create_augroup("icarus_head_" .. head, { clear = true })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, { group = group, buffer = head, callback = function()
     require("icarus.head").push(head)
-    fit(win, head)
+    fit(head)
   end })
   vim.api.nvim_create_autocmd("BufWriteCmd", { group = group, buffer = head, callback = function()
     require("icarus.head").push(head)
@@ -274,72 +266,99 @@ function M.attach(file_win)
     -- Typed in the file window and it reached the header: put back, the header's edited above.
     local here = vim.api.nvim_get_current_win()
     local want = header_lines(head)
-    if ev.event == "TextChanged" and vim.api.nvim_win_get_buf(here) == file and head_win(here)
+    if ev.event == "TextChanged" and vim.api.nvim_win_get_buf(here) == file
       and not vim.deep_equal(vim.api.nvim_buf_get_lines(file, 0, #want, false), want) then
       vim.cmd("silent undo")
-      vim.notify("The header is edited in its window above (<C-k>)", vim.log.levels.WARN)
+      vim.notify("The header is edited in the drawer (<leader>k)", vim.log.levels.WARN)
       return
     end
     require("icarus.head").pull(file, head)
-    fit(win, head)
+    fit(head)
   end })
   -- Backspacing at the start of what you write would join it to the header's ---.
   for _, key in ipairs({ "<BS>", "<C-h>", "<C-w>", "<C-u>" }) do
     vim.keymap.set("i", key, function()
       local close = bounds(file)
       local cursor = vim.api.nvim_win_get_cursor(0)
-      if close and head_win(vim.api.nvim_get_current_win()) and cursor[1] == close + 2 and cursor[2] == 0 then
+      if close and cursor[1] == close + 2 and cursor[2] == 0 then
         return ""
       end
       return key
     end, { buffer = file, expr = true, desc = "Delete, but not into the header" })
   end
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, { group = group, buffer = file, callback = function()
-    local here = vim.api.nvim_get_current_win()
-    if head_win(here) then
-      clamp(here, file)
-    end
+    clamp(vim.api.nvim_get_current_win(), file)
   end })
   vim.api.nvim_create_autocmd("WinScrolled", { group = group, callback = function()
-    if vim.api.nvim_win_is_valid(file_win) and vim.api.nvim_win_get_buf(file_win) == file and head_win(file_win) then
-      clamp(file_win, file)
+    for _, win in ipairs(vim.fn.win_findbuf(file)) do
+      clamp(win, file)
     end
   end })
-  -- The cursor below the header, where you write.
-  clamp(file_win, file)
 end
 
--- Closes the header window over file_win, and its PR window.
-function M.detach(file_win)
-  for _, win in ipairs({ head_win(file_win), prs_win(file_win) }) do
+-- The drawer over main, for the task of task.md's buffer file.
+local function open_drawer(main, file)
+  local head = head_of(file)
+  M.pull(file, head)
+  local win = head_win(main)
+  if not win then
+    win = vim.api.nvim_open_win(head, false, { split = "above", win = main, height = 1 })
+    vim.w[win].icarus_head_of = main
+  end
+  vim.api.nvim_win_set_buf(win, head)
+  for option, value in pairs({ number = false, relativenumber = false, signcolumn = "no", winfixheight = true,
+    wrap = true, winbar = "", statuscolumn = "", foldcolumn = "0" }) do
+    vim.wo[win][0][option] = value
+  end
+  fit(head)
+  -- The task's PRs in a window under the header, once they're looked up.
+  local slug = vim.fs.basename(vim.fs.dirname(vim.api.nvim_buf_get_name(file)))
+  require("icarus.prs").get(slug, function(prs)
+    if vim.api.nvim_win_is_valid(main) and vim.api.nvim_win_is_valid(win) then
+      M.show_prs(main, slug, prs)
+    end
+  end)
+end
+
+local function close_drawer(main)
+  for _, win in ipairs({ head_win(main), prs_win(main) }) do
     if win and vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
   end
 end
 
--- A task.md coming into the right column gets its header window; anything else, none.
--- Every right column, as it is: one showing a task.md has its header window, one that doesn't, none.
--- Its buffer may change from another window (the visuals), so they're all looked at.
+-- task.md, as a loaded buffer.
+local function task_file(task)
+  local file = vim.fn.bufadd(task.file)
+  vim.fn.bufload(file)
+  return file
+end
+
+-- main as it should be: a task.md in it guarded, and the drawer open on a task's screen if it's on.
 function M.sync()
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if vim.w[win].icarus_side then
-      if is_task_md(vim.api.nvim_win_get_buf(win)) then
-        if not head_win(win) or vim.api.nvim_win_get_buf(head_win(win)) ~= head_of(vim.api.nvim_win_get_buf(win)) then
-          M.attach(win)
-        end
-      else
-        M.detach(win)
-      end
-    end
+  local icarus = require("icarus")
+  local main = icarus.main()
+  local buf = vim.api.nvim_win_get_buf(main)
+  if is_task_md(buf) then
+    guard(buf)
   end
-  -- One left over from a right column that closed.
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    local of = vim.w[win].icarus_head_of or vim.w[win].icarus_prs_of
-    if of and not (vim.api.nvim_win_is_valid(of) and vim.w[of].icarus_side) then
-      pcall(vim.api.nvim_win_close, win, true)
+  local view = icarus.view()
+  local task = view and view.kind == "task" and require("icarus.tasks").read(view.task)
+  if state.drawer and task and vim.fn.filereadable(task.file) == 1 then
+    local file = task_file(task)
+    if not head_win(main) or vim.api.nvim_win_get_buf(head_win(main)) ~= head_of(file) then
+      open_drawer(main, file)
     end
+  else
+    close_drawer(main)
   end
+end
+
+-- <leader>k: the drawer, open or closed.
+function M.toggle()
+  state.drawer = not state.drawer
+  M.sync()
 end
 
 vim.api.nvim_create_autocmd({ "BufWinEnter", "WinClosed" }, {
@@ -352,15 +371,9 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "WinClosed" }, {
 })
 vim.api.nvim_create_autocmd("ColorScheme", { group = "icarus_head", callback = highlights })
 
--- After a hot reload, the right columns as they are now, each task.md's header window given this
--- code's autocmds.
+-- After a hot reload, a task.md showing gets this code's autocmds.
 vim.schedule(function()
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if vim.w[win].icarus_side and is_task_md(vim.api.nvim_win_get_buf(win)) then
-      M.attach(win)
-    end
-  end
-  M.sync()
+  require("icarus.head").sync()
 end)
 
 return M

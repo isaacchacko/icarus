@@ -1,6 +1,5 @@
--- icarus: home, then the chat it opens (icarus.acp.chat), each the whole screen, or a task's screen:
--- its agent on the left and its folder and task.md on the right (icarus.task_page). A new chat from
--- home runs in the dir icarus was started in, on "(no task)". Changing icarus's code
+-- icarus: home, a task's screen (icarus.task_page), the list or the graph: one buffer at a time, in
+-- main. A new chat from home runs in the dir icarus was started in, on "(no task)". Changing icarus's code
 -- reloads it in place (icarus.reload), which runs setup({reload = true}) on the new code.
 local chats = require("icarus.chats")
 local chat = require("icarus.acp.chat")
@@ -15,9 +14,11 @@ _G.icarus_layout = _G.icarus_layout or {}
 local layout = _G.icarus_layout ---@type {current?: string, main?: integer, view?: icarus.View, last?: icarus.View, task_view?: icarus.View, last_task?: icarus.View}
 
 ---@class icarus.View
----@field kind "home"|"task"|"chat"|"graph"|"list"|"board" a task's screen, a chat alone, a task's graph, or the board
+---@field kind "home"|"task"|"graph"|"list"|"board" a task's screen, a task's graph, or the board
 ---@field task? string the task's slug
----@field chat? string the chat's id
+---@field chat? string the chat main shows
+---@field file? string the file main shows
+---@field visual? integer the visual main shows
 
 ---@return icarus.View?
 function M.view()
@@ -49,6 +50,10 @@ function M.set_view(view)
     layout.last, layout.view = layout.view, view
   end
   remember_view(view)
+  -- Only a task's screen has columns round main.
+  if view.kind ~= "task" then
+    require("icarus.outline").close()
+  end
   -- Home is the whole screen, and the list needs no status line; every other view has both bars.
   vim.o.laststatus = (view.kind == "home" or view.kind == "list") and 0 or 3
   vim.o.showtabline = view.kind == "home" and 0 or 2
@@ -95,11 +100,14 @@ local function view_name(view)
     return "home"
   elseif view.kind == "list" or view.kind == "board" then
     return "list"
-  elseif view.chat and view.kind == "chat" then
-    local record = chats.get(view.chat)
-    return record and (record.title or "new chat")
   end
   local task = view.task and require("icarus.tasks").seen(view.task)
+  -- On the task on screen, what names a view is the buffer it shows.
+  if task and layout.view and view.kind == "task" and view.task == layout.view.task then
+    local record = view.chat and chats.get(view.chat)
+    local visual = view.visual and require("icarus.visual").list(view.task)[view.visual]
+    return record and (record.title or "new chat") or visual and visual.title or view.file and vim.fs.basename(view.file) or task.title
+  end
   return task and (view.kind == "graph" and "graph: " .. task.title or task.title)
 end
 
@@ -137,9 +145,8 @@ function M.tabline()
   return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
 end
 
--- The statusline, split where the right column starts (half the screen without one): on the left
--- the chat's modes; on the right the file the
--- right column shows, whether it has changes, whether it's watched, and where its cursor is.
+-- The statusline: on the left the chat's modes; from the middle, the file main shows, whether it has
+-- changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
   local record = layout.current and chats.get(layout.current)
@@ -166,8 +173,9 @@ function M.statusline()
     left[#left + 1] = { running and (" " .. running .. "   ") or " ", "IcarusStatusDim" }
   end
   local task = record and require("icarus.tasks").seen(record.task or require("icarus.tasks").SENTINEL)
-  local side = require("icarus.explorer").win()
-  local split = side and vim.api.nvim_win_get_position(side)[2] or math.floor(vim.o.columns / 2)
+  local view = layout.view
+  local side = view and view.kind == "task" and not view.chat and M.main()
+  local split = math.floor(vim.o.columns / 2)
   local right = {}
   if side then
     local buf = vim.api.nvim_win_get_buf(side)
@@ -192,16 +200,7 @@ function M.statusline()
     end
     right[#right + 1] = { ("   %d:%d / %d"):format(cursor[1], cursor[2] + 1, vim.api.nvim_buf_line_count(buf)), "IcarusStatusDim" }
   end
-  -- A visual an agent showed that you haven't looked at.
-  local view = layout.view
-  local unseen = view and view.task and require("icarus.visual").unseen(view.task)
-  if unseen then
-    table.insert(#right > 0 and right or left, { "   ◆ new visual: " .. unseen.title .. " (<leader>v)", "IcarusStatusNag" })
-  end
-  -- The side of the bar your cursor is on, lit: the window you're in is left or right of the split.
-  local focus = side and (vim.api.nvim_win_get_position(0)[2] >= split and "right" or "left")
-  local LIT = { IcarusStatusTask = "IcarusStatusTaskLit", IcarusStatusDim = "IcarusStatusDimLit", IcarusStatusNag = "IcarusStatusNagLit" }
-  local function render(parts, room, lit)
+  local function render(parts, room)
     local out, used = {}, 0
     for _, part in ipairs(parts) do
       local text = part[1]
@@ -210,7 +209,7 @@ function M.statusline()
         text = vim.fn.strcharpart(text, 0, math.max(0, room - used - 1)) .. "…"
         width = room - used
       end
-      out[#out + 1] = "%#" .. (lit and LIT[part[2]] or part[2]) .. "#" .. text:gsub("%%", "%%%%")
+      out[#out + 1] = "%#" .. part[2] .. "#" .. text:gsub("%%", "%%%%")
       used = used + width
       if room and used >= room then
         break
@@ -218,30 +217,31 @@ function M.statusline()
     end
     return table.concat(out), used
   end
-  local text, used = render(left, #right > 0 and split - 2 or nil, focus == "left")
+  local text, used = render(left, #right > 0 and split - 2 or nil)
   if #right == 0 then
     return " " .. text
   end
-  local left_fill = focus == "left" and "%#IcarusStatusDimLit#" or "%#IcarusStatusDim#"
-  local shown, width = render(right, nil, focus == "right")
-  local after = focus == "right" and "%#IcarusStatusDimLit#" .. (" "):rep(math.max(0, vim.o.columns - split - width)) or ""
-  return left_fill .. " " .. text .. left_fill .. (" "):rep(math.max(1, split - 1 - used)) .. shown .. after
+  return "%#IcarusStatusDim# " .. text .. "%#IcarusStatusDim#" .. (" "):rep(math.max(1, split - 1 - used)) .. render(right)
 end
 
--- The chat the main window shows.
+-- The agent you're on: the last you opened on this task, shown in main or not.
 function M.current()
   return layout.current
 end
 
--- The window home and chats show in: the last one, or the first that isn't a queue or a task's
--- right column.
+---@param record icarus.ChatRecord
+function M.on_agent(record)
+  layout.current = record.id
+end
+
+-- Main: the window everything shows in, the last one or the first that isn't round it.
 local function main_win()
   if layout.main and vim.api.nvim_win_is_valid(layout.main) then
     return layout.main
   end
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if not vim.w[win].icarus_side and not vim.w[win].icarus_queue_of
-      and not vim.w[win].icarus_head_of and not vim.w[win].icarus_prs_of and not vim.w[win].icarus_agents then
+    if not vim.w[win].icarus_queue_of and not vim.w[win].icarus_head_of
+      and not vim.w[win].icarus_prs_of and not vim.w[win].icarus_outline and not vim.w[win].icarus_margin then
       layout.main = win
       return win
     end
@@ -250,14 +250,12 @@ local function main_win()
   return layout.main
 end
 
--- The window home, chats and the graph show in.
 function M.main()
   return main_win()
 end
 
 function M.home()
   local win = main_win()
-  require("icarus.explorer").close()
   chat.leave(win)
   vim.api.nvim_win_set_buf(win, landing.buf())
   vim.wo[win][0].number, vim.wo[win][0].relativenumber = false, false
@@ -275,9 +273,7 @@ function M.open(record)
 end
 
 function M.new_chat()
-  local record = chats.create(vim.fn.getcwd())
-  M.open(record)
-  M.set_view({ kind = "chat", chat = record.id })
+  require("icarus.task_page").open(require("icarus.tasks").sentinel(), chats.create(vim.fn.getcwd()))
 end
 
 -- Shows view; false if what it showed is gone.
@@ -295,12 +291,10 @@ local function show_view(view)
     if view.kind == "graph" then
       require("icarus.graph").open(task)
     else
-      require("icarus.task_page").open(task, record)
+      local page = require("icarus.task_page")
+      page.enter(task, record)
+      page.show(task, view)
     end
-  elseif record then
-    require("icarus.explorer").close()
-    M.open(record)
-    M.set_view(view)
   else
     return false
   end
@@ -329,15 +323,14 @@ function M.previous_task()
   end
 end
 
--- <D-[> and <D-]>: back and forward through the views, from wherever you are: out of zen, a float
--- or insert mode first, past any view that's gone.
+-- <D-[> and <D-]>: back and forward through the views, from wherever you are: out of a float or
+-- insert mode first, past any view that's gone.
 function M.step_view(by)
   local history = layout.history or {}
   local at = (layout.at or #history) + by
   if not history[at] then
     return
   end
-  require("icarus.zen").off()
   local win = vim.api.nvim_get_current_win()
   if vim.api.nvim_win_get_config(win).relative ~= "" and not vim.bo.filetype:match("^snacks_") then
     pcall(vim.api.nvim_win_close, win, true)
@@ -473,31 +466,43 @@ function M.pick_agent()
   end)
 end
 
--- Opens or closes the explorer on the right: the task's folder, or on "(no task)" the chat's dir.
-function M.toggle_explorer()
-  local tasks = require("icarus.tasks")
-  local record = layout.current and chats.get(layout.current)
-  local task = record and tasks.read(record.task or tasks.SENTINEL)
-  local root = task and not task.sentinel and task.dir or record and record.cwd or vim.fn.getcwd()
-  local open = require("icarus.explorer").toggle(root)
-  if layout.view and layout.view.kind == "task" then
-    require("icarus.task_page").keep(layout.view.task, { explorer = open })
-  end
-end
-
--- The views, each a letter after <leader>v.
-
 -- Here, not in init.lua, so a hot reload applies them too.
 local OPTIONS = { termguicolors = true, mouse = "a", splitright = true, splitbelow = true,
-  ruler = false, fillchars = "eob: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
+  ruler = false, fillchars = "eob: ,vert: ,vertleft: ,vertright: ,verthoriz: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
   tabline = "%!v:lua.require'icarus'.tabline()" }
+
+-- After a hot reload from code that had a right column and sidebars: they close, and a task's screen
+-- opens as this code draws it.
+function M.adopt_columns()
+  local old = false
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local w = vim.w[win]
+    if w.icarus_side or w.icarus_agents or w.icarus_head_of or w.icarus_prs_of then
+      old = true
+      w.icarus_side = nil
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+  if not old then
+    return
+  end
+  pcall(function()
+    for _, picker in ipairs(require("snacks").picker.get({ source = "explorer", tab = false })) do
+      picker:close()
+    end
+  end)
+  local task = layout.view and layout.view.kind == "task" and require("icarus.tasks").read(layout.view.task)
+  if task then
+    require("icarus.task_page").open(task, layout.view.chat and chats.get(layout.view.chat) or nil)
+  end
+end
 
 ---@param opts? {reload?: boolean}
 function M.setup(opts)
   for name, value in pairs(OPTIONS) do
     vim.o[name] = value
   end
-  -- Relative line numbers in every file; icarus's own windows (chat, composer, queue, explorer,
+  -- Relative line numbers in every file; icarus's own windows (chat, composer, queue, outline,
   -- home, floats) keep theirs off. Global only, so the window you're in isn't changed whatever it is.
   vim.go.number, vim.go.relativenumber = true, true
   local function numbered(win)
@@ -532,11 +537,6 @@ function M.setup(opts)
     vim.api.nvim_set_hl(0, "IcarusTopStatus_" .. status, { fg = color, bg = bar.bg })
   end
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
-  vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
-  local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg
-  vim.api.nvim_set_hl(0, "IcarusStatusTaskLit", { fg = bar.fg, bg = lit, bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusDimLit", { fg = bar.fg, bg = lit })
-  vim.api.nvim_set_hl(0, "IcarusStatusNagLit", { fg = T.sun, bg = lit, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusReader", { fg = T.ink, bg = T.leaf, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusAgent", { fg = T.ink, bg = T.sky, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusFork", { fg = T.ink, bg = T.violet, bold = true })
@@ -567,22 +567,8 @@ function M.setup(opts)
     require("icarus").pick_task()
   end, { desc = "Find a task" })
   vim.keymap.set("n", "<leader>z", function()
-    require("icarus.zen").toggle()
-  end, { desc = "Zen: this window, the whole screen" })
-  vim.keymap.set("n", "<leader>l", function()
-    -- Out of zen, the sidebar shows, open already or not.
-    local open = require("icarus.explorer").open_now and require("icarus.explorer").open_now()
-    if require("icarus.zen").off() and open then
-      return
-    end
-    require("icarus").toggle_explorer()
-  end, { desc = "Right sidebar: the explorer" })
-  vim.api.nvim_create_autocmd("WinEnter", {
-    group = vim.api.nvim_create_augroup("icarus_statusline_side", { clear = true }),
-    callback = function()
-      vim.cmd.redrawstatus()
-    end,
-  })
+    require("icarus.outline").toggle()
+  end, { desc = "Zen: the outline blank, or back" })
   for lhs, by in pairs({ ["<D-[>"] = -1, ["<D-]>"] = 1 }) do
     local desc = by < 0 and "Back a view" or "Forward a view"
     vim.keymap.set({ "n", "i", "x", "s", "t" }, lhs, function()
@@ -603,9 +589,6 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>A", function()
     require("icarus.orchestration").toggle_auto()
   end, { desc = "Auto mode for the task's lead, on or off" })
-  vim.keymap.set("n", "<leader>i", function()
-    require("icarus.inbox").open()
-  end, { desc = "What's waiting on you on this task" })
   vim.keymap.set("n", "<leader>q", function()
     local record = layout.current and chats.get(layout.current)
     if record then
@@ -616,12 +599,11 @@ function M.setup(opts)
     require("icarus.links").tab()
   end, { desc = "Open the link under the cursor" })
   vim.keymap.set("n", "<leader>h", function()
-    local open = require("icarus.org").open_now()
-    if require("icarus.zen").off() and open then
-      return
-    end
-    require("icarus.org").toggle()
-  end, { desc = "Left sidebar: how this task's agents are organized" })
+    require("icarus.outline").focus()
+  end, { desc = "Into the outline, or back to main" })
+  vim.keymap.set("n", "<leader>k", function()
+    require("icarus.head").toggle()
+  end, { desc = "The drawer: the task's header and PRs" })
   vim.keymap.set("n", "<leader>R", function()
     local record = layout.current and chats.get(layout.current)
     if record then
@@ -663,9 +645,6 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>H", function()
     require("icarus").home()
   end, { desc = "Home" })
-  vim.keymap.set("n", "<leader>v", function()
-    require("icarus.visual").toggle()
-  end, { desc = "The task's visuals, or back to the file" })
   -- Once start packages are on the runtimepath, after init.lua.
   vim.schedule(function()
     require("icarus.ui").enable()
@@ -681,6 +660,7 @@ function M.setup(opts)
   require("icarus.reload").watch()
   if opts and opts.reload then
     chat.rebind()
+    M.adopt_columns()
     -- Home as this code draws it, when that's what's showing.
     if not layout.current then
       M.home()

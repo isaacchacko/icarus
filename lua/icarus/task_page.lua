@@ -1,8 +1,8 @@
--- A task's screen: its agent on the left, as icarus shows any chat, and on the right a column of the
--- task's folder (icarus.explorer, <leader>l) beside the file you last had open there, task.md at first. The agent is
--- the task's newest chat, or a new one in a new agents/<n> folder (on "(no task)", in icarus's dir).
+-- A task's screen: one buffer at a time in main, its outline (icarus.outline) beside it to reach the
+-- rest: a file, an agent's chat, or a visual. Opening a task shows the buffer you left there, task.md
+-- at first. The agent you're on is the last you opened, or the task's newest, or a new one in a new
+-- agents/<n> folder (on "(no task)", in icarus's dir); it isn't started until it's shown or used.
 local chats = require("icarus.chats")
-local explorer = require("icarus.explorer")
 local tasks = require("icarus.tasks")
 
 local M = {}
@@ -16,15 +16,14 @@ function M.new_agent(task)
   end
   local _, dir = tasks.new_agent(task.slug)
   local record = chats.create(dir, task.slug)
-  -- Its file in the agent sidebar, before it starts.
+  -- Its file in the agent tree, before it starts.
   require("icarus.org").ensure(task)
   return record
 end
 
--- How you left a task's screen, kept in its .file: the file the right column shows and its cursor,
--- as you move around, and whether the explorer is open, as <leader>l changes it. Opening the task
--- again shows it that way.
----@return {path?: string, cursor?: integer[], explorer?: boolean}
+-- How you left a task's screen, kept in its .file: what main shows ("file", "chat" or "visual"), the
+-- file and its cursor, the agent and the visual it last showed.
+---@return {shows?: string, path?: string, cursor?: integer[], chat?: string, visual?: integer}
 local function kept(slug)
   local file = tasks.dir(slug) .. "/.file"
   local ok, value = pcall(vim.json.decode, vim.fn.filereadable(file) == 1 and table.concat(vim.fn.readfile(file), "") or "")
@@ -38,17 +37,21 @@ function M.keep(slug, fields)
   end
 end
 
+-- The file main shows, and where its cursor is, kept; a file reached by :edit or gf is a view too.
 local function remember()
-  local view = require("icarus").view()
-  local side = explorer.win()
-  -- Not while a task opens: its file shows before its cursor is put back.
-  if M.opening or not (view and view.kind == "task" and side and vim.api.nvim_get_current_win() == side) then
+  local icarus = require("icarus")
+  local view = icarus.view()
+  if M.opening or not (view and view.kind == "task" and view.file) then
     return
   end
-  local buf = vim.api.nvim_win_get_buf(side)
+  local main = icarus.main()
+  local buf = vim.api.nvim_win_get_buf(main)
   local path = vim.api.nvim_buf_get_name(buf)
   if vim.bo[buf].buftype == "" and path ~= "" then
-    M.keep(view.task, { path = path, cursor = vim.api.nvim_win_get_cursor(side) })
+    M.keep(view.task, { shows = "file", path = path, cursor = vim.api.nvim_win_get_cursor(main) })
+    if path ~= view.file then
+      icarus.set_view({ kind = "task", task = view.task, file = path })
+    end
   end
 end
 
@@ -68,47 +71,94 @@ local function escape_to_list(buf)
   end, { buffer = buf, nowait = true, desc = "To the list" })
 end
 
+-- main shows path, unless it already does: :edit on it would reload it, and refuse over unsaved edits.
+local function show_file(main, path)
+  vim.wo[main].winbar = ""
+  if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(main)) ~= vim.fs.normalize(path) then
+    vim.api.nvim_win_call(main, function()
+      vim.cmd.edit(vim.fn.fnameescape(path))
+    end)
+  end
+  escape_to_list(vim.api.nvim_win_get_buf(main))
+end
+
+-- What main shows next on task: a {chat = id}, a {visual = i}, or a {file = path, line?, cursor?}.
 ---@param task icarus.Task
----@param record? icarus.ChatRecord the agent to show; the task's newest by default
-function M.open(task, record)
-  tasks.touch(task.slug)
-  record = record or chats.on_task(task.slug)[1] or M.new_agent(task)
-  require("icarus").open(record)
-  local chat = require("icarus.acp.chat").get(record)
-  for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat) }) do
-    escape_to_list(buf)
-  end
-  require("icarus").set_view({ kind = "task", task = task.slug, chat = record.id })
-  local left = kept(task.slug)
-  local path = type(left.path) == "string" and vim.fn.filereadable(left.path) == 1 and left.path or task.file
-  local cursor = path == left.path and left.cursor
+---@param what {chat?: string, visual?: integer, file?: string, line?: integer, cursor?: integer[]}
+function M.show(task, what)
+  local icarus = require("icarus")
+  local main = icarus.main()
+  remember()
   M.opening = true
-  local ok, file = pcall(explorer.open_file, path)
-  M.opening = false
-  file = assert(ok and file, file)
-  escape_to_list(vim.api.nvim_win_get_buf(file))
-  if left.explorer == false then
-    explorer.hide()
+  local view = { kind = "task", task = task.slug }
+  if what.chat then
+    local record = chats.get(what.chat)
+    icarus.open(record)
+    local chat = require("icarus.acp.chat").get(record)
+    for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat) }) do
+      escape_to_list(buf)
+    end
+    view.chat = record.id
+    M.keep(task.slug, { shows = "chat", chat = record.id })
   else
-    explorer.show(task.dir, path)
+    require("icarus.acp.chat").leave(main)
+    vim.api.nvim_set_current_win(main)
+    if what.visual then
+      local i = require("icarus.visual").show(task.slug, what.visual)
+      escape_to_list(vim.api.nvim_win_get_buf(main))
+      view.visual = i
+      M.keep(task.slug, { shows = "visual", visual = i })
+    else
+      show_file(main, what.file)
+      view.file = what.file
+      M.keep(task.slug, { shows = "file", path = what.file })
+      local at = what.line and { what.line, 0 } or what.cursor
+      if at then
+        pcall(vim.api.nvim_win_set_cursor, main, at)
+      end
+    end
   end
-  if cursor then
-    pcall(vim.api.nvim_win_set_cursor, file, cursor)
+  M.opening = false
+  icarus.set_view(view)
+  require("icarus.outline").show()
+  vim.cmd.stopinsert()
+end
+
+-- What arriving on task shows: the buffer you left.
+local function arrival(task)
+  local left = kept(task.slug)
+  if left.shows == "chat" and left.chat and chats.get(left.chat) then
+    return { chat = left.chat }
   end
-  if path ~= task.file then
-    vim.cmd.stopinsert()
-    return
+  if left.shows == "visual" and require("icarus.visual").list(task.slug)[left.visual] then
+    return { visual = left.visual }
   end
-  -- A task with nothing written under its header is where you start, at its end; else the agent's
-  -- composer, where show left you. Either way in normal mode: switching tasks isn't typing.
+  if type(left.path) == "string" and vim.fn.filereadable(left.path) == 1 then
+    return { file = left.path, cursor = left.cursor }
+  end
+  if task.sentinel then
+    return { chat = chats.on_task(task.slug)[1].id }
+  end
+  -- A task with nothing written under its header is where you start, at its end.
   local written = vim.iter(tasks.body(task)):any(function(line)
     return vim.trim(line) ~= ""
   end)
-  if not task.sentinel and not written then
-    vim.api.nvim_set_current_win(file)
-    vim.api.nvim_win_set_cursor(file, { vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(file)), 0 })
-  end
-  vim.cmd.stopinsert()
+  return { file = task.file, line = not written and #vim.fn.readfile(task.file) or nil }
+end
+
+-- The columns round main, for task: its agent the one you're on.
+function M.enter(task, record)
+  tasks.touch(task.slug)
+  local left = kept(task.slug)
+  record = record or (left.chat and chats.get(left.chat)) or chats.on_task(task.slug)[1] or M.new_agent(task)
+  require("icarus").on_agent(record)
+end
+
+---@param task icarus.Task
+---@param record? icarus.ChatRecord the agent to show; else the buffer you left
+function M.open(task, record)
+  M.enter(task, record)
+  M.show(task, record and { chat = record.id } or arrival(task))
 end
 
 -- The header edited by hand goes into task.json (redrawn if it lost what it can't); the header

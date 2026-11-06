@@ -86,7 +86,7 @@ function M.msg(args)
     or ("sent to %s"):format(record.title or record.id), true
 end
 
--- ica name <name>: the caller's title, what the user sees it as in the sidebars, the org and links.
+-- ica name <name>: the caller's title, what the user sees it as in the outline, the org and links.
 ---@return boolean ok, string result, boolean here
 -- ica status: the caller's task's status and the line on where it stands, read or set.
 ---@return boolean ok, string result, boolean here
@@ -156,7 +156,7 @@ function M.name(args)
   me.record.title = (me.record.forked_from and "⑂ " or "") .. title
   me.named_at = me.turns or 0
   chats.save(me.record)
-  -- Its file in the task's org, where the sidebar takes its name from, renamed to match.
+  -- Its file in the task's org, where the agent tree takes its name from, renamed to match.
   local org = require("icarus.org")
   local dir = me.record.task and org.dir(me.record.task)
   for path, kind in vim.fs.dir(dir or "", { depth = 20 }) do
