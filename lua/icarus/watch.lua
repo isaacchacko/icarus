@@ -27,6 +27,8 @@
 -- the cursor is on one, so which-key shows them only there.
 --
 -- ica reaches this icarus over its socket (ICARUS_SERVER) and calls M.remote.
+local T = require("icarus.theme")
+
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_watch")
@@ -42,15 +44,15 @@ state.reqs = state.reqs or {} ---@type table<string, {id: string, buf: integer, 
 local watched, comments, reqs = state.bufs, state.comments, state.reqs
 
 local function highlights()
-  vim.api.nvim_set_hl(0, "IcarusComment", { bg = "#e5c07b", fg = "#1e1e1e", default = true })
-  vim.api.nvim_set_hl(0, "IcarusCommentYou", { bg = "#56b6c2", fg = "#1e1e1e", default = true })
-  vim.api.nvim_set_hl(0, "IcarusCommentYouBody", { fg = "#56b6c2", default = true })
-  vim.api.nvim_set_hl(0, "IcarusCommentHint", { fg = "#e5c07b", italic = true, default = true })
-  vim.api.nvim_set_hl(0, "IcarusCommentBody", { fg = "#e5c07b", default = true })
-  vim.api.nvim_set_hl(0, "IcarusAsked", { bg = "#2c4a6e", default = true })
-  vim.api.nvim_set_hl(0, "IcarusProposedOld", { bg = "#5c2b2b", strikethrough = true, default = true })
-  vim.api.nvim_set_hl(0, "IcarusProposedNew", { fg = "#98c379", default = true })
-  vim.api.nvim_set_hl(0, "IcarusProposedHint", { fg = "#7f848e", italic = true, default = true })
+  vim.api.nvim_set_hl(0, "IcarusComment", { bg = T.sun, fg = T.ink, default = true })
+  vim.api.nvim_set_hl(0, "IcarusCommentYou", { bg = T.teal, fg = T.ink, default = true })
+  vim.api.nvim_set_hl(0, "IcarusCommentYouBody", { fg = T.teal, default = true })
+  vim.api.nvim_set_hl(0, "IcarusCommentHint", { fg = T.sun, italic = true, default = true })
+  vim.api.nvim_set_hl(0, "IcarusCommentBody", { fg = T.sun, default = true })
+  vim.api.nvim_set_hl(0, "IcarusAsked", { bg = T.asked, default = true })
+  vim.api.nvim_set_hl(0, "IcarusProposedOld", { bg = T.removed, strikethrough = true, default = true })
+  vim.api.nvim_set_hl(0, "IcarusProposedNew", { fg = T.leaf, default = true })
+  vim.api.nvim_set_hl(0, "IcarusProposedHint", { fg = T.mute, italic = true, default = true })
 end
 highlights()
 
@@ -244,7 +246,7 @@ function M.pulse_tick()
   state.phase = (state.phase or 0) + 1
   local t = (1 - math.cos(state.phase * math.pi / 10)) / 2
   local bg = vim.api.nvim_get_hl(0, { name = "Normal" }).bg or 0x1e1e1e
-  vim.api.nvim_set_hl(0, "IcarusAskedPulse", { bg = blend(bg, 0x3d6ea8, 0.15 + 0.85 * t) })
+  vim.api.nvim_set_hl(0, "IcarusAskedPulse", { bg = blend(bg, T.pulse, 0.15 + 0.85 * t) })
 end
 
 local function start_pulse()

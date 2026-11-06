@@ -7,6 +7,8 @@
 -- all drifting with time. Its range is cut into levels, and a dot is set wherever the level changes
 -- from the dot to its right or below: those are the contour lines. Each character takes the colour
 -- of the highest level among its dots, deep blue low to warm yellow high.
+local T = require("icarus.theme")
+
 local M = {}
 
 local NAME = "icarus://home"
@@ -18,8 +20,7 @@ local LEVELS = 11
 local ZOOM = 3.2
 local SPEED = 0.035
 
-local COLORS = { "#34425c", "#3d5576", "#466990", "#4f7ea8", "#4f93b5", "#55a6aa", "#6fb39a", "#98c379",
-  "#c4c47a", "#e5c07b", "#e8a66b" }
+local COLORS = T.field
 
 local function highlights()
   for i, color in ipairs(COLORS) do

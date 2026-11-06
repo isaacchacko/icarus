@@ -8,12 +8,14 @@
 --   /an/absolute/path[:line]         a file that exists: on its task's screen if it's in one, else
 --                                    in the right column
 --   [text](any of the above)         the same, from anywhere on the text or the target
+local T = require("icarus.theme")
+
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_links")
 
-vim.api.nvim_set_hl(0, "IcarusLink", { underline = true, fg = "#61afef", default = true })
-vim.api.nvim_set_hl(0, "IcarusLinkIcarus", { underline = true, fg = "#c678dd", default = true })
+vim.api.nvim_set_hl(0, "IcarusLink", { underline = true, fg = T.sky, default = true })
+vim.api.nvim_set_hl(0, "IcarusLinkIcarus", { underline = true, fg = T.violet, default = true })
 
 -- Whether path is a file, asked of the disk at most every few seconds per path, as drawing asks often.
 local exists = {}

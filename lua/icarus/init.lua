@@ -6,6 +6,8 @@ local chats = require("icarus.chats")
 local chat = require("icarus.acp.chat")
 local landing = require("icarus.landing")
 
+local T = require("icarus.theme")
+
 local M = {}
 
 -- In _G, so a hot reload keeps them.
@@ -438,18 +440,18 @@ function M.setup(opts)
   local dim = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   vim.api.nvim_set_hl(0, "IcarusStatusTask", { fg = bar.fg, bg = bar.bg, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
-  vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = "#e5c07b", bg = bar.bg, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
   local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg
   vim.api.nvim_set_hl(0, "IcarusStatusTaskLit", { fg = bar.fg, bg = lit, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusDimLit", { fg = bar.fg, bg = lit })
-  vim.api.nvim_set_hl(0, "IcarusStatusNagLit", { fg = "#e5c07b", bg = lit, bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusReader", { fg = "#1e1e1e", bg = "#98c379", bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusAgent", { fg = "#1e1e1e", bg = "#61afef", bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusFork", { fg = "#1e1e1e", bg = "#c678dd", bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusRouter", { fg = "#1e1e1e", bg = "#d19a66", bold = true })
-  vim.api.nvim_set_hl(0, "IcarusStatusAuto", { fg = "#1e1e1e", bg = "#e06c75", bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusNagLit", { fg = T.sun, bg = lit, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusReader", { fg = T.ink, bg = T.leaf, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusAgent", { fg = T.ink, bg = T.sky, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusFork", { fg = T.ink, bg = T.violet, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusRouter", { fg = T.ink, bg = T.ember, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusAuto", { fg = T.ink, bg = T.coral, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusAutoOff", { fg = dim.fg, bg = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg })
-  vim.api.nvim_set_hl(0, "IcarusStatusDemocracy", { fg = "#1e1e1e", bg = "#56b6c2", bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusDemocracy", { fg = T.ink, bg = T.teal, bold = true })
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("icarus", { clear = true }),
     callback = function()

@@ -6,6 +6,8 @@
 -- for a few minutes; shown under task.md's header (icarus.head) and in the board's <Tab>.
 local tasks = require("icarus.tasks")
 
+local T = require("icarus.theme")
+
 local M = {}
 
 local FRESH = 300
@@ -135,10 +137,10 @@ local GLYPHS = {
 local MAX_LOOKUPS = 4
 local looking, waiting = 0, {}
 
-vim.api.nvim_set_hl(0, "IcarusPrOpen", { fg = "#98c379", default = true })
-vim.api.nvim_set_hl(0, "IcarusPrDraft", { fg = "#7f848e", default = true })
-vim.api.nvim_set_hl(0, "IcarusPrMerged", { fg = "#c678dd", default = true })
-vim.api.nvim_set_hl(0, "IcarusPrClosed", { fg = "#e06c75", default = true })
+vim.api.nvim_set_hl(0, "IcarusPrOpen", { fg = T.leaf, default = true })
+vim.api.nvim_set_hl(0, "IcarusPrDraft", { fg = T.mute, default = true })
+vim.api.nvim_set_hl(0, "IcarusPrMerged", { fg = T.violet, default = true })
+vim.api.nvim_set_hl(0, "IcarusPrClosed", { fg = T.coral, default = true })
 
 local function remember(url, state, draft)
   states[url] = { state = state, draft = draft, at = os.time() }
