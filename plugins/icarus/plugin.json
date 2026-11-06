@@ -1,0 +1,17 @@
+{
+	"name": "icarus",
+	"version": "0.1.0",
+	"description": "How agents work inside icarus: talking to the user in files, sparring on a draft, splitting work across agents, and reviewing it.",
+	"author": {
+		"name": "Isaac Chacko"
+	},
+	"repository": "https://github.com/isaacchacko/icarus",
+	"license": "MIT",
+	"keywords": [
+		"icarus",
+		"agents",
+		"ica",
+		"orchestration",
+		"review"
+	]
+}
