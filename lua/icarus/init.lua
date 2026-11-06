@@ -46,6 +46,10 @@ function M.set_view(view)
     layout.last, layout.view = layout.view, view
   end
   remember_view(view)
+  -- Home is the whole screen; every other view has both bars.
+  local bars = view.kind ~= "home"
+  vim.o.laststatus, vim.o.showtabline = bars and 3 or 0, bars and 2 or 0
+  vim.cmd.redrawtabline()
   -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
   -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
   local task = view.kind == "task" and require("icarus.tasks").read(view.task)
@@ -82,8 +86,19 @@ function M.last_task()
   require("icarus.task_page").open(task, record and (record.task or require("icarus.tasks").SENTINEL) == task.slug and record or nil)
 end
 
+-- The bar across the top: icarus's name as home has it, then the task on screen in italics.
+function M.tabline()
+  local tasks = require("icarus.tasks")
+  local view = layout.view or {}
+  local record = layout.current and chats.get(layout.current)
+  local slug = view.task or (view.kind ~= "list" and record and record.task)
+  local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
+  local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
+  return "%#IcarusTopName# I C A R U S%#IcarusTopTask#" .. title .. "%#IcarusTopBar#"
+end
+
 -- The statusline, split where the right column starts (half the screen without one): on the left
--- the task the chat showing is on, its status and the dir icarus runs in; on the right the file the
+-- the task the chat showing is on and its status; on the right the file the
 -- right column shows, whether it has changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
@@ -116,9 +131,7 @@ function M.statusline()
     if task.status then
       left[#left + 1] = { " · " .. task.status, "IcarusStatusDim" }
     end
-    left[#left + 1] = { "   ", "IcarusStatusDim" }
   end
-  left[#left + 1] = { vim.fn.fnamemodify(vim.fn.getcwd(), ":~"), "IcarusStatusDim" }
   local side = require("icarus.explorer").win()
   local split = side and vim.api.nvim_win_get_position(side)[2] or math.floor(vim.o.columns / 2)
   local right = {}
@@ -215,7 +228,6 @@ function M.home()
   vim.api.nvim_win_set_buf(win, landing.buf())
   vim.wo[win][0].number, vim.wo[win][0].relativenumber = false, false
   vim.api.nvim_set_current_win(win)
-  vim.o.laststatus = 0
   landing.draw()
   landing.hide_cursor(true)
   layout.current = nil
@@ -225,7 +237,6 @@ end
 ---@param record icarus.ChatRecord
 function M.open(record)
   layout.current = record.id
-  vim.o.laststatus = 3
   chat.show(chat.get(record), main_win())
 end
 
@@ -430,8 +441,9 @@ end
 -- The views, each a letter after <leader>v.
 
 -- Here, not in init.lua, so a hot reload applies them too.
-local OPTIONS = { termguicolors = true, mouse = "a", splitright = true, splitbelow = true, showtabline = 0,
-  ruler = false, fillchars = "eob: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()" }
+local OPTIONS = { termguicolors = true, mouse = "a", splitright = true, splitbelow = true,
+  ruler = false, fillchars = "eob: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
+  tabline = "%!v:lua.require'icarus'.tabline()" }
 
 ---@param opts? {reload?: boolean}
 function M.setup(opts)
@@ -459,6 +471,9 @@ function M.setup(opts)
   local bar = vim.api.nvim_get_hl(0, { name = "StatusLine", link = false })
   local dim = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   vim.api.nvim_set_hl(0, "IcarusStatusTask", { fg = bar.fg, bg = bar.bg, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusTopName", { fg = bar.fg, bg = bar.bg, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
+  vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
   local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg
