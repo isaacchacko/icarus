@@ -98,7 +98,10 @@ local function open_in_task(slug, file, line)
   if not task then
     return vim.notify("No task " .. slug, vim.log.levels.WARN)
   end
-  require("icarus").open_task(task)
+  -- The agent you're on stays on screen when the task is its own; else the task's newest.
+  local current = require("icarus").current()
+  local record = current and require("icarus.chats").get(current)
+  require("icarus.task_page").open(task, record and record.task == slug and record or nil)
   if file and file ~= "" then
     local win = require("icarus.explorer").open_file(task.dir .. "/" .. file)
     vim.api.nvim_set_current_win(win)
