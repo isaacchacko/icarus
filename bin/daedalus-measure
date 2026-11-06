@@ -6,7 +6,8 @@ daedalus-measure [days] [--posts]    days defaults to 7 and can be a fraction; -
 
 Reads Claude's transcripts of the agents on icarus's tasks. A fork's transcript starts with a copy of
 its parent's, so an entry is counted once however many transcripts hold it. A gap between entries is
-working or waiting by what came before it; the gap before a prompt is the agent idle, not counted.
+working or waiting by what came before it; the agent is idle, not counted, in the gap before a prompt
+or after a turn ends (Claude logs a stop_hook_summary there, then a queue-operation when a prompt comes).
 Loss the logs can't show (rework that looks like work, a wrong call nobody caught) isn't here.
 """
 import collections
@@ -84,7 +85,7 @@ def main():
             n["compactions"] += 1
         before = last.get(path)
         # Only between neighbours in the file: what's between them may be counted in another's.
-        if before and not prompt and at == before[2] + 1:
+        if before and not before[3] and not prompt and at == before[2] + 1:
             gap = max(0, moment - before[0])
             kind = "hung" if gap > HUNG else "waiting" if before[1] else "working"
             hours[kind] += gap / 3600
@@ -121,7 +122,7 @@ def main():
         usage = message.get("usage") or {}
         n["tokens out"] += usage.get("output_tokens", 0) or 0
         n["tokens cached in"] += usage.get("cache_read_input_tokens", 0) or 0
-        last[path] = (moment, waiting, at)
+        last[path] = (moment, waiting, at, entry.get("subtype") == "stop_hook_summary")
 
     bugs = 0
     for path in glob.glob(os.path.expanduser("~/.icarus/bugs/*.json")):
