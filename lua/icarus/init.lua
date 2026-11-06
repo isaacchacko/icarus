@@ -458,6 +458,8 @@ function M.setup(opts)
       require("icarus.acp.chat").stop_all()
     end,
   })
+  -- Wrapped text breaks between words in every window, never in the middle of one.
+  vim.o.linebreak = true
   -- As LazyVim has it: down and up go by screen line through wrapped text, by line with a count.
   for _, key in ipairs({ { "j", "gj" }, { "k", "gk" }, { "<Down>", "gj" }, { "<Up>", "gk" } }) do
     vim.keymap.set({ "n", "x" }, key[1], ("v:count == 0 ? '%s' : '%s'"):format(key[2], key[1] == "<Down>" and "j"

@@ -197,7 +197,7 @@ function M.draw(tick)
     state.tasks = recent()
   end
   -- The words under the picture, each line centred on itself.
-  local words, word_marks = { "", "i c a r u s", "", "n  new chat     t  new task     <leader>f  find a task" },
+  local words, word_marks = { "", "i c a r u s", "", "n  new chat     t  new task     space f  find a task" },
     { {}, { { 0, -1, "IcarusHomeTitle" } }, {}, { { 0, -1, "IcarusHomeHint" } } }
   if #state.tasks > 0 then
     words[#words + 1] = ""

@@ -5,6 +5,8 @@
 local M = {}
 
 local WIDTH = 0.5
+-- The tree needs a few names' width; the file gets the rest of the right column.
+local TREE = 30
 
 -- The tab's right column, if it has one.
 function M.win()
@@ -64,14 +66,15 @@ function M.show(root, select, focus)
     cwd = root,
     focus = focus and "list" or false,
     follow_file = false,
-    -- It shows a moment later, and the split it makes evens out every window's width.
+    -- It shows a moment later, and the split it makes evens out every window's width. Then the tree
+    -- takes TREE columns and the file the rest of the right column.
     on_show = function(explorer)
       if select then
         require("snacks.explorer.actions").update(explorer, { target = select })
       end
       if vim.api.nvim_win_is_valid(win) then
-        local width = vim.api.nvim_win_get_width(explorer.layout.root.win)
-        vim.api.nvim_win_set_width(win, math.max(1, math.floor(vim.o.columns * WIDTH) - width - 1))
+        vim.api.nvim_win_set_width(explorer.layout.root.win, TREE)
+        vim.api.nvim_win_set_width(win, math.max(1, math.floor(vim.o.columns * WIDTH) - TREE - 1))
       end
     end,
     layout = { preset = "sidebar", preview = false, layout = { position = "right" } },
