@@ -41,9 +41,16 @@ local function claude()
 end
 
 ---@return icarus.acp.TransportConfig
-function M.command(cwd)
+-- ICARUS_CHAT is the chat's id, which ica bug files its reports under, ICARUS_TASK the slug of the
+-- task it's on (its agent sidebar is that task's org/), and ICARUS_SERVER this icarus's socket,
+-- which ica comment and propose reach it by.
+---@param chat? string
+function M.command(cwd, chat)
+  local record = chat and require("icarus.chats").get(chat)
   return { command = "node", args = { M.entry }, cwd = cwd,
-    env = { CLAUDE_CODE_EXECUTABLE = claude(), CLAUDE_CODE_ENTRYPOINT = "icarus" } }
+    env = { CLAUDE_CODE_EXECUTABLE = claude(), CLAUDE_CODE_ENTRYPOINT = "icarus", ICARUS_CHAT = chat or false,
+      ICARUS_TASK = record and record.task or false,
+      ICARUS_SERVER = vim.v.servername ~= "" and vim.v.servername or false } }
 end
 
 return M

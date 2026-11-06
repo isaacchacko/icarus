@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 # Opens icarus: a plain nvim with this checkout's init.lua, under its own NVIM_APPNAME, so its data
-# (chats, the ACP adapter, shada) is apart from your nvim's and from isovim.
+# (chats, the ACP adapter, shada) is apart from your nvim's and from isovim. Its first word one of
+# ica's commands (lua/icarus/cli.lua), it runs that instead.
 repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+case "${1:-}" in
+  bug | comment | propose | buffer | comments | watch | unwatch | name | status | claim | claims | unclaim | done | approve | reject | spawn | edge | unedge | topology | merge | retire | post | read | propose-to-peers | vote | revise | withdraw | decisions | link | show | fork | agents | msg | log | questions | help | --help | -h) NVIM_APPNAME=icarus exec nvim -l "$repo/lua/icarus/cli.lua" "$@" ;;
+esac
+# icarus is a screen: with no terminal (an agent's shell) it would sit there until something kills it.
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  echo "ica: ${1:+no command $1; }icarus needs a terminal. ica help lists the commands." >&2
+  exit 1
+fi
 NVIM_APPNAME=icarus exec nvim -u "$repo/init.lua" "$@"

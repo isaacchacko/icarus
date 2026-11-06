@@ -21,6 +21,7 @@
 -- drawn already stays as the old code drew it.
 local images = require("icarus.acp.images")
 local look = require("icarus.acp.look")
+local thread = require("icarus.acp.thread")
 local session = require("icarus.acp.session")
 local chats = require("icarus.chats")
 
@@ -378,6 +379,8 @@ local function tool(chat, update)
   end
   call.title = update.title or call.title
   call.status = update.status or call.status
+  -- What it's doing now, for the agent sidebar (icarus.org).
+  chat.last_tool = call
   call.kind = update.kind or call.kind
   call.tool = call.tool or claude.toolName
   if type(update.rawInput) == "table" and next(update.rawInput) then
@@ -456,6 +459,7 @@ local function plan(chat, update)
 end
 
 local function draw_prompt(chat, text)
+  thread.prompt(chat, text)
   local lines = vim.split(text, "\n", { plain = true })
   for i, line in ipairs(lines) do
     lines[i] = (i == 1 and GLYPH.prompt .. " " or "  ") .. line
@@ -548,6 +552,8 @@ update_bar = function(chat)
   for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
     vim.wo[win].winbar = bar
   end
+  thread.sync(chat)
+  require("icarus.acp.queue").refresh(chat)
   if chat.busy then
     spin()
   end
@@ -687,10 +693,19 @@ local function on_update(chat, update, loading)
   if kind == "agent_thought_chunk" and content.type == "text" then
     return thought(chat, content.text or "")
   end
+  if kind == "subagent_update" then
+    return require("icarus.subagents").announced(chat, update, function(text)
+      add_lines(chat, { "  " .. text }, "IcarusAcpNotice")
+    end)
+  end
   if kind == "agent_message_chunk" or kind == "tool_call" or kind == "tool_call_update" or kind == "plan" then
     end_thought(chat)
   end
+  if kind ~= "agent_message_chunk" then
+    thread.pause(chat)
+  end
   if kind == "agent_message_chunk" and content.type == "text" then
+    thread.text(chat, content.text or "")
     add_text(chat, content.text or "")
   elseif kind == "tool_call" or kind == "tool_call_update" then
     tool(chat, update)
@@ -700,12 +715,18 @@ local function on_update(chat, update, loading)
 end
 
 local function on_turn(chat, state, result)
+  thread.pause(chat)
   if state == "start" then
     chat.busy, chat.since, chat.turn_chars = true, now(), 0
     chat.verb = look.verb(chat.since)
   else
     end_thought(chat)
     chat.busy = false
+    chat.turns = (chat.turns or 0) + 1
+    -- Once the transcript has this turn.
+    vim.defer_fn(function()
+      pcall(require("icarus.orchestration").turn_ended, chat)
+    end, 1000)
     drop_boxes(chat)
     local reason = result.error or result.stopReason
     if reason == "cancelled" then
@@ -780,8 +801,109 @@ local function send(chat)
     chat.record.title = vim.fn.strchars(title) > 60 and vim.fn.strcharpart(title, 0, 59) .. "…" or title
     chats.save(chat.record)
   end
+  if chat.fork_next then
+    chat.fork_next = false
+    update_bar(chat)
+    vim.cmd.redrawstatus()
+    return M.fork(chat, text, attached, function(record)
+      local tasks = require("icarus.tasks")
+      local task = tasks.read(record.task or tasks.SENTINEL)
+      if task then
+        require("icarus.task_page").open(task, record)
+      end
+    end)
+  end
   chat.session:prompt(text, attached)
   update_bar(chat)
+end
+
+-- A fork of chat: a new chat on its task, in its dir, whose session is a copy of chat's conversation
+-- as it is now (session/fork), sent text as its first prompt; chat goes on as it was. Its record is
+-- made at once, so it has an id to link to; it opens once the fork comes back, and done(record) then.
+---@param done? fun(record: icarus.ChatRecord)
+---@return icarus.ChatRecord? record
+function M.fork(chat, text, attached, done)
+  local source = chat.session
+  if not (source.ready and source.id and source.client) then
+    vim.notify("This agent's session isn't open yet: fork it once it is", vim.log.levels.WARN)
+    return nil
+  end
+  local first = text:match("^[^\n]*")
+  local record = chats.create(chat.record.cwd, chat.record.task)
+  record.forked_from = chat.record.id
+  record.title = "⑂ " .. (vim.fn.strchars(first) > 58 and vim.fn.strcharpart(first, 0, 57) .. "…" or first)
+  chats.save(record)
+  source.client:request("session/fork", { sessionId = source.id, cwd = chat.record.cwd, mcpServers = {} }, function(result, err)
+    if err or not (result and result.sessionId) then
+      record.title = record.title .. " (the fork failed)"
+      chats.save(record)
+      return vim.notify("Could not fork: " .. tostring(err and err.message or "no session id"), vim.log.levels.ERROR)
+    end
+    record.session = result.sessionId
+    chats.save(record)
+    local tasks = require("icarus.tasks")
+    local task = tasks.read(record.task or tasks.SENTINEL)
+    if task and not task.sentinel then
+      require("icarus.org").ensure(task)
+    end
+    -- The fork knows whose it is, and to report back.
+    local note = ("(You are a fork of %s, icarus://agent/%s: you have its conversation so far. When you finish a step, or ask the user something, tell it: `ica msg %s <what>`.)"):format(
+      chat.record.title or chat.record.id, chat.record.id, chat.record.id)
+    M.get(record).session:prompt(note .. "\n\n" .. text, attached, text)
+    if done then
+      done(record)
+    end
+  end)
+  return record
+end
+
+-- <leader>R: the agent started again, so it has what icarus has now that a hot reload can't give a
+-- running one (its instructions, what icarus tells the adapter it takes): its adapter stopped, a new
+-- one started and the same session loaded, history and all, into the windows that showed it. Only
+-- while it's idle, so no turn is cut.
+function M.restart(record)
+  local old = open_chats[record.id]
+  if old and (old.busy or #old.session.queue > 0 or #old.boxes > 0) then
+    return vim.notify("It's working: restart it once it's idle", vim.log.levels.WARN)
+  end
+  local shown, typed = {}, {}
+  if old then
+    shown = thread.windows(old)
+    typed = vim.fn.win_findbuf(old.input)
+    open_chats[record.id] = nil
+    old.session:stop()
+    for _, buf in ipairs({ old.buf, old.input, old.thread }) do
+      if buf and vim.api.nvim_buf_is_valid(buf) then
+        pcall(vim.api.nvim_buf_set_name, buf, "")
+      end
+    end
+  end
+  local fresh = M.get(record)
+  local want = thread.wanted(fresh)
+  for _, win in ipairs(shown) do
+    vim.api.nvim_win_set_buf(win, want)
+  end
+  for _, win in ipairs(typed) do
+    vim.api.nvim_win_set_buf(win, fresh.input)
+  end
+  if old then
+    for _, buf in ipairs({ old.buf, old.input, old.thread }) do
+      if buf and vim.api.nvim_buf_is_valid(buf) then
+        pcall(vim.api.nvim_buf_delete, buf, { force = true })
+      end
+    end
+  end
+  update_bar(fresh)
+  vim.notify(("Restarted %s"):format(record.title or "the agent"))
+end
+
+-- <leader>s: the next message sent from this chat goes to a fork of it, or doesn't.
+function M.toggle_fork(record)
+  local chat = M.get(record)
+  chat.fork_next = not chat.fork_next
+  update_bar(chat)
+  vim.cmd.redrawstatus()
+  return chat.fork_next
 end
 
 local function enter_on_conversation(chat)
@@ -799,6 +921,28 @@ local function map(buf, modes, lhs, fn, desc)
   vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true, desc = desc })
 end
 
+-- [[ and ]]: the cursor to your message before or after it, by the prompt glyph at a line's start;
+-- ]] after your last one goes to the end of the chat.
+local function jump_prompt(chat, step)
+  local buf = vim.api.nvim_get_current_buf()
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local count = vim.api.nvim_buf_line_count(buf)
+  local mark = GLYPH.prompt .. " "
+  row = row + step
+  while row >= 1 and row <= count do
+    if vim.startswith(vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or "", mark) then
+      vim.api.nvim_win_set_cursor(0, { row, 0 })
+      vim.cmd("normal! zz")
+      return
+    end
+    row = row + step
+  end
+  -- Past your last message, ]] goes to the end, as G does.
+  if step > 0 then
+    vim.api.nvim_win_set_cursor(0, { count, 0 })
+  end
+end
+
 local function map_keys(chat)
   local function cancel()
     chat.session:cancel()
@@ -809,12 +953,33 @@ local function map_keys(chat)
   map(chat.buf, "n", "za", function()
     toggle(chat)
   end, "Open or close the tool call or thought")
-  for _, key in ipairs({ "i", "a", "o", "I", "A", "O" }) do
-    map(chat.buf, "n", key, function()
-      focus_composer(chat)
-    end, "Type in the composer")
+  local thread_buf = thread.buf(chat)
+  for _, buf in ipairs({ chat.buf, thread_buf }) do
+    map(buf, "n", "[[", function()
+      jump_prompt(chat, -1)
+    end, "Your previous message")
+    map(buf, "n", "]]", function()
+      jump_prompt(chat, 1)
+    end, "Your next message")
+    for _, key in ipairs({ "i", "a", "o", "I", "A", "O" }) do
+      map(buf, "n", key, function()
+        focus_composer(chat)
+      end, "Type in the composer")
+    end
+    map(buf, "n", "<C-c>", cancel, "Interrupt Claude")
   end
-  map(chat.buf, "n", "<C-c>", cancel, "Interrupt Claude")
+  map(thread_buf, "n", "<CR>", function()
+    focus_composer(chat)
+  end, "Type in the composer")
+  -- From the composer, up to your last message.
+  map(chat.input, "n", "[[", function()
+    local win = thread.windows(chat)[1]
+    if win then
+      vim.api.nvim_set_current_win(win)
+      vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)), 0 })
+      jump_prompt(chat, -1)
+    end
+  end, "Your last message")
   map(chat.input, { "n", "i" }, "<CR>", function()
     send(chat)
   end, "Send")
@@ -842,6 +1007,9 @@ M.hear = {
     end
   end,
   update = on_update,
+  subagent = function(chat, id, update)
+    require("icarus.subagents").update(chat, id, update)
+  end,
   prompt = draw_prompt,
   turn = on_turn,
   permission = ask_permission,
@@ -879,7 +1047,8 @@ function M.get(record)
     on_turn = hear("turn"),
     on_permission = hear("permission"),
     on_notice = hear("notice"),
-  })
+    on_subagent = hear("subagent"),
+  }, record.id)
   return chat
 end
 
@@ -888,11 +1057,12 @@ local CHAT_WINDOW = { wrap = true, linebreak = true, breakindent = true, conceal
 
 -- Shows the chat in win, its composer in a window under it; the cursor goes to the composer.
 function M.show(chat, win)
-  vim.api.nvim_win_set_buf(win, chat.buf)
+  local buf = thread.wanted(chat)
+  vim.api.nvim_win_set_buf(win, buf)
   for name, value in pairs(CHAT_WINDOW) do
     vim.wo[win][0][name] = value
   end
-  vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(chat.buf), 0 })
+  vim.api.nvim_win_set_cursor(win, { vim.api.nvim_buf_line_count(buf), 0 })
   local input = vim.w[win].icarus_composer
   if not (input and vim.api.nvim_win_is_valid(input)) then
     input = vim.api.nvim_open_win(chat.input, false, { split = "below", win = win, height = 4 })
@@ -904,12 +1074,51 @@ function M.show(chat, win)
   vim.wo[input][0].number = false
   vim.wo[input][0].relativenumber = false
   vim.wo[input][0].signcolumn = "no"
+  M.wire_composer(chat)
   update_bar(chat)
   focus_composer(chat)
 end
 
+-- The composer's text wraps, and its window grows with it: from 3 lines up to half of what it and
+-- the conversation share, the rest scrolling. Its winbar takes a line of its own.
+local COMPOSER_MIN = 3
+
+-- Its windows wrap, and it's fitted as you type and as windows resize.
+function M.wire_composer(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
+    vim.wo[win][0].wrap, vim.wo[win][0].linebreak, vim.wo[win][0].breakindent = true, true, true
+  end
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "WinResized" }, {
+    group = vim.api.nvim_create_augroup("icarus_composer_" .. chat.input, { clear = true }),
+    buffer = chat.input,
+    callback = function()
+      require("icarus.acp.chat").fit_composer(chat)
+    end,
+  })
+  M.fit_composer(chat)
+end
+
+function M.fit_composer(chat)
+  for _, win in ipairs(vim.fn.win_findbuf(chat.input)) do
+    local above = vim.w[win].icarus_composer_of
+    local room = vim.api.nvim_win_get_height(win) + (above and vim.api.nvim_win_is_valid(above) and vim.api.nvim_win_get_height(above) or 0)
+    local lines = vim.api.nvim_win_text_height(win, {}).all
+    local height = math.max(COMPOSER_MIN, math.min(lines, math.floor(room / 2))) + 1
+    if vim.api.nvim_win_get_height(win) ~= height then
+      vim.api.nvim_win_set_height(win, height)
+      -- What's typed shows from its top while it fits.
+      if lines <= height - 1 then
+        vim.api.nvim_win_call(win, function()
+          vim.fn.winrestview({ topline = 1 })
+        end)
+      end
+    end
+  end
+end
+
 -- The composer under win, closed: win is about to show something that isn't a chat.
 function M.hide_composer(win)
+  require("icarus.acp.queue").hide(win)
   local input = vim.w[win].icarus_composer
   if input and vim.api.nvim_win_is_valid(input) then
     vim.api.nvim_win_close(input, true)
@@ -922,7 +1131,19 @@ function M.rebind()
   for _, chat in pairs(open_chats) do
     map_keys(chat)
     session.adopt(chat.session)
+    M.wire_composer(chat)
     update_bar(chat)
+  end
+end
+
+-- Stops a chat's session and drops its buffers, if it's open; it isn't shown anywhere.
+function M.stop(id)
+  local chat = open_chats[id]
+  if chat then
+    open_chats[id] = nil
+    chat.session:stop()
+    pcall(vim.api.nvim_buf_delete, chat.buf, { force = true })
+    pcall(vim.api.nvim_buf_delete, chat.input, { force = true })
   end
 end
 

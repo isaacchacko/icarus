@@ -1,8 +1,8 @@
 -- One chat's ACP connection, run inside icarus: it starts the adapter (icarus.acp.adapter) in the
 -- chat's dir, opens a new session or loads the chat's last one (the adapter replays its history as
 -- updates), and sets bypassPermissions, as isovim's agents always ran. One prompt is with the agent
--- at a time; one sent while it works waits in the queue and goes when the turn ends. The adapter
--- stops with icarus, the chat's session kept for the next load.
+-- at a time; what's sent while it works waits in the queue, and all of it goes as one prompt when the
+-- turn ends. The adapter stops with icarus, the chat's session kept for the next load.
 --
 -- What it hears goes to its handlers:
 --   on_session(id)                 the session is open (new or loaded)
@@ -29,42 +29,134 @@ local M = {}
 local Session = {}
 Session.__index = Session
 
-local function with_instructions(params, cwd)
-  local imported = imports.prompt(imports.collect(cwd))
-  if imported ~= "" then
-    params._meta = { systemPrompt = { append = imported } }
+-- What every agent is told, on top of its imports (CLAUDE.md and the rest): who it is on its task, its
+-- place there by the task's orchestration (icarus.orchestration), and how to work; not how icarus's
+-- tools work, which `ica help` says when it needs them.
+local RENAME_EVERY = 10
+-- And a task's lead, to keep its task's status saying where the task stands.
+local STATUS_EVERY = 8
+
+local WORK = "Get the work done. Decide what's yours to decide; bring what isn't (to your parent, or to the"
+  .. " user if you have none) with the evidence and your recommendation. Check your own work before you"
+  .. " call it done: run it, test it, look at it. Report short: what changed, what's left, what you need."
+  .. " Name yourself in a few words for what you're doing (`ica name <name>`) once you know, and again"
+  .. " when it changes: the user tells agents apart by it."
+  .. "\n\nLink what you mention (file paths, URLs, icarus://agent/<id>, icarus://task/<slug>); the user"
+  .. " opens links with <Tab>. `ica help` lists what icarus gives you when you need it: comments and"
+  .. " proposed edits in files the user watches with you, messages to the other agents on your task,"
+  .. " forks, visuals. When icarus itself gets in your way, `ica bug <what happened>` and carry on."
+
+local function instructions(record)
+  local lines = {}
+  local task = record and record.task and require("icarus.tasks").read(record.task)
+  if task and not task.sentinel then
+    lines[#lines + 1] = ("You're an agent in icarus, on the task %q (icarus://task/%s, its folder %s)."):format(
+      task.title, task.slug, task.dir)
+  else
+    lines[#lines + 1] = "You're an agent in icarus."
   end
+  lines[#lines + 1] = require("icarus.orchestration").role(record)
+  local coaching = require("icarus.daedalus").coaching()
+  return table.concat(lines, " ") .. "\n\n" .. WORK .. (coaching ~= "" and "\n\n" .. coaching or "")
+end
+
+local function with_instructions(params, cwd, record)
+  local imported = imports.prompt(imports.collect(cwd))
+  params._meta = { systemPrompt = { append = instructions(record) .. (imported ~= "" and "\n\n" .. imported or "") } }
   return params
 end
 
--- A queued prompt is {text, images}; a string is one queued before images, by code before a hot reload.
+-- A queued prompt is {text, images, display}; a string is one queued before images, by code before a
+-- hot reload. Its text can change until it's sent.
 function Session:deliver(prompt)
   if type(prompt) == "string" then
     prompt = { text = prompt }
   end
+  prompt.sent = true
+  -- Now and then, a reminder to keep its name saying what it does: once it's had a turn to find out,
+  -- then every few turns after it last named itself (icarus.messages, ica name).
+  local chat = (_G.icarus_open_chats or {})[self.chat]
+  if chat and (chat.turns or 0) >= 1 and (not chat.named_at or chat.turns - chat.named_at >= RENAME_EVERY) then
+    chat.named_at = chat.turns
+    prompt.display = prompt.display or prompt.text
+    prompt.text = prompt.text .. ("\n\n(icarus: you're named %q. If that no longer says what you're doing now,"
+      .. " rename yourself in a few words: `ica name <name>`. Otherwise ignore this.)"):format(
+      require("icarus.chats").get(self.chat) and require("icarus.chats").get(self.chat).title or "new chat")
+  end
+  -- What the user changed meanwhile in the files it watches (icarus.watch), on this turn.
+  local edits = self.chat and require("icarus.watch").catch_up(self.chat)
+  if edits then
+    prompt.display = prompt.display or prompt.text
+    prompt.text = prompt.text .. "\n\n" .. edits
+  end
+  local record = require("icarus.chats").get(self.chat)
+  local task = chat and record and require("icarus.orchestration").leads(record) and require("icarus.tasks").read(record.task)
+  if task and not task.sentinel and (chat.turns or 0) >= 2
+    and (not chat.status_at or chat.turns - chat.status_at >= STATUS_EVERY) then
+    chat.status_at = chat.turns
+    prompt.display = prompt.display or prompt.text
+    prompt.text = prompt.text .. ("\n\n(icarus: your task is at %s%s. If that's not where it stands now,"
+      .. " update it: `ica status [<status>] <where it stands, in a line>`. Otherwise ignore this.)"):format(
+      task.status, type(task.attrs.now) == "string" and (', "' .. task.attrs.now .. '"') or "")
+  end
   self.busy = true
-  self.handlers.on_prompt(prompt.text)
+  self.handlers.on_prompt(prompt.display or prompt.text)
   self.handlers.on_turn("start")
   self.client:request("session/prompt",
     { sessionId = self.id, prompt = images.blocks(prompt.text, prompt.images, self.takes_images ~= false) },
     function(result, err)
       self.busy = false
       self.handlers.on_turn("end", { stopReason = result and result.stopReason, error = err and err.message })
-      local next_prompt = table.remove(self.queue, 1)
-      if next_prompt then
-        self:deliver(next_prompt)
+      local batch = self:take_queue()
+      if batch then
+        self:deliver(batch)
       end
     end)
 end
 
+-- Everything queued, taken out as one prompt: one turn for what piled up, not a turn each. Their texts
+-- go in the order they queued, each image chip renumbered after the images before it; each part is
+-- marked sent, as its text can change until it is (icarus.watch).
+---@return table? prompt
+function Session:take_queue()
+  local parts = self.queue
+  if #parts == 0 then
+    return nil
+  end
+  self.queue = {}
+  for i, part in ipairs(parts) do
+    if type(part) == "string" then
+      parts[i] = { text = part }
+    end
+  end
+  if #parts == 1 then
+    return parts[1]
+  end
+  local texts, shown, attached = {}, {}, {}
+  for _, part in ipairs(parts) do
+    local offset = #attached
+    vim.list_extend(attached, part.images or {})
+    texts[#texts + 1] = (part.text:gsub("%[Image #(%d+)%]", function(n)
+      return part.images and part.images[tonumber(n)] and images.chip(tonumber(n) + offset) or nil
+    end))
+    shown[#shown + 1] = part.display or texts[#texts]
+    part.sent = true
+  end
+  return { text = table.concat(texts, "\n\n---\n\n"), images = #attached > 0 and attached or nil,
+    display = table.concat(shown, "\n") }
+end
+
 ---@param attached? icarus.acp.Image[]
-function Session:prompt(text, attached)
-  local prompt = { text = text, images = attached }
+---@param display? string what the chat shows for it, if not its text
+---@return table prompt
+function Session:prompt(text, attached, display)
+  local prompt = { text = text, images = attached, display = display }
   if self.busy or not self.ready then
     self.queue[#self.queue + 1] = prompt
   else
     self:deliver(prompt)
   end
+  return prompt
 end
 
 function Session:cancel()
@@ -87,15 +179,15 @@ function Session:opened(id)
       self.handlers.on_notice(("could not set %s: %s"):format(adapter.mode, tostring(err.message)))
     end
     self.ready = true
-    local first = table.remove(self.queue, 1)
-    if first then
-      self:deliver(first)
+    local batch = self:take_queue()
+    if batch then
+      self:deliver(batch)
     end
   end)
 end
 
 function Session:new_session(cwd)
-  self.client:request("session/new", with_instructions({ cwd = cwd, mcpServers = {} }, cwd), function(result, err)
+  self.client:request("session/new", with_instructions({ cwd = cwd, mcpServers = {} }, cwd, self.chat and require("icarus.chats").get(self.chat)), function(result, err)
     if err or not (result and result.sessionId) then
       return self.handlers.on_notice("could not open a session: " .. tostring(err and err.message or "no session id"))
     end
@@ -109,7 +201,7 @@ function Session:open(cwd, id, caps)
     return self:new_session(cwd)
   end
   self.loading = true
-  self.client:request("session/load", with_instructions({ sessionId = id, cwd = cwd, mcpServers = {} }, cwd),
+  self.client:request("session/load", with_instructions({ sessionId = id, cwd = cwd, mcpServers = {} }, cwd, self.chat and require("icarus.chats").get(self.chat)),
     function(_, err)
       self.loading = false
       if err then
@@ -122,9 +214,16 @@ end
 
 function Session:connect(cwd, id)
   local handlers = self.handlers
-  self.client = Client.new(adapter.command(cwd), {
+  self.client = Client.new(adapter.command(cwd, self.chat), {
     on_notification = function(method, params)
       if method == "session/update" and type(params.update) == "table" then
+        -- A subagent's own session: not this chat's conversation (icarus.subagents).
+        if self.id and params.sessionId and params.sessionId ~= self.id then
+          if handlers.on_subagent then
+            handlers.on_subagent(params.sessionId, params.update)
+          end
+          return
+        end
         handlers.on_update(params.update, self.loading)
       end
     end,
@@ -150,7 +249,9 @@ function Session:connect(cwd, id)
   self.client:request("initialize", {
     protocolVersion = 1,
     clientInfo = { name = "icarus", version = "1" },
-    clientCapabilities = { fs = { readTextFile = false, writeTextFile = false }, terminal = false,
+    -- subagents: the adapter announces the ones an agent launches, and sends what they do on their
+    -- own sessions (icarus.subagents).
+    clientCapabilities = { fs = { readTextFile = false, writeTextFile = false }, terminal = false, subagents = vim.empty_dict(),
       _meta = { terminal_output = true, terminal_output_delta = true } },
   }, function(init, init_err)
     if init_err or not init then
@@ -166,9 +267,11 @@ function M.adopt(session)
 end
 
 -- Starts a chat's session in cwd: id's, loaded, or a new one when id is nil.
+---@param chat? string the chat's id, for ica bug
 ---@return icarus.acp.Session
-function M.start(cwd, id, handlers)
-  local self = setmetatable({ ready = false, busy = false, loading = false, queue = {}, handlers = handlers }, Session)
+function M.start(cwd, id, handlers, chat)
+  local self = setmetatable({ ready = false, busy = false, loading = false, queue = {}, handlers = handlers,
+    chat = chat }, Session)
   adapter.ensure(function(err)
     if err then
       return handlers.on_notice(err)

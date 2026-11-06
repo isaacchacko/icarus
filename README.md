@@ -1,6 +1,6 @@
 # icarus
 
-Claude Code chats in nvim, stripped down from isovim. `icarus` (or `ica`) opens on a home page that's only "press n for a new chat". Once a chat is open, a sidebar beside it lists your chats, newest first, each marked working, idle or needs you. Every chat is Claude over ACP, drawn the way Claude Code draws its own screen, in a real nvim buffer.
+Claude Code agents in nvim, organized by tasks. A task has a `task.md`, a folder of files, and agents that work with you in those files: they comment on lines, propose edits you accept or reject, and watch what you type. It began as a rebuild of isovim, which lives on in the `isovim` branch.
 
 ![icarus: the sidebar of chats, one waiting on a permission, its chat on the right](docs/screenshot.png)
 
@@ -9,9 +9,9 @@ Claude Code chats in nvim, stripped down from isovim. `icarus` (or `ica`) opens 
 Needs nvim 0.11+, node and npm, and `claude` (logged in).
 
 ```sh
-git clone https://github.com/isaacchacko/isovim ~/isovim
-ln -s ~/isovim/bin/icarus ~/.local/bin/icarus
-ln -s ~/isovim/bin/icarus ~/.local/bin/ica
+git clone https://github.com/isaacchacko/icarus ~/icarus
+ln -s ~/icarus/bin/icarus ~/.local/bin/icarus
+ln -s ~/icarus/bin/icarus ~/.local/bin/ica
 icarus
 ```
 
@@ -19,17 +19,20 @@ icarus
 
 ## Use
 
-- **Home**: the whole screen, no sidebar. `n` starts a new chat in the dir `icarus` was started in.
-- **Sidebar**: `<CR>` opens the chat under the cursor (home on the top line), `n` starts a new one.
-- **Chat**: type in the composer under it; `<CR>` sends (in insert mode too, `<S-CR>` for a new line), `<C-c>` interrupts. A prompt sent while Claude works waits its turn. A permission Claude asks for shows as its numbered box: type the number and `<CR>`, or `<CR>` on an option. `za` opens or collapses a tool call's output or a thought.
+- **Tasks**: `<leader>m` is the board, `<leader>f` finds a task, `<leader><leader>` goes back to the last one, and `<D-[>` and `<D-]>` go back and forward through views.
+- **Agents**: `<leader>h` is the agent sidebar, `<leader>g` the graph, `<leader>d` turns a chat from what was said to its full details, `<leader>z` is zen.
+- **Files**: `<leader>l` is the file sidebar. `<leader>w` watches a file with the agent you're in, so your edits reach it with its next turn. `<leader>c` comments on a line, and agents answer with comments and proposals.
+- **What's waiting on you**: `<leader>i`, everything on the task in one place.
 
-Chats run while icarus does, in bypassPermissions mode. Quitting stops them; opening one again loads its session, history and all.
+Agents use `ica`: `ica help` lists what it gives them. `ica bug <what happened>` files a report in `~/.icarus/bugs/`.
 
-## Files
+## Orchestration
 
-- `init.lua`, `bin/icarus`: the config (it only loads icarus) and the launcher.
-- `lua/icarus/init.lua`: the layout (home alone, or a chat with the sidebar on its left) and the options.
-- `lua/icarus/chats.lua`: the list of chats (`stdpath("data")/chats.json`) and their status.
-- `lua/icarus/sidebar.lua`, `lua/icarus/landing.lua`: the sidebar and home.
-- `lua/icarus/acp/session.lua`: one chat's ACP connection; `client.lua` and `transport.lua` are its JSON-RPC over stdio, `adapter.lua` installs and starts claude-agent-acp, `imports.lua` expands your CLAUDE.md `@imports`, which the adapter doesn't.
-- `lua/icarus/acp/chat.lua`, `look.lua`: drawing a chat, and how it looks.
+A task runs in one style, set by `orchestration:` in its `task.md` header or with `<leader>o`.
+
+- **router-worker**: one lead is your interface, and workers do one job each. `<leader>A` turns on auto mode, where the lead stands in for you and decides what it can. `~/.icarus/auto.md` adds what it should know about you.
+- **democracy**: peers wire themselves into a graph of claims and typed edges, in `<leader>g`. A claim reaches you through a reviewer, decisions go to a vote, and icarus refuses a move that would deadlock them.
+
+**Daedalus** wakes once a day (`<leader>D` for now), reads what agents did, finds what was lost, and coaches them through `~/.icarus/daedalus/coaching.md`, each change a bet it checks later. It follows `~/.icarus/daedalus/prompt.md` if you've written one, and `bin/daedalus-measure` prints the numbers.
+
+Agents run in bypassPermissions mode while icarus does. Quitting stops them; opening one again loads its session, history and all.

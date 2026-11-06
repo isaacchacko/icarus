@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Where icarus's agents lost something: the numbers daedalus's bets are checked against.
+
+daedalus-measure [days] [--posts]    days defaults to 7 and can be a fraction; --posts also prints
+                                     every word of the user's in the window, to judge for corrections
+
+Reads Claude's transcripts of the agents on icarus's tasks. A fork's transcript starts with a copy of
+its parent's, so an entry is counted once however many transcripts hold it. A gap between entries is
+working or waiting by what came before it; the gap before a prompt is the agent idle, not counted.
+Loss the logs can't show (rework that looks like work, a wrong call nobody caught) isn't here.
+"""
+import collections
+import glob
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime
+
+POSTS = "--posts" in sys.argv
+ARGS = [a for a in sys.argv[1:] if a != "--posts"]
+DAYS = float(ARGS[0]) if ARGS else 7
+CUT = time.time() - DAYS * 86400
+HUNG = 1800
+WAIT = re.compile(r"\bsleep\s+\d|gh run watch|--watch\b|\buntil\b.*;\s*do")
+NOTHING = re.compile(r"^(no response requested|still waiting|i'?ll wait|noted|waiting|·)", re.I)
+NOT_THEM = re.compile(r"^(<[\w-]+>|\[Your previous response|\[Request interrupted|You are |\(You are a fork|Message from the agent"
+                      r"|icarus:|The user turned on|You're watching|\S+ changed \(line numbers|Caveat:|Bug \w+, filed)")
+
+
+def stamp(text):
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+
+
+def words(part):
+    """What the user said in a part of a prompt, or None if icarus or an agent said it."""
+    if part.startswith("Request ") or part.startswith("They commented") or part.startswith("Your comment "):
+        said = re.search(r"Their message: (.*?)(\n|$)", part)
+        return said.group(1) if said else None
+    if part.startswith("They replied"):
+        said = re.findall(r"^them: (.*)$", part, re.M)
+        return said[-1] if said else None
+    return None if NOT_THEM.match(part) else part
+
+
+def main():
+    seen, entries = set(), []
+    for path in glob.glob(os.path.expanduser("~/.claude/projects/*-icarus-tasks-*/*.jsonl")):
+        if "-tasks-daedalus-" in path or os.path.getmtime(path) < CUT:
+            continue
+        task = re.search(r"-icarus-tasks-(.*?)-agents-", path)
+        with open(path, errors="replace") as file:
+            for at, line in enumerate(file):
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                # Not its uuid: a fork gets new ones for what it copied.
+                key = (entry.get("timestamp"), entry.get("type"), json.dumps((entry.get("message") or {}).get("content"))[:400])
+                if key in seen or not entry.get("timestamp") or entry.get("isSidechain"):
+                    continue
+                seen.add(key)
+                moment = stamp(entry["timestamp"])
+                if moment >= CUT:
+                    entries.append((path, moment, task.group(1) if task else "?", entry, at))
+    entries.sort(key=lambda each: (each[0], each[1]))
+
+    n = collections.Counter()
+    hours = collections.Counter()
+    by_task = collections.Counter()
+    errors = collections.Counter()
+    posts = []
+    sessions = set()
+    last = {}
+    for path, moment, task, entry, at in entries:
+        sessions.add(path)
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        content = message.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else (content or [])
+        blocks = [b for b in blocks if isinstance(b, dict)]
+        prompt = entry.get("type") == "user" and not any(b.get("type") == "tool_result" for b in blocks)
+        if entry.get("subtype") == "compact_boundary" or entry.get("isCompactSummary"):
+            n["compactions"] += 1
+        before = last.get(path)
+        # Only between neighbours in the file: what's between them may be counted in another's.
+        if before and not prompt and at == before[2] + 1:
+            gap = max(0, moment - before[0])
+            kind = "hung" if gap > HUNG else "waiting" if before[1] else "working"
+            hours[kind] += gap / 3600
+            by_task[task] += gap / 3600 if kind != "hung" else 0
+        waiting = False
+        if prompt:
+            n["turns"] += 1
+        for block in blocks:
+            kind = block.get("type")
+            if entry.get("type") == "assistant" and kind == "text":
+                if NOTHING.match(block.get("text", "").strip()):
+                    n["said nothing"] += 1
+            elif kind == "tool_use":
+                n["tool calls"] += 1
+                command = (block.get("input") or {}).get("command", "")
+                command = command if isinstance(command, str) else ""
+                waiting = waiting or block.get("name") == "Monitor" or bool(WAIT.search(command))
+                for name in ("ica msg", "ica fork", "ica spawn", "ica bug"):
+                    n[name] += command.count(name)
+            elif kind == "tool_result" and block.get("is_error"):
+                text = json.dumps(block.get("content"))
+                n["tool errors"] += 1
+                if "ica:" in text:
+                    n["ica refusals"] += 1
+                    errors[re.sub(r"\d{6,}[-\d]*", "<id>", text)[:90]] += 1
+            elif kind == "text" and entry.get("type") == "user":
+                text = block.get("text", "")
+                n["no-output nudges"] += text.startswith("[Your previous response had no visible")
+                n["interrupted"] += text.startswith("[Request interrupted")
+                for part in text.split("\n\n---\n\n"):
+                    said = words(part.strip())
+                    if said and said.strip():
+                        posts.append((moment, task, said.strip()))
+        usage = message.get("usage") or {}
+        n["tokens out"] += usage.get("output_tokens", 0) or 0
+        n["tokens cached in"] += usage.get("cache_read_input_tokens", 0) or 0
+        last[path] = (moment, waiting, at)
+
+    bugs = 0
+    for path in glob.glob(os.path.expanduser("~/.icarus/bugs/*.json")):
+        bugs += os.path.getmtime(path) >= CUT
+
+    data = (max(e[1] for e in entries) - min(e[1] for e in entries)) / 86400 if entries else 0
+    print(f"Window: {DAYS:g} days, {data:.2f} of them with data. {len(sessions)} sessions, {len(entries)} entries.")
+    active = hours["working"] + hours["waiting"]
+    print(f"Active agent-hours: {active:.1f}. Working {hours['working']:.1f}. Waiting {hours['waiting']:.1f}. Hung {hours['hung']:.1f}.")
+    print(f"Turns: {n['turns']}. Tool calls: {n['tool calls']}. Compactions: {n['compactions']}.")
+    print(f"Tool errors: {n['tool errors']}. ica refusals: {n['ica refusals']}. Bugs filed: {bugs}.")
+    print(f"Replies that said nothing: {n['said nothing']}. No-output nudges: {n['no-output nudges']}. Interrupted: {n['interrupted']}.")
+    print(f"ica msg: {n['ica msg']}. ica fork: {n['ica fork']}. ica spawn: {n['ica spawn']}.")
+    print(f"Tokens out: {n['tokens out']}. Cached in: {n['tokens cached in']}.")
+    print(f"The user's posts: {len(posts)}.")
+    print("Active hours by task: " + ", ".join(f"{task} {h:.1f}" for task, h in by_task.most_common(8)))
+    for text, count in errors.most_common(5):
+        print(f"  ica refusal x{count}: {text}")
+    if POSTS:
+        for moment, task, said in sorted(posts):
+            print(f"{datetime.fromtimestamp(moment):%m-%d %H:%M} [{task}] {said[:300]!r}")
+
+
+main()
