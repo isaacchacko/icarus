@@ -472,7 +472,7 @@ end
 
 -- Here, not in init.lua, so a hot reload applies them too.
 local OPTIONS = { termguicolors = true, mouse = "a", splitright = true, splitbelow = true,
-  ruler = false, fillchars = "eob: ,vert: ,vertleft: ,vertright: ,verthoriz: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
+  ruler = false, fillchars = "eob: ,vert: ,vertleft: ,vertright: ,verthoriz: ,horizup: ,horizdown: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
   tabline = "%!v:lua.require'icarus'.tabline()" }
 
 -- After a hot reload from code that had a right column and sidebars: they close, and a task's screen
