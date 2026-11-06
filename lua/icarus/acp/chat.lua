@@ -1049,8 +1049,9 @@ function M.get(record)
   return chat
 end
 
+-- smoothscroll: a long reply is one wrapped line, and the screen scrolls through it a row at a time.
 local CHAT_WINDOW = { wrap = true, linebreak = true, breakindent = true, conceallevel = 2, concealcursor = "nc",
-  number = false, relativenumber = false, signcolumn = "no", list = false, cursorline = false }
+  smoothscroll = true, number = false, relativenumber = false, signcolumn = "no", list = false, cursorline = false }
 
 -- Shows the chat in win; the cursor goes to the composer.
 function M.show(chat, win)
