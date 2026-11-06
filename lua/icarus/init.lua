@@ -98,14 +98,17 @@ function M.statusline()
       left[#left + 1] = { " FORK ", "IcarusStatusFork" }
     end
     local on = require("icarus.tasks").seen(record.task or require("icarus.tasks").SENTINEL)
-    if on and on.status then
+    -- Any task but "(no task)": a pinned one has no status, but it has its orchestration.
+    if on and (on.status or on.orchestration) then
       local democracy = on.orchestration == "democracy"
       left[#left + 1] = { democracy and " DEMOCRACY " or " ROUTER ", democracy and "IcarusStatusDemocracy" or "IcarusStatusRouter" }
       if not democracy then
         left[#left + 1] = on.auto and { " AUTO ", "IcarusStatusAuto" } or { " AUTO OFF ", "IcarusStatusAutoOff" }
       end
     end
-    left[#left + 1] = { " ", "IcarusStatusDim" }
+    local agent = open and open.session
+    local running = agent and agent.running_at and agent:running_at()
+    left[#left + 1] = { running and (" " .. running .. "   ") or " ", "IcarusStatusDim" }
   end
   local task = record and require("icarus.tasks").seen(record.task or require("icarus.tasks").SENTINEL)
   if task then

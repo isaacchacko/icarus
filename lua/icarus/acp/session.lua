@@ -180,6 +180,20 @@ function Session:option(id)
   end
 end
 
+-- What the session runs at, as the status line shows it: "Opus 5.5 · Medium"; nil before it's opened.
+function Session:running_at()
+  local parts = {}
+  for _, id in ipairs({ "model", "effort" }) do
+    local option = self:option(id)
+    for _, each in ipairs(option and option.options or {}) do
+      if each.value == option.currentValue then
+        parts[#parts + 1] = ((each.name or each.value):gsub("%s*%b()", ""))
+      end
+    end
+  end
+  return #parts > 0 and table.concat(parts, " · ") or nil
+end
+
 -- Sets one config option; done(ok) once the adapter answers with its options, which replace the old.
 function Session:configure(configId, value, done)
   self.client:request("session/set_config_option", { sessionId = self.id, configId = configId, value = value }, function(result, err)
@@ -187,6 +201,7 @@ function Session:configure(configId, value, done)
       self.handlers.on_notice(("could not set %s to %s: %s"):format(configId, tostring(value), tostring(err.message)))
     elseif result and result.configOptions then
       self.options = result.configOptions
+      vim.cmd.redrawstatus({ bang = true })
     end
     if done then
       done(err == nil)
@@ -216,6 +231,7 @@ function Session:opened(id, options)
   self.id = id
   self.options = options or self.options
   self.handlers.on_session(id)
+  vim.cmd.redrawstatus({ bang = true })
   self.client:request("session/set_mode", { sessionId = id, modeId = adapter.mode }, function(_, err)
     if err then
       self.handlers.on_notice(("could not set %s: %s"):format(adapter.mode, tostring(err.message)))

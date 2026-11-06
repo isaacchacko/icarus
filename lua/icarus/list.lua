@@ -46,7 +46,7 @@ local function highlights()
     return out
   end
   for status, color in pairs(COLORS) do
-    vim.api.nvim_set_hl(0, "IcarusListStatus_" .. status, { fg = color, default = true })
+    vim.api.nvim_set_hl(0, "IcarusListStatus_" .. status, { fg = color })
     vim.api.nvim_set_hl(0, "IcarusListRow_" .. status, { bg = tint(color, TINT) })
     vim.api.nvim_set_hl(0, "IcarusListPicked_" .. status, { bg = tint(color, PICKED_TINT), bold = true })
   end
