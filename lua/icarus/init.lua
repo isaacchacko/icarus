@@ -125,6 +125,8 @@ function M.tabline()
   local slug = view.task or (view.kind ~= "list" and record and record.task)
   local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
   local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
+  local status = task and task.status and ("%%#IcarusTopStatus_%s#   %s %%#IcarusTopDim#%s"):format(task.status,
+    tasks.GLYPHS[task.status], tasks.LABELS[task.status]) or ""
   local function short(name)
     local cut = vim.fn.strchars(name) > TOP_NAME and vim.fn.strcharpart(name, 0, TOP_NAME - 1) .. "…" or name
     return (cut:gsub("%%", "%%%%"))
@@ -132,11 +134,11 @@ function M.tabline()
   local before, after = neighbour(-1), neighbour(1)
   local around = (before and "‹ " .. short(before) or "") .. (before and after and "   " or "")
     .. (after and short(after) .. " ›" or "")
-  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
+  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
 end
 
 -- The statusline, split where the right column starts (half the screen without one): on the left
--- the task the chat showing is on and its status; on the right the file the
+-- the chat's modes; on the right the file the
 -- right column shows, whether it has changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
@@ -164,12 +166,6 @@ function M.statusline()
     left[#left + 1] = { running and (" " .. running .. "   ") or " ", "IcarusStatusDim" }
   end
   local task = record and require("icarus.tasks").seen(record.task or require("icarus.tasks").SENTINEL)
-  if task then
-    left[#left + 1] = { task.title, "IcarusStatusTask" }
-    if task.status then
-      left[#left + 1] = { " · " .. task.status, "IcarusStatusDim" }
-    end
-  end
   local side = require("icarus.explorer").win()
   local split = side and vim.api.nvim_win_get_position(side)[2] or math.floor(vim.o.columns / 2)
   local right = {}
@@ -520,6 +516,9 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusTopDim", { fg = dim.fg, bg = bar.bg })
+  for status, color in pairs(require("icarus.tasks").COLORS) do
+    vim.api.nvim_set_hl(0, "IcarusTopStatus_" .. status, { fg = color, bg = bar.bg })
+  end
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
   local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg
