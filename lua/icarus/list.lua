@@ -19,7 +19,6 @@ local FIELD_NS = vim.api.nvim_create_namespace("icarus_list_field")
 local UNDO_MAX = 50
 local FIELD_MS = 90
 local STALE_AFTER = 24 * 60 * 60
-local UNITS = { m = 60, h = 60 * 60, d = 24 * 60 * 60 }
 -- Each status's colour (tasks.COLORS) tints its rows by this much.
 local COLORS = tasks.COLORS
 local TINT, PICKED_TINT = 0.14, 0.34
@@ -263,20 +262,10 @@ local function idle_for(task)
   return latest and os.time() - latest
 end
 
--- The seconds in a duration like 90m, 4h or 2d, nil if it isn't one.
-local function seconds(duration)
-  local n, unit = tostring(duration):match("^%s*(%d+)%s*([mhd])%s*$")
-  return n and tonumber(n) * UNITS[unit]
-end
-
--- Whether the task is past the duration set on it, counted from when it was made.
+-- Whether the task is past the duration set on it.
 local function overdue(task)
-  local want = seconds(task.attrs.expected)
-  local y, mo, d, h, mi, sec = tostring(task.created):match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-  if not (want and y) then
-    return false
-  end
-  return os.time() - os.time({ year = y, month = mo, day = d, hour = h, min = mi, sec = sec }) > want
+  local sla = tasks.sla(task)
+  return sla and sla.left < 0
 end
 
 -- What a task's row shows after its title.
@@ -498,7 +487,7 @@ function M.expected()
       return
     end
     text = vim.trim(text)
-    if text ~= "" and not seconds(text) then
+    if text ~= "" and not tasks.seconds(text) then
       return vim.notify("Not a duration: " .. text .. ". Try 90m, 4h or 2d", vim.log.levels.WARN)
     end
     local before = task.attrs.expected or ""

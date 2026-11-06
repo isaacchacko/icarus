@@ -3,7 +3,7 @@
 -- task.md's links, and the PRs its agents opened (gh pr create, in their transcripts); each looked
 -- up with gh for its state, draft, review, checks and body. A ticket is an id like ABC-123 in the
 -- PR's branch, title or body, or a linear.app link in its body. Fetched in the background and kept
--- for a few minutes; shown in the outline, the drawer (icarus.head) and the board's <Tab>.
+-- for a few minutes; shown in the outline and the board's <Tab>.
 local tasks = require("icarus.tasks")
 
 local T = require("icarus.theme")
@@ -259,45 +259,6 @@ end
 -- What was last fetched for the task, without fetching.
 function M.kept(slug)
   return cache[slug] and cache[slug].prs
-end
-
--- The PRs as markdown lines, each a link to its PR and its tickets', and {row, from, to, group}
--- spans for the rest: what a buffer shows them as (the task's PR window, the board's preview).
----@return string[] lines, table[] spans
-function M.lines(prs)
-  if #prs == 0 then
-    return { "no PRs found for this task" }, { { 0, 0, -1, "Comment" } }
-  end
-  local lines, spans = {}, {}
-  for _, pr in ipairs(prs) do
-    local line = ("[#%d %s](%s)"):format(pr.number, pr.title:gsub("[%[%]]", ""), pr.url)
-    local check = ({ passing = "✓", failing = "✗", running = "…" })[pr.checks]
-    local row = #lines
-    if check then
-      local from = #line + 2
-      line = line .. "  " .. check
-      spans[#spans + 1] = { row, from, #line, ({ ["✓"] = "DiagnosticOk", ["✗"] = "DiagnosticError", ["…"] = "DiagnosticWarn" })[check] }
-    end
-    local notes = {}
-    if pr.state ~= "OPEN" then
-      notes[#notes + 1] = pr.state:lower()
-    elseif pr.draft then
-      notes[#notes + 1] = "draft"
-    end
-    if pr.state == "OPEN" and pr.review ~= "" then
-      notes[#notes + 1] = (pr.review:lower():gsub("_", " "))
-    end
-    if #notes > 0 then
-      local from = #line + 2
-      line = line .. "  " .. table.concat(notes, " · ")
-      spans[#spans + 1] = { row, from, #line, "Comment" }
-    end
-    for _, ticket in ipairs(pr.tickets) do
-      line = line .. "  " .. (ticket.url and ("[%s](%s)"):format(ticket.id, ticket.url) or ticket.id)
-    end
-    lines[#lines + 1] = line
-  end
-  return lines, spans
 end
 
 local STATE_HL = { OPEN = "DiagnosticInfo", MERGED = "IcarusGraphTitle", CLOSED = "Comment" }

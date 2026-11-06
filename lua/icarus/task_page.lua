@@ -161,8 +161,7 @@ function M.open(task, record)
   M.show(task, record and { chat = record.id } or arrival(task))
 end
 
--- The header edited by hand goes into task.json (redrawn if it lost what it can't); the header
--- window over it (icarus.head) shows it.
+-- The header edited by hand goes into task.json (redrawn if it lost what it can't).
 vim.api.nvim_create_autocmd("BufWritePost", {
   group = vim.api.nvim_create_augroup("icarus_task_page", { clear = true }),
   pattern = "*/tasks/*/task.md",

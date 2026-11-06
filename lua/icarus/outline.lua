@@ -270,6 +270,7 @@ local BARE = { number = false, relativenumber = false, signcolumn = "no", wrap =
   statuscolumn = "", foldcolumn = "0", list = false, spell = false, winbar = "" }
 
 local function open_win(flag, side, buf, width)
+  require("icarus.drawer").close()
   local win = vim.api.nvim_open_win(buf, false, { split = side, win = -1, width = width })
   vim.w[win][flag] = true
   for option, value in pairs(BARE) do
@@ -297,6 +298,7 @@ local function fit()
     vim.api.nvim_win_set_width(right, margin)
   end
   vim.api.nvim_win_set_width(outline, width)
+  require("icarus.drawer").sync()
 end
 
 local function stop()

@@ -58,6 +58,7 @@ function M.set_view(view)
   vim.o.laststatus = (view.kind == "home" or view.kind == "list") and 0 or 3
   vim.o.showtabline = view.kind == "home" and 0 or 2
   vim.cmd.redrawtabline()
+  require("icarus.drawer").sync()
   -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
   -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
   local task = view.kind == "task" and require("icarus.tasks").read(view.task)
@@ -95,7 +96,7 @@ function M.last_task()
 end
 
 -- A view's name for the top bar; nil for one that's gone, which stepping skips too.
-local function view_name(view)
+function M.view_name(view)
   if view.kind == "home" then
     return "home"
   elseif view.kind == "list" or view.kind == "board" then
@@ -116,12 +117,21 @@ local function neighbour(by)
   local history = layout.history or {}
   local at = (layout.at or #history) + by
   while history[at] do
-    local name = view_name(history[at])
+    local name = M.view_name(history[at])
     if name then
       return name
     end
     at = at + by
   end
+end
+
+-- The views before and after this one, for the top bar's right.
+function M.around()
+  local function short(name)
+    return vim.fn.strchars(name) > TOP_NAME and vim.fn.strcharpart(name, 0, TOP_NAME - 1) .. "…" or name
+  end
+  local before, after = neighbour(-1), neighbour(1)
+  return (before and "‹ " .. short(before) or "") .. (before and after and "   " or "") .. (after and short(after) .. " ›" or "")
 end
 
 -- The bar across the top: icarus's name as home has it, then the task on screen in italics, and at
@@ -132,17 +142,11 @@ function M.tabline()
   local record = layout.current and chats.get(layout.current)
   local slug = view.task or (view.kind ~= "list" and record and record.task)
   local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
-  local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
-  local status = task and task.status and ("%%#IcarusTopStatus_%s#   %s %%#IcarusTopDim#%s"):format(task.status,
+  local drawer = require("icarus.drawer").showing()
+  local title = task and not drawer and "   " .. task.title:gsub("%%", "%%%%") or ""
+  local status = task and task.status and not drawer and ("%%#IcarusTopStatus_%s#   %s %%#IcarusTopDim#%s"):format(task.status,
     tasks.GLYPHS[task.status], tasks.LABELS[task.status]) or ""
-  local function short(name)
-    local cut = vim.fn.strchars(name) > TOP_NAME and vim.fn.strcharpart(name, 0, TOP_NAME - 1) .. "…" or name
-    return (cut:gsub("%%", "%%%%"))
-  end
-  local before, after = neighbour(-1), neighbour(1)
-  local around = (before and "‹ " .. short(before) or "") .. (before and after and "   " or "")
-    .. (after and short(after) .. " ›" or "")
-  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
+  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. M.around():gsub("%%", "%%%%") .. " "
 end
 
 -- The statusline: on the left the chat's modes; from the middle, the file main shows, whether it has
@@ -241,7 +245,7 @@ local function main_win()
   end
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     if not vim.w[win].icarus_queue_of and not vim.w[win].icarus_head_of
-      and not vim.w[win].icarus_prs_of and not vim.w[win].icarus_outline and not vim.w[win].icarus_margin then
+      and not vim.w[win].icarus_prs_of and not vim.w[win].icarus_outline and not vim.w[win].icarus_margin and not vim.w[win].icarus_drawer then
       layout.main = win
       return win
     end
@@ -533,6 +537,8 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusTopDim", { fg = dim.fg, bg = bar.bg })
+  vim.api.nvim_set_hl(0, "IcarusTopFill", { fg = T.sun, bg = bar.bg })
+  vim.api.nvim_set_hl(0, "IcarusTopOver", { fg = T.coral, bg = bar.bg })
   for status, color in pairs(require("icarus.tasks").COLORS) do
     vim.api.nvim_set_hl(0, "IcarusTopStatus_" .. status, { fg = color, bg = bar.bg })
   end
@@ -601,9 +607,9 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>h", function()
     require("icarus.outline").focus()
   end, { desc = "Into the outline, or back to main" })
-  vim.keymap.set("n", "<leader>k", function()
-    require("icarus.head").toggle()
-  end, { desc = "The drawer: the task's header and PRs" })
+  vim.keymap.set("n", "<leader>i", function()
+    require("icarus.drawer").toggle()
+  end, { desc = "The drawer: what's on screen, and how long is left" })
   vim.keymap.set("n", "<leader>R", function()
     local record = layout.current and chats.get(layout.current)
     if record then
@@ -653,6 +659,7 @@ function M.setup(opts)
     require("icarus.links")
     require("icarus.link_cursor")
     require("icarus.head")
+    require("icarus.drawer")
     require("icarus.bugs").watch()
     require("icarus.democracy").resume()
     require("icarus.daedalus").start()

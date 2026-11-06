@@ -364,6 +364,26 @@ function M.set_status(task, status)
   M.set(task, { status = status })
 end
 
+local UNITS = { m = 60, h = 3600, d = 86400 }
+
+-- The seconds in a duration like 90m, 4h or 2d, nil if it isn't one.
+function M.seconds(duration)
+  local n, unit = tostring(duration):match("^%s*(%d+)%s*([mhd])%s*$")
+  return n and tonumber(n) * UNITS[unit]
+end
+
+-- The task's expected duration in seconds and what's left of it, counted from when it was made and
+-- negative once it's overdue; nil if it has none.
+---@return {expected: integer, left: integer}?
+function M.sla(task)
+  local expected = M.seconds(task.attrs.expected)
+  local y, mo, d, h, mi, sec = tostring(task.created):match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+  if not (expected and y) then
+    return nil
+  end
+  return { expected = expected, left = expected - (os.time() - os.time({ year = y, month = mo, day = d, hour = h, min = mi, sec = sec })) }
+end
+
 -- Moves the task's folder, its agents' dirs with it, to ~/.icarus/trash.
 ---@param task icarus.Task
 ---@return string where it went
