@@ -286,8 +286,20 @@ end
 
 local function draw_req(r)
   local sr, sc, er, ec = req_range(r)
+  if r.shown then
+    pcall(vim.api.nvim_buf_del_extmark, r.buf, NS, r.shown)
+    r.shown = nil
+  end
   if not sr then
     return
+  end
+  -- A proposal's new lines, drawn under the struck ones, without za.
+  if r.proposal and r.proposal.text and vim.api.nvim_buf_is_valid(r.buf) then
+    local rows = {}
+    for line in (r.proposal.text .. "\n"):gmatch("(.-)\n") do
+      rows[#rows + 1] = { { line, "IcarusProposedNew" } }
+    end
+    r.shown = vim.api.nvim_buf_set_extmark(r.buf, NS, er, 0, { virt_lines = rows })
   end
   local opts = { id = r.mark, end_row = er, end_col = ec, hl_group = "IcarusAsked" }
   if r.pending then
@@ -304,6 +316,7 @@ end
 
 local function close_req(r)
   pcall(vim.api.nvim_buf_del_extmark, r.buf, NS, r.mark)
+  pcall(vim.api.nvim_buf_del_extmark, r.buf, NS, r.shown or 0)
   reqs[r.id] = nil
 end
 
