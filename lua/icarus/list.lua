@@ -502,6 +502,7 @@ end
 function M.toggle_filter()
   state.today_only = not state.today_only or nil
   M.draw()
+  require("icarus.drawer").sync()
 end
 
 -- s: picks the task's status from the list's statuses, the one it has marked.
@@ -630,6 +631,11 @@ end
 
 function M.back()
   require("icarus").last_view()
+end
+
+-- What the drawer calls the list as it's filtered.
+function M.title()
+  return state.today_only and "today's tasks" or "all tasks"
 end
 
 function M.back_to_task()

@@ -1,6 +1,7 @@
 -- The drawer: the top bar grown downward, <leader>i, on every view but home, so everything under it
--- moves down rather than being covered. The bar keeps icarus's name; the drawer's line is the view's
--- title: on a task its title, status and what's left of its expected duration as a bar that drains.
+-- moves down rather than being covered. The bar keeps icarus's name and the views before and after;
+-- the drawer's line is the view's title: on a task its title, status and what's left of its expected
+-- duration as a bar that drains; on the list which tasks it shows.
 -- It's a window across the whole screen, on the bar's background, and it can't be entered.
 local tasks = require("icarus.tasks")
 
@@ -51,7 +52,7 @@ local function view_title(view)
   if task then
     return task_title(task)
   end
-  return { { " " .. (view.kind == "list" and "task list" or require("icarus").view_name(view) or ""), "IcarusTopTask" } }
+  return { { " " .. (view.kind == "list" and require("icarus.list").title() or require("icarus").view_name(view) or ""), "IcarusTopTask" } }
 end
 
 local function draw(buf, view)
