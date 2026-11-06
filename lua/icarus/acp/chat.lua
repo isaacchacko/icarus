@@ -775,7 +775,8 @@ end
 -- made at once, so it has an id to link to; it opens once the fork comes back, and done(record) then.
 ---@param done? fun(record: icarus.ChatRecord)
 ---@return icarus.ChatRecord? record
-function M.fork(chat, text, attached, done)
+-- pin: what the fork runs at, for a task's workers (the task header's workers_model and workers_effort).
+function M.fork(chat, text, attached, done, pin)
   local source = chat.session
   if not (source.ready and source.id and source.client) then
     vim.notify("This agent's session isn't open yet: fork it once it is", vim.log.levels.WARN)
@@ -785,6 +786,9 @@ function M.fork(chat, text, attached, done)
   local record = chats.create(chat.record.cwd, chat.record.task)
   record.forked_from = chat.record.id
   record.title = "⑂ " .. (vim.fn.strchars(first) > 58 and vim.fn.strcharpart(first, 0, 57) .. "…" or first)
+  if pin then
+    record.model, record.effort = pin.model, pin.effort
+  end
   chats.save(record)
   source.client:request("session/fork", { sessionId = source.id, cwd = chat.record.cwd, mcpServers = {} }, function(result, err)
     if err or not (result and result.sessionId) then

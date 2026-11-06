@@ -1245,9 +1245,14 @@ function M.fork(args)
     return false, "chat " .. tostring(args.chat) .. " isn't open in this icarus", false
   end
   local record = chat.record
+  local task = record.task and require("icarus.tasks").read(record.task)
+  local pin = task and not task.sentinel and task.attrs.workers_model and {
+    model = task.attrs.workers_model,
+    effort = task.attrs.workers_effort,
+  } or nil
   local fork = require("icarus.acp.chat").fork(chat, args.text, nil, function(made)
     vim.notify(("%s forked: %s"):format(record.title or "an agent", made.title))
-  end)
+  end, pin)
   if not fork then
     return false, "your session isn't open yet", true
   end
