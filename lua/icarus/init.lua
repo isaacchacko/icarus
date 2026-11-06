@@ -94,7 +94,7 @@ function M.tabline()
   local slug = view.task or (view.kind ~= "list" and record and record.task)
   local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
   local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
-  return "%#IcarusTopName# I C A R U S%#IcarusTopTask#" .. title .. "%#IcarusTopBar#"
+  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. "%#IcarusTopBar#"
 end
 
 -- The statusline, split where the right column starts (half the screen without one): on the left
@@ -471,7 +471,13 @@ function M.setup(opts)
   local bar = vim.api.nvim_get_hl(0, { name = "StatusLine", link = false })
   local dim = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   vim.api.nvim_set_hl(0, "IcarusStatusTask", { fg = bar.fg, bg = bar.bg, bold = true })
-  vim.api.nvim_set_hl(0, "IcarusTopName", { fg = bar.fg, bg = bar.bg, bold = true })
+  -- The name on a darker bar than the rest: each channel at 60%.
+  local base = bar.bg or 0x282c34
+  local darker = 0
+  for _, shift in ipairs({ 0x10000, 0x100, 1 }) do
+    darker = darker + math.floor(math.floor(base / shift) % 256 * 0.6) * shift
+  end
+  vim.api.nvim_set_hl(0, "IcarusTopName", { fg = bar.fg, bg = darker, bold = true })
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
