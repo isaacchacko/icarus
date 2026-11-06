@@ -57,6 +57,20 @@ function M.set_view(view)
   end
 end
 
+-- <leader>`: the pinned task; on it, the view before. The pinned task has no slot in <leader><leader>.
+function M.toggle_pinned()
+  local tasks = require("icarus.tasks")
+  local pinned = tasks.pinned()
+  if not pinned then
+    return vim.notify("No pinned task", vim.log.levels.WARN)
+  end
+  local view = layout.view
+  if view and view.kind == "task" and view.task == pinned.slug then
+    return M.last_view()
+  end
+  M.open_task(tasks.read(pinned.slug) or pinned)
+end
+
 -- <leader><leader>: the task before this one, on the agent you had there; again to come back.
 function M.last_task()
   local view = layout.last_task
@@ -474,13 +488,8 @@ function M.setup(opts)
     require("icarus").new_task()
   end, { desc = "New task" })
   vim.keymap.set("n", "<leader>`", function()
-    local task = require("icarus.tasks").pinned()
-    if task then
-      M.open_task(require("icarus.tasks").read(task.slug) or task)
-    else
-      vim.notify("No pinned task", vim.log.levels.WARN)
-    end
-  end, { desc = "The pinned task" })
+    M.toggle_pinned()
+  end, { desc = "The pinned task, or back from it" })
   vim.keymap.set("n", "<leader>f", function()
     require("icarus").pick_task()
   end, { desc = "Find a task" })
