@@ -142,7 +142,7 @@ function M.buf()
     end, { buffer = buf, nowait = true, desc = "Open recent task " .. i })
   end
   vim.keymap.set("n", "q", function()
-    vim.cmd("confirm qall")
+    require("icarus.landing").quit()
   end, { buffer = buf, nowait = true, desc = "Quit icarus" })
   vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
     group = vim.api.nvim_create_augroup("icarus_home", { clear = true }),
@@ -163,6 +163,31 @@ function M.buf()
   end })
   vim.api.nvim_create_autocmd("ColorScheme", { group = "icarus_home", callback = highlights })
   return buf
+end
+
+-- Quits, asking once about unsaved buffers, wherever they are (other tasks' included). The answer is
+-- taken here, so no prompt is left waiting on the screen.
+function M.quit()
+  local unsaved = vim.tbl_filter(function(buf)
+    return vim.bo[buf].modified and vim.bo[buf].buftype == "" and vim.api.nvim_buf_get_name(buf) ~= ""
+  end, vim.api.nvim_list_bufs())
+  if #unsaved == 0 then
+    return vim.cmd("qall")
+  end
+  local names = vim.tbl_map(function(buf)
+    return "  " .. vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":~")
+  end, unsaved)
+  local choice = vim.fn.confirm("Unsaved changes:\n" .. table.concat(names, "\n"), "&Save all\n&Quit anyway\n&Cancel", 3)
+  if choice == 1 then
+    for _, buf in ipairs(unsaved) do
+      vim.api.nvim_buf_call(buf, function()
+        vim.cmd("silent write")
+      end)
+    end
+    vim.cmd("qall")
+  elseif choice == 2 then
+    vim.cmd("qall!")
+  end
 end
 
 -- Hides the cursor (a cursor shape fully blended away), or puts back the one before.
