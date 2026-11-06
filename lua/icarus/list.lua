@@ -441,7 +441,13 @@ function M.overview()
   if overview_win() then
     return M.close_overview()
   end
-  -- Closing its window wipes the buffer, so the name is free when it opens again.
+  -- Closing its window wipes the buffer, so the name is free when it opens again. One left hidden by
+  -- an older version, in a running icarus, goes first.
+  for _, each in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_get_name(each) == OVERVIEW then
+      vim.api.nvim_buf_delete(each, { force = true })
+    end
+  end
   local b = vim.api.nvim_create_buf(false, true)
   vim.bo[b].bufhidden = "wipe"
   vim.bo[b].filetype = "markdown"
