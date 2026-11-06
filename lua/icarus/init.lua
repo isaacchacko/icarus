@@ -39,6 +39,9 @@ local function remember_view(view)
   layout.history = history
 end
 
+-- How much of a view's name the top bar shows.
+local TOP_NAME = 24
+
 -- What the screen shows now; the view it showed before is kept for the graph's q.
 ---@param view icarus.View
 function M.set_view(view)
@@ -86,7 +89,35 @@ function M.last_task()
   require("icarus.task_page").open(task, record and (record.task or require("icarus.tasks").SENTINEL) == task.slug and record or nil)
 end
 
--- The bar across the top: icarus's name as home has it, then the task on screen in italics.
+-- A view's name for the top bar; nil for one that's gone, which stepping skips too.
+local function view_name(view)
+  if view.kind == "home" then
+    return "home"
+  elseif view.kind == "list" or view.kind == "board" then
+    return "list"
+  elseif view.chat and view.kind == "chat" then
+    local record = chats.get(view.chat)
+    return record and (record.title or "new chat")
+  end
+  local task = view.task and require("icarus.tasks").seen(view.task)
+  return task and (view.kind == "graph" and "graph: " .. task.title or task.title)
+end
+
+-- The nearest view that's still there, by steps of by from where history is.
+local function neighbour(by)
+  local history = layout.history or {}
+  local at = (layout.at or #history) + by
+  while history[at] do
+    local name = view_name(history[at])
+    if name then
+      return name
+    end
+    at = at + by
+  end
+end
+
+-- The bar across the top: icarus's name as home has it, then the task on screen in italics, and at
+-- the right the views before and after this one.
 function M.tabline()
   local tasks = require("icarus.tasks")
   local view = layout.view or {}
@@ -94,7 +125,14 @@ function M.tabline()
   local slug = view.task or (view.kind ~= "list" and record and record.task)
   local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
   local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
-  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. "%#IcarusTopBar#"
+  local function short(name)
+    local cut = vim.fn.strchars(name) > TOP_NAME and vim.fn.strcharpart(name, 0, TOP_NAME - 1) .. "…" or name
+    return (cut:gsub("%%", "%%%%"))
+  end
+  local before, after = neighbour(-1), neighbour(1)
+  local around = (before and "‹ " .. short(before) or "") .. (before and after and "   " or "")
+    .. (after and short(after) .. " ›" or "")
+  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
 end
 
 -- The statusline, split where the right column starts (half the screen without one): on the left
@@ -307,6 +345,7 @@ function M.step_view(by)
     at = at + by
   end
   layout.stepping = false
+  vim.cmd.redrawtabline()
 end
 
 function M.new_task()
@@ -480,6 +519,7 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusTopName", { fg = bar.fg, bg = darker, bold = true })
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
+  vim.api.nvim_set_hl(0, "IcarusTopDim", { fg = dim.fg, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
   local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg
