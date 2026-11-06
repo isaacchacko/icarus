@@ -39,6 +39,9 @@ local function remember_view(view)
   layout.history = history
 end
 
+-- How much of a view's name the top bar shows.
+local TOP_NAME = 24
+
 -- What the screen shows now; the view it showed before is kept for the graph's q.
 ---@param view icarus.View
 function M.set_view(view)
@@ -46,9 +49,9 @@ function M.set_view(view)
     layout.last, layout.view = layout.view, view
   end
   remember_view(view)
-  -- Home is the whole screen; every other view has both bars.
-  local bars = view.kind ~= "home"
-  vim.o.laststatus, vim.o.showtabline = bars and 3 or 0, bars and 2 or 0
+  -- Home is the whole screen, and the list needs no status line; every other view has both bars.
+  vim.o.laststatus = (view.kind == "home" or view.kind == "list") and 0 or 3
+  vim.o.showtabline = view.kind == "home" and 0 or 2
   vim.cmd.redrawtabline()
   -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
   -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
@@ -86,7 +89,35 @@ function M.last_task()
   require("icarus.task_page").open(task, record and (record.task or require("icarus.tasks").SENTINEL) == task.slug and record or nil)
 end
 
--- The bar across the top: icarus's name as home has it, then the task on screen in italics.
+-- A view's name for the top bar; nil for one that's gone, which stepping skips too.
+local function view_name(view)
+  if view.kind == "home" then
+    return "home"
+  elseif view.kind == "list" or view.kind == "board" then
+    return "list"
+  elseif view.chat and view.kind == "chat" then
+    local record = chats.get(view.chat)
+    return record and (record.title or "new chat")
+  end
+  local task = view.task and require("icarus.tasks").seen(view.task)
+  return task and (view.kind == "graph" and "graph: " .. task.title or task.title)
+end
+
+-- The nearest view that's still there, by steps of by from where history is.
+local function neighbour(by)
+  local history = layout.history or {}
+  local at = (layout.at or #history) + by
+  while history[at] do
+    local name = view_name(history[at])
+    if name then
+      return name
+    end
+    at = at + by
+  end
+end
+
+-- The bar across the top: icarus's name as home has it, then the task on screen in italics, and at
+-- the right the views before and after this one.
 function M.tabline()
   local tasks = require("icarus.tasks")
   local view = layout.view or {}
@@ -94,11 +125,20 @@ function M.tabline()
   local slug = view.task or (view.kind ~= "list" and record and record.task)
   local task = slug and slug ~= tasks.SENTINEL and tasks.seen(slug)
   local title = task and "   " .. task.title:gsub("%%", "%%%%") or ""
-  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. "%#IcarusTopBar#"
+  local status = task and task.status and ("%%#IcarusTopStatus_%s#   %s %%#IcarusTopDim#%s"):format(task.status,
+    tasks.GLYPHS[task.status], tasks.LABELS[task.status]) or ""
+  local function short(name)
+    local cut = vim.fn.strchars(name) > TOP_NAME and vim.fn.strcharpart(name, 0, TOP_NAME - 1) .. "…" or name
+    return (cut:gsub("%%", "%%%%"))
+  end
+  local before, after = neighbour(-1), neighbour(1)
+  local around = (before and "‹ " .. short(before) or "") .. (before and after and "   " or "")
+    .. (after and short(after) .. " ›" or "")
+  return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. around .. " "
 end
 
 -- The statusline, split where the right column starts (half the screen without one): on the left
--- the task the chat showing is on and its status; on the right the file the
+-- the chat's modes; on the right the file the
 -- right column shows, whether it has changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
@@ -126,12 +166,6 @@ function M.statusline()
     left[#left + 1] = { running and (" " .. running .. "   ") or " ", "IcarusStatusDim" }
   end
   local task = record and require("icarus.tasks").seen(record.task or require("icarus.tasks").SENTINEL)
-  if task then
-    left[#left + 1] = { task.title, "IcarusStatusTask" }
-    if task.status then
-      left[#left + 1] = { " · " .. task.status, "IcarusStatusDim" }
-    end
-  end
   local side = require("icarus.explorer").win()
   local split = side and vim.api.nvim_win_get_position(side)[2] or math.floor(vim.o.columns / 2)
   local right = {}
@@ -283,6 +317,18 @@ function M.last_view()
   end
 end
 
+-- Escape on the list: the task you were last on, wherever it is in the history; a task that's gone is
+-- skipped.
+function M.previous_task()
+  local history = layout.history or {}
+  for at = (layout.at or #history) - 1, 1, -1 do
+    local view = history[at]
+    if view.kind == "task" and require("icarus.tasks").seen(view.task) and show_view(view) then
+      return
+    end
+  end
+end
+
 -- <D-[> and <D-]>: back and forward through the views, from wherever you are: out of zen, a float
 -- or insert mode first, past any view that's gone.
 function M.step_view(by)
@@ -307,6 +353,7 @@ function M.step_view(by)
     at = at + by
   end
   layout.stepping = false
+  vim.cmd.redrawtabline()
 end
 
 function M.new_task()
@@ -480,6 +527,10 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusTopName", { fg = bar.fg, bg = darker, bold = true })
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
+  vim.api.nvim_set_hl(0, "IcarusTopDim", { fg = dim.fg, bg = bar.bg })
+  for status, color in pairs(require("icarus.tasks").COLORS) do
+    vim.api.nvim_set_hl(0, "IcarusTopStatus_" .. status, { fg = color, bg = bar.bg })
+  end
   vim.api.nvim_set_hl(0, "IcarusStatusDim", { fg = dim.fg, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusNag", { fg = T.sun, bg = bar.bg, bold = true })
   local lit = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg

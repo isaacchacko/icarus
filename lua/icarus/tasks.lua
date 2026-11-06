@@ -37,6 +37,8 @@ M.STATUSES = { "spec", "todo", "building", "review", "blocked", "merged", "cance
 M.LABELS = { spec = "Backlog", todo = "Todo", building = "In Progress", review = "Review", blocked = "Blocked",
   merged = "Done", cancelled = "Cancelled" }
 M.GLYPHS = { spec = "◌", todo = "○", building = "◐", review = "◉", blocked = "⊘", merged = "✓", cancelled = "" }
+local T = require("icarus.theme")
+M.COLORS = { spec = T.mute, todo = T.ash, building = T.sun, review = T.leaf, blocked = T.coral, merged = T.sky }
 M.SENTINEL = "no-task"
 
 -- The header's keys in this order, the rest after them by name.

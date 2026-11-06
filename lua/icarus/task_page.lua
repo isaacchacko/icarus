@@ -60,12 +60,12 @@ vim.api.nvim_create_autocmd({ "BufEnter", "WinLeave", "VimLeavePre" }, {
 })
 M.remember = remember
 
--- Escape in normal mode on a task's screen goes back to the board. It's bound on the task's own
--- buffers, so it wins over the global Escape there.
-local function escape_to_board(buf)
+-- Escape in normal mode on a task's screen goes to the list, and Escape there comes back. It's bound
+-- on the task's own buffers, so nothing else there takes the key.
+local function escape_to_list(buf)
   vim.keymap.set("n", "<Esc>", function()
     require("icarus.list").open()
-  end, { buffer = buf, nowait = true, desc = "Back to the list" })
+  end, { buffer = buf, nowait = true, desc = "To the list" })
 end
 
 ---@param task icarus.Task
@@ -76,7 +76,7 @@ function M.open(task, record)
   require("icarus").open(record)
   local chat = require("icarus.acp.chat").get(record)
   for _, buf in ipairs({ chat.buf, require("icarus.acp.thread").buf(chat) }) do
-    escape_to_board(buf)
+    escape_to_list(buf)
   end
   require("icarus").set_view({ kind = "task", task = task.slug, chat = record.id })
   local left = kept(task.slug)
@@ -86,7 +86,7 @@ function M.open(task, record)
   local ok, file = pcall(explorer.open_file, path)
   M.opening = false
   file = assert(ok and file, file)
-  escape_to_board(vim.api.nvim_win_get_buf(file))
+  escape_to_list(vim.api.nvim_win_get_buf(file))
   if left.explorer == false then
     explorer.hide()
   else

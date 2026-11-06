@@ -9,7 +9,6 @@
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
 -- overview on the right: links, status, agents, history.
 local tasks = require("icarus.tasks")
-local T = require("icarus.theme")
 
 local M = {}
 
@@ -21,8 +20,8 @@ local UNDO_MAX = 50
 local FIELD_MS = 90
 local STALE_AFTER = 24 * 60 * 60
 local UNITS = { m = 60, h = 60 * 60, d = 24 * 60 * 60 }
--- Each status's colour, as Linear has them: on its glyph, and tinting its rows.
-local COLORS = { spec = T.mute, todo = T.ash, building = T.sun, review = T.leaf, blocked = T.coral, merged = T.sky }
+-- Each status's colour (tasks.COLORS) tints its rows by this much.
+local COLORS = tasks.COLORS
 local TINT, PICKED_TINT = 0.14, 0.34
 
 -- In _G, so a hot reload keeps the task picked and the undo history.
@@ -189,6 +188,7 @@ local function buf()
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
+  map("<Esc>", "back_to_task", "Back to the task you were on")
   return b
 end
 
@@ -642,6 +642,10 @@ end
 
 function M.back()
   require("icarus").last_view()
+end
+
+function M.back_to_task()
+  require("icarus").previous_task()
 end
 
 return M
