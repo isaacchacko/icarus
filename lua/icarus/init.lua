@@ -46,8 +46,10 @@ function M.set_view(view)
     layout.last, layout.view = layout.view, view
   end
   remember_view(view)
-  -- The task before this one, for <leader><leader>: another task's screen, with its agent.
-  if view.kind == "task" then
+  -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
+  -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
+  local task = view.kind == "task" and require("icarus.tasks").read(view.task)
+  if view.kind == "task" and not (task and task.pinned) then
     if layout.task_view and layout.task_view.task ~= view.task then
       layout.last_task = layout.task_view
     end
