@@ -4,10 +4,8 @@
 -- lives outside the list.
 --
 -- j and k go between tasks, <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
--- s and S move it on and back a status, u undoes the last change, and q goes back to the view before.
--- G grabs the task under the cursor: then j and k move it within its status, h and l to the status
--- before or after. Tab shows the overview on the right: links, status, agents, history. e asks the
--- task's agent to enrich it.
+-- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
+-- overview on the right: links, status, agents, history.
 local tasks = require("icarus.tasks")
 
 local M = {}
@@ -17,16 +15,17 @@ local OVERVIEW = "icarus://overview"
 local NS = vim.api.nvim_create_namespace("icarus_list")
 local UNDO_MAX = 50
 
--- In _G, so a hot reload keeps the task picked, the grab and the undo history.
+-- In _G, so a hot reload keeps the task picked and the undo history.
 _G.icarus_list = _G.icarus_list or { row = 1, undo = {} }
 local state = _G.icarus_list
 
+-- The rows as last drawn, so the cursor can move without reading the tasks again.
+local cached
+
 local function highlights()
   vim.api.nvim_set_hl(0, "IcarusListHeader", { bold = true, default = true })
-  vim.api.nvim_set_hl(0, "IcarusListFlag", { link = "DiagnosticWarn", default = true })
   vim.api.nvim_set_hl(0, "IcarusListDone", { link = "Comment", default = true })
   vim.api.nvim_set_hl(0, "IcarusListSelected", { link = "CursorLine", default = true })
-  vim.api.nvim_set_hl(0, "IcarusListGrab", { link = "DiagnosticInfo", default = true })
 end
 highlights()
 
@@ -37,7 +36,7 @@ local function shown()
   end, tasks.STATUSES)
 end
 
--- The tasks in each status, in their order: by position where they have one, else last opened first.
+-- The tasks in each status, last opened first.
 ---@return table<string, icarus.Task[]>
 local function by_status()
   local by = {}
@@ -48,21 +47,6 @@ local function by_status()
     if not task.sentinel and not task.pinned and by[task.status] then
       table.insert(by[task.status], task)
     end
-  end
-  for _, list in pairs(by) do
-    local rank = {}
-    for i, task in ipairs(list) do
-      rank[task] = i
-    end
-    table.sort(list, function(a, b)
-      local pa, pb = a.attrs.position, b.attrs.position
-      if pa and pb and pa ~= pb then
-        return pa < pb
-      elseif (pa ~= nil) ~= (pb ~= nil) then
-        return pa ~= nil
-      end
-      return rank[a] < rank[b]
-    end)
   end
   return by
 end
@@ -142,29 +126,21 @@ local function buf()
       require("icarus.list")[fn]()
     end, { buffer = b, nowait = true, desc = desc })
   end
-  map("j", "move_down", "Task below, or down while grabbed")
-  map("k", "move_up", "Task above, or up while grabbed")
-  map("h", "move_left", "Status before, while grabbed")
-  map("l", "move_right", "Status after, while grabbed")
-  map("G", "grab", "Grab the task, or let it go")
+  map("j", "move_down", "Task below")
+  map("k", "move_up", "Task above")
   map("<CR>", "enter", "Open the task")
   map("<Tab>", "overview", "The overview on the right")
-  map("e", "enrich", "Ask its agent to enrich the task")
   map("n", "new", "New task")
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
   map("T", "toggle_today", "Toggle today")
-  map("s", "advance", "Move it to the next status")
-  map("S", "retreat", "Move it back a status")
+  map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
   return b
 end
 
--- The rows as last drawn, so the cursor can move without reading the tasks again.
-local cached
-
--- Highlights each row: the picked task, the grabbed one, and the done ones.
+-- Highlights each row: the picked task, and the done ones.
 local function paint(b, all, picking)
   vim.api.nvim_buf_clear_namespace(b, NS, 0, -1)
   for i, row in ipairs(all) do
@@ -172,7 +148,7 @@ local function paint(b, all, picking)
     if row.header then
       group = "IcarusListHeader"
     elseif row.task == picking then
-      group = row.task.slug == state.grab and "IcarusListGrab" or "IcarusListSelected"
+      group = "IcarusListSelected"
     elseif row.task.status == "merged" then
       group = "IcarusListDone"
     end
@@ -183,7 +159,8 @@ local function paint(b, all, picking)
 end
 
 -- The cursor moved, by any motion (Ctrl-D and Ctrl-U too): the task under it is the one picked, and
--- on a header the task below it. Only the highlight is drawn again, so the cursor stays where it is.
+-- on a header the task below it. Only the highlight and the overview are drawn again, so the cursor
+-- stays where it is.
 function M.cursor_moved()
   local all = cached
   if not all then
@@ -203,9 +180,10 @@ function M.cursor_moved()
     pick(row.task)
   end
   paint(buf(), all, picked(all))
+  M.draw_overview()
 end
 
--- Draws the list into its buffer, the picked task highlighted and the grabbed one marked.
+-- Draws the list into its buffer, the picked task highlighted.
 function M.draw()
   local b = buf()
   local all = rows()
@@ -261,7 +239,7 @@ local function move(step)
   M.draw()
 end
 
--- Changes a task's attributes or status, then draws the list again.
+-- Changes the picked task, then draws the list again.
 local function change(fn)
   local task = picked(rows())
   if task then
@@ -271,93 +249,11 @@ local function change(fn)
 end
 
 function M.move_down()
-  if state.grab then
-    return M.reorder(1)
-  end
   move(1)
 end
 
 function M.move_up()
-  if state.grab then
-    return M.reorder(-1)
-  end
   move(-1)
-end
-
-function M.move_left()
-  if state.grab then
-    M.step_status(-1)
-  end
-end
-
-function M.move_right()
-  if state.grab then
-    M.step_status(1)
-  end
-end
-
-function M.grab()
-  local task = picked(rows())
-  if not task then
-    return
-  end
-  state.grab = state.grab ~= task.slug and task.slug or nil
-  M.draw()
-end
-
--- Swaps the grabbed task with its neighbour in its status: the positions of the whole status are
--- written first, so the order is the one on screen.
-function M.reorder(step)
-  local task = state.grab and vim.iter(tasks.list()):find(function(each)
-    return each.slug == state.grab
-  end)
-  if not task then
-    return
-  end
-  local list = by_status()[task.status]
-  local at = vim.fn.index(list, task) + 1
-  local other = list[at + step]
-  if not other then
-    return
-  end
-  local before = {}
-  for i, each in ipairs(list) do
-    before[each.slug] = each.attrs.position
-  end
-  for i, each in ipairs(list) do
-    tasks.set(each, { position = i })
-  end
-  tasks.set(task, { position = at + step })
-  tasks.set(other, { position = at })
-  remember("move " .. task.title, function()
-    for slug, position in pairs(before) do
-      local each = tasks.read(slug)
-      if each then
-        tasks.set(each, { position = position })
-      end
-    end
-  end)
-  pick(task)
-  M.draw()
-end
-
--- Moves the task to the status before or after its own, while grabbed.
-function M.step_status(step)
-  change(function(task)
-    local order = shown()
-    local at = vim.fn.index(order, task.status) + 1
-    local to = order[at + step]
-    if to then
-      local from = task.status
-      tasks.set_status(task, to)
-      remember(("move %s to %s"):format(task.title, tasks.LABELS[from]), function()
-        local now = tasks.read(task.slug)
-        if now then
-          tasks.set_status(now, from)
-        end
-      end)
-    end
-  end)
 end
 
 function M.enter()
@@ -406,12 +302,28 @@ function M.toggle_today()
   end)
 end
 
-function M.advance()
-  M.step_status(1)
-end
-
-function M.retreat()
-  M.step_status(-1)
+-- s: picks the task's status from the list's statuses, with the one it has marked.
+function M.status()
+  change(function(task)
+    local order = shown()
+    vim.ui.select(vim.tbl_map(function(status)
+      return tasks.LABELS[status]
+    end, order), { prompt = "Status of " .. task.title }, function(_, index)
+      local to = index and order[index]
+      if to and to ~= task.status then
+        local from = task.status
+        tasks.set_status(task, to)
+        remember(("status of %s to %s"):format(task.title, tasks.LABELS[from]), function()
+          local now = tasks.read(task.slug)
+          if now then
+            tasks.set_status(now, from)
+          end
+        end)
+        pick(task)
+        M.draw()
+      end
+    end)
+  end)
 end
 
 function M.undo()
@@ -466,8 +378,6 @@ local function overview_lines(task)
   for _, line in ipairs(history) do
     lines[#lines + 1] = "  " .. line
   end
-  lines[#lines + 1] = ""
-  lines[#lines + 1] = "e enriches it: its agent writes a summary you can accept"
   return lines
 end
 
@@ -500,24 +410,6 @@ function M.overview()
   vim.wo[new].wrap = true
   vim.wo[new].linebreak = true
   M.draw_overview()
-end
-
--- e: asks the picked task's agent to enrich it: a summary from its links, tickets and history, which
--- it proposes into task.md for you to accept.
-function M.enrich()
-  local task = picked(rows())
-  if not task then
-    return
-  end
-  local record = require("icarus.chats").on_task(task.slug)[1]
-  if not record then
-    return vim.notify(task.title .. " has no agent yet: open it and start one", vim.log.levels.WARN)
-  end
-  local agent = require("icarus.acp.chat").get(record).session
-  agent:prompt(table.concat({
-    ("Enrich the task %s: write a short summary of it from its links, its linear and PR links, and its history."):format(task.title),
-    ("Propose it into %s as a section headed `## Summary (generated)`, so the user can accept or edit it."):format(task.file),
-  }, "\n"), nil, ("◉ enrich %s"):format(task.title))
 end
 
 function M.back()
