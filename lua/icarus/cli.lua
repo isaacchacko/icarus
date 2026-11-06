@@ -145,7 +145,8 @@ local USAGE = {
   unedge = "ica unedge <type> <agent>\n  unwires it",
   topology = "ica topology ring|debate|mesh\n  wires the task's agents: ring, each reviews the next; debate, two contest and a third reviews both; mesh (up to 4), all review all",
   merge = "ica merge <agent>\n  a bid to absorb it: you say you're the parent and it's the child; talk it out\nica merge --accept <agent> <handoff...|->\n  you're the child: your work goes to it, and you end\nica merge --decline <agent> <why...>",
-  retire = "ica retire\n  your claim has landed and nothing related is next: you leave the task, and your edges go to whoever needed you",
+  retire = "ica retire\n  you're finished: you leave the task (a democracy: your claim has landed and your edges go to whoever needed you)",
+  close = "ica close <agent id>\n  the lead closes a finished agent on a router-worker task: it leaves the list and its session stops after its turn",
   post = "ica post <text...|->\n  adds to the task's shared channel",
   read = "ica read\n  what's new on the task's shared channel since you last read",
   ["propose-to-peers"] = "ica propose-to-peers <what...|->\n  a decision to the agents you've edges with (all, if none). Each must answer",
@@ -331,7 +332,7 @@ local COMMANDS = {
 
 -- A democracy's commands (icarus.democracy), which reads their arguments itself; a last - is stdin.
 for _, each in ipairs({ "claim", "claims", "unclaim", "done", "approve", "reject", "spawn", "edge", "unedge", "topology", "merge",
-  "retire", "post", "read", "propose-to-peers", "vote", "revise", "withdraw", "decisions" }) do
+  "retire", "close", "post", "read", "propose-to-peers", "vote", "revise", "withdraw", "decisions" }) do
   COMMANDS[each] = function(args)
     local argv = vim.list_slice(args)
     argv[#argv] = argv[#argv] and stdin_or(argv[#argv]) or nil

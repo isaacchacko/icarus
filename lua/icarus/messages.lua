@@ -29,14 +29,18 @@ function M.agents(args)
   local task = task_of(me.record)
   local lines = { ("agents on %s:"):format(task and task.title or "(no task)") }
   for _, record in ipairs(chats.on_task(me.record.task or tasks.SENTINEL)) do
-    local open = _G.icarus_open_chats[record.id]
-    lines[#lines + 1] = ("%s  %-9s %s%s%s"):format(record.id, open and chats.status(record.id) or "not open",
-      record.title or "new chat", record.forked_from and (" (a fork of " .. record.forked_from .. ")") or "",
-      record.id == me.record.id and "  ← you" or "")
-    local peers = task and require("icarus.orchestration").style(task) == "democracy" and not record.retired
-    local place = peers and require("icarus.democracy").describe(task.slug, record.id)
-    if place and #place > 0 then
-      lines[#lines + 1] = "    " .. table.concat(place, " · ")
+    -- Retired and closed agents leave the list; the caller stays, as it's the one asking.
+    if not record.retired or record.id == me.record.id then
+      local open = _G.icarus_open_chats[record.id]
+      lines[#lines + 1] = ("%s  %-9s %s%s%s"):format(record.id, open and chats.status(record.id) or "not open",
+        record.title or "new chat", record.forked_from and (" (a fork of " .. record.forked_from .. ")") or "",
+        record.id == me.record.id and "  ← you" or "")
+      lines[#lines] = lines[#lines] .. ("  [%s · %s]"):format(record.model or "default", record.effort or "default")
+      local peers = task and require("icarus.orchestration").style(task) == "democracy" and not record.retired
+      local place = peers and require("icarus.democracy").describe(task.slug, record.id)
+      if place and #place > 0 then
+        lines[#lines + 1] = "    " .. table.concat(place, " · ")
+      end
     end
   end
   return true, table.concat(lines, "\n"), true
@@ -51,6 +55,9 @@ function M.msg(args)
   local record = chats.get(args.to)
   if not record then
     return false, ("no agent %s (ica agents lists them)"):format(args.to), true
+  end
+  if record.retired then
+    return false, ("%s has retired from its task: nothing to send it"):format(record.title or record.id), true
   end
   if record.id == me.record.id then
     return false, "that's you", true

@@ -29,7 +29,7 @@ local chats = require("icarus.chats")
 local M = {}
 
 M.COMMANDS = { "claim", "claims", "unclaim", "done", "approve", "reject", "spawn", "edge", "unedge", "topology", "merge",
-  "retire", "post", "read", "propose-to-peers", "vote", "revise", "withdraw", "decisions" }
+  "retire", "close", "post", "read", "propose-to-peers", "vote", "revise", "withdraw", "decisions" }
 
 local MAX_NODES, MAX_EDGES = 6, 3
 local PROBE_TURNS, PROBE_SECONDS = 10, 30 * 60
@@ -368,6 +368,19 @@ local function land(graph, id)
 end
 
 -- id leaves the graph: its edges go to whoever needed it, and its session stops once its turn ends.
+-- Ends an agent's place on its task: its record retires, its watches go, and its session stops once
+-- its turn ends (M.tick). Any style.
+local function leave_chat(id)
+  local record = chats.get(id)
+  if record then
+    record.retired = true
+    chats.save(record)
+  end
+  require("icarus.watch").release(id)
+  state.leaving = state.leaving or {}
+  state.leaving[id] = true
+end
+
 local function retire(graph, id)
   local needers, onward = {}, {}
   for _, edge in ipairs(graph.edges) do
@@ -396,14 +409,7 @@ local function retire(graph, id)
     end, d.voters or {})
   end
   graph.nodes[id] = nil
-  local record = chats.get(id)
-  if record then
-    record.retired = true
-    chats.save(record)
-  end
-  require("icarus.watch").release(id)
-  state.leaving = state.leaving or {}
-  state.leaving[id] = true
+  leave_chat(id)
 end
 
 -- child folds into parent: what's its goes there, and it retires.
@@ -688,6 +694,23 @@ function handlers.retire(me, _, graph)
   return true, "you've left the graph: your session ends with this turn"
 end
 
+-- router-worker: the lead closes an agent of its task that's finished, so it leaves the list.
+function handlers.close(me, slug, _, argv)
+  local lead = chats.get(me)
+  if not (lead and require("icarus.orchestration").leads(lead)) then
+    return false, "only a task's lead closes agents: a worker retires itself with ica retire"
+  end
+  local target = argv[1] and chats.get(argv[1])
+  if not target or target.task ~= slug or target.retired then
+    return false, ("no agent %s on this task"):format(tostring(argv[1]))
+  end
+  if target.id == me then
+    return false, "that's you: ica retire"
+  end
+  leave_chat(target.id)
+  return true, agent(target.id) .. " is closed"
+end
+
 function handlers.post(me, slug, _, argv)
   local text = rest(argv, 1)
   if text == "" then
@@ -819,8 +842,24 @@ function M.remote(cmd, args)
     return false, "you're not on a task", true
   end
   local style = require("icarus.orchestration").style(task)
-  if style ~= "democracy" then
+  local any_style = cmd == "post" or cmd == "retire" or cmd == "close"
+  if style ~= "democracy" and not any_style then
     return false, ("ica %s is for a democracy; this task is %s"):format(cmd, style), true
+  end
+  if style ~= "democracy" then
+    -- Without a graph: posting is the channel, and retiring or closing only ends places (leave_chat).
+    if cmd == "retire" then
+      leave_chat(args.chat)
+      state.slugs = state.slugs or {}
+      state.slugs[slug] = true
+      M.start()
+      return true, "you've left the task: your session ends with this turn", true
+    end
+    local ok, out = handlers[cmd](args.chat, slug, nil, args.argv or {})
+    if cmd == "close" then
+      M.start()
+    end
+    return ok, out, true
   end
   local graph = load(slug)
   local ok, out = handlers[cmd](args.chat, slug, graph, args.argv or {})
