@@ -95,6 +95,9 @@ function M.status(args)
   if args.status and not vim.tbl_contains(tasks.STATUSES, args.status) then
     return false, ("no status %s: it's one of %s"):format(args.status, table.concat(tasks.STATUSES, ", ")), true
   end
+  if args.status and task.pinned then
+    return false, task.title .. " is pinned, so it has no status: use ica status --now <where it stands>", true
+  end
   local changes = {}
   changes.status = args.status
   changes.now = args.now and vim.trim((args.now:gsub("%s+", " "))) or nil
@@ -103,7 +106,7 @@ function M.status(args)
     me.status_at = me.turns or 0
     task = tasks.read(task.slug)
   end
-  return true, ("%s: %s%s"):format(task.title, task.status, task.attrs.now and (" — " .. task.attrs.now) or ""), true
+  return true, ("%s: %s%s"):format(task.title, task.status or "pinned", task.attrs.now and (" — " .. task.attrs.now) or ""), true
 end
 
 -- ica link [--remove] <url>...: links on the caller's task (a PR's shows with its tickets, icarus.prs).

@@ -223,6 +223,12 @@ local function merge(slug, stored, edited)
   else
     attrs.pinned = nil
   end
+  -- A flag is on or absent, so turning one off leaves nothing in the header.
+  for _, flag in ipairs({ "high", "today" }) do
+    if attrs[flag] ~= true then
+      attrs[flag] = nil
+    end
+  end
   if type(attrs.links) == "string" and attrs.links ~= "" then
     attrs.links = { attrs.links }
   elseif type(attrs.links) ~= "table" then

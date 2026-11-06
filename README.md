@@ -19,7 +19,7 @@ icarus
 
 ## Use
 
-- **Tasks**: `<leader>m` is the board, `<leader>f` finds a task, `<leader><leader>` goes back to the last one, and `<D-[>` and `<D-]>` go back and forward through views.
+- **Tasks**: `<leader>m` is the list of tasks, `<leader>f` finds a task, `<leader><leader>` goes back to the last one, and `<D-[>` and `<D-]>` go back and forward through views.
 - **Agents**: `<leader>h` is the agent sidebar, `<leader>g` the graph, `<leader>d` turns a chat from what was said to its full details, `<leader>z` is zen.
 - **Files**: `<leader>l` is the file sidebar. `<leader>w` watches a file with the agent you're in, so your edits reach it with its next turn. `<leader>c` comments on a line, and agents answer with comments and proposals.
 - **What's waiting on you**: `<leader>i`, everything on the task in one place.
