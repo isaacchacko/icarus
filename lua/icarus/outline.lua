@@ -5,6 +5,8 @@
 -- Main is TEXT columns at most, and it sits centred: the outline takes the left margin and a blank
 -- window the right one, so a wider screen only adds margin. <leader>z blanks the outline in place,
 -- so main doesn't move. Neither blank window can be entered.
+--
+-- A lead's workers aren't listed until H shows them, except one waiting on you or the one on screen.
 local chats = require("icarus.chats")
 local tasks = require("icarus.tasks")
 
@@ -112,15 +114,18 @@ function ROWS.agents(task, waiting)
   for _, row in ipairs(require("icarus.org").rows(task)) do
     local id = row.target.chat
     local asks = id and waiting.chats[id]
-    out[#out + 1] = { key = id and "chat:" .. id or "subagent:" .. row.target.subagent, lead = row.tree,
-      glyph = asks and "◆" or row.glyph, glyph_hl = row.hl,
-      text = row.note and (row.name .. "  " .. row.note) or row.name, waiting = asks or row.status == "needs you", open = function()
-        if id then
-          require("icarus.task_page").show(task, { chat = id })
-        else
-          require("icarus.subagents").open(row.target.subagent)
-        end
-      end }
+    local needs = asks or row.status == "needs you"
+    if state.workers or row.tree == "" or needs or row.current then
+      out[#out + 1] = { key = id and "chat:" .. id or "subagent:" .. row.target.subagent, lead = row.tree,
+        glyph = asks and "◆" or row.glyph, glyph_hl = row.hl,
+        text = row.note and (row.name .. "  " .. row.note) or row.name, waiting = needs, open = function()
+          if id then
+            require("icarus.task_page").show(task, { chat = id })
+          else
+            require("icarus.subagents").open(row.target.subagent)
+          end
+        end }
+    end
   end
   return out
 end
@@ -196,6 +201,7 @@ local function draw()
   if not (win and task) or state.hidden then
     return
   end
+  M.bind(vim.api.nvim_win_get_buf(win))
   local waiting = waiting_on(task.slug)
   local width = vim.api.nvim_win_get_width(win)
   local lines, marks, map = {}, {}, {}
@@ -254,9 +260,14 @@ local function enter()
   end
 end
 
-local function list_buf()
-  local buf = scratch(NAME)
-  vim.bo[buf].filetype = "icarus_outline"
+-- The keys on the list, set the first time this version draws it, so an open outline gets them on a
+-- hot reload.
+local bound = {}
+function M.bind(buf)
+  if bound[buf] then
+    return
+  end
+  bound[buf] = true
   for _, lhs in ipairs({ "<CR>", "l", "<Tab>" }) do
     vim.keymap.set("n", lhs, enter, { buffer = buf, nowait = true, desc = "Open this in main" })
   end
@@ -266,7 +277,21 @@ local function list_buf()
   vim.keymap.set("n", "<Esc>", function()
     require("icarus.list").open()
   end, { buffer = buf, nowait = true, desc = "To the list" })
+  vim.keymap.set("n", "H", function()
+    M.toggle_workers()
+  end, { buffer = buf, nowait = true, desc = "Show or hide the workers" })
+end
+
+local function list_buf()
+  local buf = scratch(NAME)
+  vim.bo[buf].filetype = "icarus_outline"
+  M.bind(buf)
   return buf
+end
+
+function M.toggle_workers()
+  state.workers = not state.workers or nil
+  M.redraw()
 end
 
 local BARE = { number = false, relativenumber = false, signcolumn = "no", wrap = false, winfixwidth = true,
