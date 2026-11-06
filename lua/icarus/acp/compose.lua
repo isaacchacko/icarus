@@ -1,5 +1,5 @@
 -- The composer: where you type to an agent, the last lines of the chat's own buffer, under the
--- conversation and a rule. Both of a chat's buffers end in one (its details and its thread), and the
+-- conversation, the agent's status line (M.status) and a rule. Both of a chat's buffers end in one (its details and its thread), and the
 -- draft lives in whichever shows: M.carry moves it across.
 --
 -- An extmark holds the composer's start, and everything above it is the conversation. What draws the
@@ -29,14 +29,29 @@ local views = _G.icarus_compose.views
 ---@field mark? integer
 ---@field start integer the composer's first row, as last set; on_lines can't read the mark, a change has moved it by then
 ---@field below? integer during M.write, how many lines the composer has
+---@field status? table[] the status line's {text, hl} parts, drawn above the rule
 ---@field quiet? boolean it's icarus changing the buffer, not you
 ---@field breach? boolean an edit reached above the composer
 
 local function pin(view, buf, row)
   row = math.min(row, vim.api.nvim_buf_line_count(buf) - 1)
   view.start = row
+  -- The status line is always a line, blank when there's nothing to say, so the draft doesn't jump
+  -- when a turn starts or ends.
+  local status = view.status and #view.status > 0 and view.status or { { "", "IcarusAcpRule" } }
   view.mark = vim.api.nvim_buf_set_extmark(buf, NS, row, 0, { id = view.mark, right_gravity = false,
-    virt_lines = { { { RULE, "IcarusAcpRule" } } }, virt_lines_above = true })
+    virt_lines = { status, { { RULE, "IcarusAcpRule" } } }, virt_lines_above = true })
+end
+
+-- The agent's status line above the rule, in both of the chat's buffers.
+---@param parts {[1]: string, [2]: string}[]
+function M.status(chat, parts)
+  for buf, view in pairs(views) do
+    if view.chat == chat and vim.api.nvim_buf_is_valid(buf) and view.mark then
+      view.status = parts
+      pin(view, buf, M.start(buf))
+    end
+  end
 end
 
 -- Runs fn with the buffer writable and out of undo, as icarus's own change.

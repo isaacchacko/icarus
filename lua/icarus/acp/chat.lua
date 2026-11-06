@@ -12,7 +12,7 @@
 --      1. Allow            in the composer, or <CR> on an option, answers it
 --   ✻ Brewed for 8s        the turn's summary
 --
--- The window's winbar is Claude's spinner line while the agent works. <CR> sends (in insert mode
+-- Claude's spinner line sits right above the composer while the agent works. <CR> sends (in insert mode
 -- too, where <S-CR> is a new line), <C-c> interrupts the turn. A prompt sent while the agent works
 -- waits its turn. A cursor in the composer goes down with it as the conversation grows; one in the
 -- conversation stays where you left it.
@@ -424,7 +424,8 @@ end
 local FRAMES = { "·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢" }
 local frame = 1
 
--- What the chat's winbar says, as {text, hl} parts: while the agent works, Claude's spinner line.
+-- What the line above the composer says, as {text, hl} parts: while the agent works, Claude's spinner
+-- line.
 local function bar_parts(chat)
   local parts = {}
   local function add(text, hl)
@@ -445,8 +446,6 @@ local function bar_parts(chat)
     end
     notes[#notes + 1] = "<C-c> to interrupt"
     add(" (" .. table.concat(notes, " · ") .. ")", "IcarusAcpSpinnerNote")
-  else
-    add(GLYPH.prompt .. " " .. (chat.record.title or "new chat"), "IcarusAcpIdle")
   end
   if #chat.session.queue > 0 then
     add((" · %d queued"):format(#chat.session.queue), "IcarusAcpSpinnerNote")
@@ -484,12 +483,14 @@ function M.tick()
 end
 
 update_bar = function(chat)
-  local bar = " "
-  for _, part in ipairs(bar_parts(chat)) do
-    bar = bar .. "%#" .. part[2] .. "#" .. part[1]:gsub("%%", "%%%%")
-  end
+  local parts = bar_parts(chat)
+  table.insert(parts, 1, { " ", "IcarusAcpIdle" })
+  require("icarus.acp.compose").status(chat, #parts > 1 and parts or {})
+  -- A window from when this line was its winbar.
   for _, win in ipairs(thread.windows(chat)) do
-    vim.wo[win].winbar = bar
+    if vim.wo[win].winbar ~= "" then
+      vim.wo[win].winbar = ""
+    end
   end
   thread.sync(chat)
   require("icarus.acp.queue").refresh(chat)
