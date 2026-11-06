@@ -937,7 +937,7 @@ local function map_keys(chat)
   local function cancel()
     chat.session:cancel()
   end
-  for _, buf in ipairs({ chat.buf, thread.buf(chat) }) do
+  for _, buf in ipairs({ chat.buf, thread.buf(chat), chat.input }) do
     map(buf, "n", "<leader>M", function()
       pick_model(chat)
     end, "The model and effort this chat runs at")
