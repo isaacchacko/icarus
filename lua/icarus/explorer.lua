@@ -77,7 +77,9 @@ function M.show(root, select, focus)
         vim.api.nvim_win_set_width(win, math.max(1, math.floor(vim.o.columns * WIDTH) - TREE - 1))
       end
     end,
-    layout = { preset = "sidebar", preview = false, layout = { position = "right" } },
+    -- The sidebar preset with no search box: the tree alone, its keys and <leader>l are the only way in.
+    layout = { preview = false, layout = { position = "right", backdrop = false, border = "none", box = "vertical",
+      { win = "list", border = "none" } } },
     -- Closing it by hand is <leader>l's, so a task remembers it.
     win = { list = { keys = { q = { function()
       require("icarus").toggle_explorer()
