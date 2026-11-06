@@ -1,8 +1,12 @@
 -- Watch, and the agent's comments and proposals in a buffer, as icarus's first prototype had them.
 --
--- <leader>w on a file: the agent on the left watches it. It gets the buffer, numbered, then every
--- 5s while it changes the diff since it last saw it (one line each in the chat), and is told to stay
--- quiet and answer in the buffer. A diff waiting behind a busy agent takes in the edits after it.
+-- <leader>w on a file: the agent on the left watches it. It gets the buffer, numbered, then the user's
+-- edits to it as a diff on the agent's next turn, and is told to stay quiet and answer in the buffer.
+-- A diff waiting behind a busy agent takes in the edits after it.
+--
+-- The buffer is looked at every 5s, but read once a minute: each read commits what the user has
+-- typed to ~/.icarus/edits, saved or not, so every change has a history in git. <leader>* reads it
+-- now, sending the whole buffer to the agent.
 --
 -- Comments: ica comment <file> <line|text> <comment...|-> puts one on a line: the line goes yellow
 -- with "▸ za" after it. A comment stays until it's dismissed: a line rewritten keeps it where it
@@ -33,6 +37,8 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_watch")
 local EVERY = 5000
+local READ_EVERY = 60000
+local EDITS = vim.fn.expand("~/.icarus/edits")
 local STORE = vim.fn.stdpath("data") .. "/comments"
 
 -- In _G, so a hot reload keeps them.
@@ -791,6 +797,9 @@ function M.attach(buf)
   vim.keymap.set("x", "<leader>a", function()
     require("icarus.watch").ask()
   end, { buffer = buf, desc = "Ask Claude about the selection" })
+  vim.keymap.set("n", "<leader>*", function()
+    require("icarus.watch").full_read(buf)
+  end, { buffer = buf, desc = "Read the whole file to Claude now" })
   local group = vim.api.nvim_create_augroup("icarus_comments_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, { group = group, buffer = buf, callback = function()
     keys(buf)
@@ -845,13 +854,36 @@ function M.catch_up(chat_id)
   return #parts > 0 and table.concat(parts, "\n\n") or nil
 end
 
+-- Commits buf's text to ~/.icarus/edits, one file per watched file at its own path, so a change
+-- nobody saved is still in its history. The message says whether the buffer was saved.
+local function log_edit(buf, text)
+  local rel = vim.api.nvim_buf_get_name(buf):gsub("^/", "")
+  local file = EDITS .. "/" .. rel
+  vim.fn.mkdir(vim.fs.dirname(file), "p")
+  if vim.fn.isdirectory(EDITS .. "/.git") == 0 then
+    vim.system({ "git", "-C", EDITS, "init", "-q" }):wait()
+  end
+  vim.fn.writefile(vim.split(text, "\n", { plain = true }), file)
+  local message = ("%s: %s"):format(vim.bo[buf].modified and "unsaved" or "saved", rel)
+  local identity = { "git", "-C", EDITS, "-c", "user.name=icarus", "-c", "user.email=icarus@localhost" }
+  vim.system(vim.list_extend(vim.list_extend({}, identity), { "add", "--", rel }), {}, vim.schedule_wrap(function()
+    -- Nothing to commit (the same text as last time) exits non-zero, which is fine.
+    vim.system(vim.list_extend(vim.list_extend({}, identity), { "commit", "-q", "-m", message, "--", rel }))
+  end))
+end
+
 -- Sends the agent what changed since it last saw buf, or adds it to the diff still waiting.
-function M.flush(buf)
+-- Every READ_EVERY the text is logged (force logs it now); the agent gets its diff on its turn.
+function M.flush(buf, force)
   local watch = watched[buf]
   if not watch or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
   local now = content(buf)
+  if now ~= watch.logged and (force or vim.uv.now() - (watch.logged_at or 0) >= READ_EVERY) then
+    watch.logged, watch.logged_at = now, vim.uv.now()
+    log_edit(buf, now)
+  end
   if now == watch.base then
     return
   end
@@ -892,6 +924,24 @@ function M.flush(buf)
     watch.pending = agent:prompt(text, nil, display)
   end
   watch.base = now
+end
+
+-- <leader>*: reads buf now. Its edits are logged, and the agent gets the whole buffer, numbered, as
+-- the new base its next diffs are against.
+function M.full_read(buf)
+  local watch = watched[buf]
+  if not watch then
+    return vim.notify("Watch it first (<leader>w)", vim.log.levels.WARN)
+  end
+  M.flush(buf, true)
+  local agent = session(watch.chat)
+  if not agent then
+    return M.stop(buf)
+  end
+  local now = content(buf)
+  agent:prompt(("Full read of %s, as the user has it now (line numbers are its):\n```\n%s\n```"):format(
+    vim.api.nvim_buf_get_name(buf), numbered(buf)), nil, ("◉ read %s"):format(name(buf)))
+  watch.base, watch.sent_base = now, now
 end
 
 -- A file is the user's, not its watcher's: any agent on it may comment and propose there, each
@@ -1031,7 +1081,7 @@ function M.start(buf, chat_id, asked)
     return
   end
   local timer = assert(vim.uv.new_timer())
-  watched[buf] = { chat = chat_id, base = content(buf), timer = timer }
+  watched[buf] = { chat = chat_id, base = content(buf), logged = content(buf), timer = timer }
   local path = vim.api.nvim_buf_get_name(buf)
   agent:prompt(table.concat({
     ("%s %s, the file you and they work in. Their edits come with your next turn, as a diff; a line they"
