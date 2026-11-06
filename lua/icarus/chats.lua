@@ -12,6 +12,8 @@ local FILE = vim.fn.stdpath("data") .. "/chats.json"
 ---@field task? string the slug of the task it's on (icarus.tasks); none is the sentinel, "(no task)"
 ---@field title? string its first prompt's first line
 ---@field session? string its ACP session, loaded when it's opened again
+---@field model? string the model it runs at (<leader>M); the adapter's default when none
+---@field effort? string its reasoning effort, for the model (<leader>M)
 
 -- In _G, so a hot reload keeps them.
 _G.icarus_chats = _G.icarus_chats or { statuses = {} }

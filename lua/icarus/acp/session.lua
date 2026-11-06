@@ -171,18 +171,62 @@ function Session:stop()
   end
 end
 
-function Session:opened(id)
+-- The adapter's config option with this id (model, effort), if the session has it.
+function Session:option(id)
+  for _, option in ipairs(self.options or {}) do
+    if option.id == id then
+      return option
+    end
+  end
+end
+
+-- Sets one config option; done(ok) once the adapter answers with its options, which replace the old.
+function Session:configure(configId, value, done)
+  self.client:request("session/set_config_option", { sessionId = self.id, configId = configId, value = value }, function(result, err)
+    if err then
+      self.handlers.on_notice(("could not set %s to %s: %s"):format(configId, tostring(value), tostring(err.message)))
+    elseif result and result.configOptions then
+      self.options = result.configOptions
+    end
+    if done then
+      done(err == nil)
+    end
+  end)
+end
+
+-- The model, then the effort, this chat was set to: effort is for the model, so it goes second.
+function Session:apply_saved(done)
+  local record = self.chat and require("icarus.chats").get(self.chat) or {}
+  local pending = vim.tbl_filter(function(id)
+    return record[id] ~= nil
+  end, { "model", "effort" })
+  local function step(i)
+    local configId = pending[i]
+    if not configId then
+      return done()
+    end
+    self:configure(configId, record[configId], function()
+      step(i + 1)
+    end)
+  end
+  step(1)
+end
+
+function Session:opened(id, options)
   self.id = id
+  self.options = options or self.options
   self.handlers.on_session(id)
   self.client:request("session/set_mode", { sessionId = id, modeId = adapter.mode }, function(_, err)
     if err then
       self.handlers.on_notice(("could not set %s: %s"):format(adapter.mode, tostring(err.message)))
     end
-    self.ready = true
-    local batch = self:take_queue()
-    if batch then
-      self:deliver(batch)
-    end
+    self:apply_saved(function()
+      self.ready = true
+      local batch = self:take_queue()
+      if batch then
+        self:deliver(batch)
+      end
+    end)
   end)
 end
 
@@ -191,7 +235,7 @@ function Session:new_session(cwd)
     if err or not (result and result.sessionId) then
       return self.handlers.on_notice("could not open a session: " .. tostring(err and err.message or "no session id"))
     end
-    self:opened(result.sessionId)
+    self:opened(result.sessionId, result.configOptions)
   end)
 end
 
@@ -202,13 +246,13 @@ function Session:open(cwd, id, caps)
   end
   self.loading = true
   self.client:request("session/load", with_instructions({ sessionId = id, cwd = cwd, mcpServers = {} }, cwd, self.chat and require("icarus.chats").get(self.chat)),
-    function(_, err)
+    function(result, err)
       self.loading = false
       if err then
         self.handlers.on_notice(("could not load session %s (%s); starting a new one"):format(id, tostring(err.message)))
         return self:new_session(cwd)
       end
-      self:opened(id)
+      self:opened(id, result and result.configOptions)
     end)
 end
 

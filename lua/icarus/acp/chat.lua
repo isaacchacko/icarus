@@ -893,9 +893,54 @@ local function jump_prompt(chat, step)
   end
 end
 
+-- Asks for one of the chat's options (model or effort) from the adapter's list, the current one marked.
+local function choose(chat, configId, done)
+  local option = chat.session:option(configId)
+  if not (option and option.options) then
+    return vim.notify(("this chat has no %s to choose"):format(configId), vim.log.levels.WARN)
+  end
+  vim.ui.select(option.options, {
+    prompt = configId,
+    format_item = function(item)
+      return (item.value == option.currentValue and "● " or "  ") .. (item.name or item.value)
+    end,
+  }, function(item)
+    if item then
+      done(item.value)
+    end
+  end)
+end
+
+-- <leader>M: the model, then the effort, this chat runs at. Each choice is saved on the chat and
+-- applied again when it's opened.
+local function pick_model(chat)
+  choose(chat, "model", function(model)
+    chat.session:configure("model", model, function(ok)
+      if not ok then
+        return
+      end
+      chat.record.model = model
+      require("icarus.chats").save(chat.record)
+      choose(chat, "effort", function(effort)
+        chat.session:configure("effort", effort, function(effort_ok)
+          if effort_ok then
+            chat.record.effort = effort
+            require("icarus.chats").save(chat.record)
+          end
+        end)
+      end)
+    end)
+  end)
+end
+
 local function map_keys(chat)
   local function cancel()
     chat.session:cancel()
+  end
+  for _, buf in ipairs({ chat.buf, thread.buf(chat) }) do
+    map(buf, "n", "<leader>M", function()
+      pick_model(chat)
+    end, "The model and effort this chat runs at")
   end
   map(chat.buf, "n", "<CR>", function()
     enter_on_conversation(chat)
