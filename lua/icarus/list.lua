@@ -1,6 +1,6 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
--- (p) and today (<leader>t) flags, whether an agent on it needs you, how many links it has, stale when none
+-- (p) and today (<leader>t) flags, whether an agent on it needs you or is running, how many links it has, stale when none
 -- of its agents has moved in a day, and overdue when it's past the duration set with <leader>e.
 -- <leader>T shows only today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
 -- outside the list. The home field moves behind the rows.
@@ -273,12 +273,16 @@ end
 -- What a task's row shows after its title.
 local function flags(task)
   local chats = require("icarus.chats")
-  local needs = vim.iter(chats.on_task(task.slug)):any(function(record)
-    return chats.status(record.id) == "needs you"
-  end)
+  local needs, running = false, false
+  for _, record in ipairs(chats.on_task(task.slug)) do
+    local status = chats.status(record.id)
+    needs = needs or status == "needs you"
+    running = running or status == "working"
+  end
   local live = task.status ~= "merged"
   local idle = live and idle_for(task)
-  return (task.high and "  !" or "") .. (needs and "  ◆ needs you" or "") .. (task.today and "  today" or "")
+  return (task.high and "  !" or "") .. (needs and "  ◆ needs you" or "") .. (running and "  ● running" or "")
+    .. (task.today and "  today" or "")
     .. (live and overdue(task) and "  overdue" or "") .. (idle and idle > STALE_AFTER and "  stale" or "")
     .. (#task.links > 0 and ("  ↗ %d"):format(#task.links) or "")
 end
