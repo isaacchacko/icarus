@@ -2,7 +2,7 @@
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
 -- (p) and today (<leader>t) flags, whether an agent on it needs you or is running, how many links it has, stale when none
 -- of its agents has moved in a day, and overdue when it's past the duration set with <leader>e.
--- <leader>T shows only today's tasks. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
+-- H and L step through its filters (all, today's, high priority, needs you), shown in the top bar. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
 -- outside the list. The home field moves behind the rows.
 --
 -- Every motion is vim's own, counts included, and the task under the cursor is the one picked. <CR> opens one, n makes a task, d deletes one (its folder goes to trash),
@@ -53,6 +53,42 @@ local function highlights()
 end
 highlights()
 
+local function needs_you(task)
+  local chats = require("icarus.chats")
+  for _, record in ipairs(chats.on_task(task.slug)) do
+    if chats.status(record.id) == "needs you" then
+      return true
+    end
+  end
+  return false
+end
+
+-- What H and L step through, in the top bar's order.
+local FILTERS = {
+  { name = "All tasks", keep = function()
+    return true
+  end },
+  { name = "Today's tasks", keep = function(task)
+    return task.today
+  end },
+  { name = "High Priority", keep = function(task)
+    return task.high
+  end },
+  { name = "Needs you", keep = needs_you },
+}
+
+-- Which filter is on.
+function M.filter_at()
+  return FILTERS[state.filter] and state.filter or 1
+end
+
+-- The filters' names, and which is on, for the top bar.
+function M.filters()
+  return vim.tbl_map(function(filter)
+    return filter.name
+  end, FILTERS), M.filter_at()
+end
+
 -- The statuses the list shows, in the loop's order.
 local function shown()
   return vim.tbl_filter(function(status)
@@ -68,7 +104,7 @@ local function by_status()
     by[status] = {}
   end
   for _, task in ipairs(tasks.recent()) do
-    if not task.sentinel and not task.pinned and by[task.status] and (task.today or not state.today_only) then
+    if not task.sentinel and not task.pinned and by[task.status] and FILTERS[M.filter_at()].keep(task) then
       table.insert(by[task.status], task)
     end
   end
@@ -184,7 +220,9 @@ local function buf()
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
   map("<leader>t", "toggle_today", "Toggle today")
-  map("<leader>T", "toggle_filter", "Show only today's tasks, or all")
+  pcall(vim.keymap.del, "n", "<leader>T", { buffer = b })
+  map("H", "filter_left", "The filter to the left")
+  map("L", "filter_right", "The filter to the right")
   map("<leader>e", "expected", "How long it should take")
   map("s", "status", "Change its status")
   map("u", "undo", "Undo the last change")
@@ -505,10 +543,20 @@ function M.expected()
   end)
 end
 
-function M.toggle_filter()
-  state.today_only = not state.today_only or nil
+-- H and L: the filter next to this one, round the ends.
+local function step_filter(by)
+  state.filter = (M.filter_at() - 1 + by) % #FILTERS + 1
   M.draw()
   require("icarus.drawer").sync()
+  vim.cmd.redrawtabline()
+end
+
+function M.filter_left()
+  step_filter(-1)
+end
+
+function M.filter_right()
+  step_filter(1)
 end
 
 -- s: picks the task's status from the list's statuses, the one it has marked.
@@ -641,7 +689,7 @@ end
 
 -- What the drawer calls the list as it's filtered.
 function M.title()
-  return state.today_only and "today's tasks" or "all tasks"
+  return FILTERS[M.filter_at()].name:lower()
 end
 
 function M.back_to_task()

@@ -171,6 +171,12 @@ function M.tabline()
   local title = task and not drawer and "   " .. task.title:gsub("%%", "%%%%") or ""
   local status = task and task.status and not drawer and ("%%#IcarusTopStatus_%s#   %s %%#IcarusTopDim#%s"):format(task.status,
     tasks.GLYPHS[task.status], tasks.LABELS[task.status]) or ""
+  if view.kind == "list" and not drawer then
+    local names, at = require("icarus.list").filters()
+    for i, name in ipairs(names) do
+      status = status .. (i == at and "%#IcarusTopOn#   " or "%#IcarusTopDim#   ") .. name
+    end
+  end
   return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. M.around():gsub("%%", "%%%%") .. " "
 end
 
@@ -586,6 +592,7 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusTopTask", { fg = bar.fg, bg = bar.bg, italic = true })
   vim.api.nvim_set_hl(0, "IcarusTopBar", { bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusTopDim", { fg = dim.fg, bg = bar.bg })
+  vim.api.nvim_set_hl(0, "IcarusTopOn", { fg = bar.fg, bg = bar.bg, bold = true })
   vim.api.nvim_set_hl(0, "IcarusTopFill", { fg = T.sun, bg = bar.bg })
   vim.api.nvim_set_hl(0, "IcarusTopOver", { fg = T.coral, bg = bar.bg })
   for status, color in pairs(require("icarus.tasks").COLORS) do
