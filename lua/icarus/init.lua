@@ -72,7 +72,6 @@ function M.set_view(view)
   vim.o.showtabline = view.kind == "home" and 0 or 2
   vim.cmd.redrawtabline()
   require("icarus.drawer").sync()
-  require("icarus.header").sync()
   -- The task before this one, for <leader><leader>: another task's screen, with its agent. The
   -- pinned task isn't in that order: it's reached with <leader>`, and it takes no slot.
   local task = view.kind == "task" and require("icarus.tasks").read(view.task)
@@ -628,9 +627,6 @@ function M.setup(opts)
       require("icarus.jump").section("g" .. key, section[1], section[2])
     end, { desc = "The outline's " .. section[2] })
   end
-  vim.keymap.set("n", "<C-k>", function()
-    require("icarus.header").key()
-  end, { desc = "The task's header, or the window above" })
   vim.keymap.set("n", "<leader>`", function()
     M.toggle_pinned()
   end, { desc = "The pinned task, or back from it" })
