@@ -1481,19 +1481,21 @@ if state.notes then
     end
   end
   state.notes = nil
-  for buf, watch in pairs(watched) do
-    -- From when a watch had timers.
-    if watch.timer then
-      watch.timer:stop()
-      watch.timer:close()
-      watch.timer = nil
-    end
-    wire(buf)
+end
+
+-- After a hot reload, the watches run on this code, and a router task's markdown goes to its lead.
+for buf, watch in pairs(watched) do
+  -- From when a watch had timers.
+  if watch.timer then
+    watch.timer:stop()
+    watch.timer:close()
+    watch.timer = nil
   end
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) then
-      M.follow(buf)
-    end
+  wire(buf)
+end
+for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  if vim.api.nvim_buf_is_loaded(buf) then
+    M.follow(buf)
   end
 end
 
