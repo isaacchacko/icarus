@@ -9,6 +9,8 @@
 -- A lead's workers aren't listed until H shows them, except one waiting on you or the one on screen.
 -- d asks, then deletes or archives the row: a file goes to trash, a worker is stopped and retired, a
 -- visual or a PR leaves the list. Each row says what d does to it, and a row that says nothing can't go.
+-- A task's specs are its markdown files, with a row saying so when it has none besides task.md: a on any
+-- of those asks for a name and makes one, and r renames one.
 local chats = require("icarus.chats")
 local tasks = require("icarus.tasks")
 
@@ -63,6 +65,7 @@ end
 ---@field line? integer the line that's waiting
 ---@field open fun()
 ---@field remove? {ask: string, run: fun()} what d asks, and what it does on yes
+---@field spec? {make: fun(), rename?: fun()} what a and r do here
 
 ---@type table<string, fun(task: icarus.Task, waiting: table): icarus.OutlineRow[]>
 local ROWS = {}
@@ -73,7 +76,9 @@ function ROWS.task(task, waiting)
   end
   return { { key = "header", text = "header", open = function()
     require("icarus.task_page").show(task, { header = true })
-  end }, { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], open = function()
+  end }, { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], spec = { make = function()
+    new_spec(task, task.dir)
+  end }, open = function()
     require("icarus.task_page").show(task, { file = task.file, line = waiting.files[task.file] })
   end } }
 end
@@ -96,6 +101,90 @@ local function trash(task, path)
   assert(vim.uv.fs_rename(path, to))
 end
 
+-- name as a spec's file name, ending in .md; nil if it can't be one.
+local function spec_name(name)
+  name = vim.trim(name or "")
+  if name == "" or name:find("/", 1, true) or name:match("^%.") then
+    return nil
+  end
+  return name:match("%.md$") and name or name .. ".md"
+end
+
+-- a: asks for a name, makes the spec in dir and opens it.
+local function new_spec(task, dir)
+  vim.ui.input({ prompt = "New spec: " }, function(text)
+    vim.cmd.stopinsert()
+    local name = spec_name(text)
+    if not name then
+      return
+    end
+    local path = dir .. "/" .. name
+    if vim.uv.fs_stat(path) then
+      return vim.notify(name .. " is already there", vim.log.levels.WARN)
+    end
+    vim.fn.writefile({}, path)
+    require("icarus.task_page").show(task, { file = path })
+  end)
+end
+
+-- r: renames the spec, with its open buffer and its comments.
+local function rename_spec(task, path)
+  vim.ui.input({ prompt = "Rename to: ", default = vim.fs.basename(path) }, function(text)
+    vim.cmd.stopinsert()
+    local name = spec_name(text)
+    local to = name and vim.fs.dirname(path) .. "/" .. name
+    if not to or to == path then
+      return
+    elseif vim.uv.fs_stat(to) then
+      return vim.notify(name .. " is already there", vim.log.levels.WARN)
+    end
+    local buf
+    for _, each in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(each) == path then
+        buf = each
+      end
+    end
+    local unsaved = buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified
+    if unsaved then
+      vim.api.nvim_buf_call(buf, function()
+        vim.cmd("silent write")
+      end)
+    end
+    assert(vim.uv.fs_rename(path, to))
+    require("icarus.watch").moved(path, to)
+    if buf then
+      vim.api.nvim_buf_set_name(buf, to)
+      -- Naming a buffer leaves its old name behind as a buffer of its own, and marks it as not this file.
+      for _, each in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_get_name(each) == path then
+          vim.api.nvim_buf_delete(each, { force = true })
+        end
+      end
+      if vim.api.nvim_buf_is_loaded(buf) then
+        vim.api.nvim_buf_call(buf, function()
+          vim.cmd("silent keepalt write!")
+        end)
+      end
+    end
+    if (require("icarus").view() or {}).file == path then
+      require("icarus.task_page").show(task, { file = to })
+    end
+    M.redraw()
+  end)
+end
+
+-- Whether the task has markdown besides task.md, in its folders too.
+local function has_specs(task)
+  for name, kind in vim.fs.dir(task.dir, { depth = 8, skip = function(dir)
+    return not NOT_FILES[dir] and not dir:match("^%.")
+  end }) do
+    if kind == "file" and name:match("%.md$") and task.dir .. "/" .. name ~= task.file and not name:match("^%.") then
+      return true
+    end
+  end
+  return false
+end
+
 -- The files in dir, then its folders, each a row that opens and closes in place: a task's folder can
 -- hold hundreds of an agent's screenshots.
 function ROWS.files(task, waiting, dir, lead)
@@ -114,9 +203,14 @@ function ROWS.files(task, waiting, dir, lead)
     if path ~= task.file then
       out[#out + 1] = { key = "file:" .. path, text = name, lead = lead, line = waiting.files[path], open = function()
         require("icarus.task_page").show(task, { file = path, line = waiting.files[path] })
-      end, remove = { ask = ("Delete %s? It goes to trash."):format(name), run = function()
-        trash(task, path)
-      end } }
+      end, spec = name:match("%.md$") and { make = function()
+        new_spec(task, dir)
+      end, rename = function()
+        rename_spec(task, path)
+      end } or nil,
+        remove = { ask = ("Delete %s? It goes to trash."):format(name), run = function()
+          trash(task, path)
+        end } }
     end
   end
   for _, name in ipairs(folders) do
@@ -131,6 +225,13 @@ function ROWS.files(task, waiting, dir, lead)
     if state.open[path] then
       vim.list_extend(out, ROWS.files(task, waiting, path, lead .. "  "))
     end
+  end
+  if dir == task.dir and not has_specs(task) then
+    table.insert(out, 1, { key = "no-specs", text = "(no specs)", spec = { make = function()
+      new_spec(task, dir)
+    end }, open = function()
+      new_spec(task, dir)
+    end })
   end
   return out
 end
@@ -354,6 +455,20 @@ function M.bind(buf)
     require("icarus.list").open()
   end, { buffer = buf, nowait = true, desc = "To the list" })
   vim.keymap.set("n", "d", remove, { buffer = buf, nowait = true, desc = "Delete or archive this, after asking" })
+  vim.keymap.set("n", "a", function()
+    local row = rows_at[vim.api.nvim_win_get_cursor(0)[1]]
+    if row and row.spec then
+      row.spec.make()
+    end
+  end, { buffer = buf, nowait = true, desc = "A new spec" })
+  vim.keymap.set("n", "r", function()
+    local row = rows_at[vim.api.nvim_win_get_cursor(0)[1]]
+    if row and row.spec and row.spec.rename then
+      row.spec.rename()
+    elseif row and row.spec then
+      vim.notify(row.text .. " can't be renamed", vim.log.levels.WARN)
+    end
+  end, { buffer = buf, nowait = true, desc = "Rename this spec" })
   vim.keymap.set("n", "H", function()
     M.toggle_workers()
   end, { buffer = buf, nowait = true, desc = "Show or hide the workers" })

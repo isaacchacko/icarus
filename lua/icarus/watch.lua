@@ -111,6 +111,14 @@ local function store_file(buf)
   return ("%s/%s.json"):format(STORE, (vim.api.nvim_buf_get_name(buf):gsub("/", "%%")))
 end
 
+-- A file was renamed from from to to: its comments go with it.
+function M.moved(from, to)
+  local function kept(path)
+    return ("%s/%s.json"):format(STORE, (path:gsub("/", "%%")))
+  end
+  vim.uv.fs_rename(kept(from), kept(to))
+end
+
 local function save(buf)
   local out = {}
   for _, item in ipairs(comments[buf] or {}) do
