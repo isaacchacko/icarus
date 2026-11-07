@@ -251,7 +251,7 @@ function ROWS.agents(task, waiting)
           if id then
             require("icarus.task_page").show(task, { chat = id })
           else
-            require("icarus.subagents").open(row.target.subagent)
+            require("icarus.task_page").show(task, { subagent = row.target.subagent })
           end
         end, remove = worker and { ask = ("Archive %s? It stops, and H still lists it."):format(row.name), run = function()
           if row.current then
@@ -452,7 +452,7 @@ function M.bind(buf)
     M.focus()
   end, { buffer = buf, nowait = true, desc = "Back to main" })
   vim.keymap.set("n", "<Esc>", function()
-    require("icarus.list").open()
+    require("icarus").to_list()
   end, { buffer = buf, nowait = true, desc = "To the list" })
   vim.keymap.set("n", "d", remove, { buffer = buf, nowait = true, desc = "Delete or archive this, after asking" })
   vim.keymap.set("n", "a", function()

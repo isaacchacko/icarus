@@ -67,7 +67,7 @@ M.remember = remember
 -- on the task's own buffers, so nothing else there takes the key.
 local function escape_to_list(buf)
   vim.keymap.set("n", "<Esc>", function()
-    require("icarus.list").open()
+    require("icarus").to_list()
   end, { buffer = buf, nowait = true, desc = "To the list" })
 end
 
@@ -101,6 +101,9 @@ function M.show(task, what)
     end
     view.chat = record.id
     M.keep(task.slug, { shows = "chat", chat = record.id })
+    if what.cursor then
+      pcall(vim.api.nvim_win_set_cursor, main, what.cursor)
+    end
   else
     require("icarus.acp.chat").leave(main)
     vim.api.nvim_set_current_win(main)
@@ -112,6 +115,9 @@ function M.show(task, what)
       escape_to_list(vim.api.nvim_win_get_buf(main))
       view.header = true
       M.keep(task.slug, { shows = "header" })
+    elseif what.subagent then
+      require("icarus.subagents").open(what.subagent)
+      view.subagent = what.subagent
     elseif what.visual then
       local i = require("icarus.visual").show(task.slug, what.visual)
       escape_to_list(vim.api.nvim_win_get_buf(main))

@@ -76,8 +76,12 @@ local function buf_of(slug)
       require("icarus.visual")[fn](slug)
     end, { buffer = buf, nowait = true, desc = desc })
   end
-  map("[", "older", "Older visual")
-  map("]", "newer", "Newer visual")
+  -- From when these were single keys, which would take [[ and ]].
+  for _, lhs in ipairs({ "[", "]" }) do
+    pcall(vim.keymap.del, "n", lhs, { buffer = buf })
+  end
+  map("[v", "older", "Older visual")
+  map("]v", "newer", "Newer visual")
   vim.keymap.set("n", "q", function()
     require("icarus").last_view()
   end, { buffer = buf, nowait = true, desc = "Back to what main showed" })
@@ -266,7 +270,7 @@ local function draw(slug, i)
     end
     state.showing[slug] = i
     for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-      vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · q back"
+      vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [v ]v older/newer · q back"
     end
     vim.cmd.redrawstatus()
     if IMAGES[ext] then
@@ -314,7 +318,7 @@ local function draw(slug, i)
   vim.bo[buf].modifiable = false
   vim.bo[buf].modified = false
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [ ] older/newer · q back"
+    vim.wo[win][0].winbar = " " .. title:gsub("%%", "%%%%") .. "  ·  [v ]v older/newer · q back"
   end
   vim.cmd.redrawstatus()
   return buf

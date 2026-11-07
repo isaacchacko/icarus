@@ -26,14 +26,26 @@ function M.view()
   return layout.view
 end
 
--- Every view in order, for <D-[> and <D-]>; a new one drops whatever was ahead of it, as a browser does.
+-- Whether two views are the same place, wherever the cursor is in it.
+local function same_view(a, b)
+  if not (a and b) then
+    return a == b
+  end
+  local plain = function(view)
+    return vim.tbl_extend("force", view, { cursor = false })
+  end
+  return vim.deep_equal(plain(a), plain(b))
+end
+
+-- Every view in order, for [[ and ]] and <D-[> and <D-]>; a new one drops whatever was ahead of it, as
+-- a browser does. Each keeps where the cursor was, for coming back.
 local function remember_view(view)
   if layout.stepping then
     return
   end
   local history = layout.history or { layout.last }
   layout.at = layout.at or #history
-  if not vim.deep_equal(history[layout.at], view) then
+  if not same_view(history[layout.at], view) then
     history = vim.list_slice(history, math.max(1, layout.at - 198), layout.at)
     history[#history + 1] = view
     layout.at = #history
@@ -115,10 +127,21 @@ function M.view_name(view)
   return task and (view.kind == "graph" and "graph: " .. task.title or task.title)
 end
 
+-- Where a step by goes from. The toggle to the list (M.quietly) leaves history where it was, so from
+-- the list the view behind you is the one history is on.
+local function step_from(by)
+  local history = layout.history or {}
+  local at = layout.at or #history
+  if by < 0 and not same_view(history[at], layout.view) then
+    return at
+  end
+  return at + by
+end
+
 -- The nearest view that's still there, by steps of by from where history is.
 local function neighbour(by)
   local history = layout.history or {}
-  local at = (layout.at or #history) + by
+  local at = step_from(by)
   while history[at] do
     local name = M.view_name(history[at])
     if name then
@@ -322,19 +345,43 @@ end
 -- skipped.
 function M.previous_task()
   local history = layout.history or {}
-  for at = (layout.at or #history) - 1, 1, -1 do
+  for at = layout.at or #history, 1, -1 do
     local view = history[at]
-    if view.kind == "task" and require("icarus.tasks").seen(view.task) and show_view(view) then
-      return
+    if view.kind == "task" and require("icarus.tasks").seen(view.task) then
+      local shown
+      M.quietly(function()
+        shown = show_view(view)
+      end)
+      if shown then
+        layout.at = at
+        return vim.cmd.redrawtabline()
+      end
     end
   end
+end
+
+-- Runs fn without it counting in history: what a toggle does.
+function M.quietly(fn)
+  layout.stepping = true
+  local ok, err = pcall(fn)
+  layout.stepping = false
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- Escape on a task: the list, as a toggle, so [[ doesn't count every press.
+function M.to_list()
+  M.quietly(function()
+    require("icarus.list").open()
+  end)
 end
 
 -- <D-[> and <D-]>: back and forward through the views, from wherever you are: out of a float or
 -- insert mode first, past any view that's gone.
 function M.step_view(by)
   local history = layout.history or {}
-  local at = (layout.at or #history) + by
+  local at = step_from(by)
   if not history[at] then
     return
   end
@@ -593,6 +640,38 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>z", function()
     require("icarus.outline").toggle()
   end, { desc = "Zen: the outline blank, or back" })
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = vim.api.nvim_create_augroup("icarus_view_cursor", { clear = true }),
+    callback = function()
+      local entry = layout.history and layout.history[layout.at or 0]
+      if entry and entry.kind == "task" and same_view(entry, layout.view) and vim.api.nvim_get_current_win() == layout.main then
+        entry.cursor = vim.api.nvim_win_get_cursor(0)
+      end
+    end,
+  })
+  for lhs, by in pairs({ ["[["] = -1, ["]]"] = 1 }) do
+    vim.keymap.set("n", lhs, function()
+      M.step_view(by)
+    end, { desc = by < 0 and "The view before" or "The view after" })
+  end
+  -- [[ and ]] are the same everywhere, but a filetype's plugin binds them on its own buffers, and beats
+  -- a global key. Markdown's does, whatever no_plugin_maps says, so they're taken off after it runs.
+  local function free_brackets(buf)
+    for _, lhs in ipairs({ "[[", "]]" }) do
+      pcall(vim.keymap.del, "n", lhs, { buffer = buf })
+    end
+  end
+  vim.api.nvim_create_autocmd("FileType", { group = vim.api.nvim_create_augroup("icarus_brackets", { clear = true }),
+    callback = function(ev)
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(ev.buf) then
+          free_brackets(ev.buf)
+        end
+      end)
+    end })
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    free_brackets(buf)
+  end
   for lhs, by in pairs({ ["<D-[>"] = -1, ["<D-]>"] = 1 }) do
     local desc = by < 0 and "Back a view" or "Forward a view"
     vim.keymap.set({ "n", "i", "x", "s", "t" }, lhs, function()

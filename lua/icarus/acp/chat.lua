@@ -889,8 +889,8 @@ local function map(buf, modes, lhs, fn, desc)
   vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true, desc = desc })
 end
 
--- [[ and ]]: the cursor to your message before or after it, by the prompt glyph at a line's start,
--- in the conversation only: a draft isn't a message yet. ]] after your last one goes to the composer.
+-- K and J: the cursor to your message before or after it, by the prompt glyph at a line's start,
+-- in the conversation only: a draft isn't a message yet. J after your last one goes to the composer.
 local function jump_prompt(chat, step)
   local buf = vim.api.nvim_get_current_buf()
   local stop = compose.start(buf)
@@ -905,7 +905,7 @@ local function jump_prompt(chat, step)
     end
     row = row + step
   end
-  -- Past your last message, ]] goes to the end, as G does.
+  -- Past your last message, J goes to the end, as G does.
   if step > 0 then
     vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(buf), 0 })
   end
@@ -967,10 +967,14 @@ local function map_keys(chat)
     map(buf, "n", "<CR>", function()
       enter(chat)
     end, "Send, answer the option here, or type in the composer")
-    map(buf, "n", "[[", function()
+    -- Buffers from before these were J and K.
+    for _, lhs in ipairs({ "[[", "]]" }) do
+      pcall(vim.keymap.del, "n", lhs, { buffer = buf })
+    end
+    map(buf, "n", "K", function()
       jump_prompt(chat, -1)
     end, "Your previous message")
-    map(buf, "n", "]]", function()
+    map(buf, "n", "J", function()
       jump_prompt(chat, 1)
     end, "Your next message")
     -- In the composer they're vim's own; in the conversation they go to the composer.

@@ -19,7 +19,7 @@ icarus
 
 ## Use
 
-- **Tasks**: `<leader>m` is the list of tasks, `<leader>f` finds a task, `<leader><leader>` goes back to the last one, and `<D-[>` and `<D-]>` go back and forward through views.
+- **Tasks**: `<leader>m` is the list of tasks, `<leader>f` finds a task, `<leader><leader>` goes back to the last one, and `[[` and `]]` (or `<D-[>` and `<D-]>`, in insert mode too) go back and forward through views, to where the cursor was.
 - **A task's screen**: one buffer at a time, centred, with an outline of everything on the task: files, agents, visuals, PRs. `<leader>h` goes into it, `<CR>` opens a row, ◆ marks what's waiting on you, `<leader>z` is zen, `<leader>i` opens the drawer from the top bar. The outline's header row edits the task's attributes.
 - **Agents**: `<leader>g` is the graph, `<leader>d` turns a chat from what was said to its full details.
 - **Files**: `<leader>w` watches a file with the agent you're in, so your edits reach it with its next turn. `<leader>c` comments on a line, and agents answer with comments and proposals.
