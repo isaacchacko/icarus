@@ -24,8 +24,10 @@ local COLORS = tasks.COLORS
 local TINT, PICKED_TINT = 0.14, 0.34
 
 -- In _G, so a hot reload keeps the task picked and the undo history.
-_G.icarus_list = _G.icarus_list or { row = 1, undo = {} }
+_G.icarus_list = _G.icarus_list or {}
 local state = _G.icarus_list
+-- One at a time, so what an older version kept gets what this one needs.
+state.row, state.undo = state.row or 1, state.undo or {}
 
 -- The rows as last drawn, so the cursor can move without reading the tasks again.
 local cached
