@@ -7,6 +7,8 @@
 -- so main doesn't move. Neither blank window can be entered.
 --
 -- A lead's workers aren't listed until H shows them, except one waiting on you or the one on screen.
+-- d asks, then deletes or archives the row: a file goes to trash, a worker is stopped and retired, a
+-- visual or a PR leaves the list. Each row says what d does to it, and a row that says nothing can't go.
 local chats = require("icarus.chats")
 local tasks = require("icarus.tasks")
 
@@ -59,6 +61,7 @@ end
 ---@field waiting? boolean
 ---@field line? integer the line that's waiting
 ---@field open fun()
+---@field remove? {ask: string, run: fun()} what d asks, and what it does on yes
 
 ---@type table<string, fun(task: icarus.Task, waiting: table): icarus.OutlineRow[]>
 local ROWS = {}
@@ -72,6 +75,24 @@ function ROWS.task(task, waiting)
   end }, { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], open = function()
     require("icarus.task_page").show(task, { file = task.file, line = waiting.files[task.file] })
   end } }
+end
+
+-- Moves path to ~/.icarus/trash, off the screen first, and out of any buffer holding it.
+local function trash(task, path)
+  local view = require("icarus").view() or {}
+  if view.file and vim.startswith(view.file, path) then
+    require("icarus.task_page").show(task, { file = task.file })
+  end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(buf)
+    if name == path or vim.startswith(name, path .. "/") then
+      require("icarus.watch").stop(buf)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end
+  end
+  vim.fn.mkdir(tasks.ROOT .. "/trash", "p")
+  local to = ("%s/trash/%s-%s-%s"):format(tasks.ROOT, task.slug, vim.fs.basename(path), os.date("%Y%m%d-%H%M%S"))
+  assert(vim.uv.fs_rename(path, to))
 end
 
 -- The files in dir, then its folders, each a row that opens and closes in place: a task's folder can
@@ -92,7 +113,9 @@ function ROWS.files(task, waiting, dir, lead)
     if path ~= task.file then
       out[#out + 1] = { key = "file:" .. path, text = name, lead = lead, line = waiting.files[path], open = function()
         require("icarus.task_page").show(task, { file = path, line = waiting.files[path] })
-      end }
+      end, remove = { ask = ("Delete %s? It goes to trash."):format(name), run = function()
+        trash(task, path)
+      end } }
     end
   end
   for _, name in ipairs(folders) do
@@ -101,7 +124,9 @@ function ROWS.files(task, waiting, dir, lead)
     out[#out + 1] = { key = "folder:" .. path, text = name .. "/", lead = lead, open = function()
       state.open[path] = not state.open[path] or nil
       M.redraw()
-    end }
+    end, remove = { ask = ("Delete %s/ and everything in it? It goes to trash."):format(name), run = function()
+      trash(task, path)
+    end } }
     if state.open[path] then
       vim.list_extend(out, ROWS.files(task, waiting, path, lead .. "  "))
     end
@@ -116,6 +141,8 @@ function ROWS.agents(task, waiting)
     local asks = id and waiting.chats[id]
     local needs = asks or row.status == "needs you"
     if state.workers or row.tree == "" or needs or row.current then
+      local record = id and chats.get(id)
+      local worker = record and not record.retired and require("icarus.orchestration").parent(record)
       out[#out + 1] = { key = id and "chat:" .. id or "subagent:" .. row.target.subagent, lead = row.tree,
         glyph = asks and "◆" or row.glyph, glyph_hl = row.hl,
         text = row.note and (row.name .. "  " .. row.note) or row.name, waiting = needs, open = function()
@@ -124,7 +151,14 @@ function ROWS.agents(task, waiting)
           else
             require("icarus.subagents").open(row.target.subagent)
           end
-        end }
+        end, remove = worker and { ask = ("Archive %s? It stops, and H still lists it."):format(row.name), run = function()
+          if row.current then
+            require("icarus.task_page").show(task, { file = task.file })
+          end
+          record.retired = true
+          chats.save(record)
+          require("icarus.acp.chat").stop(id)
+        end } or nil }
     end
   end
   return out
@@ -135,7 +169,12 @@ function ROWS.visuals(task)
   for i, visual in ipairs(require("icarus.visual").list(task.slug)) do
     out[#out + 1] = { key = "visual:" .. i, text = visual.title, waiting = not visual.seen, open = function()
       require("icarus.task_page").show(task, { visual = i })
-    end }
+    end, remove = { ask = ("Remove %s from the visuals? Its file stays."):format(visual.title), run = function()
+      if (require("icarus").view() or {}).visual then
+        require("icarus.task_page").show(task, { file = task.file })
+      end
+      require("icarus.visual").remove(task.slug, i)
+    end } }
   end
   return out
 end
@@ -146,7 +185,9 @@ function ROWS.prs(task)
   return vim.tbl_map(function(pr)
     return { key = "pr:" .. pr.url, text = ("#%d %s"):format(pr.number, pr.title), open = function()
       require("icarus.links").open(pr.url)
-    end }
+    end, remove = { ask = ("Remove #%d from this task?"):format(pr.number), run = function()
+      prs.hide(task, pr.url)
+    end } }
   end, prs.kept(task.slug) or {})
 end
 
@@ -260,6 +301,20 @@ local function enter()
   end
 end
 
+-- d: the row under the cursor, once you've said yes.
+local function remove()
+  local row = rows_at[vim.api.nvim_win_get_cursor(0)[1]]
+  if not row then
+    return
+  elseif not row.remove then
+    return vim.notify(row.text .. " can't be deleted or archived", vim.log.levels.WARN)
+  end
+  if vim.fn.confirm(row.remove.ask, "&Yes\n&Cancel", 2) == 1 then
+    row.remove.run()
+    M.redraw()
+  end
+end
+
 -- The keys on the list, set the first time this version draws it, so an open outline gets them on a
 -- hot reload.
 local bound = {}
@@ -277,6 +332,7 @@ function M.bind(buf)
   vim.keymap.set("n", "<Esc>", function()
     require("icarus.list").open()
   end, { buffer = buf, nowait = true, desc = "To the list" })
+  vim.keymap.set("n", "d", remove, { buffer = buf, nowait = true, desc = "Delete or archive this, after asking" })
   vim.keymap.set("n", "H", function()
     M.toggle_workers()
   end, { buffer = buf, nowait = true, desc = "Show or hide the workers" })

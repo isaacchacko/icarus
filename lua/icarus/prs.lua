@@ -248,12 +248,35 @@ function M.get(slug, done, force)
   end
   cache[slug] = { at = os.time(), prs = kept and kept.prs, waiting = { done } }
   fetch(slug, function(prs)
+    prs = M.visible(slug, prs)
     local waiting = cache[slug].waiting
     cache[slug] = { at = os.time(), prs = prs }
     for _, each in ipairs(waiting) do
       pcall(each, prs)
     end
   end)
+end
+
+-- prs without the ones taken off the task, however they were found: a link, a transcript, a branch.
+function M.visible(slug, prs)
+  local task = tasks.read(slug)
+  local hidden = task and task.attrs.hidden_prs
+  if type(hidden) ~= "table" then
+    return prs
+  end
+  return vim.tbl_filter(function(pr)
+    return not vim.tbl_contains(hidden, pr.url)
+  end, prs)
+end
+
+-- Takes a PR off the task: its link, and for good, as one its agent opened would be found again.
+function M.hide(task, url)
+  local hidden = type(task.attrs.hidden_prs) == "table" and vim.deepcopy(task.attrs.hidden_prs) or {}
+  hidden[#hidden + 1] = url
+  tasks.set(task, { hidden_prs = hidden, links = vim.tbl_filter(function(link)
+    return link ~= url
+  end, task.links) })
+  cache[task.slug] = nil
 end
 
 -- What was last fetched for the task, without fetching.

@@ -51,6 +51,13 @@ local function save(slug, list)
   end
 end
 
+-- The i-th of the task's visuals off its list; its file stays.
+function M.remove(slug, i)
+  local list = M.list(slug)
+  table.remove(list, i)
+  save(slug, list)
+end
+
 local function buf_of(slug)
   local name = "icarus://visual/" .. slug
   local buf
