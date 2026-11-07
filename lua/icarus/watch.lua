@@ -4,9 +4,12 @@
 -- edits to it as a diff on the agent's next turn, and is told to stay quiet and answer in the buffer.
 -- A diff waiting behind a busy agent takes in the edits after it.
 --
--- The buffer is looked at every 5s, but read once a minute: each read commits what the user has
--- typed to ~/.icarus/edits, saved or not, so every change has a history in git. <leader>* reads it
--- now, sending the whole buffer to the agent.
+-- On a router task the lead watches every markdown file in the task's folder, without being asked
+-- and without being told: the file is simply theirs (M.follow).
+--
+-- Nothing here runs on a timer, and nothing starts a turn unless you do: a line with @claude does as
+-- you leave insert mode, and <leader>* reads the whole buffer to the agent. Each turn and each :w commit
+-- what you've typed to ~/.icarus/edits, saved or not, so every change has a history in git.
 --
 -- Comments: ica comment <file> <line|text> <comment...|-> puts one on a line: the line goes yellow
 -- with "▸ za" after it. A comment stays until it's dismissed: a line rewritten keeps it where it
@@ -36,10 +39,8 @@ local T = require("icarus.theme")
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("icarus_watch")
-local EVERY = 5000
-local READ_EVERY = 60000
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
-local EDITS = vim.fn.expand("~/.icarus/edits")
+local EDITS = require("icarus.tasks").ROOT .. "/edits"
 local STORE = vim.fn.stdpath("data") .. "/comments"
 
 -- In _G, so a hot reload keeps them.
@@ -869,8 +870,22 @@ vim.api.nvim_create_autocmd("FileChangedShellPost", { group = GROUP, callback = 
   end
 end })
 vim.api.nvim_create_autocmd("ColorScheme", { group = GROUP, callback = highlights })
+vim.api.nvim_create_autocmd({ "BufReadPost", "BufEnter" }, { group = GROUP, pattern = "*.md", callback = function(ev)
+  require("icarus.watch").follow(ev.buf)
+end })
 
 -- Watching
+
+local log_edit
+
+-- Commits what's new in buf to the log.
+local function record(buf, watch)
+  local now = content(buf)
+  if now ~= watch.logged then
+    watch.logged = now
+    log_edit(buf, now)
+  end
+end
 
 -- What the user changed in the files chat_id watches since it last saw them, as text to go with its
 -- next turn (icarus.acp.session); each file then counts as seen.
@@ -879,6 +894,7 @@ function M.catch_up(chat_id)
   for buf, watch in pairs(watched) do
     if watch.chat == chat_id and vim.api.nvim_buf_is_valid(buf) then
       local now = content(buf)
+      record(buf, watch)
       if now ~= watch.base then
         local diff = (vim.text and vim.text.diff or vim.diff)(watch.base, now, { ctxlen = 2 }) --[[@as string]]
         if vim.trim(diff) ~= "" then
@@ -894,7 +910,7 @@ end
 
 -- Commits buf's text to ~/.icarus/edits, one file per watched file at its own path, so a change
 -- nobody saved is still in its history. The message says whether the buffer was saved.
-local function log_edit(buf, text)
+log_edit = function(buf, text)
   local rel = vim.api.nvim_buf_get_name(buf):gsub("^/", "")
   local file = EDITS .. "/" .. rel
   vim.fn.mkdir(vim.fs.dirname(file), "p")
@@ -910,37 +926,29 @@ local function log_edit(buf, text)
   end))
 end
 
--- Sends the agent what changed since it last saw buf, or adds it to the diff still waiting.
--- Every READ_EVERY the text is logged (force logs it now); the agent gets its diff on its turn.
-function M.flush(buf, force)
+-- A new @claude line sends the agent what changed since it last saw buf, or adds to the diff still
+-- waiting. Any other edit waits for the agent's next turn (M.catch_up).
+function M.flush(buf)
   local watch = watched[buf]
   if not watch or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
   local now = content(buf)
-  if now ~= watch.logged and (force or vim.uv.now() - (watch.logged_at or 0) >= READ_EVERY) then
-    watch.logged, watch.logged_at = now, vim.uv.now()
-    log_edit(buf, now)
-  end
   if now == watch.base then
     return
   end
-  local agent = session(watch.chat)
-  if not agent then
-    return M.stop(buf)
-  end
-  -- An edit waits for the agent's next turn (M.catch_up). Only a request starts one: a new line with
-  -- @claude, once they've stopped typing (the same between two polls).
-  local settled = now == watch.last
-  watch.last = now
   local asked = false
   for _, line in ipairs(vim.split(now, "\n", { plain = true })) do
     if line:find("@claude", 1, true) and not watch.base:find(line, 1, true) then
       asked = true
     end
   end
-  if not (asked and settled) then
+  if not asked then
     return
+  end
+  local agent = session(watch.chat)
+  if not agent then
+    return M.stop(buf)
   end
   -- Still waiting, and not taken out of the queue by hand (icarus.acp.queue).
   local pending = watch.pending and not watch.pending.sent and vim.tbl_contains(agent.queue, watch.pending) and watch.pending
@@ -971,7 +979,7 @@ function M.full_read(buf)
   if not watch then
     return vim.notify("Watch it first (<leader>w)", vim.log.levels.WARN)
   end
-  M.flush(buf, true)
+  record(buf, watch)
   local agent = session(watch.chat)
   if not agent then
     return M.stop(buf)
@@ -1111,18 +1119,63 @@ function M.stop(buf)
   if not watch then
     return
   end
-  watch.timer:stop()
-  watch.timer:close()
+  pcall(vim.api.nvim_del_augroup_by_name, "icarus_watch_" .. buf)
   watched[buf] = nil
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     vim.wo[win][0].winbar = watch.winbar or ""
   end
 end
 
-local function poll(buf, timer)
-  timer:start(EVERY, EVERY, vim.schedule_wrap(function()
+-- Your own acts on a watched buffer: leaving insert mode or changing it in normal mode can send an
+-- @claude line, and :w logs it.
+local function wire(buf)
+  local group = vim.api.nvim_create_augroup("icarus_watch_" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd({ "InsertLeave", "TextChanged" }, { group = group, buffer = buf, callback = function()
     require("icarus.watch").flush(buf)
-  end))
+  end })
+  vim.api.nvim_create_autocmd("BufWritePost", { group = group, buffer = buf, callback = function()
+    require("icarus.watch").logged(buf)
+  end })
+end
+
+function M.logged(buf)
+  if watched[buf] then
+    record(buf, watched[buf])
+  end
+end
+
+-- The lead of the router task whose folder holds buf's markdown file, if it is one.
+local function lead_of(buf)
+  local tasks = require("icarus.tasks")
+  local path = vim.api.nvim_buf_get_name(buf)
+  local slug, rest = path:sub(#tasks.ROOT + 1):match("^/tasks/([^/]+)/(.+%.md)$")
+  if not (slug and vim.startswith(path, tasks.ROOT)) or vim.startswith(rest, "agents/") then
+    return nil
+  end
+  local orchestration = require("icarus.orchestration")
+  local task = tasks.read(slug)
+  if not task or task.sentinel or orchestration.style(task) ~= "router-worker" then
+    return nil
+  end
+  for _, record in ipairs(require("icarus.chats").on_task(slug)) do
+    if orchestration.leads(record) and not record.retired then
+      return record.id
+    end
+  end
+end
+
+-- A router task's markdown is its lead's to watch, from whoever had it, with nothing said to anyone:
+-- the file's edits simply come with the lead's next turn.
+function M.follow(buf)
+  local lead = vim.api.nvim_buf_is_valid(buf) and lead_of(buf)
+  if not lead or (watched[buf] and watched[buf].chat == lead) then
+    return
+  end
+  M.stop(buf)
+  local now = content(buf)
+  watched[buf] = { chat = lead, base = now, logged = now }
+  wire(buf)
+  M.attach(buf)
 end
 
 ---@param asked? boolean the agent started it itself (ica watch), not the user
@@ -1131,8 +1184,7 @@ function M.start(buf, chat_id, asked)
   if not agent then
     return
   end
-  local timer = assert(vim.uv.new_timer())
-  watched[buf] = { chat = chat_id, base = content(buf), logged = content(buf), timer = timer }
+  watched[buf] = { chat = chat_id, base = content(buf), logged = content(buf) }
   local path = vim.api.nvim_buf_get_name(buf)
   agent:prompt(table.concat({
     ("%s %s, the file you and they work in. Their edits come with your next turn, as a diff; a line they"
@@ -1149,7 +1201,7 @@ function M.start(buf, chat_id, asked)
     "- `ica propose <request id> [--note <text>] <replacement...|->` answers a selection they asked about.",
     ("- `ica buffer %s` prints it as it is now, numbered, unsaved edits included."):format(path),
   }, "\n"), nil, ("◉ watching %s"):format(name(buf)))
-  poll(buf, timer)
+  wire(buf)
   M.attach(buf)
   mark_windows(buf)
 end
@@ -1169,6 +1221,9 @@ function M.toggle()
   local buf = target()
   if not buf then
     return vim.notify("No file to watch: open one", vim.log.levels.WARN)
+  end
+  if lead_of(buf) then
+    return vim.notify("This task's lead always watches its markdown", vim.log.levels.INFO)
   end
   local chat_id = require("icarus").current()
   if watched[buf] and watched[buf].chat ~= chat_id and chat_id then
@@ -1427,9 +1482,18 @@ if state.notes then
   end
   state.notes = nil
   for buf, watch in pairs(watched) do
-    pcall(vim.api.nvim_del_augroup_by_name, "icarus_watch_" .. buf)
-    watch.timer:stop()
-    poll(buf, watch.timer)
+    -- From when a watch had timers.
+    if watch.timer then
+      watch.timer:stop()
+      watch.timer:close()
+      watch.timer = nil
+    end
+    wire(buf)
+  end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) then
+      M.follow(buf)
+    end
   end
 end
 

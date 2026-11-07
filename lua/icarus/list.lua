@@ -573,7 +573,7 @@ local function overview_lines(task)
   lines[#lines + 1] = ""
   lines[#lines + 1] = "history"
   local rel = task.dir:gsub("^/", "")
-  local log = vim.system({ "git", "-C", vim.fn.expand("~/.icarus/edits"), "log", "--format=%ar  %s", "-10", "--", rel }, { text = true }):wait()
+  local log = vim.system({ "git", "-C", tasks.ROOT .. "/edits", "log", "--format=%ar  %s", "-10", "--", rel }, { text = true }):wait()
   local history = vim.split(vim.trim(log.stdout or ""), "\n", { plain = true })
   if history[1] == "" then
     history = { "  no edits logged yet" }

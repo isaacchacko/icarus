@@ -17,6 +17,8 @@ local LEAD = "You lead this task: you're the user's interface to it, and their a
   .. " context), keep them unblocked, and review what they hand back. Bring the user finished work and"
   .. " decisions, not progress. Keep the task's status saying where it stands (`ica status`): its column"
   .. " on the board, and a line the user reads there."
+  .. " The task's markdown is yours to answer: the user's edits to it come with your next turn as a diff, whichever"
+  .. " file, and you answer in the file. Nothing starts a turn but them."
 -- A lead with `auto: true` in task.md's header (or <leader>A) stands in for the user. ~/.icarus/auto.md,
 -- if it's there, adds what it should know about them.
 local AUTO = "Auto mode is on: you stand in for the user on this task, deciding what they'd decide."
