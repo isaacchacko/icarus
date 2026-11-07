@@ -25,6 +25,7 @@ local NS = vim.api.nvim_create_namespace("icarus_outline")
 vim.api.nvim_set_hl(0, "IcarusOutlineRow", { link = "Comment", default = true })
 vim.api.nvim_set_hl(0, "IcarusOutlineHere", { link = "Normal", default = true })
 vim.api.nvim_set_hl(0, "IcarusOutlineWaiting", { fg = T.sun })
+vim.api.nvim_set_hl(0, "IcarusOutlineLit", { fg = T.sun, bold = true })
 
 -- In _G, so a hot reload keeps one timer.
 _G.icarus_outline = _G.icarus_outline or {}
@@ -191,6 +192,24 @@ function ROWS.prs(task)
   end, prs.kept(task.slug) or {})
 end
 
+-- The Linear tickets of the task's PRs.
+function ROWS.tickets(task)
+  local out, seen = {}, {}
+  for _, pr in ipairs(require("icarus.prs").kept(task.slug) or {}) do
+    for _, ticket in ipairs(pr.tickets or {}) do
+      if not seen[ticket.id] then
+        seen[ticket.id] = true
+        out[#out + 1] = { key = "ticket:" .. ticket.id, text = ticket.id, open = function()
+          if ticket.url then
+            require("icarus.links").open(ticket.url)
+          end
+        end }
+      end
+    end
+  end
+  return out
+end
+
 function ROWS.decisions(task)
   local out = {}
   for _, row in ipairs(require("icarus.inbox").rows(task.slug)) do
@@ -202,7 +221,7 @@ function ROWS.decisions(task)
 end
 
 -- The list's order, each a group of rows with a blank line between: the one place to change it.
-local ORDER = { "task", "files", "agents", "visuals", "prs", "decisions" }
+local ORDER = { "task", "files", "agents", "visuals", "prs", "tickets", "decisions" }
 
 local function clip(text, width)
   if vim.fn.strdisplaywidth(text) <= width then
@@ -253,6 +272,7 @@ local function draw()
       lines[#lines + 1] = ""
     end
     for _, row in ipairs(rows) do
+      row.group = group
       local asks = row.waiting or row.line ~= nil
       local mine = row.key == current
       local glyph = row.glyph or (asks and "◆") or " "
@@ -260,7 +280,8 @@ local function draw()
       local line = left .. clip(row.text, width - vim.fn.strdisplaywidth(left) - 1)
       lines[#lines + 1] = line
       map[#lines] = row
-      marks[#marks + 1] = { #lines - 1, 0, #line, mine and "IcarusOutlineHere" or "IcarusOutlineRow" }
+      local lit = state.lit and state.lit[row.key]
+      marks[#marks + 1] = { #lines - 1, 0, #line, lit and "IcarusOutlineLit" or mine and "IcarusOutlineHere" or "IcarusOutlineRow" }
       if asks then
         marks[#marks + 1] = { #lines - 1, #left - #glyph - 1, #left - 1, "IcarusOutlineWaiting" }
       elseif row.glyph_hl then
@@ -444,6 +465,37 @@ function M.toggle()
 end
 
 -- <leader>h: into the list, the row of what main shows under the cursor; from it, back to main.
+-- The cursor to the first row of a section; false if it has none.
+function M.jump(group)
+  local win = win_with("icarus_outline")
+  if not win then
+    return false
+  end
+  if state.hidden then
+    M.toggle()
+  end
+  draw()
+  local first
+  for i, row in pairs(rows_at) do
+    if row.group == group and (not first or i < first) then
+      first = i
+    end
+  end
+  if not first then
+    return false
+  end
+  vim.api.nvim_set_current_win(win)
+  vim.api.nvim_win_set_cursor(win, { first, 0 })
+  return true
+end
+
+-- Lights the rows with these keys, or none.
+---@param keys? table<string, boolean>
+function M.light(keys)
+  state.lit = keys
+  M.redraw()
+end
+
 function M.focus()
   local win = win_with("icarus_outline")
   if not win then

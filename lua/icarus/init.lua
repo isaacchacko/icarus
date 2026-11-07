@@ -569,6 +569,18 @@ function M.setup(opts)
   for _, key in ipairs({ "h", "j", "k", "l" }) do
     vim.keymap.set("n", "<C-" .. key .. ">", "<C-w>" .. key, { desc = "Go to the window " .. ({ h = "left", j = "below", k = "above", l = "right" })[key] })
   end
+  vim.keymap.set("n", "gt", function()
+    require("icarus.jump").task_md()
+  end, { desc = "task.md" })
+  vim.keymap.set("n", "gm", function()
+    require("icarus.jump").markdown()
+  end, { desc = "A markdown file by name" })
+  for key, section in pairs({ a = { "agents", "agents" }, v = { "visuals", "visuals" }, p = { "prs", "PRs" },
+    l = { "tickets", "Linear tickets" } }) do
+    vim.keymap.set("n", "g" .. key, function()
+      require("icarus.jump").section("g" .. key, section[1], section[2])
+    end, { desc = "The outline's " .. section[2] })
+  end
   vim.keymap.set("n", "<C-k>", function()
     require("icarus.header").key()
   end, { desc = "The task's header, or the window above" })
