@@ -182,6 +182,65 @@ function M.glyph(url)
   return GLYPHS[known.state == "OPEN" and known.draft and "DRAFT" or known.state] or GLYPHS.OPEN
 end
 
+-- A Linear ticket's status as a glyph, in the task list's language: by its name where the workspace
+-- has one of its own, else by its type.
+local TICKET_GLYPHS = {
+  Paused = { "◐", T.mute }, Blocked = { "⊘", T.coral }, ["In Review"] = { "◉", T.leaf },
+  triage = { "◌", T.mute }, backlog = { "◌", T.mute }, unstarted = { "○", T.ash }, started = { "◐", T.sun },
+  completed = { "✓", T.sky }, canceled = { "✕", T.mute }, duplicate = { "✕", T.mute },
+}
+for name, glyph in pairs(TICKET_GLYPHS) do
+  glyph[3] = "IcarusTicket" .. name:gsub("%s", "")
+  vim.api.nvim_set_hl(0, glyph[3], { fg = glyph[2] })
+end
+local MAX_ASKING = 3
+
+-- In _G, so a hot reload keeps what's been asked.
+_G.icarus_tickets = _G.icarus_tickets or {}
+local statuses = _G.icarus_tickets ---@type table<string, {at: integer, name?: string, type?: string}>
+local asking, to_ask = 0, {}
+
+-- Asks Linear for the next tickets, read-only, through the mcp CLI, as many at a time as MAX_ASKING.
+local function ask_linear()
+  while asking < MAX_ASKING and #to_ask > 0 do
+    local id = table.remove(to_ask, 1)
+    asking = asking + 1
+    local ok = pcall(vim.system, { "mcp", "--json", "call", "linear", "get_issue", "id=" .. id }, { text = true, timeout = 30000 },
+      vim.schedule_wrap(function(result)
+        asking = asking - 1
+        local decoded, reply = pcall(vim.json.decode, result.code == 0 and result.stdout or "")
+        local text = decoded and type(reply) == "table" and type(reply.content) == "table" and reply.content[1]
+        local parsed, issue = pcall(vim.json.decode, text and text.text or "")
+        if parsed and type(issue) == "table" and type(issue.status) == "string" then
+          statuses[id].name, statuses[id].type = issue.status, issue.statusType
+          require("icarus.outline").redraw()
+        end
+        ask_linear()
+      end))
+    if not ok then
+      asking = asking - 1
+    end
+  end
+end
+
+-- What a ticket's row starts with, {glyph, group}: its status's, or a dim dot until it's known. Asks
+-- about one it doesn't know, or hasn't for a while; a ticket's status changes outside anything here.
+function M.ticket_glyph(id)
+  local known = statuses[id]
+  if not known or os.time() - known.at >= FRESH then
+    known = known or {}
+    known.at = os.time()
+    statuses[id] = known
+    to_ask[#to_ask + 1] = id
+    ask_linear()
+  end
+  local glyph = TICKET_GLYPHS[known.name] or TICKET_GLYPHS[known.type]
+  if glyph then
+    return { glyph[1], glyph[3] }
+  end
+  return { "·", "IcarusLinkMark" }
+end
+
 local function shape(pr)
   remember(pr.url, pr.state, pr.isDraft)
   return { number = pr.number, title = pr.title, url = pr.url, state = pr.state, draft = pr.isDraft,

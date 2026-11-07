@@ -285,7 +285,8 @@ function ROWS.prs(task)
   local prs = require("icarus.prs")
   prs.get(task.slug, function() end)
   return vim.tbl_map(function(pr)
-    return { key = "pr:" .. pr.url, text = ("#%d %s"):format(pr.number, pr.title), open = function()
+    local state = prs.glyph(pr.url)
+    return { key = "pr:" .. pr.url, text = ("#%d %s"):format(pr.number, pr.title), glyph = state[1], glyph_hl = state[2], open = function()
       require("icarus.links").open(pr.url)
     end, remove = { ask = ("Remove #%d from this task?"):format(pr.number), run = function()
       prs.hide(task, pr.url)
@@ -300,7 +301,8 @@ function ROWS.tickets(task)
     for _, ticket in ipairs(pr.tickets or {}) do
       if not seen[ticket.id] then
         seen[ticket.id] = true
-        out[#out + 1] = { key = "ticket:" .. ticket.id, text = ticket.id, open = function()
+        local status = require("icarus.prs").ticket_glyph(ticket.id)
+        out[#out + 1] = { key = "ticket:" .. ticket.id, text = ticket.id, glyph = status[1], glyph_hl = status[2], open = function()
           if ticket.url then
             require("icarus.links").open(ticket.url)
           end
