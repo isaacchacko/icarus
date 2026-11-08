@@ -102,15 +102,43 @@ function Session:deliver(prompt)
   self.busy = true
   self.handlers.on_prompt(prompt.display or prompt.text)
   self.handlers.on_turn("start")
-  self.client:request("session/prompt",
-    { sessionId = self.id, prompt = images.blocks(prompt.text, prompt.images, self.takes_images ~= false) },
-    function(result, err)
-      self.busy = false
-      self.handlers.on_turn("end", { stopReason = result and result.stopReason, error = err and err.message })
-      local batch = self:take_queue()
-      if batch then
-        self:deliver(batch)
+  local function send()
+    self.client:request("session/prompt",
+      { sessionId = self.id, prompt = images.blocks(prompt.text, prompt.images, self.takes_images ~= false) },
+      function(result, err)
+        -- The adapter forgets a session whose Claude process died and answers every later prompt
+        -- "Resource not found": load it back, once, and send again.
+        if err and err.message == "Resource not found" and not prompt.reloaded then
+          prompt.reloaded = true
+          return self:reload(send, function()
+            self.busy = false
+            self.handlers.on_turn("end", { error = err.message })
+          end)
+        end
+        self.busy = false
+        self.handlers.on_turn("end", { stopReason = result and result.stopReason, error = err and err.message })
+        local batch = self:take_queue()
+        if batch then
+          self:deliver(batch)
+        end
+      end)
+  end
+  send()
+end
+
+-- Loads this session back into the adapter, its history replayed as loading.
+function Session:reload(on_loaded, on_failed)
+  local record = self.chat and require("icarus.chats").get(self.chat)
+  local cwd = self.cwd or (record and record.cwd)
+  self.loading = true
+  self.client:request("session/load", with_instructions({ sessionId = self.id, cwd = cwd, mcpServers = {} }, cwd, record),
+    function(_, err)
+      self.loading = false
+      if err then
+        self.handlers.on_notice(("could not reload session %s (%s)"):format(self.id, tostring(err.message)))
+        return on_failed()
       end
+      on_loaded()
     end)
 end
 
@@ -273,6 +301,7 @@ function Session:open(cwd, id, caps)
 end
 
 function Session:connect(cwd, id)
+  self.cwd = cwd
   local handlers = self.handlers
   self.client = Client.new(adapter.command(cwd, self.chat), {
     on_notification = function(method, params)
