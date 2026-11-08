@@ -1,6 +1,6 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
--- (p) and today (<leader>t) flags, whether an agent on it needs you or is running, how many links it has, stale when none
+-- (p) and today (t) flags, whether an agent on it needs you or is running, how many links it has, stale when none
 -- of its agents has moved in a day, and overdue when it's past the duration set with <leader>e.
 -- H and L step through its filters (all, today's, high priority, needs you), shown in the top bar. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
 -- outside the list. The home field moves behind the rows.
@@ -209,7 +209,7 @@ local function buf()
       end
     end) })
   -- Keys this list used to take from vim, on a buffer an older version made.
-  for _, lhs in ipairs({ "j", "k", "f", "e", "T" }) do
+  for _, lhs in ipairs({ "j", "k", "f", "e", "T", "<leader>t" }) do
     pcall(vim.keymap.del, "n", lhs, { buffer = b })
   end
   local function map(lhs, fn, desc)
@@ -222,7 +222,7 @@ local function buf()
   map("n", "new", "New task")
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
-  map("<leader>t", "toggle_today", "Toggle today")
+  map("t", "toggle_today", "Toggle today")
   pcall(vim.keymap.del, "n", "<leader>T", { buffer = b })
   map("H", "filter_left", "The filter to the left")
   map("L", "filter_right", "The filter to the right")
