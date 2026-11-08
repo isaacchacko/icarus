@@ -228,6 +228,7 @@ local function buf()
   map("L", "filter_right", "The filter to the right")
   map("<leader>e", "expected", "How long it should take")
   map("s", "status", "Change its status")
+  map("r", "rename", "Rename it")
   map("u", "undo", "Undo the last change")
   map("q", "back", "Back")
   map("<Esc>", "back_to_task", "Back to the task you were on")
@@ -567,6 +568,28 @@ function M.expected()
       tasks.set(tasks.read(task.slug) or task, { expected = before })
     end)
     M.draw()
+  end)
+end
+
+-- r: a new title. The folder keeps its name, so the agents working in it don't lose their way.
+function M.rename()
+  local task = picked(rows())
+  if not task or task.sentinel then
+    return
+  end
+  vim.ui.input({ prompt = "Rename to: ", default = task.title }, function(text)
+    vim.cmd.stopinsert()
+    text = text and vim.trim(text)
+    if not text or text == "" or text == task.title then
+      return
+    end
+    local before = task.title
+    tasks.set(task, { title = text })
+    remember(("title of %s"):format(text), function()
+      tasks.set(tasks.read(task.slug) or task, { title = before })
+    end)
+    M.draw()
+    vim.cmd.redrawtabline()
   end)
 end
 
