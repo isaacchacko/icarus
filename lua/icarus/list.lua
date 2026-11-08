@@ -9,6 +9,7 @@
 -- s changes its status, u undoes the last change, and q goes back to the view before. Tab shows the
 -- overview on the right: links, status, agents, history.
 local tasks = require("icarus.tasks")
+local T = require("icarus.theme")
 
 local M = {}
 
@@ -35,6 +36,8 @@ local cached
 local function highlights()
   vim.api.nvim_set_hl(0, "IcarusListHeader", { bold = true, default = true })
   vim.api.nvim_set_hl(0, "IcarusListField", { link = "Comment", default = true })
+  vim.api.nvim_set_hl(0, "IcarusListHigh", { fg = T.ink, bg = T.coral, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusListToday", { fg = T.ink, bg = T.sun, bold = true })
   local bg = vim.api.nvim_get_hl(0, { name = "Normal" }).bg or 0x1e1e1e
   -- A row's background: the status's colour, t of the way from the window's.
   local function tint(color, t)
@@ -243,14 +246,19 @@ local function paint(b, all, picking)
     else
       group = "IcarusListRow_" .. row.task.status
     end
+    -- A range to the line's end rather than line_hl_group, which a badge's background can't sit above.
     if group then
-      vim.api.nvim_buf_set_extmark(b, NS, i - 1, 0, { line_hl_group = group })
+      vim.api.nvim_buf_set_extmark(b, NS, i - 1, 0, { end_row = i, end_col = 0, hl_group = group, hl_eol = true,
+        priority = 100 })
     end
     local status = row.header or row.task.status
     if COLORS[status] then
       local col = row.header and 0 or 2
       vim.api.nvim_buf_set_extmark(b, NS, i - 1, col, { end_col = col + #tasks.GLYPHS[status],
         hl_group = "IcarusListStatus_" .. status, priority = 300 })
+    end
+    for _, badge in ipairs(row.badges or {}) do
+      vim.api.nvim_buf_set_extmark(b, NS, i - 1, badge[1], { end_col = badge[2], hl_group = badge[3], priority = 400 })
     end
   end
 end
@@ -319,10 +327,24 @@ local function flags(task)
   end
   local live = task.status ~= "merged"
   local idle = live and idle_for(task)
-  return (task.high and "  !" or "") .. (needs and "  ◆ needs you" or "") .. (running and "  ● running" or "")
-    .. (task.today and "  today" or "")
+  -- High priority and today are badges, coloured blocks; where each is, as byte ranges in the text.
+  local text, badges = "", {}
+  local function badge(label, group)
+    text = text .. "  "
+    local from = #text
+    text = text .. " " .. label .. " "
+    badges[#badges + 1] = { from, #text, group }
+  end
+  if task.high then
+    badge("HIGH", "IcarusListHigh")
+  end
+  if task.today then
+    badge("TODAY", "IcarusListToday")
+  end
+  text = text .. (needs and "  ◆ needs you" or "") .. (running and "  ● running" or "")
     .. (live and overdue(task) and "  overdue" or "") .. (idle and idle > STALE_AFTER and "  stale" or "")
     .. (#task.links > 0 and ("  ↗ %d"):format(#task.links) or "")
+  return text, badges
 end
 
 -- The home field behind the list, in each line from just past its text to the window's edge, so it
@@ -397,7 +419,12 @@ function M.draw()
     if row.header then
       lines[#lines + 1] = ("%s %s  %d"):format(tasks.GLYPHS[row.header], tasks.LABELS[row.header], row.count)
     else
-      lines[#lines + 1] = ("  %s %s%s"):format(tasks.GLYPHS[row.task.status] or "", row.task.title, flags(row.task))
+      local head = ("  %s %s"):format(tasks.GLYPHS[row.task.status] or "", row.task.title)
+      local tail, badges = flags(row.task)
+      row.badges = vim.tbl_map(function(badge)
+        return { #head + badge[1], #head + badge[2], badge[3] }
+      end, badges)
+      lines[#lines + 1] = head .. tail
     end
   end
   if #lines == 0 then
