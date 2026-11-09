@@ -94,9 +94,7 @@ end
 
 -- The statuses the list shows, in the loop's order.
 local function shown()
-  return vim.tbl_filter(function(status)
-    return status ~= "cancelled"
-  end, tasks.STATUSES)
+  return tasks.STATUSES
 end
 
 -- The tasks in each status, last opened first.
