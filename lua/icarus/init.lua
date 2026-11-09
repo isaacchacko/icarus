@@ -530,7 +530,7 @@ function M.pick_agent()
 end
 
 -- Here, not in init.lua, so a hot reload applies them too.
-local OPTIONS = { termguicolors = true, mouse = "a", splitright = true, splitbelow = true,
+local OPTIONS = { termguicolors = true, swapfile = false, mouse = "a", splitright = true, splitbelow = true,
   ruler = false, fillchars = "eob: ,vert: ,vertleft: ,vertright: ,verthoriz: ,horizup: ,horizdown: ", clipboard = "unnamedplus", statusline = "%!v:lua.require'icarus'.statusline()",
   tabline = "%!v:lua.require'icarus'.tabline()" }
 
