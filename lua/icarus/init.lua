@@ -180,11 +180,15 @@ function M.tabline()
   return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. M.around():gsub("%%", "%%%%") .. " "
 end
 
--- The statusline: on the left the chat's modes; from the middle, the file main shows, whether it has
+-- The statusline: on the left zen and the chat's modes; from the middle, the file main shows, whether it has
 -- changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
   local record = layout.current and chats.get(layout.current)
+  -- Zen (<leader>z): the outline blanked, on every task until it's toggled back.
+  if _G.icarus_outline and _G.icarus_outline.hidden then
+    left[#left + 1] = { " ZEN ", "IcarusStatusZen" }
+  end
   -- The chat's modes, as vim shows its own: how chats show (the thread, or the agent's details),
   -- and whether the next message goes to a fork.
   if record then
@@ -606,6 +610,7 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusStatusAuto", { fg = T.ink, bg = T.coral, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusAutoOff", { fg = dim.fg, bg = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusDemocracy", { fg = T.ink, bg = T.teal, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusZen", { fg = T.ink, bg = T.mute, bold = true })
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("icarus", { clear = true }),
     callback = function()
