@@ -1,6 +1,6 @@
 -- The list: every open task, the whole screen, grouped by status with each status's glyph, in the order
 -- the loop goes (Backlog, Todo, In Progress, Review, Blocked, Done). A task shows its high priority
--- (p) and today (t) flags, whether an agent on it needs you or is running, how many links it has, stale when none
+-- (p) and today (t; T clears every one) flags, whether an agent on it needs you or is running, how many links it has, stale when none
 -- of its agents has moved in a day, and overdue when it's past the duration set with <leader>e.
 -- H and L step through its filters (all, today's, high priority, needs you), shown in the top bar. Cancelled tasks are soft deleted, so they aren't listed; the pinned task lives
 -- outside the list. The home field moves behind the rows.
@@ -221,6 +221,7 @@ local function buf()
   map("d", "delete", "Delete it (its folder goes to trash)")
   map("p", "toggle_high", "Toggle high priority")
   map("t", "toggle_today", "Toggle today")
+  map("T", "clear_today", "Clear today on every task")
   pcall(vim.keymap.del, "n", "<leader>T", { buffer = b })
   map("H", "filter_left", "The filter to the left")
   map("L", "filter_right", "The filter to the right")
@@ -544,6 +545,25 @@ function M.toggle_today()
       tasks.set(tasks.read(task.slug) or task, { today = before })
     end)
   end)
+end
+
+-- T: today off every task, to mark the day afresh; u puts them all back.
+function M.clear_today()
+  local marked = vim.tbl_filter(function(task)
+    return task.today
+  end, tasks.list())
+  if #marked == 0 then
+    return
+  end
+  for _, task in ipairs(marked) do
+    tasks.set(task, { today = false })
+  end
+  remember(("today of %d tasks"):format(#marked), function()
+    for _, task in ipairs(marked) do
+      tasks.set(tasks.read(task.slug) or task, { today = true })
+    end
+  end)
+  M.draw()
 end
 
 -- e: how long the task should take, like 90m, 4h or 2d, counted from when it was made. Empty clears it.
