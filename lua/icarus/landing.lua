@@ -183,9 +183,7 @@ function M.quit()
   local choice = vim.fn.confirm("Unsaved changes:\n" .. table.concat(names, "\n"), "&Save all\n&Quit anyway\n&Cancel", 3)
   if choice == 1 then
     for _, buf in ipairs(unsaved) do
-      vim.api.nvim_buf_call(buf, function()
-        vim.cmd("silent write")
-      end)
+      require("icarus.tasks").save(buf, true)
     end
     vim.cmd("qall")
   elseif choice == 2 then

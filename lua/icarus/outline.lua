@@ -146,9 +146,7 @@ local function rename_spec(task, path)
     end
     local unsaved = buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified
     if unsaved then
-      vim.api.nvim_buf_call(buf, function()
-        vim.cmd("silent write")
-      end)
+      require("icarus.tasks").save(buf)
     end
     assert(vim.uv.fs_rename(path, to))
     require("icarus.watch").moved(path, to)

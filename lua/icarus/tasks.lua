@@ -146,6 +146,61 @@ local function loaded_buf(path)
   end
 end
 
+-- Agents write files under open buffers, and a prompt about that would stop every ica call: a buffer
+-- with no unsaved edits takes the disk's text, one with them keeps them and is marked (M.refresh).
+local DISK = vim.api.nvim_create_augroup("icarus_disk", { clear = true })
+vim.api.nvim_create_autocmd("FileChangedShell", { group = DISK, callback = function(ev)
+  local reason = vim.v.fcs_reason
+  if reason == "deleted" then
+    vim.v.fcs_choice = ""
+  elseif vim.bo[ev.buf].modified then
+    vim.v.fcs_choice = ""
+    if not vim.b[ev.buf].icarus_disk_differs then
+      vim.b[ev.buf].icarus_disk_differs = true
+      local name = vim.fs.basename(vim.api.nvim_buf_get_name(ev.buf))
+      vim.schedule(function()
+        vim.notify(name .. " changed on disk: your unsaved edits are kept, and it isn't saved over", vim.log.levels.WARN)
+      end)
+    end
+  else
+    vim.v.fcs_choice = "reload"
+  end
+end })
+vim.api.nvim_create_autocmd({ "BufWritePost", "BufReadPost" }, { group = DISK, callback = function(ev)
+  vim.b[ev.buf].icarus_disk_differs = nil
+end })
+
+-- Every couple of seconds, open files catch up with what agents wrote to them, so you're never
+-- typing into an old copy. Not while a prompt or the command line is up.
+_G.icarus_disk_timer = _G.icarus_disk_timer or vim.uv.new_timer()
+_G.icarus_disk_timer:start(2000, 2000, vim.schedule_wrap(function()
+  local mode = vim.api.nvim_get_mode()
+  if mode.blocking or mode.mode:match("^[cr]") then
+    return
+  end
+  pcall(vim.cmd, "silent! checktime")
+end))
+
+-- Brings buf up with its file; true if the file has changed under unsaved edits.
+---@return boolean
+function M.refresh(buf)
+  vim.cmd("checktime " .. buf)
+  return vim.b[buf].icarus_disk_differs == true
+end
+
+-- Writes buf without a prompt. Under unsaved edits a changed file isn't written over unless force
+-- says so; false then.
+---@return boolean saved
+function M.save(buf, force)
+  if M.refresh(buf) and not force then
+    return false
+  end
+  vim.api.nvim_buf_call(buf, function()
+    vim.cmd("silent write!")
+  end)
+  return true
+end
+
 -- task.md's lines: its buffer's if it's loaded, which may have changes not yet written.
 local function file_lines(path)
   local buf = loaded_buf(path)
@@ -162,12 +217,17 @@ local function write_file(slug, attrs, body)
   local buf = loaded_buf(path)
   if buf then
     -- Only its header: what's typed under it stays (and is saved with it, as the header is read from disk).
+    local differs = M.refresh(buf)
     local now = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     local _, under = parse(now)
     vim.api.nvim_buf_set_lines(buf, 0, #now - #under, false, header(attrs))
-    vim.api.nvim_buf_call(buf, function()
-      vim.cmd("silent write")
-    end)
+    if differs then
+      -- Both sides moved: the header goes to the disk too, and neither's text is lost.
+      local _, on_disk = parse(vim.fn.readfile(path))
+      vim.fn.writefile(vim.list_extend(header(attrs), on_disk), path)
+    else
+      M.save(buf)
+    end
   else
     vim.fn.writefile(lines, path)
   end

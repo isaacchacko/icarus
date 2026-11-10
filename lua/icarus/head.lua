@@ -161,20 +161,20 @@ function M.buffer(task)
     vim.bo[head].swapfile = false
     vim.bo[head].filetype = "yaml"
     vim.api.nvim_buf_set_name(head, name)
-    vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, { buffer = head, callback = function()
-      paint(head)
-    end })
-    vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = head, callback = function()
-      local lines = vim.list_extend({ "---" }, vim.api.nvim_buf_get_lines(head, 0, -1, false))
-      lines[#lines + 1] = "---"
-      local close = bounds(file)
-      vim.api.nvim_buf_set_lines(file, 0, close and close + 1 or 0, false, lines)
-      vim.bo[head].modified = false
-      vim.api.nvim_buf_call(file, function()
-        vim.cmd("silent write")
-      end)
-    end })
   end
+  -- Each time, so a header buffer from before a hot reload has only this code's.
+  vim.api.nvim_clear_autocmds({ buffer = head, event = { "TextChanged", "TextChangedI", "BufWriteCmd" } })
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, { buffer = head, callback = function()
+    paint(head)
+  end })
+  vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = head, callback = function()
+    local lines = vim.list_extend({ "---" }, vim.api.nvim_buf_get_lines(head, 0, -1, false))
+    lines[#lines + 1] = "---"
+    local close = bounds(file)
+    vim.api.nvim_buf_set_lines(file, 0, close and close + 1 or 0, false, lines)
+    vim.bo[head].modified = false
+    require("icarus.tasks").save(file)
+  end })
   pull(file)
   return head
 end
@@ -195,6 +195,14 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 vim.api.nvim_create_autocmd("ColorScheme", { group = "icarus_head", callback = highlights })
+
+-- A hot reload drops what the old code put on its buffers, whatever those groups were keyed by: left
+-- on a hidden task.md, they'd call functions this code doesn't have.
+for _, autocmd in ipairs(vim.api.nvim_get_autocmds({})) do
+  if autocmd.group_name and autocmd.group_name:match("^icarus_head_%d+$") then
+    pcall(vim.api.nvim_del_augroup_by_name, autocmd.group_name)
+  end
+end
 
 -- After a hot reload, a task.md showing gets this code's autocmds.
 vim.schedule(function()

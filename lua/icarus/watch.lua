@@ -155,11 +155,18 @@ local function row_of(buf, item)
   local count = vim.api.nvim_buf_line_count(buf)
   local at = pos[1] and math.min(pos[1], count - 1)
   if at and vim.api.nvim_buf_get_lines(buf, at, at + 1, false)[1] == item.anchor then
+    item.reread = nil
     return at
   end
   local found = find_row(buf, item.anchor) or (#item.anchor >= 8 and find_row(buf, item.anchor:sub(1, 24)))
   if found then
+    item.reread = nil
     return found
+  end
+  -- Read again from disk without its line: a reload throws marks away, so it keeps its text, to find
+  -- the line if it comes back, and waits where it last was.
+  if item.reread then
+    return math.min(item.row or at or 0, count - 1)
   end
   if at then
     item.anchor = vim.api.nvim_buf_get_lines(buf, at, at + 1, false)[1] or item.anchor
@@ -180,6 +187,16 @@ local function draw(buf, item)
       item.who == "you" and "you" or short_name(item.chat), item.thread and #item.thread > 1 and (" · " .. #item.thread) or ""),
       "IcarusCommentHint" } }, virt_text_pos = "eol", invalidate = false }
   item.mark = vim.api.nvim_buf_set_extmark(buf, NS, row, 0, opts)
+  if not item.reread then
+    item.row = row
+  end
+end
+
+-- buf was read again from disk: where its marks are no longer says where its comments belong.
+function M.reread(buf)
+  for _, item in ipairs(comments[buf] or {}) do
+    item.reread = true
+  end
 end
 
 -- Draws buf's comments again; one whose line was deleted goes with it.
@@ -444,7 +461,13 @@ function M.accept(r)
   end
   local sr, sc, er, ec = req_range(r)
   if sr then
+    local clean = not vim.bo[r.buf].modified and vim.bo[r.buf].buftype == ""
     vim.api.nvim_buf_set_text(r.buf, sr, sc, er, ec, vim.split(r.proposal.text, "\n", { plain = true }))
+    -- Taken, it's on disk: an agent reads it there, and a reload can't lose it. Edits of yours not
+    -- saved yet stay yours to save.
+    if clean then
+      require("icarus.tasks").save(r.buf)
+    end
   end
   close_req(r)
 end
@@ -868,12 +891,14 @@ end
 local GROUP = vim.api.nvim_create_augroup("icarus_comments", { clear = true })
 vim.api.nvim_create_autocmd("BufReadPost", { group = GROUP, callback = function(ev)
   if vim.bo[ev.buf].buftype == "" and (comments[ev.buf] or vim.fn.filereadable(store_file(ev.buf)) == 1) then
+    require("icarus.watch").reread(ev.buf)
     require("icarus.watch").attach(ev.buf)
   end
 end })
 -- Read again from disk (an agent wrote the file): its comments and proposals found on their lines.
 vim.api.nvim_create_autocmd("FileChangedShellPost", { group = GROUP, callback = function(ev)
   if comments[ev.buf] then
+    require("icarus.watch").reread(ev.buf)
     require("icarus.watch").attach(ev.buf)
   end
 end })
@@ -1257,6 +1282,7 @@ local function loaded(path, chat)
   path = vim.fs.normalize(path)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_name(buf) == path then
+      require("icarus.tasks").refresh(buf)
       return buf
     end
   end
@@ -1454,7 +1480,8 @@ function M.remote(cmd, args)
   elseif cmd == "comment" then
     local row = tonumber(args.line) and tonumber(args.line) - 1 or find_row(buf, args.line)
     if not row or row < 0 or row >= vim.api.nvim_buf_line_count(buf) then
-      return false, ("no line %s in %s"):format(args.line, name(buf)), true
+      local unsaved = vim.b[buf].icarus_disk_differs and " (its file changed on disk under unsaved edits, so the buffer has its own text: ica buffer shows it)" or ""
+      return false, ("no line %s in %s%s"):format(args.line, name(buf), unsaved), true
     end
     M.attach(buf)
     local item = { id = new_id(), anchor = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1], text = args.text,
