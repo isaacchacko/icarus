@@ -165,6 +165,11 @@ local USAGE = {
   log = "ica log <agent id> [n]\n  the last n (10) things said between that agent and the user",
   questions = "ica questions\n  what's open with the user on your task: comment threads in its files, and agents whose last word asked something",
   msg = "ica msg <agent id|icarus://agent/<id>> <message...|->\n  a message to another agent, queued for when its turn ends; it answers the same way",
+  dispatch = table.concat({
+    "ica dispatch <task-slug> <message...|->   an instruction to the task's lead, started if it has none",
+    "ica dispatch --new <title> <message...|->  a new task, its lead started with the instruction",
+    "ica dispatch --plan [<note>]               go: every unsent line of today's note's plan sent, and marked",
+  }, "\n"),
 }
 
 local function help(command)
@@ -282,6 +287,25 @@ local COMMANDS = {
       fail("usage: " .. USAGE.msg)
     end
     remote("msg", { chat = vim.env.ICARUS_CHAT or fail("ica msg: only an agent sends messages (no $ICARUS_CHAT)"), to = to, text = text })
+  end,
+  -- ica dispatch <task-slug> <message...|-> | --new <title> <message...|-> | --plan [<note>]
+  dispatch = function(args)
+    local usage = "usage:\n" .. USAGE.dispatch
+    if args[1] == "--plan" then
+      return remote("dispatch", { plan = true, note = args[2] and vim.fn.fnamemodify(args[2], ":p") or "" })
+    end
+    local payload = {}
+    if args[1] == "--new" then
+      table.remove(args, 1)
+      payload.title = table.remove(args, 1) or fail(usage)
+    else
+      payload.slug = table.remove(args, 1) or fail(usage)
+    end
+    payload.text = stdin_or(table.concat(args, " "))
+    if vim.trim(payload.text) == "" then
+      fail(usage)
+    end
+    remote("dispatch", payload)
   end,
   -- ica comments <file>
   comments = function(args)

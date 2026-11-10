@@ -1330,6 +1330,8 @@ function M.remote(cmd, args)
     return require("icarus.visual").remote(args)
   elseif cmd == "fork" then
     return M.fork(args)
+  elseif cmd == "dispatch" then
+    return require("icarus.today").remote(args)
   elseif vim.tbl_contains(require("icarus.democracy").COMMANDS, cmd) then
     return require("icarus.democracy").remote(cmd, args)
   elseif cmd == "agents" or cmd == "msg" or cmd == "name" or cmd == "status" or cmd == "link" or cmd == "log" or cmd == "questions" then

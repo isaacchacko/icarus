@@ -1,6 +1,6 @@
 -- The home page, the whole screen: the contour lines of a field that keeps changing, drawn in
--- braille dots across the window and moving while home shows. Under it the keys and your last few
--- tasks, 1-3 opening them.
+-- braille dots across the window and moving while home shows. Under it the keys (d, today's note) and
+-- your last few tasks, 1-3 opening them.
 --
 -- Each braille character is 2 by 4 dots, so the window is a bitmap twice its width and four times
 -- its height. The field is a few waves over coordinates that are themselves bent by slower waves,
@@ -141,6 +141,9 @@ function M.buf()
       end
     end, { buffer = buf, nowait = true, desc = "Open recent task " .. i })
   end
+  vim.keymap.set("n", "d", function()
+    require("icarus.today").open()
+  end, { buffer = buf, nowait = true, desc = "Today's note" })
   vim.keymap.set("n", "q", function()
     require("icarus.landing").quit()
   end, { buffer = buf, nowait = true, desc = "Quit icarus" })
@@ -222,7 +225,7 @@ function M.draw(tick)
     state.tasks = recent()
   end
   -- The words under the picture, each line centred on itself.
-  local words, word_marks = { "", "i c a r u s", "", "n  new chat     t  new task     space f  find a task" },
+  local words, word_marks = { "", "i c a r u s", "", "n  new chat     t  new task     d  today's note     space f  find a task" },
     { {}, { { 0, -1, "IcarusHomeTitle" } }, {}, { { 0, -1, "IcarusHomeHint" } } }
   if #state.tasks > 0 then
     words[#words + 1] = ""
