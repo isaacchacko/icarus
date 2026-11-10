@@ -648,6 +648,13 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>z", function()
     require("icarus.outline").toggle()
   end, { desc = "Zen: the outline blank, or back" })
+  vim.keymap.set("n", "<leader>O", function()
+    local chat = M.current()
+    if not chat then
+      return vim.notify("No agent to open", vim.log.levels.WARN)
+    end
+    require("icarus.acp.adapter").native(chat)
+  end, { desc = "The agent in its own claude, in a new Ghostty window" })
   vim.api.nvim_create_autocmd("CursorMoved", {
     group = vim.api.nvim_create_augroup("icarus_view_cursor", { clear = true }),
     callback = function()

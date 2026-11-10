@@ -53,4 +53,31 @@ function M.command(cwd, chat)
       ICARUS_SERVER = vim.v.servername ~= "" and vim.v.servername or false } }
 end
 
+-- The chat's agent in its own claude, in a new Ghostty window: claude --resume on its session, in its
+-- folder, with the same ICARUS_* so ica works there too. Both write the one session, so a turn is
+-- best sent from one place at a time.
+---@param chat string
+function M.native(chat)
+  local record = require("icarus.chats").get(chat)
+  if not (record and record.session) then
+    return vim.notify("This chat has no session yet", vim.log.levels.WARN)
+  end
+  local env = M.command(record.cwd, chat).env
+  local exports = {}
+  for _, name in ipairs({ "ICARUS_CHAT", "ICARUS_TASK", "ICARUS_SERVER" }) do
+    if env[name] then
+      exports[#exports + 1] = ("%s=%s"):format(name, vim.fn.shellescape(env[name]))
+    end
+  end
+  local line = ("cd %s && %s %s --resume %s"):format(vim.fn.shellescape(record.cwd), table.concat(exports, " "),
+    vim.fn.shellescape(claude()), vim.fn.shellescape(record.session))
+  vim.system({ "open", "-na", "Ghostty", "--args", "-e", vim.o.shell, "-lc", line }, {}, function(result)
+    if result.code ~= 0 then
+      vim.schedule(function()
+        vim.notify("Ghostty didn't open: " .. vim.trim(result.stderr or ""), vim.log.levels.ERROR)
+      end)
+    end
+  end)
+end
+
 return M
