@@ -180,7 +180,7 @@ function M.tabline()
   return "%#IcarusTopName# i c a r u s %#IcarusTopTask#" .. title .. status .. "%#IcarusTopBar#%=%#IcarusTopDim#" .. M.around():gsub("%%", "%%%%") .. " "
 end
 
--- The statusline: on the left zen and the chat's modes; from the middle, the file main shows, whether it has
+-- The statusline: on the left zen, French and the chat's modes; from the middle, the file main shows, whether it has
 -- changes, whether it's watched, and where its cursor is.
 function M.statusline()
   local left = {} ---@type {[1]: string, [2]: string}[]
@@ -188,6 +188,10 @@ function M.statusline()
   -- Zen (<leader>z): the outline blanked, on every task until it's toggled back.
   if _G.icarus_outline and _G.icarus_outline.hidden then
     left[#left + 1] = { " ZEN ", "IcarusStatusZen" }
+  end
+  local french = require("icarus.french").badge()
+  if french then
+    left[#left + 1] = { french, "IcarusStatusFrench" }
   end
   -- The chat's modes, as vim shows its own: how chats show (the thread, or the agent's details),
   -- and whether the next message goes to a fork.
@@ -611,6 +615,7 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, "IcarusStatusAutoOff", { fg = dim.fg, bg = vim.api.nvim_get_hl(0, { name = "Visual", link = false }).bg or bar.bg })
   vim.api.nvim_set_hl(0, "IcarusStatusDemocracy", { fg = T.ink, bg = T.teal, bold = true })
   vim.api.nvim_set_hl(0, "IcarusStatusZen", { fg = T.ink, bg = T.mute, bold = true })
+  vim.api.nvim_set_hl(0, "IcarusStatusFrench", { fg = T.ink, bg = T.teal, bold = true })
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("icarus", { clear = true }),
     callback = function()
@@ -648,6 +653,12 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>z", function()
     require("icarus.outline").toggle()
   end, { desc = "Zen: the outline blank, or back" })
+  vim.keymap.set("n", "<leader>L", function()
+    require("icarus.french").set_rate()
+  end, { desc = "French: new words a day (0 stalls)" })
+  vim.keymap.set("n", "<leader>F", function()
+    require("icarus.french").toggle()
+  end, { desc = "French: the English back, or the French again" })
   vim.keymap.set("n", "<leader>O", function()
     local chat = M.current()
     if not chat then
@@ -781,6 +792,7 @@ function M.setup(opts)
     require("icarus.bugs").watch()
     require("icarus.democracy").resume()
     require("icarus.daedalus").start()
+    require("icarus.french").setup()
   end)
   require("icarus.reload").watch()
   if opts and opts.reload then

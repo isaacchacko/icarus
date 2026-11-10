@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# Icarus's French: Bergamot (the Firefox translator, run locally) translating English to French, one
+# JSON request per line on stdin, one answer per line on stdout. It's run under Rosetta by the venv
+# that `icarus-french --install` makes, as Bergamot ships no Apple silicon build.
+#
+#   {"id": 1, "lines": ["I will check the file."]}
+#     -> {"id": 1, "words": [[[7, 12, "vérifier"], [17, 21, "fichier"]]]}
+#   each English word that became one span of French: its byte range in the line, and that French.
+#   {"id": 2, "rank": [<transcript paths>]}
+#     -> {"id": 2, "rank": [{"word": "file", "count": 812, "clean": 0.9}, ...]}
+#   the words of the agents' replies, most seen first, with how often each translates cleanly.
+#
+# The words come back through Bergamot's HTML mode: each English word is wrapped in a tag, and the
+# tags are carried onto the French by the model's alignment, so a tag around one span of French says
+# that span is the word's translation.
+import html
+import json
+import os
+import re
+import sys
+from collections import Counter
+
+HOME = os.path.expanduser("~/.local/share/icarus/french")
+MODEL = os.path.join(HOME, "models/enfr.student.tiny11")
+MODEL_URL = "https://data.statmt.org/bergamot/models/fren/enfr.student.tiny11.v1.805d112122af03d0.tar.gz"
+
+WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+TAG = re.compile(r'<b id="w(\d+)">(.*?)</b>', re.S)
+LETTER = re.compile(r"\w", re.U)
+
+
+def install():
+    import subprocess
+    import tarfile
+    import urllib.request
+
+    os.makedirs(HOME, exist_ok=True)
+    venv = os.path.join(HOME, "venv")
+    if not os.path.exists(os.path.join(venv, "bin/python")):
+        py = subprocess.check_output(["uv", "python", "find", "cpython-3.10-macos-x86_64"], text=True).strip()
+        subprocess.check_call(["uv", "venv", "-q", "-p", py, venv])
+        subprocess.check_call(["uv", "pip", "install", "-q", "--python-platform", "x86_64-apple-darwin", "bergamot"],
+                              env={**os.environ, "VIRTUAL_ENV": venv})
+    if not os.path.exists(os.path.join(MODEL, "bergamot.yml")):
+        os.makedirs(os.path.dirname(MODEL), exist_ok=True)
+        archive = os.path.join(HOME, "enfr.tar.gz")
+        urllib.request.urlretrieve(MODEL_URL, archive)
+        with tarfile.open(archive) as tar:
+            tar.extractall(os.path.dirname(MODEL))
+        os.remove(archive)
+        subprocess.check_call(["arch", "-x86_64", os.path.join(venv, "bin/python"), "-c",
+                               "from bergamot.utils import patch_marian_for_bergamot as p; "
+                               f"p('{MODEL}/config.intgemm8bitalpha.yml', '{MODEL}/bergamot.yml')"])
+
+
+class Translator:
+    def __init__(self):
+        import bergamot
+
+        self.bergamot = bergamot
+        self.service = bergamot.Service(bergamot.ServiceConfig(numWorkers=1, logLevel="off"))
+        self.model = self.service.modelFromConfigPath(os.path.join(MODEL, "bergamot.yml"))
+        self.options = bergamot.ResponseOptions(alignment=True, qualityScores=False, HTML=True)
+        self.cache = {}
+
+    def words(self, lines):
+        todo = [line for line in dict.fromkeys(lines) if line not in self.cache]
+        if todo:
+            marked, spans = [], []
+            for line in todo:
+                parts, at, found = [], 0, []
+                for n, m in enumerate(WORD.finditer(line)):
+                    parts.append(html.escape(line[at:m.start()], quote=False))
+                    parts.append('<b id="w%d">%s</b>' % (n, m.group(0)))
+                    found.append((m.start(), m.end()))
+                    at = m.end()
+                parts.append(html.escape(line[at:], quote=False))
+                marked.append("".join(parts))
+                spans.append(found)
+            responses = self.service.translate(self.model, self.bergamot.VectorString(marked), self.options)
+            for line, found, response in zip(todo, spans, responses):
+                self.cache[line] = self.aligned(line, found, response.target.text)
+        return [self.cache[line] for line in lines]
+
+    @staticmethod
+    def aligned(line, found, target):
+        seen = {}
+        for n, text in TAG.findall(target):
+            seen.setdefault(int(n), []).append(html.unescape(text).strip())
+        out = []
+        for n, (start, end) in enumerate(found):
+            texts = seen.get(n, [])
+            # One span of French with a letter in it; a word split over several (don't -> ne ... pas)
+            # or lost in the French is left English.
+            # An elided French word (s'il, l'agent) took in a neighbour, unless the English was one too.
+            elided = re.match(r"^\w{1,2}['’]", texts[0]) if len(texts) == 1 else None
+            if len(texts) == 1 and LETTER.search(texts[0]) and len(texts[0].split()) <= 3 and (
+                    not elided or "'" in line[start:end]):
+                # Byte offsets, as the editor counts them.
+                b_start = len(line[:start].encode())
+                b_end = b_start + len(line[start:end].encode())
+                out.append([b_start, b_end, texts[0]])
+        return out
+
+    def rank(self, paths, top=600, samples=6):
+        counts, examples = Counter(), {}
+        for line in replies(paths):
+            for m in WORD.finditer(line):
+                word = m.group(0).lower()
+                counts[word] += 1
+                bucket = examples.setdefault(word, [])
+                if len(bucket) < samples and len(line) < 300:
+                    bucket.append(line)
+        ranked = []
+        for word, count in counts.most_common(top):
+            lines = examples.get(word, [])
+            clean = 0
+            for line, words in zip(lines, self.words(lines)):
+                # Cleanly, and to something else: a name that stays the same teaches nothing.
+                cleanly = {line.encode()[s:e].decode().lower() for s, e, fr in words if fr.lower() != word}
+                clean += word in cleanly
+            ranked.append({"word": word, "count": count, "clean": clean / len(lines) if lines else 0})
+        return ranked
+
+
+FENCE = re.compile(r"^\s*(```|~~~)")
+CODE = re.compile(r"`[^`]*`|https?://\S+|\S*/\S*|\S+\.\w{1,5}\b")
+
+
+def replies(paths):
+    """The prose of the agents' replies in Claude transcripts: no code, paths or links."""
+    for path in paths:
+        try:
+            handle = open(path, encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        with handle:
+            for raw in handle:
+                if '"assistant"' not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    continue
+                if entry.get("type") != "assistant":
+                    continue
+                for block in (entry.get("message") or {}).get("content") or []:
+                    if not isinstance(block, dict) or block.get("type") != "text":
+                        continue
+                    fenced = False
+                    for line in block.get("text", "").split("\n"):
+                        if FENCE.match(line):
+                            fenced = not fenced
+                            continue
+                        if not fenced and line.strip() and not line.lstrip().startswith("|"):
+                            yield CODE.sub(" ", line).strip()
+
+
+def serve():
+    translator = Translator()
+    print(json.dumps({"ready": True}), flush=True)
+    for raw in sys.stdin:
+        try:
+            request = json.loads(raw)
+            if "rank" in request:
+                answer = {"id": request.get("id"), "rank": translator.rank(request["rank"])}
+            else:
+                answer = {"id": request.get("id"), "words": translator.words(request.get("lines", []))}
+        except Exception as err:  # one bad request mustn't end the translator
+            answer = {"id": request.get("id") if isinstance(request, dict) else None, "error": str(err)}
+        print(json.dumps(answer, ensure_ascii=False), flush=True)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--install"]:
+        install()
+    else:
+        serve()
