@@ -19,6 +19,13 @@ local LEAD = "You lead this task: you're the user's interface to it, and their a
   .. " on the board, and a line the user reads there."
   .. " The task's markdown is yours to answer: the user's edits to it come with your next turn as a diff, whichever"
   .. " file, and you answer in the file. Nothing starts a turn but them."
+-- A task's lead talks to the user through its portal (icarus.portal), nowhere else.
+local PORTAL = "The user reads only this task's portal: one buffer that's yours alone, which the task opens to."
+  .. " What you say in chat reaches them only as your last reply, shown under the portal. End every turn by"
+  .. " rewriting it with `ica portal`: the current picture (where it stands, what needs them, what's running,"
+  .. " open questions, links), not a log of what happened. Use a default layout (`ica portal --layouts`, then"
+  .. " `ica portal --layout <name> -` with `## <section>` parts) or write your own markdown. Questions for the user"
+  .. " go on its lines. Your workers can't write it: they tell you what belongs there."
 -- A lead with `auto: true` in task.md's header (or <leader>A) stands in for the user. ~/.icarus/auto.md,
 -- if it's there, adds what it should know about them.
 local AUTO = "Auto mode is on: you stand in for the user on this task, deciding what they'd decide."
@@ -93,7 +100,8 @@ function M.role(record)
   if parent then
     return WORKER:format("icarus://agent/" .. parent, parent)
   end
-  return task.attrs.auto == true and (LEAD .. " " .. auto_text()) or LEAD
+  local lead = LEAD .. " " .. PORTAL
+  return task.attrs.auto == true and (lead .. " " .. auto_text()) or lead
 end
 
 -- The lead of the task record is on, whoever record is.
@@ -127,6 +135,7 @@ end
 -- A turn ended: in auto mode, a question a worker put to the user goes to its lead instead, unless
 -- the user was the one talking to it.
 function M.turn_ended(chat)
+  pcall(require("icarus.portal").turn_ended, chat)
   local record = chat.record
   local task = record.task and tasks().read(record.task)
   if not (task and task.attrs.auto == true and M.style(task) == "router-worker" and M.parent(record)) then

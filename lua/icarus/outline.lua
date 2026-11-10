@@ -83,6 +83,11 @@ end
 
 function ROWS.task(task, waiting)
   local first = task.sentinel and today_rows(task, waiting) or {}
+  if require("icarus.portal").lead(task) then
+    first[#first + 1] = { key = "portal", text = "portal", open = function()
+      require("icarus.task_page").show(task, { portal = true })
+    end }
+  end
   if vim.fn.filereadable(task.file) == 0 then
     return first
   end
@@ -360,7 +365,7 @@ end
 -- The key of the row for what main shows.
 local function here()
   local view = require("icarus").view() or {}
-  return view.chat and "chat:" .. view.chat or view.file and "file:" .. view.file or view.visual and "visual:" .. view.visual
+  return view.portal and "portal" or view.chat and "chat:" .. view.chat or view.file and "file:" .. view.file or view.visual and "visual:" .. view.visual
     or view.header and "header"
 end
 

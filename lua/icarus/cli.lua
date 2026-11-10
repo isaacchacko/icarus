@@ -162,6 +162,11 @@ local USAGE = {
   fork = "ica fork <question...|->\n  a fork of you, a sibling on your task, asked the question; prints its link. It runs at the task's workers_model and workers_effort (its task.md header), if set",
   ["new-task"] = "ica new-task <title> [<text...>|-]\n  makes a task, its text under the header if given; prints its link. No agent starts on it",
   ["merge-task"] = "ica merge-task <from> [<into>]\n  folds task <from> into <into> (your task by default): its text, links and agents. A lead does it, or anyone on a democracy",
+  portal = table.concat({
+    "ica portal [--layout <name>] <content...|->   the router rewrites its task's portal, all the user reads: the current picture, not a log",
+    "ica portal --layouts                         the default layouts and their sections",
+    "ica portal --show                            the portal as it is now",
+  }, "\n"),
   link = "ica link [--remove] <url>...\n  adds links to your task (a GitHub PR's shows on the task with its Linear tickets); --remove takes them off",
   agents = "ica agents\n  the agents on your task: id, status, title; yours marked",
   log = "ica log <agent id> [n]\n  the last n (10) things said between that agent and the user",
@@ -308,6 +313,27 @@ local COMMANDS = {
       fail(usage)
     end
     remote("dispatch", payload)
+  end,
+  -- ica portal [--layout <name>] <content...|-> | --layouts | --show
+  portal = function(args)
+    local payload = { chat = vim.env.ICARUS_CHAT }
+    if args[1] == "--layouts" then
+      return remote("portal", { layouts = true })
+    end
+    payload.chat = payload.chat or fail("ica portal: only an agent has a task (no $ICARUS_CHAT)")
+    if args[1] == "--show" then
+      payload.show = true
+      return remote("portal", payload)
+    end
+    if args[1] == "--layout" then
+      table.remove(args, 1)
+      payload.layout = table.remove(args, 1) or fail("usage:\n" .. USAGE.portal)
+    end
+    payload.text = stdin_or(table.concat(args, " "))
+    if vim.trim(payload.text) == "" then
+      fail("usage:\n" .. USAGE.portal)
+    end
+    remote("portal", payload)
   end,
   -- ica comments <file>
   comments = function(args)

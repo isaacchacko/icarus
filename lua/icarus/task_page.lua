@@ -82,7 +82,7 @@ local function show_file(main, path)
   escape_to_list(vim.api.nvim_win_get_buf(main))
 end
 
--- What main shows next on task: a {chat = id}, a {visual = i}, {header = true}, or a
+-- What main shows next on task: its {portal = true}, a {chat = id}, a {visual = i}, {header = true}, or a
 -- {file = path, line?, cursor?}.
 ---@param task icarus.Task
 ---@param what {chat?: string, visual?: integer, header?: boolean, file?: string, line?: integer, cursor?: integer[]}
@@ -92,7 +92,17 @@ function M.show(task, what)
   remember()
   M.opening = true
   local view = { kind = "task", task = task.slug }
-  if what.chat then
+  -- A portal whose router has gone: the task's own file.
+  if what.portal and not require("icarus.portal").lead(task) then
+    what = { file = task.file }
+  end
+  if what.portal then
+    require("icarus.acp.chat").leave(main)
+    require("icarus.portal").show(task, main)
+    escape_to_list(vim.api.nvim_win_get_buf(main))
+    view.portal = true
+    M.keep(task.slug, { shows = "portal" })
+  elseif what.chat then
     local record = chats.get(what.chat)
     icarus.open(record)
     local chat = require("icarus.acp.chat").get(record)
@@ -139,8 +149,11 @@ function M.show(task, what)
   vim.cmd.stopinsert()
 end
 
--- What arriving on task shows: the buffer you left.
+-- What arriving on task shows: its portal if it has a router, else the buffer you left.
 local function arrival(task)
+  if require("icarus.portal").lead(task) then
+    return { portal = true }
+  end
   local left = kept(task.slug)
   if left.shows == "chat" and left.chat and chats.get(left.chat) then
     return { chat = left.chat }

@@ -4,7 +4,7 @@
 # ica's commands (lua/icarus/cli.lua), it runs that instead.
 repo="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 case "${1:-}" in
-  bug | comment | propose | buffer | comments | watch | unwatch | name | status | claim | claims | unclaim | done | approve | reject | spawn | edge | unedge | topology | merge | retire | close | post | read | propose-to-peers | vote | revise | withdraw | decisions | link | merge-task | new-task | show | fork | agents | msg | dispatch | log | questions | help | --help | -h) NVIM_APPNAME=icarus exec nvim -l "$repo/lua/icarus/cli.lua" "$@" ;;
+  bug | comment | propose | buffer | comments | watch | unwatch | name | status | claim | claims | unclaim | done | approve | reject | spawn | edge | unedge | topology | merge | retire | close | post | read | propose-to-peers | vote | revise | withdraw | decisions | link | merge-task | new-task | show | fork | agents | msg | dispatch | portal | log | questions | help | --help | -h) NVIM_APPNAME=icarus exec nvim -l "$repo/lua/icarus/cli.lua" "$@" ;;
 esac
 # icarus is a screen: with no terminal (an agent's shell) it would sit there until something kills it.
 if [ ! -t 0 ] || [ ! -t 1 ]; then

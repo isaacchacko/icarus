@@ -1358,6 +1358,8 @@ function M.remote(cmd, args)
     return M.fork(args)
   elseif cmd == "dispatch" then
     return require("icarus.today").remote(args)
+  elseif cmd == "portal" then
+    return require("icarus.portal").remote(args)
   elseif vim.tbl_contains(require("icarus.democracy").COMMANDS, cmd) then
     return require("icarus.democracy").remote(cmd, args)
   elseif cmd == "merge-task" then
