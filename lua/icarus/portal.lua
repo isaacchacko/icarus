@@ -208,6 +208,34 @@ function M.focus(win)
   vim.cmd.startinsert({ bang = true })
 end
 
+-- <leader>a on a selection in the portal: the one-line ask, as in a file, and what you write goes to the
+-- router at once with the selection as a reference (its lines, then the text in a fence). The cursor
+-- stays where it was.
+local function ask(chat, buf)
+  local mode = vim.fn.mode()
+  vim.cmd("normal! \27")
+  local from, to = vim.fn.getpos("'<"), vim.fn.getpos("'>")
+  local first, last = from[2], math.min(to[2], compose.start(buf))
+  local lines = vim.api.nvim_buf_get_lines(buf, first - 1, last, false)
+  if #lines == 0 then
+    return
+  end
+  if mode == "v" then
+    lines[#lines] = lines[#lines]:sub(1, to[3] + vim.str_utf_end(lines[#lines], math.min(to[3], #lines[#lines])))
+    lines[1] = lines[1]:sub(from[3])
+  end
+  local ref = { ("%s:%s"):format(vim.api.nvim_buf_get_name(buf), first == last and first or ("%d-%d"):format(first, last)), "```markdown" }
+  vim.list_extend(ref, lines)
+  ref[#ref + 1] = "```"
+  vim.ui.input({ prompt = "Ask the router (optional): " }, function(message)
+    if message == nil then
+      return
+    end
+    message = vim.trim(message)
+    chat.session:prompt(table.concat(ref, "\n") .. (message ~= "" and ("\n\n" .. message) or ""))
+  end)
+end
+
 -- Sends the draft to the router, as its chat does.
 local function send(chat)
   local holder = compose.holder(chat)
@@ -259,6 +287,9 @@ function M.bind(buf, slug, chat)
   map("i", "<CR>", function()
     send(chat)
   end, "Send to the router")
+  map("x", "<leader>a", function()
+    ask(chat, buf)
+  end, "Ask the router about the selection")
   for _, key in ipairs({ "<S-CR>", "<M-CR>" }) do
     map("i", key, "<CR>", "New line")
   end
@@ -296,43 +327,6 @@ function M.show(task, win)
   end
   vim.api.nvim_set_current_win(win)
   pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
-  return true
-end
-
--- <leader>a on a selection, on a task with a router: the selection into the router's composer as a
--- reference (where it's from, then its text in a fence), and the portal open with the cursor under it,
--- for you to say what about it. False when the task has no router.
-function M.reference()
-  local view = require("icarus").view()
-  local task = view and view.task and tasks.read(view.task)
-  if not M.lead(task) then
-    return false
-  end
-  local buf = vim.api.nvim_get_current_buf()
-  local mode = vim.fn.mode()
-  vim.cmd("normal! \27")
-  local from, to = vim.fn.getpos("'<"), vim.fn.getpos("'>")
-  local first, last = from[2], to[2]
-  local lines = vim.api.nvim_buf_get_lines(buf, first - 1, last, false)
-  if mode == "v" and #lines > 0 then
-    lines[#lines] = lines[#lines]:sub(1, to[3] + vim.str_utf_end(lines[#lines], math.min(to[3], #lines[#lines])))
-    lines[1] = lines[1]:sub(from[3])
-  end
-  local name = vim.api.nvim_buf_get_name(buf)
-  local where = (name:match("^icarus://") or name == "") and name or vim.fn.fnamemodify(name, ":~")
-  where = where .. (first == last and (":" .. first) or (":%d-%d"):format(first, last))
-  local filetype = vim.bo[buf].filetype:match("^icarus_") and "markdown" or vim.bo[buf].filetype
-  local ref = { where, "```" .. filetype }
-  vim.list_extend(ref, lines)
-  vim.list_extend(ref, { "```", "" })
-  require("icarus.task_page").show(task, { portal = true })
-  local chat = require("icarus.acp.chat").get(M.lead(task))
-  local draft = compose.lines(compose.holder(chat))
-  while #draft > 0 and vim.trim(draft[#draft]) == "" do
-    table.remove(draft)
-  end
-  compose.set(chat, vim.list_extend(#draft > 0 and vim.list_extend(draft, { "" }) or {}, ref))
-  M.focus(require("icarus").main())
   return true
 end
 
