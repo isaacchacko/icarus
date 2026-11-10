@@ -1,6 +1,6 @@
--- French, a few words at a time: in what agents say (each chat's thread), the English words you've
--- learned show as their French, in place, the rest of the sentence English: "I'll vérifier the
--- fichier and ensuite push." It's drawn over the text, never in it: the buffer, the transcript and what
+-- French, a few words at a time: in what agents say (each chat's thread, and a task's portal with the
+-- router's reply under it), the English words you've learned show as their French, in place, the rest
+-- of the sentence English: "I'll vérifier the fichier and ensuite push." It's drawn over the text, never in it: the buffer, the transcript and what
 -- the agent reads stay English.
 --
 -- Bergamot translates each line locally (bin/icarus-french, a process of its own), and its alignment
@@ -29,6 +29,8 @@ local RATE = 5
 -- A word is ranked once it's been seen this often and translated cleanly this share of the time.
 local MIN_COUNT, MIN_CLEAN = 3, 0.6
 local RANK_EVERY = 7 * 86400
+-- The buffers that are what agents say: everything above their composer but your messages.
+local FILETYPES = { icarus_thread = true, icarus_portal = true }
 local TRANSCRIPTS = 400
 local DEBOUNCE_MS = 300
 -- How far back a thread is drawn: its last rows, where you read.
@@ -455,7 +457,7 @@ function M.setup()
   highlights()
   local group = vim.api.nvim_create_augroup("icarus_french", { clear = true })
   vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = highlights })
-  vim.api.nvim_create_autocmd("FileType", { group = group, pattern = "icarus_thread", callback = function(ev)
+  vim.api.nvim_create_autocmd("FileType", { group = group, pattern = vim.tbl_keys(FILETYPES), callback = function(ev)
     M.attach(ev.buf)
   end })
   vim.api.nvim_create_autocmd("CursorMoved", { group = group, callback = hint })
@@ -464,9 +466,9 @@ function M.setup()
       M.draw(ev.buf)
     end
   end })
-  -- Threads open from before (a hot reload): attached now. live.bufs keeps the ones already are.
+  -- Threads and portals open from before (a hot reload): attached now.
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == "icarus_thread" then
+    if vim.api.nvim_buf_is_loaded(buf) and FILETYPES[vim.bo[buf].filetype] then
       M.attach(buf)
     end
   end

@@ -94,7 +94,8 @@ class Translator:
             # or lost in the French is left English.
             # An elided French word (s'il, l'agent) took in a neighbour, unless the English was one too.
             elided = re.match(r"^\w{1,2}['’]", texts[0]) if len(texts) == 1 else None
-            if len(texts) == 1 and LETTER.search(texts[0]) and len(texts[0].split()) <= 3 and (
+            # One French word: a phrase (en est-il, réponse du) is the alignment smearing over neighbours.
+            if len(texts) == 1 and LETTER.search(texts[0]) and len(texts[0].split()) == 1 and (
                     not elided or "'" in line[start:end]):
                 # Byte offsets, as the editor counts them.
                 b_start = len(line[:start].encode())
