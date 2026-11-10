@@ -1360,6 +1360,8 @@ function M.remote(cmd, args)
     return require("icarus.today").remote(args)
   elseif vim.tbl_contains(require("icarus.democracy").COMMANDS, cmd) then
     return require("icarus.democracy").remote(cmd, args)
+  elseif cmd == "merge-task" then
+    return require("icarus.messages").merge_task(args)
   elseif cmd == "new-task" then
     return require("icarus.messages").new_task(args)
   elseif cmd == "agents" or cmd == "msg" or cmd == "name" or cmd == "status" or cmd == "link" or cmd == "log" or cmd == "questions" then

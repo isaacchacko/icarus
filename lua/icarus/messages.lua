@@ -166,6 +166,55 @@ function M.new_task(args)
   return true, ("made %s: icarus://task/%s (%s)"):format(task.title, task.slug, task.file), true
 end
 
+-- ica merge-task <from> [<into>]: a task folded into another, the caller's by default (tasks.merge). A
+-- lead of either does it, or any agent on a democracy; the agents that moved hear where they are now.
+function M.merge_task(args)
+  local me = caller(args)
+  if not me then
+    return false, "chat " .. tostring(args.chat) .. " isn't open in this icarus", false
+  end
+  local orchestration = require("icarus.orchestration")
+  local from, into = tasks.read(args.from or ""), tasks.read(args.into or me.record.task or "")
+  if not from then
+    return false, ("no task %s (its slug, the folder name under ~/.icarus/tasks)"):format(tostring(args.from)), true
+  elseif not into then
+    return false, ("no task %s"):format(tostring(args.into or me.record.task)), true
+  elseif me.record.task ~= from.slug and me.record.task ~= into.slug then
+    return false, "you're on neither task: an agent on one of them merges them", true
+  end
+  local mine = tasks.read(me.record.task)
+  if orchestration.style(mine) ~= "democracy" and orchestration.parent(me.record) then
+    return false, "a worker doesn't merge tasks: ask your lead", true
+  end
+  local ok, moved = pcall(tasks.merge, from, into)
+  if not ok then
+    return false, tostring(moved):gsub("^.-:%d+: ", ""), true
+  end
+  -- A moved lead goes under into's, so into keeps one.
+  local lead
+  for _, record in ipairs(chats.on_task(into.slug)) do
+    if not vim.tbl_contains(moved, record) and orchestration.leads(record) then
+      lead = record
+      break
+    end
+  end
+  for _, record in ipairs(moved) do
+    if lead and orchestration.parent(record) == nil and orchestration.style(into) == "router-worker" then
+      record.parent = lead.id
+      chats.save(record)
+    end
+    local open = _G.icarus_open_chats[record.id]
+    if open and open.session and record.id ~= me.record.id then
+      open.session:prompt(("icarus: your task %s was merged into %s (icarus://task/%s). You're on it now%s; your dir hasn't moved."):format(
+        from.title, into.title, into.slug, record.parent and (", under icarus://agent/" .. record.parent) or ""), nil,
+        "◉ task merged into " .. into.title)
+    end
+  end
+  pcall(require("icarus.org").ensure, tasks.read(into.slug))
+  return true, ("%s merged into %s: its text is at the end of %s, %d agent%s moved"):format(from.title, into.title,
+    into.file, #moved, #moved == 1 and "" or "s"), true
+end
+
 function M.name(args)
   local me = caller(args)
   if not me then

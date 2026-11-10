@@ -457,6 +457,42 @@ function M.delete(task)
   return to
 end
 
+-- Folds task from into task into: from's text goes under a heading at the end of into's task.md, its
+-- links join into's, and its agents move to into. from is cancelled, with merged_into naming where it
+-- went; its folder stays, as its agents' dirs are in it.
+---@return icarus.ChatRecord[] the agents that moved
+function M.merge(from, into)
+  assert(not from.sentinel and not into.sentinel, "(no task) can't be merged")
+  assert(not from.pinned, from.title .. " is pinned and can't be merged")
+  assert(from.slug ~= into.slug, "a task can't merge into itself")
+  local text = vim.list_extend({ "", "## merged from " .. from.title, "" }, M.body(from))
+  local buf = loaded_buf(into.file)
+  local appended = false
+  if buf then
+    local differs = M.refresh(buf)
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, text)
+    appended = not differs and M.save(buf)
+  end
+  if not appended then
+    vim.fn.writefile(text, into.file, "a")
+  end
+  local links = vim.deepcopy(into.links)
+  for _, link in ipairs(from.links) do
+    if not vim.tbl_contains(links, link) then
+      links[#links + 1] = link
+    end
+  end
+  M.set(into, { links = links })
+  local moved = {}
+  for _, record in ipairs(require("icarus.chats").on_task(from.slug)) do
+    record.task = into.slug
+    require("icarus.chats").save(record)
+    moved[#moved + 1] = record
+  end
+  M.set(from, { status = "cancelled", merged_into = into.slug })
+  return moved
+end
+
 -- Marks the task opened now, for M.recent.
 function M.touch(slug)
   vim.fn.writefile({ tostring(os.time()) }, M.dir(slug) .. "/.opened")

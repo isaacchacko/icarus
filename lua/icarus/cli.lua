@@ -161,6 +161,7 @@ local USAGE = {
   show = "ica show <file> [--title <title>] [--task <slug>]\n  a visual on your task's outline",
   fork = "ica fork <question...|->\n  a fork of you, a sibling on your task, asked the question; prints its link. It runs at the task's workers_model and workers_effort (its task.md header), if set",
   ["new-task"] = "ica new-task <title> [<text...>|-]\n  makes a task, its text under the header if given; prints its link. No agent starts on it",
+  ["merge-task"] = "ica merge-task <from> [<into>]\n  folds task <from> into <into> (your task by default): its text, links and agents. A lead does it, or anyone on a democracy",
   link = "ica link [--remove] <url>...\n  adds links to your task (a GitHub PR's shows on the task with its Linear tickets); --remove takes them off",
   agents = "ica agents\n  the agents on your task: id, status, title; yours marked",
   log = "ica log <agent id> [n]\n  the last n (10) things said between that agent and the user",
@@ -328,6 +329,11 @@ local COMMANDS = {
     local text = #args > 1 and stdin_or(table.concat(vim.list_slice(args, 2), " ")) or nil
     remote("new-task", { chat = vim.env.ICARUS_CHAT or fail("ica new-task: only an agent makes tasks (no $ICARUS_CHAT)"),
       title = title, text = text })
+  end,
+  -- ica merge-task <from> [<into>]
+  ["merge-task"] = function(args)
+    remote("merge-task", { chat = vim.env.ICARUS_CHAT or fail("ica merge-task: only an agent merges tasks (no $ICARUS_CHAT)"),
+      from = args[1] or fail("usage: " .. USAGE["merge-task"]), into = args[2] })
   end,
   -- ica status [<status>] [<where it stands...>] | --now <where it stands...>
   status = function(args)
