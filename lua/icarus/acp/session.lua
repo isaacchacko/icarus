@@ -56,6 +56,9 @@ local function instructions(record)
     lines[#lines + 1] = "You're an agent in icarus."
   end
   lines[#lines + 1] = require("icarus.orchestration").role(record)
+  if record and record.dispatcher then
+    lines[#lines + 1] = require("icarus.today").role()
+  end
   local coaching = require("icarus.daedalus").coaching()
   return table.concat(lines, " ") .. "\n\n" .. WORK .. (coaching ~= "" and "\n\n" .. coaching or "")
 end

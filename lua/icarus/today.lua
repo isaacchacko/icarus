@@ -170,10 +170,21 @@ function M.go(path)
   return report
 end
 
+-- The dispatcher's standing role, in its instructions (icarus.acp.session), so it knows the note before
+-- it's passed one.
+function M.role()
+  return table.concat({
+    ("You're the user's day planner and sparring partner. Their note for each day is %s/<YYYY-MM-DD>.md; today's is the one for the date it is."):format(M.dir()),
+    "Spar with them on it: say where the day is overcommitted or vague, what their high and today tasks need that the note leaves out, what to drop or do first, and why. Disagree when you do; give your recommendation, not a list of options.",
+    "Ask on the note itself: one `ica comment` per question, on the line it's about, with your recommendation. Their replies and edits come back to you; answer in the note.",
+    "When they pass you the note, you also write the plan (its steps come with the pass). Nothing goes to other agents until they say go.",
+  }, " ")
+end
+
 -- What the dispatcher is told when you pass it the note.
 local function pass_text(path)
   return table.concat({
-    ("The user passed you today's note, %s. You're their dispatcher: you turn the note into instructions for their tasks' agents. Nothing goes out until they say go."):format(path),
+    ("The user passed you today's note, %s. You're their dispatcher and sparring partner: you push on the day, then turn the note into instructions for their tasks' agents. Nothing goes out until they say go."):format(path),
     "",
     ("1. `ica watch %s`, so their edits reach you."):format(path),
     ("2. Read their tasks: each folder in %s/tasks except no-task, its task.json (title, status, now, high, today) and task.md. Skip merged and cancelled ones unless the note names them."):format(tasks.ROOT),
@@ -181,7 +192,7 @@ local function pass_text(path)
     "   `- <task-slug>: <what to tell it>` for an existing task, or",
     '   `- new "<Title>": <what to tell it>` for work no task covers.',
     "   Each instruction stands alone: the agent reading it has never seen the note. Propose only what the note asks for that no ✓ line already covers.",
-    "4. Tell the user in one line that the plan is ready to edit; they change it in place.",
+    "4. Spar on it: comment on the note's lines where the day is overcommitted, vague or missing something their tasks need, each with your recommendation; then tell the user in one line that the plan is ready to edit and what you'd change first. Revise the plan as they decide.",
     "",
     ("When the user says go: `ica dispatch --plan %s`, which sends every line not marked ✓ and marks it; then tell them in a line what went where. Before go, send nothing."):format(path),
   }, "\n")
