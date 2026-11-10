@@ -143,6 +143,29 @@ function M.link(args)
   return true, #links > 0 and table.concat(links, "\n") or "no links", true
 end
 
+-- ica new-task <title> [<text...>|-]: a task of its own, its text under the header if given. No agent
+-- starts on it; whoever opens it does.
+function M.new_task(args)
+  local me = caller(args)
+  if not me then
+    return false, "chat " .. tostring(args.chat) .. " isn't open in this icarus", false
+  end
+  local title = vim.trim((args.title or ""):gsub("%s+", " "))
+  if title == "" then
+    return false, "usage: ica new-task <title> [<text...>|-]", true
+  end
+  local task = tasks.create(title)
+  local text = vim.trim(args.text or "")
+  if text ~= "" then
+    local lines = vim.fn.readfile(task.file)
+    if lines[#lines] == "" then
+      lines[#lines] = nil
+    end
+    vim.fn.writefile(vim.list_extend(lines, vim.split(text, "\n", { plain = true })), task.file)
+  end
+  return true, ("made %s: icarus://task/%s (%s)"):format(task.title, task.slug, task.file), true
+end
+
 function M.name(args)
   local me = caller(args)
   if not me then
