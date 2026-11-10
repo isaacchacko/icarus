@@ -194,18 +194,31 @@ local function quote(chat, buf)
     return
   end
   compose.set(chat, { "On the portal's line \"" .. line .. "\": ", })
-  require("icarus.acp.chat").focus(chat.record.id)
+  M.focus()
+end
+
+-- The cursor to the end of the portal's composer in win (the current window), in insert, scrolled so
+-- the composer is in view.
+function M.focus(win)
+  win = win or vim.api.nvim_get_current_win()
+  compose.place(win)
+  vim.api.nvim_win_call(win, function()
+    vim.cmd("normal! zb")
+  end)
   vim.cmd.startinsert({ bang = true })
 end
 
 -- Sends the draft to the router, as its chat does.
 local function send(chat)
-  local text = vim.trim(table.concat(compose.lines(compose.holder(chat)), "\n"))
+  local holder = compose.holder(chat)
+  local text = vim.trim(table.concat(compose.lines(holder), "\n"))
   if text == "" then
     return
   end
+  local attached
+  text, attached = require("icarus.acp.images").collect(holder, text)
   compose.clear(chat)
-  chat.session:prompt(text)
+  chat.session:prompt(text, attached)
 end
 
 -- The task's portal buffer, made the first time, its composer the router's.
@@ -223,6 +236,14 @@ local function buf_for(slug, chat)
   compose.init(chat, buf)
   compose.keys(buf, chat)
   state.bufs[slug] = buf
+  M.redraw(slug)
+  return buf
+end
+
+-- The portal's keys, bound each time it opens: they hold its router's chat and this code's
+-- functions, and either can have changed since the buffer was made (a restart, a hot reload). Its
+-- composer takes images (<C-v>), into the set its router's chat composer has.
+function M.bind(buf, slug, chat)
   local function map(modes, lhs, fn, desc)
     vim.keymap.set(modes, lhs, fn, { buffer = buf, nowait = true, desc = desc })
   end
@@ -246,14 +267,13 @@ local function buf_for(slug, chat)
       if compose.inside(buf) then
         return key
       end
-      return ("<Cmd>lua require('icarus.acp.chat').focus(%q)<CR>"):format(chat.record.id)
+      return "<Cmd>lua require('icarus.portal').focus()<CR>"
     end, { buffer = buf, nowait = true, expr = true, desc = "Type to the router" })
   end
   map({ "n", "i" }, "<C-c>", function()
     chat.session:cancel()
   end, "Interrupt the router")
-  M.redraw(slug)
-  return buf
+  require("icarus.acp.images").setup(buf, chat, chat.buf)
 end
 
 local WINDOW = { wrap = true, linebreak = true, breakindent = true, conceallevel = 2, concealcursor = "nc",
@@ -268,6 +288,7 @@ function M.show(task, win)
   require("icarus").on_agent(record)
   local chat = require("icarus.acp.chat").get(record)
   local buf = buf_for(task.slug, chat)
+  M.bind(buf, task.slug, chat)
   compose.carry(chat, buf)
   vim.api.nvim_win_set_buf(win, buf)
   for name, value in pairs(WINDOW) do
@@ -275,6 +296,43 @@ function M.show(task, win)
   end
   vim.api.nvim_set_current_win(win)
   pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+  return true
+end
+
+-- <leader>a on a selection, on a task with a router: the selection into the router's composer as a
+-- reference (where it's from, then its text in a fence), and the portal open with the cursor under it,
+-- for you to say what about it. False when the task has no router.
+function M.reference()
+  local view = require("icarus").view()
+  local task = view and view.task and tasks.read(view.task)
+  if not M.lead(task) then
+    return false
+  end
+  local buf = vim.api.nvim_get_current_buf()
+  local mode = vim.fn.mode()
+  vim.cmd("normal! \27")
+  local from, to = vim.fn.getpos("'<"), vim.fn.getpos("'>")
+  local first, last = from[2], to[2]
+  local lines = vim.api.nvim_buf_get_lines(buf, first - 1, last, false)
+  if mode == "v" and #lines > 0 then
+    lines[#lines] = lines[#lines]:sub(1, to[3] + vim.str_utf_end(lines[#lines], math.min(to[3], #lines[#lines])))
+    lines[1] = lines[1]:sub(from[3])
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  local where = (name:match("^icarus://") or name == "") and name or vim.fn.fnamemodify(name, ":~")
+  where = where .. (first == last and (":" .. first) or (":%d-%d"):format(first, last))
+  local filetype = vim.bo[buf].filetype:match("^icarus_") and "markdown" or vim.bo[buf].filetype
+  local ref = { where, "```" .. filetype }
+  vim.list_extend(ref, lines)
+  vim.list_extend(ref, { "```", "" })
+  require("icarus.task_page").show(task, { portal = true })
+  local chat = require("icarus.acp.chat").get(M.lead(task))
+  local draft = compose.lines(compose.holder(chat))
+  while #draft > 0 and vim.trim(draft[#draft]) == "" do
+    table.remove(draft)
+  end
+  compose.set(chat, vim.list_extend(#draft > 0 and vim.list_extend(draft, { "" }) or {}, ref))
+  M.focus(require("icarus").main())
   return true
 end
 

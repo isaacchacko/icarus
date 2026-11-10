@@ -865,8 +865,10 @@ function M.attach(buf)
     end
   end, { buffer = buf, desc = "Open Claude's comment or proposal, else fold" })
   vim.keymap.set("x", "<leader>a", function()
-    require("icarus.watch").ask()
-  end, { buffer = buf, desc = "Ask Claude about the selection" })
+    if not require("icarus.portal").reference() then
+      require("icarus.watch").ask()
+    end
+  end, { buffer = buf, desc = "The selection to the router's portal, or ask Claude about it" })
   vim.keymap.set("n", "<leader>*", function()
     require("icarus.watch").full_read(buf)
   end, { buffer = buf, desc = "Read the whole file to Claude now" })

@@ -650,6 +650,12 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>f", function()
     require("icarus").pick_task()
   end, { desc = "Find a task" })
+  vim.keymap.set("x", "<leader>a", function()
+    if not require("icarus.portal").reference() then
+      vim.cmd("normal! \27")
+      vim.notify("This task has no router to send the selection to", vim.log.levels.WARN)
+    end
+  end, { desc = "The selection to the router, in its portal's composer" })
   vim.keymap.set("n", "<leader>r", function()
     require("icarus.portal").toggle()
   end, { desc = "The portal, or its router's thread" })
