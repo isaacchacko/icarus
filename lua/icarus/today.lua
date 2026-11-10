@@ -50,10 +50,20 @@ local function dispatcher()
   end
   if not found then
     found = require("icarus.task_page").new_agent(tasks.sentinel())
-    found.dispatcher, found.title = true, "dispatcher"
+    found.dispatcher = true
+  end
+  if found.title ~= "day planner" then
+    found.title = "day planner"
     chats.save(found)
   end
   return found
+end
+
+M.planner = dispatcher
+
+-- <leader>a in the note: the planner's chat in main, started if it isn't, to spar on the day.
+function M.open_planner()
+  require("icarus.task_page").show(tasks.sentinel(), { chat = dispatcher().id })
 end
 
 local function write(buf)
@@ -220,9 +230,12 @@ local function bind(buf, path)
     local report = require("icarus.today").go(path)
     vim.notify(#report > 0 and ("Sent:\n" .. table.concat(report, "\n")) or "Nothing in the plan to send")
   end, { buffer = buf, desc = "Go: send the plan's unsent lines to their tasks" })
+  vim.keymap.set("n", "<leader>a", function()
+    require("icarus.today").open_planner()
+  end, { buffer = buf, desc = "The day planner's chat, to spar on the day" })
 end
 
--- <leader>t: the day's note in main, on "(no task)" beside the dispatcher.
+-- <leader>t: the day's note in main, on "(no task)"; the outline's top rows are it and the day planner.
 function M.open()
   local path = M.ensure()
   local page = require("icarus.task_page")

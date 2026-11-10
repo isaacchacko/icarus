@@ -70,17 +70,29 @@ end
 ---@type table<string, fun(task: icarus.Task, waiting: table): icarus.OutlineRow[]>
 local ROWS = {}
 
+-- On "(no task)", today's note and the day planner come first (icarus.today).
+local function today_rows(task, waiting)
+  local today = require("icarus.today")
+  local path, planner = today.path(), today.planner()
+  return { { key = "file:" .. path, text = "today's note", line = waiting.files[path], open = function()
+    today.open()
+  end }, { key = "chat:" .. planner.id, text = "day planner", waiting = waiting.chats[planner.id] ~= nil, open = function()
+    today.open_planner()
+  end } }
+end
+
 function ROWS.task(task, waiting)
+  local first = task.sentinel and today_rows(task, waiting) or {}
   if vim.fn.filereadable(task.file) == 0 then
-    return {}
+    return first
   end
-  return { { key = "header", text = "header", open = function()
+  return vim.list_extend(first, { { key = "header", text = "header", open = function()
     require("icarus.task_page").show(task, { header = true })
   end }, { key = "file:" .. task.file, text = "task.md", line = waiting.files[task.file], spec = { make = function()
     new_spec(task, task.dir)
   end }, open = function()
     require("icarus.task_page").show(task, { file = task.file, line = waiting.files[task.file] })
-  end } }
+  end } })
 end
 
 -- Moves path to ~/.icarus/trash, off the screen first, and out of any buffer holding it.
@@ -240,8 +252,8 @@ function ROWS.agents(task, waiting)
     local id = row.target.chat
     local asks = id and waiting.chats[id]
     local needs = asks or row.status == "needs you"
-    if state.workers or row.tree == "" or needs or row.current then
-      local record = id and chats.get(id)
+    local record = id and chats.get(id)
+    if (state.workers or row.tree == "" or needs or row.current) and not (record and record.dispatcher) then
       local worker = record and not record.retired and require("icarus.orchestration").parent(record)
       out[#out + 1] = { key = id and "chat:" .. id or "subagent:" .. row.target.subagent, lead = row.tree,
         glyph = asks and "◆" or row.glyph, glyph_hl = row.hl,
