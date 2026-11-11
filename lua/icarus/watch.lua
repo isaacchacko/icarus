@@ -279,6 +279,10 @@ local function blend(a, b, t)
 end
 
 function M.pulse_tick()
+  -- Ticks queued while the loop was blocked still run after an earlier one stopped the timer.
+  if not state.pulse then
+    return
+  end
   if not any_pending() then
     state.pulse:stop()
     state.pulse:close()
