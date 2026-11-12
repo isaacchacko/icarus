@@ -166,6 +166,15 @@ local function caller_address()
   return ws and ws .. "/" .. agent
 end
 
+-- An agent reading or changing another, for the agent graph's cursor (isovim.agent_cursors); nothing from a plain
+-- shell or an agent's own hooks.
+local function acted_on(ws, agent, act)
+  local by = caller_address()
+  if by and by ~= ws .. "/" .. agent then
+    require("isovim.events").publish_agent(ws, agent, "acted", { by = by, act = act })
+  end
+end
+
 -- Runs Lua in the open TUI; returns false when it isn't open.
 local function tui(code, ...)
   if not vim.uv.fs_stat(store.socket) then
@@ -347,6 +356,7 @@ return {
   split_host = split_host,
   parent_address = parent_address,
   caller_address = caller_address,
+  acted_on = acted_on,
   tui = tui,
   word = word,
   await = await,

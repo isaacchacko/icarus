@@ -133,6 +133,7 @@ end
 -- Rewrites the agent's plain-text transcript; its hooks run this after every prompt and answer.
 function commands.transcript(args)
   local ws, agent = resolve_agent(args[1])
+  c.acted_on(ws.id, agent.id, "transcript")
   out(require("isovim.transcript").write(ws.id, agent.id) or "")
 end
 

@@ -56,6 +56,8 @@ local function shown(node)
   return at
 end
 
+M.find, M.shown = find, shown
+
 -- The cells of the line from a node to one it started: down its trunk, along the bus, into the child's top.
 local function segment(parent, child)
   local cells, trunk = {}, parent.x + 2

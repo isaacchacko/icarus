@@ -214,6 +214,7 @@ function commands.peek(args)
   if not panes.running(ws.id, agent.id) then
     fail(ws.name .. " · " .. agent.name .. " is not running")
   end
+  c.acted_on(ws.id, agent.id, "peek")
   local output = vim.split(panes.capture(ws.id, agent.id, lines):gsub("%s+$", ""), "\n")
   out(table.concat(vim.list_slice(output, math.max(1, #output - lines + 1)), "\n"))
 end

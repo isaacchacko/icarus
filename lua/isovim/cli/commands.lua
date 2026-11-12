@@ -477,7 +477,7 @@ M.list = {
                                      print each event whose topic matches a pattern, one JSON
                                      line {topic, time, ...} as it happens, until killed (made
                                      for a Monitor); --once exits after the first. Topics:
-                                     agent.<scope>.<id>.status|spawned|exited|promoted,
+                                     agent.<scope>.<id>.status|spawned|exited|promoted|acted,
                                      msg.<scope>.<id>, pr.<owner/repo>.<n>.state|ci|review,
                                      surface.<owner/repo>.<name>.created|changed|removed|
                                      answered|consumed, where an agent's scope is its repo (owner/repo, or _) and

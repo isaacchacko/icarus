@@ -12,7 +12,8 @@
 -- it. What's idle is dim, so what's moving stands out; hidden agents are here too, with an eye.
 --
 -- It's redrawn as states change: only the lines that changed are written, and the cursor stays put unless its
--- box moved. Messages moving between agents show as pulses along the lines (isovim.agent_pulses). hjkl go along the
+-- box moved. Messages moving between agents show as pulses along the lines (isovim.agent_pulses), and an agent
+-- reading or renaming another as a cursor going over to it (isovim.agent_cursors). hjkl go along the
 -- graph (M.step). Any other motion (a scroll, the wheel, a click) moves the focus to
 -- the box under the cursor or nearest it, so the next key goes from where you're looking.
 local store = require("isovim.store")
@@ -692,6 +693,7 @@ function M.draw(move_cursor)
     state.focus_at = where
   end
   require("isovim.agent_pulses").after_draw()
+  require("isovim.agent_cursors").render()
 end
 
 -- What's so may have changed: read it again, if it's been a moment, and draw. As the sidebar refreshes.
@@ -718,6 +720,7 @@ local function start_timer()
     local graph = require("isovim.agent_graph")
     if window() == -1 then
       require("isovim.agent_pulses").stop()
+      require("isovim.agent_cursors").stop()
       return stop_timer()
     end
     if state.dirty or vim.uv.now() - (state.read_at or 0) >= READ_EVERY then
@@ -959,6 +962,7 @@ function M.shown()
   M.draw(true)
   start_timer()
   require("isovim.agent_pulses").start()
+  require("isovim.agent_cursors").start()
 end
 
 -- Opens the graph as a tab of the current project, drawing everything.

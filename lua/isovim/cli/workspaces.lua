@@ -75,6 +75,7 @@ function commands.rename(args)
   if target:find("/") then
     local ws, agent = resolve_agent(target)
     store.update_agent(ws.id, agent.id, { name = name })
+    c.acted_on(ws.id, agent.id, "rename")
   else
     store.rename(resolve(target).id, name)
   end
