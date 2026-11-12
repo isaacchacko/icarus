@@ -6,6 +6,7 @@
 -- window the right one, so a wider screen only adds margin. <leader>z blanks the outline in place,
 -- so main doesn't move. Neither blank window can be entered.
 --
+-- Agents go most recently active first, so it doubles as the queue to read next.
 -- A lead's workers aren't listed until H shows them, except one waiting on you or the one on screen.
 -- d asks, then deletes or archives the row: a file goes to trash, a worker is stopped and retired, a
 -- visual or a PR leaves the list. Each row says what d does to it, and a row that says nothing can't go.

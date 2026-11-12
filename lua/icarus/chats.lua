@@ -109,6 +109,18 @@ function M.create(cwd, task)
   return record
 end
 
+-- When the chat last wrote to its transcript, else when it was made.
+function M.last_active(record)
+  if record.session then
+    local base = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude")
+    local stat = vim.uv.fs_stat(("%s/projects/%s/%s.jsonl"):format(base, (record.cwd:gsub("[^%w]", "-")), record.session))
+    if stat then
+      return stat.mtime.sec
+    end
+  end
+  return record.created or 0
+end
+
 function M.status(id)
   return statuses[id] or "idle"
 end

@@ -298,13 +298,10 @@ end
 -- The seconds since any agent on the task last wrote to its transcript, nil if none has.
 local function idle_for(task)
   local chats = require("icarus.chats")
-  local base = vim.fs.normalize(vim.env.CLAUDE_CONFIG_DIR or "~/.claude")
   local latest
   for _, record in ipairs(chats.on_task(task.slug)) do
     if record.session then
-      local path = ("%s/projects/%s/%s.jsonl"):format(base, (record.cwd:gsub("[^%w]", "-")), record.session)
-      local stat = vim.uv.fs_stat(path)
-      latest = stat and math.max(latest or 0, stat.mtime.sec) or latest
+      latest = math.max(latest or 0, chats.last_active(record))
     end
   end
   return latest and os.time() - latest

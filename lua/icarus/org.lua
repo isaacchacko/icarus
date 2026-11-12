@@ -82,9 +82,6 @@ function M.rows(task)
   for _, record in ipairs(records) do
     by_id[record.id] = record
   end
-  table.sort(records, function(a, b)
-    return a.id < b.id
-  end)
   for _, record in ipairs(records) do
     local of = require("icarus.orchestration").parent(record)
     local parent = of and by_id[of] and of
@@ -94,6 +91,27 @@ function M.rows(task)
     else
       roots[#roots + 1] = record
     end
+  end
+  -- Most recently active first, a lead as active as its busiest worker.
+  local active = {}
+  local function latest(record)
+    if not active[record.id] then
+      active[record.id] = chats.last_active(record)
+      for _, kid in ipairs(children[record.id] or {}) do
+        active[record.id] = math.max(active[record.id], latest(kid))
+      end
+    end
+    return active[record.id]
+  end
+  local function by_activity(a, b)
+    if latest(a) ~= latest(b) then
+      return latest(a) > latest(b)
+    end
+    return a.id < b.id
+  end
+  table.sort(roots, by_activity)
+  for _, kids in pairs(children) do
+    table.sort(kids, by_activity)
   end
   local named = names(task.slug)
   local out = {}
